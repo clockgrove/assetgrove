@@ -24,7 +24,7 @@ interface LookDevArgs {
 
 export const lookDevCommand = defineCommand<LookDevArgs>({
   name: "look-dev",
-  tool: null,
+  tool: "look_dev",
   summary: "give a picked 3D character its look: base colour, fur groom maps and eyes",
   details: `Repaints a picked character's base colour on its own UVs in the look the bible's approved
 references define (restyled renders projected back onto the model), writes fur groom maps
@@ -73,6 +73,7 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
+  confirm: "spend",
   async run(args, ctx) {
     const ledger = spendLedger(args.workItem);
     const spec = await readJson<AssetSpec>(args.spec);

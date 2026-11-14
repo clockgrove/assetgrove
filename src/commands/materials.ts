@@ -30,7 +30,7 @@ interface MaterialsArgs {
 
 export const materialsCommand = defineCommand<MaterialsArgs>({
   name: "materials",
-  tool: null,
+  tool: "materials",
   summary: "derive and check material maps, native renditions and target lit previews",
   details: `Derives the channels requested by style.materials, checks alignment and temporal stability,
 writes native-resolution renditions, runs target compression and dusk-rain/night previews,
@@ -79,6 +79,7 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
+  confirm: "spend",
   async run(args) {
     const spec = await readJson<AssetSpec>(args.spec);
     const profile = await readJson<TargetProfile>(args.profile);

@@ -28,7 +28,7 @@ interface GenerateSheetArgs {
 
 export const generateSheetCommand = defineCommand<GenerateSheetArgs>({
   name: "generate-sheet",
-  tool: null,
+  tool: "generate_sheet",
   summary: "have the model draw a whole cycle as one sheet within a cost cap, then import it",
   details: `Asks the model for a whole animation cycle as one sheet within the cost cap in USD, then
 imports it as the import command does, with a proposed grouping for a human to confirm.
@@ -85,6 +85,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
+  confirm: "spend",
   async run(args) {
     const ledger = spendLedger(args.workItem);
     const capUsd = args.cap ?? DEFAULT_CAP_USD;

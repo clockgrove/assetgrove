@@ -74,7 +74,7 @@ interface ImportArgs {
 
 export const importCommand = defineCommand<ImportArgs>({
   name: "import",
-  tool: null,
+  tool: "import",
   summary: "slice a contact sheet into frames and propose animation families",
   details: `Slices a contact sheet (from any tool; --tool names it, for example "ChatGPT image
 generation"), removes the background to the profile's style, and has a vision model propose
@@ -159,6 +159,7 @@ below the threshold, off skips scoring.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
+  confirm: "spend",
   async run(args, ctx) {
     const capUsd = args.cap ?? DEFAULT_CAP_USD;
     const slice = sliceOptions(args.grid, args.components, args.frames);

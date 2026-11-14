@@ -1,5 +1,4 @@
 import { serveMcp } from "../mcp.ts";
-import { planningContext } from "../providers/index.ts";
 import { defineCommand } from "./types.ts";
 
 interface McpArgs {
@@ -10,9 +9,11 @@ interface McpArgs {
 export const mcpCommand = defineCommand<McpArgs>({
   name: "mcp",
   tool: null,
-  summary: "serve bible, plan and apply tools over MCP stdio",
-  details: `Serves MCP over stdio with the official MCP SDK. Model keys come from the environment.
-Tools: bible_describe, bible_init, bible_preset, plan, apply. File paths are local to this server.`,
+  summary: "serve every command as an MCP tool over stdio",
+  details: `Serves MCP over stdio with the official MCP SDK: one tool per command other than mcp, each
+returning the command's --json document. Model keys come from the environment. File paths are
+local to this server. Refuses to start (exit 2) when a proxy or TLS variable is set that the
+settings' environment.allow does not list.`,
   json: false,
   input: {
     type: "object",
@@ -34,8 +35,9 @@ Tools: bible_describe, bible_init, bible_preset, plan, apply. File paths are loc
   async run(args, ctx) {
     // Decision-call log lines go to stderr; stdout carries only JSON-RPC.
     await serveMcp({
-      ...(await planningContext(args.providerScript, args.workItem)),
-      log: ctx.log,
+      ...ctx,
+      ...(args.providerScript !== undefined && { providerScript: args.providerScript }),
+      ...(args.workItem !== undefined && { workItem: args.workItem }),
     });
     return { exitCode: 0, fields: {}, human: "" };
   },

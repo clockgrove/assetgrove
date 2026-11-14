@@ -29,7 +29,7 @@ function need<K extends keyof LodArgs>(args: LodArgs, flags: Record<K, string>):
 
 export const lodCommand = defineCommand<LodArgs>({
   name: "lod",
-  tool: null,
+  tool: "lod",
   summary: "make a 3D model's detail levels and texture tiers within the target's budgets",
   details: `Two forms: --run and --candidate (with optional --profile) name a staged candidate;
 --model, --provenance, --spec and --profile name a given .glb.

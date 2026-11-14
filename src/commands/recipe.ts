@@ -14,7 +14,7 @@ interface RecipeArgs {
 
 export const recipeCommand = defineCommand<RecipeArgs>({
   name: "recipe",
-  tool: null,
+  tool: "recipe",
   summary: "run a recipe file (a sequence of operations) over images",
   details: `Runs the steps of a recipe file in order over the input images and writes the outputs and a
 provenance record. --out is a file for a single output, otherwise a directory.`,

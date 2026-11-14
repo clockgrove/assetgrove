@@ -44,6 +44,7 @@ Approval authorizes this generation spend; resulting assets remain pending revie
   },
   positionals: [{ name: "plan" }],
   effect: { readOnly: false, spends: "always", writes: "runs" },
+  confirm: "spend",
   async run(args, ctx) {
     if (args.plan === undefined) throw new InputError("apply requires exactly one plan file");
     const result = await generationTool(

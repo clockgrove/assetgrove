@@ -38,7 +38,7 @@ interface FixFrameArgs {
 
 export const fixFrameCommand = defineCommand<FixFrameArgs>({
   name: "fix-frame",
-  tool: null,
+  tool: "fix_frame",
   summary: "regenerate one bad frame of a strip by a reference-guided edit within a cost cap",
   details: `Edits frame <n> (1-based) with one reference-guided edit call, from an approved neighbour
 frame (--from) or the approved key pose (--key-pose), within the cost cap in USD. Only that
@@ -126,6 +126,7 @@ limits, and needs no key.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
+  confirm: "spend",
   async run(args) {
     const index = args.frame;
     const neighbour = args.from;

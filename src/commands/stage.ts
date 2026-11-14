@@ -27,7 +27,7 @@ interface StageArgs {
 
 export const stageCommand = defineCommand<StageArgs>({
   name: "stage",
-  tool: null,
+  tool: "stage",
   summary: "generate candidates within a cost cap and stage those that pass QA",
   details: `Generates candidates through the Vercel AI Gateway (AI_GATEWAY_API_KEY from the environment)
 within the cost cap in USD, and stages only the ones that pass QA.
@@ -74,6 +74,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
+  confirm: "spend",
   async run(args, ctx) {
     const ledger = spendLedger(args.workItem);
     const candidates = args.candidates ?? DEFAULT_CANDIDATES;

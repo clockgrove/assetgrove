@@ -1,4 +1,6 @@
+import type { Env } from "../env.ts";
 import type { ErrorCode } from "../errors.ts";
+import type { Settings } from "../settings.ts";
 
 /** What running a command can do: whether it only reads, whether it spends, and where it writes. */
 export interface Effect {
@@ -29,8 +31,16 @@ export interface JsonSchemaObject {
 
 /** What a run of a command is given besides its arguments. */
 export interface RunContext {
+  /** The developer settings, loaded once per process (src/commands/context.ts). */
+  settings: Settings;
   /** Receives log lines; the CLI sends them to stderr. */
   log: (message: string) => void;
+  /** The environment the refusal rule reads; process.env when absent. */
+  env?: Env;
+  /** The MCP server's --provider-script, given to each tool call of a command that takes one. */
+  providerScript?: string;
+  /** The MCP server's --work-item, given to each tool call that names no work item. */
+  workItem?: string;
 }
 
 /** A refusal's code and message; a spend-limit refusal also names the limit and its numbers. */

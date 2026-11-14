@@ -1,9 +1,17 @@
 import { parseArgs } from "node:util";
 import type { ParseArgsOptionsConfig } from "node:util";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
-import { InputError } from "../errors.ts";
+import { SettingsError } from "../env.ts";
+import { EXIT, InputError } from "../errors.ts";
+import { checkContextEnvironment, isPaid } from "./context.ts";
 import { failureOutcome } from "./result.ts";
-import type { CommandSpec, JsonSchemaProperty, Outcome, RunContext } from "./types.ts";
+import type {
+  CommandSpec,
+  JsonSchemaObject,
+  JsonSchemaProperty,
+  Outcome,
+  RunContext,
+} from "./types.ts";
 
 type Args = Record<string, unknown>;
 
@@ -104,14 +112,59 @@ export async function validateArgs(spec: CommandSpec, args: Args): Promise<void>
   }
 }
 
-/** Validates a command's input and runs it; a thrown error becomes its refusal outcome. */
+/**
+ * Validates a command's input and runs it; a thrown error becomes its refusal outcome. A paid
+ * command first refuses an environment its settings do not allow (exit 2 `settings_invalid`).
+ */
 export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
   try {
+    if (isPaid(spec)) checkContextEnvironment(ctx);
     await validateArgs(spec, args);
     return await spec.run(args, ctx);
   } catch (error) {
-    return failureOutcome(error);
+    return errorOutcome(error);
   }
+}
+
+/** The outcome of a thrown error; a settings refusal keeps its own code, `settings_invalid`. */
+export function errorOutcome(error: unknown): Outcome {
+  if (error instanceof SettingsError) {
+    return {
+      exitCode: EXIT.settings_invalid,
+      fields: {},
+      human: "",
+      error: { code: "settings_invalid", message: error.message },
+    };
+  }
+  return failureOutcome(error);
+}
+
+/**
+ * Input properties no tool accepts: the scripted provider and routes come from the server, a dry
+ * run is the CLI's, and approval is a person's. `json` and `help` are CLI flags, not properties.
+ */
+export const CLI_ONLY_PROPERTIES: readonly string[] = [
+  "providerScript",
+  "dryRun",
+  "routes",
+  "autoApprove",
+];
+
+/** A tool's input schema: the command's input without the CLI-only properties or help placeholders. */
+export function toolInputSchema(spec: CommandSpec): JsonSchemaObject {
+  const properties: Record<string, JsonSchemaProperty> = {};
+  for (const [name, property] of Object.entries(spec.input.properties)) {
+    if (CLI_ONLY_PROPERTIES.includes(name)) continue;
+    const { placeholder: _placeholder, ...rest } = property;
+    properties[name] = rest;
+  }
+  const required = (spec.input.required ?? []).filter((n) => !CLI_ONLY_PROPERTIES.includes(n));
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 && { required }),
+    additionalProperties: false,
+  };
 }
 
 function valueHint(name: string, property: JsonSchemaProperty): string {
