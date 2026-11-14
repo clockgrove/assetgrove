@@ -1,76 +1,55 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { BudgetExceededError } from "./budget.ts";
+import type { Env } from "./env.ts";
 import { InputError } from "./errors.ts";
+import type { GenerationProvider } from "./gateway/provider.ts";
+import { assertLimitsDeclared, isPaid } from "./limits.ts";
+import type { Settings } from "./settings.ts";
 import type { TargetProfile } from "./types.ts";
 
 /**
- * Provider spend across runs (assetgrove#74). A run's `Budget` caps that run alone; this ledger
- * caps what every run on this machine (or in this CI job) spends together: a daily limit over the
- * last 24 hours, and a limit per work item (an Objective, a campaign or a session label).
+ * Provider spend across runs (design section 3). A run's `Budget` caps that run alone; this ledger
+ * caps what every run of this developer spends together: a daily cap over the last 24 hours, and a
+ * cap per work item (an Objective, a campaign or a session label). Both caps come from the
+ * developer settings (`caps.dailyUsd`, `caps.workItemUsd`), lowered only by a target profile's
+ * `spend` limits; the ledger is `<stateDir>/spend.jsonl`.
  *
  * The ledger is an append-only JSON Lines file. Every paid call appends a reservation of its
  * estimate before it is made and a settlement with its actual cost after. A reservation is checked
  * against the entries before it in the file, so concurrent runs are ordered by their appends and
  * can never both fit into the same remaining spend; a reservation that does not fit is cancelled
  * (settled at 0) and the call is refused. A reservation never settled (a crashed run) keeps its
- * estimate, as a failed call does in `Budget`. Scripted calls cost nothing and are never recorded
- * (`isPaidProvider`).
+ * estimate, as a failed call does in `Budget`. Whether a call is paid is its provider's billing,
+ * decided by the adapter (src/providers/adapter.ts); free calls are never recorded.
  */
 
-export const DEFAULT_DAILY_LIMIT_USD = 10;
-export const DEFAULT_WORK_ITEM_LIMIT_USD = 5;
+/** The variable naming the work item when `--work-item` does not. No other spend variable is read. */
+export const WORK_ITEM_ENV = "ASSETGROVE_WORK_ITEM";
 
-/** The provider name whose calls cost no money: the scripted provider of tests and offline runs. */
-export const UNPAID_PROVIDER = "scripted";
-
-/**
- * Whether a provider's calls are real spend, decided on its name alone. Every name but the
- * scripted provider's is paid, and an unknown provider (undefined) counts as paid.
- */
-export function isPaidProvider(providerName: string | undefined): boolean {
-  return providerName !== UNPAID_PROVIDER;
-}
+/** The ledger file under the settings' state directory. */
+export const LEDGER_FILE = "spend.jsonl";
 
 /**
- * The ledger a run with this provider reserves against, with the profile's limits: none for the
- * scripted provider, whose runs keep only their own cap.
+ * The ledger a run with this provider reserves against, with the profile's limits: none for a
+ * free provider, whose runs keep only their own cap. A paid provider must declare its limit
+ * first (`provider_limit_undeclared`, exit 3), before anything is reserved.
  */
 export function ledgerFor(
   ledger: SpendLedger | undefined,
-  providerName: string | undefined,
+  provider: GenerationProvider | undefined,
   profile?: Pick<TargetProfile, "spend">,
 ): SpendLedger | undefined {
-  return isPaidProvider(providerName) ? ledger?.forProfile(profile) : undefined;
+  if (!isPaid(provider)) return undefined;
+  assertLimitsDeclared(provider);
+  return ledger?.forProfile(profile);
 }
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EPSILON = 1e-9;
 
-export const SPEND_ENV = {
-  ledger: "ASSETGROVE_SPEND_LEDGER",
-  workItem: "ASSETGROVE_WORK_ITEM",
-  dailyLimit: "ASSETGROVE_DAILY_LIMIT_USD",
-  workItemLimit: "ASSETGROVE_WORK_ITEM_LIMIT_USD",
-  /** Set by Factory in a worker's environment on every route: the Objective's issue number. */
-  factoryIssue: "FACTORY_ISSUE",
-} as const;
-
-/**
- * The work item when none is named: a Factory worker's Objective, from `FACTORY_ISSUE` (digits
- * only), as `<GITHUB_REPOSITORY>#<n>` on Actions or `factory#<n>` elsewhere. Two repositories'
- * Objectives with the same number on one machine then share a limit, which only makes it stricter.
- */
-export function factoryWorkItem(env: NodeJS.ProcessEnv): string | undefined {
-  const issue = env[SPEND_ENV.factoryIssue]?.trim();
-  if (!issue || !/^[0-9]+$/.test(issue)) return undefined;
-  const repo = env["GITHUB_REPOSITORY"]?.trim();
-  return `${repo && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ? repo : "factory"}#${issue}`;
-}
-
 export type SpendLimitName = "daily" | "work-item";
-export type LimitSource = "environment" | "profile" | "default";
+export type LimitSource = "settings" | "profile";
 
 export interface SpendLimitStatus {
   limit: SpendLimitName;
@@ -118,14 +97,21 @@ export function limitLabel(status: SpendLimitStatus): string {
 }
 
 type Entry =
-  | { op: "reserve"; id: string; at: string; route: string; workItem?: string; amountUsd: number }
+  | {
+      op: "reserve";
+      id: string;
+      at: string;
+      provider?: string;
+      route: string;
+      workItem?: string;
+      amountUsd: number;
+    }
   | { op: "settle"; id: string; at: string; costUsd: number };
 
-/** A limit as each source sets it; the strictest one set applies, the default when none is. */
+/** A limit as each source sets it: the settings cap, lowered only by a lower profile limit. */
 interface LimitSetting {
-  environment?: number;
+  settings: number;
   profile?: number;
-  fallback: number;
 }
 
 interface LedgerOptions {
@@ -150,48 +136,21 @@ export class SpendLedger {
   }
 
   /**
-   * The ledger and limits from the environment: `ASSETGROVE_SPEND_LEDGER` (default
-   * `$XDG_STATE_HOME/assetgrove/spend.jsonl`, or `~/.local/state/...`; in a Factory worker, where
-   * `FACTORY_ISSUE` is set, `assetgrove-spend.jsonl` in `$FACTORY_STATE_DIR`, else `$TMPDIR`),
-   * `ASSETGROVE_WORK_ITEM`
-   * (or `workItem`, from `--work-item`; else a Factory worker's Objective from `FACTORY_ISSUE`),
-   * `ASSETGROVE_DAILY_LIMIT_USD` and
-   * `ASSETGROVE_WORK_ITEM_LIMIT_USD`.
+   * The ledger and caps from the developer settings: `<stateDir>/spend.jsonl`, `caps.dailyUsd` and
+   * `caps.workItemUsd`. The work item is `workItem` (from `--work-item`), else
+   * `ASSETGROVE_WORK_ITEM`, else none.
    */
-  static fromEnv(
-    env: NodeJS.ProcessEnv = process.env,
-    options: { workItem?: string; now?: () => Date } = {},
+  static fromSettings(
+    settings: Pick<Settings, "stateDir" | "caps">,
+    options: { workItem?: string; env?: Env; now?: () => Date } = {},
   ): SpendLedger {
-    const configured = env[SPEND_ENV.ledger]?.trim();
-    const stateHome = env["XDG_STATE_HOME"]?.trim();
-    // Factory's stage-persistent state directory when it gives one, else the stage's temp dir.
-    const temp = env["FACTORY_STATE_DIR"]?.trim() || env["TMPDIR"]?.trim();
-    const path = configured
-      ? resolve(configured)
-      : factoryWorkItem(env) !== undefined
-        ? // A Factory worker's sandbox drops writes outside its stage's temp dir between commands,
-          // so a ledger under the home directory would forget every reservation (assetgrove#108).
-          join(temp && isAbsolute(temp) ? temp : tmpdir(), "assetgrove-spend.jsonl")
-        : join(
-            stateHome && isAbsolute(stateHome) ? stateHome : join(homedir(), ".local", "state"),
-            "assetgrove",
-            "spend.jsonl",
-          );
-    const workItem =
-      (options.workItem ?? env[SPEND_ENV.workItem])?.trim() || factoryWorkItem(env) || undefined;
-    const daily = envLimit(env, SPEND_ENV.dailyLimit);
-    const item = envLimit(env, SPEND_ENV.workItemLimit);
+    const env = options.env ?? process.env;
+    const workItem = (options.workItem ?? env[WORK_ITEM_ENV])?.trim() || undefined;
     return new SpendLedger({
-      path,
+      path: join(settings.stateDir, LEDGER_FILE),
       ...(workItem !== undefined && { workItem }),
-      daily: {
-        ...(daily !== undefined && { environment: daily }),
-        fallback: DEFAULT_DAILY_LIMIT_USD,
-      },
-      workItemLimit: {
-        ...(item !== undefined && { environment: item }),
-        fallback: DEFAULT_WORK_ITEM_LIMIT_USD,
-      },
+      daily: { settings: settings.caps.dailyUsd },
+      workItemLimit: { settings: settings.caps.workItemUsd },
       ...(options.now !== undefined && { now: options.now }),
     });
   }
@@ -232,12 +191,13 @@ export class SpendLedger {
    * the reservation cancelled) when it does not fit beside the reservations recorded before it.
    * Returns the reservation's ledger id, for `settle`.
    */
-  reserve(amountUsd: number, what: string, route: string): string {
+  reserve(amountUsd: number, what: string, route: string, provider?: string): string {
     const id = randomUUID();
     this.append({
       op: "reserve",
       id,
       at: this.now().toISOString(),
+      ...(provider !== undefined && { provider }),
       route,
       ...(this.workItem !== undefined && { workItem: this.workItem }),
       amountUsd,
@@ -350,32 +310,22 @@ function isEntry(value: unknown): value is Entry {
       typeof e["route"] === "string" &&
       typeof e["amountUsd"] === "number" &&
       Number.isFinite(e["amountUsd"]) &&
-      (e["workItem"] === undefined || typeof e["workItem"] === "string")
+      (e["workItem"] === undefined || typeof e["workItem"] === "string") &&
+      (e["provider"] === undefined || typeof e["provider"] === "string")
     );
   return e["op"] === "settle" && typeof e["costUsd"] === "number" && Number.isFinite(e["costUsd"]);
 }
 
 function effective(setting: LimitSetting): { usd: number; source: LimitSource } {
-  const { environment, profile } = setting;
-  if (environment !== undefined && (profile === undefined || environment <= profile))
-    return { usd: environment, source: "environment" };
-  if (profile !== undefined) return { usd: profile, source: "profile" };
-  return { usd: setting.fallback, source: "default" };
+  if (setting.profile !== undefined && setting.profile < setting.settings)
+    return { usd: setting.profile, source: "profile" };
+  return { usd: setting.settings, source: "settings" };
 }
 
 function withProfile(setting: LimitSetting, value: number | undefined): LimitSetting {
   if (value === undefined) return setting;
   const profile = setting.profile === undefined ? value : Math.min(setting.profile, value);
   return { ...setting, profile };
-}
-
-function envLimit(env: NodeJS.ProcessEnv, name: string): number | undefined {
-  const raw = env[name];
-  if (raw === undefined || raw.trim() === "") return undefined;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0)
-    throw new InputError(`${name} must be a non-negative number of USD, got "${raw}"`);
-  return n;
 }
 
 function profileLimit(value: unknown, field: string): number | undefined {

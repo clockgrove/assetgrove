@@ -32,17 +32,16 @@ export const LIMIT_KINDS = [
   "unlimited",
 ] as const;
 
-const limitSchema = z
-  .strictObject({
-    kind: z.enum(LIMIT_KINDS),
-    usd: usd.optional(),
-    period: name.optional(),
-    acceptUnlimited: z.boolean().optional(),
-  })
-  .refine((limit) => limit.kind !== "unlimited" || limit.acceptUnlimited === true, {
-    message: 'kind "unlimited" needs acceptUnlimited: true',
-    path: ["acceptUnlimited"],
-  });
+/**
+ * A provider's declared limit. An `unlimited` limit without `acceptUnlimited` loads, but a paid
+ * call refuses it (exit 3 `provider_limit_undeclared`, src/limits.ts).
+ */
+const limitSchema = z.strictObject({
+  kind: z.enum(LIMIT_KINDS),
+  usd: usd.optional(),
+  period: name.optional(),
+  acceptUnlimited: z.boolean().optional(),
+});
 
 const providerSchema = z.strictObject({
   adapter: name.optional(),

@@ -1,3 +1,4 @@
+import { runCap } from "../budget.ts";
 import { evaluateIdentity } from "../identity-eval.ts";
 import type { Breakdown, MediumReport } from "../identity-eval.ts";
 import { readJson } from "../inputs.ts";
@@ -85,7 +86,7 @@ hold a game's private art. See docs/generation-knobs.md.`,
   confirm: "spend",
   async run(args, ctx) {
     const profile = args.profile ? (await readJson<TargetProfile>(args.profile)).value : {};
-    const { provider, name } = await providerFor(args.providerScript);
+    const { provider, name } = await providerFor(ctx, args.providerScript);
     const report = await evaluateIdentity({
       ...(args.bible !== undefined && { biblePath: args.bible }),
       casesPath: args.cases,
@@ -93,8 +94,8 @@ hold a game's private art. See docs/generation-knobs.md.`,
       routes: await loadRoutes(args.routes),
       provider,
       providerName: name,
-      capUsd: args.cap ?? DEFAULT_CAP_USD,
-      ledger: spendLedger(args.workItem),
+      capUsd: runCap(ctx.settings.caps, args.cap, DEFAULT_CAP_USD),
+      ledger: spendLedger(ctx, args.workItem),
       ...(args.log !== undefined && { logPath: args.log }),
       log: ctx.log,
     });

@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { Budget } from "../budget.ts";
+import { Budget, runCap } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import { declarationOption, lockFor, readBytes, readJson, sliceOptions } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
@@ -161,7 +161,7 @@ below the threshold, off skips scoring.`,
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
   async run(args, ctx) {
-    const capUsd = args.cap ?? DEFAULT_CAP_USD;
+    const capUsd = runCap(ctx.settings.caps, args.cap, DEFAULT_CAP_USD);
     const slice = sliceOptions(args.grid, args.components, args.frames);
     const profile = await readJson<TargetProfile>(args.profile);
     const bible = args.bible ? await readJson<StyleBible>(args.bible) : undefined;
@@ -173,11 +173,11 @@ below the threshold, off skips scoring.`,
     const caller = async (): Promise<Caller> => {
       if (!shared) {
         const routes = await loadRoutes(args.routes);
-        const { provider, name } = await providerFor(args.providerScript);
+        const { provider, name } = await providerFor(ctx, args.providerScript);
         shared = new Caller({
           provider,
           providerName: name,
-          budget: new Budget(capUsd, ledgerFor(spendLedger(args.workItem), name, profile.value)),
+          budget: new Budget(capUsd, ledgerFor(spendLedger(ctx, args.workItem), provider, profile.value)),
           routes,
           log: ctx.log,
         });

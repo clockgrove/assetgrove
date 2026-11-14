@@ -5,7 +5,9 @@ import type { ErrorCode } from "../errors.ts";
 import { LicenseError } from "../license.ts";
 import { redact } from "../redact.ts";
 import type { RunRecord, StagePlan } from "../loop.ts";
-import { SPEND_ENV, SpendLimitError, isPaidProvider, limitLabel } from "../spend.ts";
+import type { GenerationProvider } from "../gateway/provider.ts";
+import { isPaid } from "../limits.ts";
+import { SpendLimitError, WORK_ITEM_ENV, limitLabel } from "../spend.ts";
 import type { SpendLedger, SpendStatus } from "../spend.ts";
 import type { Failure, Outcome } from "./types.ts";
 
@@ -75,13 +77,13 @@ export const usd = (n: number) => `$${n.toFixed(4)}`;
 
 function formatSpend(spend: SpendStatus, counted: boolean): string[] {
   return [
-    `spend ledger ${spend.ledger}` + (counted ? "" : " (scripted provider: not counted)"),
+    `spend ledger ${spend.ledger}` + (counted ? "" : " (free provider: not counted)"),
     ...spend.limits.map(
       (l) =>
         `  ${limitLabel(l)} (${l.source}): ${usd(l.spentUsd)} spent, ${usd(l.remainingUsd)} left`,
     ),
     ...(spend.workItem === null
-      ? [`  no work item named (--work-item or ${SPEND_ENV.workItem}); the daily limit applies`]
+      ? [`  no work item named (--work-item or ${WORK_ITEM_ENV}); the daily limit applies`]
       : []),
   ];
 }
@@ -89,16 +91,16 @@ function formatSpend(spend: SpendStatus, counted: boolean): string[] {
 /**
  * The outcome of a dry run: the plan, the spend left under each ledger limit, and a refusal (exit
  * 3) when the forecast is over the run's cap or, for a paid provider, over what is left under a
- * limit. A scripted run's calls are not counted (`spend.counted` false), so the limits never
- * refuse it.
+ * limit. A free provider's calls (as its adapter bills them) are not counted (`spend.counted`
+ * false), so the limits never refuse it.
  */
 export function dryRunOutcome(
   plan: { estimateUsd: number; capUsd: number; withinCap: boolean },
   human: string,
   ledger: SpendLedger,
-  providerName: string | undefined,
+  provider: GenerationProvider | undefined,
 ): Outcome {
-  const counted = isPaidProvider(providerName);
+  const counted = isPaid(provider);
   const spend = { ...ledger.status(), counted };
   const over = counted
     ? spend.limits.find((l) => plan.estimateUsd > l.remainingUsd + 1e-9)

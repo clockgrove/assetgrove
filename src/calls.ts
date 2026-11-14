@@ -1,7 +1,9 @@
+import { BudgetExceededError } from "./budget.ts";
 import type { Budget } from "./budget.ts";
 import { InputError, ProviderError } from "./errors.ts";
-import { isPaidProvider } from "./spend.ts";
+import { assertLimitDeclared, billingFor } from "./limits.ts";
 import type {
+  CallKind,
   DecisionQuestion,
   DecisionResult,
   GenerationProvider,
@@ -50,6 +52,7 @@ export class Caller {
   }
 
   private async record<T extends ProviderResult>(
+    kind: CallKind,
     operation: string,
     prompt: string,
     references: LoadedReference[],
@@ -58,13 +61,14 @@ export class Caller {
     run: (route: Route) => Promise<T>,
   ): Promise<T> {
     const route = this.route(operation);
+    // Whether the call costs money is its provider's billing, decided by the adapter. A paid
+    // call needs its provider's declared limit; a free one never reaches the cross-run ledger.
+    const billing = billingFor(this.provider, kind);
+    assertLimitDeclared(billing);
     const reservation = this.budget.reserve(
       route.estimatedCostUsd,
       `the ${operation} call`,
-      // Scripted calls cost nothing: they never reach the cross-run ledger.
-      isPaidProvider(this.providerName)
-        ? `${this.providerName}:${operation}:${route.model}`
-        : undefined,
+      ...(billing.paid ? [`${this.providerName}:${operation}:${route.model}`, billing.provider] : []),
     );
     const startedAt = this.now().toISOString();
     let result: T;
@@ -73,7 +77,8 @@ export class Caller {
     } catch (error) {
       // A failed call may still have been billed; count the estimate so the cap stays safe.
       this.budget.settle(reservation, route.estimatedCostUsd);
-      if (error instanceof ProviderError) throw error;
+      // The provider's quota refusing the call is a spend refusal (cap_refused), not a failure.
+      if (error instanceof ProviderError || error instanceof BudgetExceededError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new ProviderError(`the ${operation} call failed: ${message}`, { cause: error });
     }
@@ -115,7 +120,7 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       references: references.map((r) => ({ role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    const result = await this.record(operation, prompt, references, parameters, sendSeed, (r) =>
+    const result = await this.record("image", operation, prompt, references, parameters, sendSeed, (r) =>
       this.provider.generateImage({
         model: r.model,
         prompt,
@@ -149,7 +154,7 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       views: views.map((r) => ({ view: r.view, role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    return this.record(operation, prompt, views, parameters, sendSeed, (r) => {
+    return this.record("model", operation, prompt, views, parameters, sendSeed, (r) => {
       const generate = this.provider.generateModel?.bind(this.provider);
       if (!generate) throw new ProviderError(`the provider cannot make 3D models (${operation})`);
       return generate({
@@ -171,7 +176,7 @@ export class Caller {
       rigType,
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
     };
-    return this.record(operation, `rig: ${rigType}`, [], parameters, undefined, (r) => {
+    return this.record("rig", operation, `rig: ${rigType}`, [], parameters, undefined, (r) => {
       const rig = this.provider.rigModel?.bind(this.provider);
       if (!rig) throw new ProviderError(`the provider cannot rig 3D models (${operation})`);
       return rig({
@@ -191,7 +196,7 @@ export class Caller {
       clips,
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
     };
-    return this.record(operation, `clips: ${clips.join(", ")}`, [], parameters, undefined, (r) => {
+    return this.record("animate", operation, `clips: ${clips.join(", ")}`, [], parameters, undefined, (r) => {
       const animate = this.provider.animateModel?.bind(this.provider);
       if (!animate) throw new ProviderError(`the provider cannot animate 3D models (${operation})`);
       return animate({
@@ -210,7 +215,7 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       images: images.map((r) => ({ role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    const result = await this.record(operation, prompt, images, parameters, undefined, (r) =>
+    const result = await this.record("vision", operation, prompt, images, parameters, undefined, (r) =>
       this.provider.analyzeImages({
         model: r.model,
         prompt,
@@ -238,7 +243,7 @@ export class Caller {
     const started = performance.now();
     let result: DecisionResult;
     try {
-      result = await this.record(operation, prompt, images, parameters, undefined, (r) => {
+      result = await this.record("decide", operation, prompt, images, parameters, undefined, (r) => {
         const decide = this.provider.decide?.bind(this.provider);
         if (!decide)
           throw new ProviderError(`the provider cannot make typed decisions (${operation})`);

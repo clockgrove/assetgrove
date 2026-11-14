@@ -1,4 +1,4 @@
-import { Budget } from "../budget.ts";
+import { Budget, runCap } from "../budget.ts";
 import { loadBible } from "../bible.ts";
 import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
@@ -74,10 +74,10 @@ fixes its text or its references. See docs/generation-knobs.md.`,
     );
     if (loaded.length === 0) throw new InputError(`${doc.path} has no identity locks`);
     const routes = await loadRoutes(args.routes);
-    const { provider, name } = await providerFor(args.providerScript);
+    const { provider, name } = await providerFor(ctx, args.providerScript);
     const budget = new Budget(
-      args.cap ?? DEFAULT_CAP_USD,
-      ledgerFor(spendLedger(args.workItem), name, {}),
+      runCap(ctx.settings.caps, args.cap, DEFAULT_CAP_USD),
+      ledgerFor(spendLedger(ctx, args.workItem), provider, {}),
     );
     budget.check(
       loaded.length * (routes[IDENTITY_CHECK_OPERATION] as Route).estimatedCostUsd,

@@ -20,6 +20,34 @@ export class BudgetExceededError extends Error {
   }
 }
 
+/** A `--cap` above the settings' run cap: only a person raises a cap. Exit 3 `cap_refused`. */
+export class CapRefusedError extends BudgetExceededError {
+  readonly code = "cap_refused";
+  constructor(capUsd: number, runUsd: number) {
+    super(runUsd, 0, capUsd, "--cap");
+    this.name = "CapRefusedError";
+    this.message =
+      `refused: --cap $${capUsd.toFixed(2)} is above the developer settings' run cap of ` +
+      `$${runUsd.toFixed(2)} (caps.runUsd); only a person raises a cap, by editing the settings`;
+  }
+}
+
+/**
+ * A run's cap: `--cap` when given, else the command's own default, never above the settings'
+ * `caps.runUsd`. A `--cap` above it is refused (`CapRefusedError`) before any work.
+ */
+export function runCap(
+  caps: { runUsd: number },
+  cap: number | undefined,
+  fallbackUsd: number = caps.runUsd,
+): number {
+  if (cap !== undefined) {
+    if (cap > caps.runUsd + 1e-9) throw new CapRefusedError(cap, caps.runUsd);
+    return cap;
+  }
+  return Math.min(fallbackUsd, caps.runUsd);
+}
+
 export interface Reservation {
   readonly amountUsd: number;
   settled: boolean;
@@ -61,9 +89,10 @@ export class Budget {
    * or would cross a ledger limit. Only a paid call names its `route`, and only a call with a
    * route is reserved in the ledger; a scripted call reserves against the run's cap alone.
    */
-  reserve(amountUsd: number, what = "the call", route?: string): Reservation {
+  reserve(amountUsd: number, what = "the call", route?: string, provider?: string): Reservation {
     this.fitCap(amountUsd, what);
-    const ledgerId = route === undefined ? undefined : this.ledger?.reserve(amountUsd, what, route);
+    const ledgerId =
+      route === undefined ? undefined : this.ledger?.reserve(amountUsd, what, route, provider);
     this.reserved += amountUsd;
     return { amountUsd, settled: false, ...(ledgerId !== undefined && { ledgerId }) };
   }

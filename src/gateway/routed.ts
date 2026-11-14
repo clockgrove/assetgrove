@@ -1,6 +1,8 @@
 import { ProviderError } from "../errors.ts";
 import type {
   AnimateRequest,
+  Billing,
+  CallKind,
   DecisionRequest,
   DecisionResult,
   GenerationProvider,
@@ -13,70 +15,61 @@ import type {
   VisionResult,
 } from "./provider.ts";
 
-/** An adapter that serves only the 3D calls. */
-export type ModelProvider = Pick<GenerationProvider, "generateModel" | "rigModel" | "animateModel">;
+/** An adapter instance that serves only the 3D calls. */
+export type ModelProvider = Pick<
+  GenerationProvider,
+  "billing" | "generateModel" | "rigModel" | "animateModel"
+>;
+
+const MODEL_CALLS = new Set<CallKind>(["model", "rig", "animate"]);
 
 /**
- * One provider made of two adapters: image, vision and decision calls go to the gateway, 3D calls
- * to the 3D adapter. Each adapter is made on its first call, so a missing key fails only the calls
- * that need it (as a provider error) and a run that never makes them needs no key for them.
+ * One provider made of two adapter instances: image, vision and decision calls go to the gateway,
+ * 3D calls to the 3D adapter, and each call is billed by the instance that serves it. A missing key
+ * fails only the calls that need it (as a provider error).
  */
 export class RoutedProvider implements GenerationProvider {
-  private readonly makeGateway: () => GenerationProvider;
-  private readonly makeModels: () => ModelProvider;
-  private gateway?: GenerationProvider;
-  private models?: ModelProvider;
+  private readonly gateway: GenerationProvider;
+  private readonly models: ModelProvider;
+  readonly billing: Billing;
+  readonly billings: readonly Billing[];
 
-  constructor(options: { gateway: () => GenerationProvider; models: () => ModelProvider }) {
-    this.makeGateway = options.gateway;
-    this.makeModels = options.models;
+  constructor(options: { gateway: GenerationProvider; models: ModelProvider }) {
+    this.gateway = options.gateway;
+    this.models = options.models;
+    this.billing = options.gateway.billing;
+    this.billings = [options.gateway.billing, options.models.billing];
   }
 
-  private image(): GenerationProvider {
-    return (this.gateway ??= make(this.makeGateway));
-  }
-
-  private model(): ModelProvider {
-    return (this.models ??= make(this.makeModels));
+  billingFor(kind: CallKind): Billing {
+    return MODEL_CALLS.has(kind) ? this.models.billing : this.gateway.billing;
   }
 
   generateImage(request: ImageRequest): Promise<ImageResult> {
-    return this.image().generateImage(request);
+    return this.gateway.generateImage(request);
   }
 
   analyzeImages(request: VisionRequest): Promise<VisionResult> {
-    return this.image().analyzeImages(request);
+    return this.gateway.analyzeImages(request);
   }
 
   decide(request: DecisionRequest): Promise<DecisionResult> {
-    const provider = this.image();
-    if (!provider.decide) throw new ProviderError("the gateway cannot make typed decisions");
-    return provider.decide(request);
+    if (!this.gateway.decide) throw new ProviderError("the gateway cannot make typed decisions");
+    return this.gateway.decide(request);
   }
 
   generateModel(request: ModelRequest): Promise<ModelResult> {
-    const provider = this.model();
-    if (!provider.generateModel) throw new ProviderError("the 3D provider cannot make models");
-    return provider.generateModel(request);
+    if (!this.models.generateModel) throw new ProviderError("the 3D provider cannot make models");
+    return this.models.generateModel(request);
   }
 
   rigModel(request: RigRequest): Promise<ModelResult> {
-    const provider = this.model();
-    if (!provider.rigModel) throw new ProviderError("the 3D provider cannot rig models");
-    return provider.rigModel(request);
+    if (!this.models.rigModel) throw new ProviderError("the 3D provider cannot rig models");
+    return this.models.rigModel(request);
   }
 
   animateModel(request: AnimateRequest): Promise<ModelResult> {
-    const provider = this.model();
-    if (!provider.animateModel) throw new ProviderError("the 3D provider cannot animate models");
-    return provider.animateModel(request);
-  }
-}
-
-function make<T>(factory: () => T): T {
-  try {
-    return factory();
-  } catch (error) {
-    throw new ProviderError((error as Error).message, { cause: error });
+    if (!this.models.animateModel) throw new ProviderError("the 3D provider cannot animate models");
+    return this.models.animateModel(request);
   }
 }

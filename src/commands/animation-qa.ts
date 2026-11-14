@@ -1,3 +1,4 @@
+import { runCap } from "../budget.ts";
 import { join, resolve } from "node:path";
 import {
   importTargets,
@@ -10,7 +11,7 @@ import { formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
 import { readJson, specForQa } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
-import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
+import { providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
 import type { TargetProfile } from "../types.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
@@ -109,8 +110,8 @@ Exits 5 when any check fails; every failed check names its frame.`,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
   confirm: "spend",
-  async run(args) {
-    const capUsd = args.cap ?? DEFAULT_CAP_USD;
+  async run(args, ctx) {
+    const capUsd = runCap(ctx.settings.caps, args.cap, DEFAULT_CAP_USD);
     const routes = await loadRoutes(args.routes);
     const vision = !args.noVision;
     const spec = await specForQa(args.spec);
@@ -141,7 +142,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
       if (spec.gait !== undefined) t.gait = spec.gait;
     }
     if (args.dryRun) {
-      const providerName = await dryRunProvider(args.providerScript);
+      const providerName = (await providerFor(ctx, args.providerScript)).provider;
       const plan = await planAnimationQa(targets, routes, capUsd, vision);
       const human = [
         `dry run: ${targets.length} strip(s), ${plan.calls} planned vision call(s), nothing spent`,
@@ -152,7 +153,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
         `forecast ${usd(plan.estimateUsd)} against a $${capUsd.toFixed(2)} cap` +
           (plan.withinCap ? "" : " (over the cap)"),
       ].join("\n");
-      const ledger = targets.reduce((l, t) => l.forProfile(t.profile), spendLedger(args.workItem));
+      const ledger = targets.reduce((l, t) => l.forProfile(t.profile), spendLedger(ctx, args.workItem));
       return dryRunOutcome(plan, human, ledger, providerName);
     }
     const outDir = resolve(args.out ?? ".assetgrove/animation");
@@ -161,8 +162,8 @@ Exits 5 when any check fails; every failed check names its frame.`,
       outDir,
       routes,
       capUsd,
-      ledger: spendLedger(args.workItem),
-      ...(vision && { provider: await providerFor(args.providerScript) }),
+      ledger: spendLedger(ctx, args.workItem),
+      ...(vision && { provider: await providerFor(ctx, args.providerScript) }),
     });
     const lines: string[] = [];
     for (const r of results) {

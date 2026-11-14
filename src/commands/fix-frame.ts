@@ -1,3 +1,4 @@
+import { runCap } from "../budget.ts";
 import { resolve } from "node:path";
 import {
   DEFAULT_FIX_CAP_USD,
@@ -9,7 +10,7 @@ import {
 import { formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
 import { readJson, specForQa } from "../inputs.ts";
-import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
+import { providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
 import type { StyleBible, TargetProfile } from "../types.ts";
 import { dryRunOutcome, usd } from "./result.ts";
@@ -127,14 +128,14 @@ limits, and needs no key.`,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
   confirm: "spend",
-  async run(args) {
+  async run(args, ctx) {
     const index = args.frame;
     const neighbour = args.from;
     const keyPose = args.keyPose;
     if ((neighbour === undefined) === (keyPose === undefined)) {
       throw new InputError("give exactly one of --from <frame> or --key-pose <image>");
     }
-    const capUsd = args.cap ?? DEFAULT_FIX_CAP_USD;
+    const capUsd = runCap(ctx.settings.caps, args.cap, DEFAULT_FIX_CAP_USD);
     const routes = await loadRoutes(args.routes);
     const profile = await readJson<TargetProfile>(args.profile);
     const anchor = parseAnchor(args.anchor);
@@ -149,7 +150,7 @@ limits, and needs no key.`,
       ...(spec.gait !== undefined && { gait: spec.gait }),
     });
     if (args.dryRun) {
-      const providerName = await dryRunProvider(args.providerScript);
+      const providerName = (await providerFor(ctx, args.providerScript)).provider;
       const plan = planFrameFix(routes, capUsd);
       const human = [
         `dry run: fix frame ${index}, ${plan.calls} planned call(s), nothing spent`,
@@ -160,7 +161,7 @@ limits, and needs no key.`,
       return dryRunOutcome(
         plan,
         human,
-        spendLedger(args.workItem).forProfile(profile.value),
+        spendLedger(ctx, args.workItem).forProfile(profile.value),
         providerName,
       );
     }
@@ -176,8 +177,8 @@ limits, and needs no key.`,
       outDir: resolve(args.out),
       routes,
       capUsd,
-      ledger: spendLedger(args.workItem),
-      provider: await providerFor(args.providerScript),
+      ledger: spendLedger(ctx, args.workItem),
+      provider: await providerFor(ctx, args.providerScript),
     });
     const human = [
       `fixed frame ${index} of ${target.family} with ${result.fix.model} (request ${result.fix.requestId}), $${result.spentUsd.toFixed(4)} spent`,

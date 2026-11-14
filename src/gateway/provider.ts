@@ -3,6 +3,38 @@
  * scripted provider implements it for tests. No provider SDK type appears here.
  */
 
+import type { ProviderLimit } from "../settings.ts";
+
+/** What a provider reports about its own limit or balance, read without spending. */
+export interface LimitReading {
+  /** Where the reading came from, for example `gateway credits` or `tripo balance`. */
+  source: string;
+  /** Spendable USD left, when the provider reports it in USD. */
+  remainingUsd?: number;
+  /** The limit itself in USD, when the provider reports one. */
+  limitUsd?: number;
+  /** A balance in the provider's own credits, when it reports credits. */
+  credits?: number;
+}
+
+/**
+ * Who bills a provider instance's calls, decided by its adapter (src/providers/adapter.ts): whether
+ * they cost money, the hosts they reach, the limit the developer declared in settings and, when the
+ * provider reports one, how to read it. A provider's name never decides.
+ */
+export interface Billing {
+  adapter: string;
+  /** The provider id in settings. */
+  provider: string;
+  paid: boolean;
+  hosts: string[];
+  limit?: ProviderLimit;
+  limitReading?: () => Promise<LimitReading>;
+}
+
+/** The kinds of call a provider answers. */
+export type CallKind = "image" | "vision" | "decide" | "model" | "rig" | "animate";
+
 export interface ImageInput {
   mediaType: string;
   bytes: Uint8Array;
@@ -48,6 +80,12 @@ export interface VisionResult extends ProviderResult {
 }
 
 export interface GenerationProvider {
+  /** Who bills this provider's calls; for a composite provider, its image calls'. */
+  readonly billing: Billing;
+  /** Every billing a composite provider's calls can carry; absent means `[billing]`. */
+  readonly billings?: readonly Billing[];
+  /** The billing of one kind of call, for a composite provider; absent means `billing`. */
+  billingFor?(kind: CallKind): Billing;
   generateImage(request: ImageRequest): Promise<ImageResult>;
   analyzeImages(request: VisionRequest): Promise<VisionResult>;
   /** A typed decision (Score or Boolean); providers without decision models leave it out. */
