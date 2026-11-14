@@ -90,29 +90,157 @@ export function assignedKeys(text: string, file: string, names: readonly string[
   return found;
 }
 
-/** The Git top level holding `dir` (or its nearest existing ancestor); undefined outside Git. */
-function topLevel(dir: string): string | undefined {
+/** The nearest existing directory at or above `dir`. */
+function existingDir(dir: string): string {
   let at = resolve(dir);
   while (!existsSync(at) && dirname(at) !== at) at = dirname(at);
+  return at;
+}
+
+/** Whether `dir` or an ancestor holds a `.git` entry (a directory, or a worktree's file). */
+function insideGit(dir: string): boolean {
+  if (process.env.GIT_DIR) return true;
+  let at = dir;
+  for (;;) {
+    if (existsSync(join(at, ".git"))) return true;
+    if (dirname(at) === at) return false;
+    at = dirname(at);
+  }
+}
+
+/** A refusal for a repository whose tracked files Git could not list: nothing proves it clean. */
+function unscannable(step: string, result: ReturnType<typeof spawnSync>): KeyTrackedError {
+  const why = result.error
+    ? result.error.message
+    : `exit ${result.status ?? result.signal}: ${
+        String(result.stderr ?? "")
+          .trim()
+          .split("\n")[0] ?? ""
+      }`;
+  return new KeyTrackedError(
+    `the tracked-key guard could not read the repository's tracked files (git ${step}, ${why}), so it cannot show that no tracked file holds a key. Make git work in this checkout (installed, and the directory trusted under safe.directory) and run again.`,
+    [],
+  );
+}
+
+/**
+ * The Git top level holding `dir` (or its nearest existing ancestor); undefined when no `.git`
+ * entry is at or above it. Inside one, a git that cannot answer is a refusal, never a pass.
+ */
+function topLevel(dir: string): string | undefined {
+  const at = existingDir(dir);
+  if (!insideGit(at)) return undefined;
   const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: at, encoding: "utf8" });
-  if (result.status !== 0 || !result.stdout) return undefined;
+  if (result.error || result.status !== 0 || !result.stdout.trim()) {
+    throw unscannable("rev-parse", result);
+  }
   return result.stdout.trim();
 }
 
-/** Every tracked file of the repository at `top`, relative to it. */
-function trackedFiles(top: string): string[] {
-  const result = spawnSync("git", ["ls-files", "-z", "--cached"], {
+/** One index entry: its path relative to the top level, mode and blob id. */
+interface IndexEntry {
+  file: string;
+  mode: string;
+  oid: string;
+}
+
+/** Every index entry of the repository at `top` (`git ls-files -z --cached --stage`). */
+function trackedFiles(top: string): IndexEntry[] {
+  const result = spawnSync("git", ["ls-files", "-z", "--cached", "--stage"], {
     cwd: top,
     maxBuffer: 256 * 1024 * 1024,
   });
-  if (result.status !== 0) return [];
-  return result.stdout.toString("utf8").split("\0").filter(Boolean);
+  if (result.error || result.status !== 0) throw unscannable("ls-files", result);
+  const entries = new Map<string, IndexEntry>();
+  for (const record of result.stdout.toString("utf8").split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+    const [mode, oid] = record.slice(0, tab).split(" ");
+    const file = record.slice(tab + 1);
+    // A conflicted path has several stages; each blob is read.
+    entries.set(`${file}\0${oid}`, { file, mode: mode!, oid: oid! });
+  }
+  return [...entries.values()];
+}
+
+/**
+ * The staged content of each regular-file entry whose blob is 4 MB or less, by blob id. The index
+ * is what the next commit takes, so a key staged and then edited out of the working file counts.
+ */
+function stagedBlobs(top: string, entries: IndexEntry[]): Map<string, Buffer> {
+  const blobs = new Map<string, Buffer>();
+  const oids = [
+    ...new Set(entries.filter((e) => e.mode === "100644" || e.mode === "100755").map((e) => e.oid)),
+  ];
+  if (oids.length === 0) return blobs;
+  const check = spawnSync("git", ["cat-file", "--batch-check"], {
+    cwd: top,
+    input: `${oids.join("\n")}\n`,
+    maxBuffer: 256 * 1024 * 1024,
+    encoding: "utf8",
+  });
+  if (check.error || check.status !== 0) throw unscannable("cat-file --batch-check", check);
+  const small = check.stdout
+    .split("\n")
+    .map((line) => line.split(" "))
+    .filter(([, type, size]) => type === "blob" && Number(size) <= MAX_SCANNED_BYTES)
+    .map(([oid]) => oid!);
+  if (small.length === 0) return blobs;
+  const batch = spawnSync("git", ["cat-file", "--batch"], {
+    cwd: top,
+    input: `${small.join("\n")}\n`,
+    maxBuffer: 1024 * 1024 * 1024,
+  });
+  if (batch.error || batch.status !== 0) throw unscannable("cat-file --batch", batch);
+  const out = batch.stdout;
+  let at = 0;
+  while (at < out.length) {
+    const eol = out.indexOf(0x0a, at);
+    if (eol < 0) break;
+    const [oid, type, size] = out.subarray(at, eol).toString("utf8").split(" ");
+    if (type !== "blob") {
+      at = eol + 1;
+      continue;
+    }
+    const length = Number(size);
+    blobs.set(oid!, out.subarray(eol + 1, eol + 1 + length));
+    at = eol + 1 + length + 1;
+  }
+  return blobs;
+}
+
+/** The working-tree content of a tracked file, unless it is missing, not a file or over 4 MB. */
+function workingContent(path: string): Buffer | undefined {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > MAX_SCANNED_BYTES) return undefined;
+    return readFileSync(path);
+  } catch {
+    return undefined; // Deleted from the working tree: its staged content is still read.
+  }
+}
+
+/** The key a file's content holds, by exact value first, then by named assignment. */
+function keyIn(
+  content: Buffer,
+  file: string,
+  values: ReadonlyArray<readonly [string, string]>,
+  names: readonly string[],
+): TrackedKey | undefined {
+  if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER)) return undefined;
+  const valueHit = values.find(([, value]) => content.includes(value));
+  if (valueHit) return { file, variable: valueHit[0], rule: "value" };
+  const assigned = assignedKeys(content.toString("utf8"), file, names);
+  if (assigned.length > 0) return { file, variable: assigned[0]!, rule: "assignment" };
+  return undefined;
 }
 
 /**
  * Every tracked file of the repository holding `dir` that holds a key: the exact value (16+
  * characters) of a configured key variable, or a non-empty value assigned to one by name. LFS
- * pointers and files over 4 MB are skipped. Outside a Git repository nothing is tracked.
+ * pointers and files over 4 MB are skipped. Each file's staged blob and its working-tree content are
+ * read. With no `.git` at or above `dir` nothing is tracked; inside one, a git that cannot list
+ * or read the tracked files is a `key_tracked` refusal, never a pass.
  */
 export function findTrackedKeys(
   dir: string,
@@ -125,25 +253,23 @@ export function findTrackedKeys(
   const values = names
     .map((name) => [name, env[name]?.trim() ?? ""] as const)
     .filter(([, value]) => value.length >= MIN_KEY_VALUE_LENGTH);
+  const entries = trackedFiles(top);
+  const staged = stagedBlobs(top, entries);
   const found: TrackedKey[] = [];
-  for (const file of trackedFiles(top)) {
-    const path = join(top, file);
-    let content: Buffer;
-    try {
-      const stat = lstatSync(path);
-      if (!stat.isFile() || stat.size > MAX_SCANNED_BYTES) continue;
-      content = readFileSync(path);
-    } catch {
-      continue; // Deleted from the working tree: nothing to read.
+  const seen = new Set<string>();
+  for (const { file, oid } of entries) {
+    if (seen.has(file)) continue;
+    // Both the staged content (what the next commit takes) and the working file (what
+    // `commit -a` would take) are read.
+    const contents = [staged.get(oid), workingContent(join(top, file))];
+    for (const content of contents) {
+      const hit = content && keyIn(content, file, values, names);
+      if (hit) {
+        found.push(hit);
+        seen.add(file);
+        break;
+      }
     }
-    if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER)) continue;
-    const valueHit = values.find(([, value]) => content.includes(value));
-    if (valueHit) {
-      found.push({ file, variable: valueHit[0], rule: "value" });
-      continue;
-    }
-    const assigned = assignedKeys(content.toString("utf8"), file, names);
-    if (assigned.length > 0) found.push({ file, variable: assigned[0]!, rule: "assignment" });
   }
   return found;
 }

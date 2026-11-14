@@ -187,3 +187,45 @@ test("outside a Git repository nothing is tracked", () => {
   temporary.push(dir);
   assert.deepEqual(findTrackedKeys(dir, { env: { [GATEWAY]: KEY_VALUE } }), []);
 });
+
+test("a key staged and then edited out of or deleted from the working file is refused", async () => {
+  const dir = await repository({
+    "edited.env": `${GATEWAY}=abc\n`,
+    "deleted.txt": `token ${KEY_VALUE}\n`,
+  });
+  await writeFile(join(dir, "edited.env"), `${GATEWAY}=\n`);
+  rmSync(join(dir, "deleted.txt"));
+  const found = findTrackedKeys(dir, { env: { [GATEWAY]: KEY_VALUE } });
+  assert.deepEqual(found.map((f) => f.file).sort(), ["deleted.txt", "edited.env"]);
+});
+
+test("a key in the working file of a tracked file is refused before it is staged", async () => {
+  const dir = await repository({ "later.env": `${GATEWAY}=\n` });
+  await writeFile(join(dir, "later.env"), `${GATEWAY}=abc\n`);
+  assert.equal(findTrackedKeys(dir, { env: {} }).length, 1);
+});
+
+test("inside a .git that git cannot read, the guard refuses with key_tracked instead of passing", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-badgit-")));
+  temporary.push(dir);
+  await writeFile(join(dir, ".git"), "gitdir: ./missing-git-dir\n");
+  assert.throws(
+    () => checkTrackedKeys(dir, { env: { [GATEWAY]: KEY_VALUE } }),
+    (error: unknown) =>
+      error instanceof KeyTrackedError &&
+      error.code === "key_tracked" &&
+      /rev-parse/.test(error.message) &&
+      !error.message.includes(KEY_VALUE),
+  );
+});
+
+test("when git cannot run inside a repository, the guard refuses with key_tracked", async () => {
+  const dir = await repository({ "clean.txt": "nothing here\n" });
+  const path = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    assert.throws(() => checkTrackedKeys(dir, { env: {} }), KeyTrackedError);
+  } finally {
+    process.env.PATH = path;
+  }
+});
