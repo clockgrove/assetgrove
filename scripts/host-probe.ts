@@ -68,15 +68,16 @@ function createServer(): McpServer {
         });
       }
       const choice = answer.content?.choice;
-      if (
-        answer.action !== "accept" ||
-        answer.content?.approve !== true ||
-        !(typeof choice === "string" && choice in COLOURS)
-      ) {
-        return {
-          content: [{ type: "text", text: `probe: ${answer.action}` }],
-          isError: true,
-        };
+      const refusal =
+        answer.action !== "accept"
+          ? answer.action
+          : answer.content?.approve !== true
+            ? "not approved"
+            : !(typeof choice === "string" && Object.hasOwn(COLOURS, choice))
+              ? `unknown choice ${JSON.stringify(choice)}`
+              : undefined;
+      if (refusal !== undefined) {
+        return { content: [{ type: "text", text: `probe: ${refusal}` }], isError: true };
       }
 
       const intervalSeconds = args.intervalSeconds ?? 5;

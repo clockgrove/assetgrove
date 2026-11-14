@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { PNG } from "pngjs";
 
 type Answer = { action: "accept" | "decline"; content?: { approve: boolean; choice: string } };
 
@@ -55,7 +56,18 @@ test("progress arrives while the probe runs and the result carries a PNG", async
     { name: "probe", arguments: { intervalSeconds: 0.2, durationSeconds: 1 } },
     { onprogress: (update) => progress.push(update.progress) },
   );
-  assert.ok(progress.length >= 1);
+  assert.ok(progress.length > 1, `expected several progress ticks, got ${progress.length}`);
+  assert.equal(progress.at(-1), 1);
   const image = result.content.find((block) => block.type === "image");
   assert.equal(image?.mimeType, "image/png");
+  const png = PNG.sync.read(Buffer.from(image.data, "base64"));
+  assert.equal(png.width, 64);
+  assert.deepEqual([...png.data.subarray(0, 4)], [0, 0, 255, 255]);
+});
+
+test("an accepted form without approval names the reason", async () => {
+  answer = { action: "accept", content: { approve: false, choice: "red" } };
+  const result = await client.callTool({ name: "probe", arguments: {} });
+  assert.equal(result.isError, true);
+  assert.deepEqual(result.content[0], { type: "text", text: "probe: not approved" });
 });

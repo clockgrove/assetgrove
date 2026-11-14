@@ -8,12 +8,12 @@ What `probe` does:
 - Asks an elicitation form: an `approve` Boolean and a `choice` enum (`red`, `green`, `blue`).
 - After acceptance, sends `notifications/progress` every `intervalSeconds` (default 5) for `durationSeconds` (default 120), first tick at once.
 - Returns a text block `choice: <value>` and a 64×64 PNG in the chosen colour.
-- Declining, cancelling or `approve=false` returns `isError`.
+- Declining, cancelling, `approve=false` or an unknown choice returns `isError` with text naming the reason (`probe: decline`, `probe: cancel`, `probe: not approved`, `probe: unknown choice …`).
 - Logs each progress tick and any cancellation to stderr.
 
 ## Setup
 
-Run `pnpm install` once. The probe runs with `node scripts/host-probe.ts` from the repo root (Node 24 or later). Use absolute paths in every config below. If a command has changed, check the harness's current docs.
+Run `pnpm install` once. The probe runs with `node scripts/host-probe.ts` from the repo root (Node 24 or later). Use absolute paths in every local config below; the remote-session `.mcp.json` uses a path relative to the repo root, because the session runs from its own checkout. If a command has changed, check the harness's current docs.
 
 ## Claude Code, local
 
