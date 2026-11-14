@@ -78,7 +78,8 @@ export function stageProvider(
   spec: AssetSpec,
 ): { provider: GenerationProvider; providerName: string } {
   const gateway = gatewayProvider(ctx);
-  if (spec.kind !== CHARACTER_3D_KIND) return { provider: gateway.provider, providerName: gateway.name };
+  if (spec.kind !== CHARACTER_3D_KIND)
+    return { provider: gateway.provider, providerName: gateway.name };
   const tripoId = providerIdFor(ctx.settings, TRIPO_ADAPTER);
   const models = createProvider(ctx.settings, tripoId, {
     ...(ctx.env !== undefined && { env: ctx.env }),

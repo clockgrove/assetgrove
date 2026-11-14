@@ -243,6 +243,7 @@ test("a request ID the provider did not report is marked local in provenance", a
   const world = await syntheticWorld();
   const base = scriptedProvider();
   const provider: GenerationProvider = {
+    billing: base.billing,
     generateImage: (request) => base.generateImage(request),
     analyzeImages: async (request) => ({
       ...(await base.analyzeImages(request)),
@@ -412,6 +413,7 @@ test("a provider failure is a ProviderError recorded in the run's errors, and th
   const world = await syntheticWorld();
   const good = scriptedProvider();
   const failing: GenerationProvider = {
+    billing: good.billing,
     generateImage: () => Promise.reject(new Error("upstream 503")),
     analyzeImages: (request) => good.analyzeImages(request),
   };

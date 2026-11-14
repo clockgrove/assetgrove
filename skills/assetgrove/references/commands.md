@@ -1,6 +1,6 @@
 # Assetgrove commands
 
-One section per command: its usage, its flags, and the MCP tool that serves it and that tool's arguments. Every command takes `--help`; every command except `mcp` takes `--json`. Paid commands reserve every call against their `--cap` (USD) and against the spend ledger (see [Environment](../SKILL.md#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `bible init`, `bible preset`, `pick` and `write-families` write into the target.
+One section per command: its usage, its flags, and the MCP tool that serves it and that tool's arguments. Every command takes `--help`; every command except `mcp` takes `--json`. Paid commands reserve every call against their `--cap` (USD) and against the spend ledger and the caps in the developer's settings (see [Environment](../SKILL.md#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `bible init`, `bible preset`, `pick` and `write-families` write into the target.
 
 ### `bible`
 
@@ -202,3 +202,23 @@ ops [--json]
 Lists every operation with its summary, parameters and engines. Local.
 
 MCP tool: `ops`, no arguments.
+
+### `settings`
+
+```text
+settings (path | show | check) [--provider-script <module>] [--json]
+```
+
+Read-only. `path` prints the settings file that applies and whether it exists. `show` prints the settings with no key: each provider shows its `keyEnv` and whether the key is present (`keyPresent`). `check` reports, per provider, whether its key is present, whether a limit is declared and whether it is verified, and lists the environment variables the settings would refuse. `--provider-script` gives a `scripted` provider entry its module, whose `limitReading` answers that provider's reading.
+
+MCP tool: `settings`, arguments `action`.
+
+### `spend`
+
+```text
+spend (status | check) [--provider <id>] [--work-item <label>] [--provider-script <module>] [--json]
+```
+
+`status` reports the ledger path, the work item, the caps, `today.spentUsd` (the last 24 hours) and the limits with their source (`settings` or `profile`). `check` reads each configured provider's own limit (gateway credits; Tripo balance) and compares it with the declared one, reporting `provider`, `adapter`, `paid`, `declared`, `limit`, `verified`, `reading` and `mismatch`; Anthropic and OpenAI are declared only. A reading that contradicts the declaration exits 3 (`provider_limit_mismatch`). `--provider` limits `check` to one provider. `--provider-script` gives a `scripted` provider entry its module, whose `limitReading` answers that provider's reading. Spends nothing.
+
+MCP tool: `spend`, arguments `action`, `provider`, `workItem`.

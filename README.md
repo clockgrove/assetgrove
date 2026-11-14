@@ -51,8 +51,8 @@ The package ships its skills under `skills/`. Install them into your harness wit
 
 - Always pass `--json`. Stdout is one JSON document. Logs go to stderr. Assetgrove never prompts.
 - Run `stage --dry-run` first. It spends nothing and needs no key.
-- Name the work item (`ASSETGROVE_WORK_ITEM` or `--work-item`, for example the Objective; a Factory worker gets its Objective from `FACTORY_ISSUE` by default). Paid calls across runs are capped at $10 a day and $5 per work item by default; see [Spend limits](#spend-limits).
-- Set `AI_GATEWAY_API_KEY` in the environment. In a sandbox, allow the host `ai-gateway.vercel.sh`; it is the only host Assetgrove reaches. Inside a Factory stage, `FACTORY_GATEWAY_URL` points calls at Factory's metering relay instead, which holds the real key and counts each call against the Objective's caps.
+- Name the work item (`ASSETGROVE_WORK_ITEM` or `--work-item`, for example the Objective). Paid calls across runs are capped at $10 a day and $5 per work item by default, set in your settings; see [Spend limits](#spend-limits).
+- Set `AI_GATEWAY_API_KEY` in the environment. In a sandbox, allow the host `ai-gateway.vercel.sh`; it is the only host Assetgrove reaches.
 - Agents stage, humans pick ([PRD principle 2](docs/PRD.md#principles)). Agents never run `pick` or `write-families` and never confirm a grouping.
 
 ## Commands and exit codes
@@ -85,16 +85,9 @@ The package ships its skills under `skills/`. Install them into your harness wit
 
 ## Spend limits
 
-`--cap` bounds one run. Every paid call (not scripted ones, `--provider-script`) is also recorded in a spend ledger shared by every run on the machine (or in the CI job), and refused (exit 3) before it is made when it would cross a daily limit or the limit of its work item. `--dry-run` shows the spend left under each.
+`--cap` bounds one run, and never exceeds `caps.runUsd` in your settings (default $5; a `--cap` above it exits 3 before any work). Every paid call is also recorded in a spend ledger, `<stateDir>/spend.jsonl`, shared by every run, and refused (exit 3) before it is made when it would cross the daily limit (`caps.dailyUsd`, default $10, last 24 hours) or the limit of its work item (`caps.workItemUsd`, default $5). Name the work item with `--work-item <label>` or `ASSETGROVE_WORK_ITEM`; without one only the daily limit applies. Whether a call is paid comes from its provider's adapter, and scripted calls (`--provider-script`) are free. `--dry-run` shows the spend left under each limit.
 
-| Variable                         | Default                                                                                                                                                |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ASSETGROVE_SPEND_LEDGER`        | `$XDG_STATE_HOME/assetgrove/spend.jsonl` (`~/.local/state/...`); `assetgrove-spend.jsonl` in `$FACTORY_STATE_DIR` (else `$TMPDIR`) in a Factory worker |
-| `ASSETGROVE_WORK_ITEM`           | none (`--work-item <label>` overrides; unset in a Factory worker: `<repo>#<FACTORY_ISSUE>`; otherwise daily limit only)                                |
-| `ASSETGROVE_DAILY_LIMIT_USD`     | $10 over the last 24 hours                                                                                                                             |
-| `ASSETGROVE_WORK_ITEM_LIMIT_USD` | $5 per work item                                                                                                                                       |
-
-A target profile can set `spend.dailyLimitUsd` and `spend.workItemLimitUsd`; the stricter of the profile and the environment applies. See [docs/target-profile.md](docs/target-profile.md#spend-limits-across-runs).
+A target profile can set `spend.dailyLimitUsd` and `spend.workItemLimitUsd`; the lower of the profile and your settings applies. A paid call to a provider with no declared `providers.<id>.limit` exits 3 (`provider_limit_undeclared`) before any spend. `assetgrove spend status` shows the ledger and limits, `assetgrove spend check` compares each declared limit with what the provider reports, and `assetgrove settings show` and `settings check` show what the settings hold, never a key. See [docs/settings.md](docs/settings.md) and [docs/target-profile.md](docs/target-profile.md#spend-limits-across-runs).
 
 ## Develop
 

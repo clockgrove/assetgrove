@@ -43,7 +43,8 @@ function isRecord(value: unknown): value is Json {
 export class TripoProvider {
   readonly #apiKey: string | undefined;
   readonly #keyEnv: string;
-  readonly #usdPerCredit: number | undefined;
+  /** The settings price of one credit in USD; without it a call settles at its estimate. */
+  readonly usdPerCredit: number | undefined;
   readonly #baseUrl: string;
   readonly billing: Billing;
   readonly #fetch: typeof fetch;
@@ -63,7 +64,7 @@ export class TripoProvider {
   }) {
     this.#apiKey = options.apiKey || undefined;
     this.#keyEnv = options.keyEnv ?? "TRIPO_API_KEY";
-    this.#usdPerCredit = options.usdPerCredit;
+    this.usdPerCredit = options.usdPerCredit;
     this.#baseUrl = TRIPO_BASE_URL;
     this.billing = {
       ...(options.billing ?? {
@@ -94,7 +95,7 @@ export class TripoProvider {
     return {
       source: "tripo balance",
       credits,
-      ...(this.#usdPerCredit !== undefined && { remainingUsd: credits * this.#usdPerCredit }),
+      ...(this.usdPerCredit !== undefined && { remainingUsd: credits * this.usdPerCredit }),
     };
   }
 
@@ -159,7 +160,7 @@ export class TripoProvider {
   }
 
   #cost(credits: number | undefined): { costUsd?: number } {
-    const rate = this.#usdPerCredit;
+    const rate = this.usdPerCredit;
     return credits !== undefined && rate !== undefined ? { costUsd: credits * rate } : {};
   }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { VercelGateway } from "../../src/gateway/vercel.ts";
+import { realGateway } from "./providers.ts";
 import { IDENTITY_LEVELS } from "../../src/identity.ts";
 import { createRaster, encodePng, setPixel } from "../../src/image/raster.ts";
 import { defaultRoutes } from "../../src/routes.ts";
@@ -22,7 +22,7 @@ test(
   "real gateway: one typed identity decision (Score) with reference images",
   { skip },
   async () => {
-    const result = await VercelGateway.fromEnv().decide({
+    const result = await realGateway().decide({
       model: defaultRoutes.identity.model,
       prompt:
         "Image 1 is the candidate. Image 2 is the approved reference. Identity record: a plain red disc.",

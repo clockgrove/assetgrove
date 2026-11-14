@@ -107,16 +107,16 @@ export class VercelGateway implements GenerationProvider {
   async generateImage(req: ImageRequest): Promise<ImageResult> {
     const result = await this.#sdk("image", () =>
       generateImage({
-      model: this.#gateway.imageModel(req.model),
-      prompt:
-        req.references.length === 0
-          ? req.prompt
-          : { text: req.prompt, images: req.references.map((r) => r.bytes) },
-      ...(req.size !== undefined && { size: req.size as `${number}x${number}` }),
-      ...(req.seed !== undefined && { seed: req.seed }),
-      ...(req.providerOptions !== undefined && {
-        providerOptions: req.providerOptions as Record<string, never>,
-      }),
+        model: this.#gateway.imageModel(req.model),
+        prompt:
+          req.references.length === 0
+            ? req.prompt
+            : { text: req.prompt, images: req.references.map((r) => r.bytes) },
+        ...(req.size !== undefined && { size: req.size as `${number}x${number}` }),
+        ...(req.seed !== undefined && { seed: req.seed }),
+        ...(req.providerOptions !== undefined && {
+          providerOptions: req.providerOptions as Record<string, never>,
+        }),
       }),
     );
     const meta = result.providerMetadata as Metadata;
@@ -138,23 +138,23 @@ export class VercelGateway implements GenerationProvider {
   async analyzeImages(req: VisionRequest): Promise<VisionResult> {
     const result = await this.#sdk("vision", () =>
       generateText({
-      model: this.#gateway.languageModel(req.model),
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: req.prompt },
-            ...req.images.map((i) => ({
-              type: "image" as const,
-              image: i.bytes,
-              mediaType: i.mediaType,
-            })),
-          ],
-        },
-      ],
-      ...(req.providerOptions !== undefined && {
-        providerOptions: req.providerOptions as Record<string, never>,
-      }),
+        model: this.#gateway.languageModel(req.model),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: req.prompt },
+              ...req.images.map((i) => ({
+                type: "image" as const,
+                image: i.bytes,
+                mediaType: i.mediaType,
+              })),
+            ],
+          },
+        ],
+        ...(req.providerOptions !== undefined && {
+          providerOptions: req.providerOptions as Record<string, never>,
+        }),
       }),
     );
     const gw = gatewayMeta(result.providerMetadata as Metadata);
@@ -186,18 +186,18 @@ export class VercelGateway implements GenerationProvider {
           };
     const result = await this.#sdk("decide", () =>
       experimental_decide({
-      model: this.#gateway.decisionModel(req.model),
-      state: [
-        { type: "text", text: req.prompt },
-        ...req.images.map((i) => ({
-          type: "file" as const,
-          mediaType: i.mediaType,
-          data: i.bytes,
-        })),
-      ],
-      questions: { answer: question },
-      // Decision providers rate-limit tightly (#27); back off and retry rather than fail.
-      maxRetries: 4,
+        model: this.#gateway.decisionModel(req.model),
+        state: [
+          { type: "text", text: req.prompt },
+          ...req.images.map((i) => ({
+            type: "file" as const,
+            mediaType: i.mediaType,
+            data: i.bytes,
+          })),
+        ],
+        questions: { answer: question },
+        // Decision providers rate-limit tightly (#27); back off and retry rather than fail.
+        maxRetries: 4,
       }),
     );
     const raw = result.answers.answer as

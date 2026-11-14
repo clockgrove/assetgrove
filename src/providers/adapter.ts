@@ -15,7 +15,8 @@ import { GATEWAY_BASE_URL, VercelGateway } from "../gateway/vercel.ts";
 import { TRIPO_BASE_URL, TripoProvider } from "../gateway/tripo.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
-export type AdapterCapability = "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate";
+export type AdapterCapability =
+  "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate";
 
 export type { ModelProvider } from "../gateway/routed.ts";
 

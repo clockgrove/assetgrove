@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProviderError } from "../src/errors.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { TripoProvider } from "../src/gateway/tripo.ts";
+import { createProvider } from "../src/providers/adapter.ts";
+import { loadSettings } from "../src/settings.ts";
 
 const KEY = "tsk_secret_key_123";
 const GLB = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
@@ -63,9 +68,15 @@ function fake(options: {
   return { calls, fetch: impl as typeof fetch };
 }
 
-function provider(f: { fetch: typeof fetch }, sleeps: number[] = [], timeoutMs?: number) {
+function provider(
+  f: { fetch: typeof fetch },
+  sleeps: number[] = [],
+  timeoutMs?: number,
+  usdPerCredit?: number,
+) {
   return new TripoProvider({
     apiKey: KEY,
+    ...(usdPerCredit !== undefined && { usdPerCredit }),
     fetch: f.fetch,
     sleep: async (ms) => void sleeps.push(ms),
     pollIntervalMs: 10,
@@ -77,13 +88,13 @@ const png = (view: string) => ({ view, mediaType: "image/png", bytes: new Uint8A
 
 test("multiview orders front, left, back, right with {} for a missing view; the budget is the face limit", async () => {
   const f = fake({});
-  const result = await provider(f).generateModel({
+  const result = await provider(f, [], undefined, 0.01).generateModel({
     model: "tripo",
     views: [png("back"), png("front"), png("left")],
     seed: 7,
     maxTriangles: 40000,
     providerOptions: {
-      tripo: { modelVersion: "v3", texture: true, pbr: true, usdPerCredit: 0.01 },
+      tripo: { modelVersion: "v3", texture: true, pbr: true },
     },
   });
   const create = f.calls.find((c) => c.url.endsWith("/task") && c.method === "POST");
@@ -204,7 +215,46 @@ test("balance reads the balance", async () => {
   assert.equal(await provider(fake({})).balance(), 12.5);
 });
 
-test("fromEnv without a key throws", () => {
-  assert.throws(() => TripoProvider.fromEnv({}), { message: "TRIPO_API_KEY is not set" });
-  assert.ok(TripoProvider.fromEnv({ TRIPO_API_KEY: KEY }) instanceof TripoProvider);
+test("credits are priced with the settings' usdPerCredit, never the route's", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "assetgrove-tripo-"));
+  const path = join(dir, "settings.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      format: "assetgrove-settings/1",
+      stateDir: join(dir, "state"),
+      providers: { tripo: { usdPerCredit: 0.02 } },
+    }),
+  );
+  const settings = loadSettings({ env: { ASSETGROVE_CONFIG: path, HOME: dir }, cwd: dir });
+  const made = createProvider(settings, "tripo", { env: { TRIPO_API_KEY: KEY } });
+  assert.ok(made instanceof TripoProvider);
+  assert.equal(made.usdPerCredit, 0.02);
+  const priced = provider(fake({ credit: 30 }), [], undefined, made.usdPerCredit);
+  const result = await priced.rigModel({
+    model: "tripo",
+    source: "t",
+    rigType: "biped",
+    providerOptions: { tripo: { usdPerCredit: 1 } },
+  });
+  assert.ok(Math.abs((result.costUsd ?? 0) - 0.6) < 1e-9);
+  assert.equal(made.billing.adapter, "tripo");
+  assert.equal(made.billing.paid, true);
+  assert.deepEqual(made.billing.hosts, ["api.tripo3d.ai"]);
+  assert.deepEqual(await provider(fake({}), [], undefined, 0.02).reading(), {
+    source: "tripo balance",
+    credits: 12.5,
+    remainingUsd: 0.25,
+  });
+});
+
+test("without a key, a call fails naming the variable and nothing is sent", async () => {
+  const f = fake({});
+  const keyless = new TripoProvider({ keyEnv: "MY_TRIPO_KEY", fetch: f.fetch });
+  await assert.rejects(keyless.balance(), (error: Error) => {
+    assert.ok(error instanceof ProviderError);
+    assert.match(error.message, /MY_TRIPO_KEY is not set/);
+    return true;
+  });
+  assert.equal(f.calls.length, 0);
 });

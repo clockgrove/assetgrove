@@ -153,7 +153,10 @@ Exits 5 when any check fails; every failed check names its frame.`,
         `forecast ${usd(plan.estimateUsd)} against a $${capUsd.toFixed(2)} cap` +
           (plan.withinCap ? "" : " (over the cap)"),
       ].join("\n");
-      const ledger = targets.reduce((l, t) => l.forProfile(t.profile), spendLedger(ctx, args.workItem));
+      const ledger = targets.reduce(
+        (l, t) => l.forProfile(t.profile),
+        spendLedger(ctx, args.workItem),
+      );
       return dryRunOutcome(plan, human, ledger, providerName);
     }
     const outDir = resolve(args.out ?? ".assetgrove/animation");

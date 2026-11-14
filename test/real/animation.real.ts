@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { importTargets, runAnimationQa, runFixFrame } from "../../src/animation/commands.ts";
-import { VercelGateway } from "../../src/gateway/vercel.ts";
+import { realGateway } from "./providers.ts";
 import { defaultRoutes } from "../../src/routes.ts";
 import { importSheet, writeFamilies } from "../../src/sheet/import.ts";
 import type { TargetProfile } from "../../src/types.ts";
@@ -102,7 +102,7 @@ test(
     assert.equal(offline.spentUsd, 0);
     if (!real) return;
 
-    const provider = { provider: VercelGateway.fromEnv(), name: "vercel-ai-gateway" };
+    const provider = { provider: realGateway(), name: "vercel-ai-gateway" };
     const first = targets[0];
     assert.ok(first);
     const flicker = await runAnimationQa({

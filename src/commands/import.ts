@@ -177,7 +177,10 @@ below the threshold, off skips scoring.`,
         shared = new Caller({
           provider,
           providerName: name,
-          budget: new Budget(capUsd, ledgerFor(spendLedger(ctx, args.workItem), provider, profile.value)),
+          budget: new Budget(
+            capUsd,
+            ledgerFor(spendLedger(ctx, args.workItem), provider, profile.value),
+          ),
           routes,
           log: ctx.log,
         });

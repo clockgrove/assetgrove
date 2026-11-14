@@ -66,15 +66,16 @@ Decide on the exit and `error.code`, never on the message. What the commands ret
 
 ## Environment
 
-- `AI_GATEWAY_API_KEY`: the Vercel AI Gateway key, from the environment only. Not needed for `--dry-run` or `--provider-script`.
+- `AI_GATEWAY_API_KEY`: the Vercel AI Gateway key, from the environment only. Or the variable a provider entry's `keyEnv` names. Not needed for `--dry-run` or `--provider-script`.
 - `TRIPO_API_KEY`: the Tripo key, from the environment only, for the 3D calls of a `character-3d` stage.
 - `--provider-script <module>` answers every model call from a module whose default export is `{ image, vision }`. Its calls cost nothing and the ledger neither counts nor refuses them; `--cap` still applies.
-- Every paid call is recorded in a spend ledger shared across runs: `ASSETGROVE_SPEND_LEDGER`, default `$XDG_STATE_HOME/assetgrove/spend.jsonl` or `~/.local/state/assetgrove/spend.jsonl`. A call that would cross the daily limit (`ASSETGROVE_DAILY_LIMIT_USD`, default $10, last 24 hours) or the work item's limit (`ASSETGROVE_WORK_ITEM_LIMIT_USD`, default $5) is refused with exit 3. A target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd` apply too; the stricter of each pair wins. `--dry-run` shows the spend left under each.
-- Name the work item with `--work-item` or `ASSETGROVE_WORK_ITEM`. Without one, a CI work item from `FACTORY_ISSUE` (digits only) is used. With no work item, only the daily limit applies.
-- When `FACTORY_ISSUE` is set, the default ledger is `assetgrove-spend.jsonl` in `$FACTORY_STATE_DIR`, or else in the temp directory.
+- Every paid call is recorded in a spend ledger shared across runs, `<stateDir>/spend.jsonl`. Caps come from the developer's settings: `caps.runUsd` (default $5) bounds `--cap`, and a call that would cross the daily limit (`caps.dailyUsd`, default $10, last 24 hours) or the work item's limit (`caps.workItemUsd`, default $5) is refused with exit 3. A target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd` apply too; the lower of each pair wins. `--dry-run` shows the spend left under each.
+- Name the work item with `--work-item` or `ASSETGROVE_WORK_ITEM`. With no work item, only the daily limit applies.
+- A paid call to a provider with no declared `providers.<id>.limit` in the settings exits 3 (`provider_limit_undeclared`) before any spend. `spend check` compares each declared limit with what the provider reports; `settings check` reports each provider's key, declared limit and refused environment variables. Neither shows a key.
 
 ## Network
 
-- The Vercel AI Gateway at `ai-gateway.vercel.sh` (HTTPS), for `plan` with a key, `apply`, the `mcp` tools `plan` and `apply`, `materials`, `stage`, `look-dev`, `import` (unless `--no-propose` and no identity scoring), `generate-sheet`, `identity-eval`, `identity-check`, `animation-qa` (unless `--no-vision`) and `fix-frame`. When `FACTORY_GATEWAY_URL` is set, these calls go to `<FACTORY_GATEWAY_URL>/v4/ai` instead.
+- The Vercel AI Gateway at `ai-gateway.vercel.sh` (HTTPS), for `plan` with a key, `apply`, the `mcp` tools `plan` and `apply`, `materials`, `stage`, `look-dev`, `import` (unless `--no-propose` and no identity scoring), `generate-sheet`, `identity-eval`, `identity-check`, `animation-qa` (unless `--no-vision`) and `fix-frame`.
 - Tripo at `api.tripo3d.ai` (HTTPS), plus the model download URL each finished Tripo task returns, only for `stage` with a `character-3d` spec.
+- `spend check` and `settings check` read the gateway's credits and Tripo's balance, spending nothing, for each configured provider whose key is set. A gateway entry's `baseURL` in the settings replaces `ai-gateway.vercel.sh`.
 - Nothing is reached with `--dry-run` or `--provider-script`. `bible`, `pick`, `rig`, `lod`, `write-families`, `op`, `recipe` and `ops` reach no host; `pick` and `write-families` run the target profile's validator command locally.

@@ -124,20 +124,29 @@ export class ScriptedProvider implements GenerationProvider {
     this.calls.push({ kind: "model", request });
     const index = this.modelCount++;
     if (!this.script.model) throw new Error("the provider script has no model answer");
-    return { requestId: `scripted-model-${index}`, ...this.#answer("model", () => this.script.model!(request, index)) };
+    return {
+      requestId: `scripted-model-${index}`,
+      ...this.#answer("model", () => this.script.model!(request, index)),
+    };
   }
 
   async rigModel(request: RigRequest): Promise<ModelResult> {
     this.calls.push({ kind: "rig", request });
     const index = this.rigCount++;
     if (!this.script.rig) throw new Error("the provider script has no rig answer");
-    return { requestId: `scripted-rig-${index}`, ...this.#answer("rig", () => this.script.rig!(request, index)) };
+    return {
+      requestId: `scripted-rig-${index}`,
+      ...this.#answer("rig", () => this.script.rig!(request, index)),
+    };
   }
 
   async animateModel(request: AnimateRequest): Promise<ModelResult> {
     this.calls.push({ kind: "animate", request });
     const index = this.animateCount++;
     if (!this.script.animate) throw new Error("the provider script has no animate answer");
-    return { requestId: `scripted-animate-${index}`, ...this.#answer("animate", () => this.script.animate!(request, index)) };
+    return {
+      requestId: `scripted-animate-${index}`,
+      ...this.#answer("animate", () => this.script.animate!(request, index)),
+    };
   }
 }

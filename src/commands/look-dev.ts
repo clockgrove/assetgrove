@@ -82,11 +82,7 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
     const profile = await readJson<TargetProfile>(args.profile);
     const routes = await loadRoutes(args.routes);
     // The profile's look-dev cap when --cap is absent, never above the settings' run cap.
-    const capUsd = runCap(
-      ctx.settings.caps,
-      args.cap,
-      planLookdev(profile.value, routes).capUsd,
-    );
+    const capUsd = runCap(ctx.settings.caps, args.cap, planLookdev(profile.value, routes).capUsd);
     const plan = planLookdev(profile.value, routes, capUsd);
     const scripted = await scriptedFrom(ctx, args.providerScript);
     const chosen = scripted ?? gatewayProvider(ctx);

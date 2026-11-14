@@ -41,7 +41,7 @@ A character with an identity lock adds one `identity` call per candidate (see [g
 
 ## 3D routes (Tripo, not the gateway)
 
-3D characters (`character-3d`, [characters-3d.md](characters-3d.md)) call Tripo's API directly with `TRIPO_API_KEY`. Their identity call still goes through the gateway. The account is on paid credits, so Tripo's output is owned: the routes' `outputGrant` is `LicenseRef-tripo-paid`, plan `paid`, commercial, `relabel: true`. Each call's cost is the task's reported `consumed_credit` × `usdPerCredit` ($0.01).
+3D characters (`character-3d`, [characters-3d.md](characters-3d.md)) call Tripo's API directly with `TRIPO_API_KEY`. Their identity call still goes through the gateway. The account is on paid credits, so Tripo's output is owned: the routes' `outputGrant` is `LicenseRef-tripo-paid`, plan `paid`, commercial, `relabel: true`. Each call's cost is the task's reported `consumed_credit` × the Tripo provider entry's `usdPerCredit` in settings (see [settings.md](settings.md#providers)); without it a call settles at its route estimate.
 
 | Operation | Model                             | What it calls                                                                                        | Estimate per call |
 | --------- | --------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------- |

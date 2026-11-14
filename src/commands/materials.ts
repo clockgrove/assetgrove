@@ -119,7 +119,12 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
         withinCap: estimateUsd <= capUsd + 1e-9,
       };
       const human = `dry run: materials, ${plan.calls} planned call(s), nothing spent\nforecast ${usd(estimateUsd)} against a $${capUsd.toFixed(2)} cap`;
-      return dryRunOutcome(plan, human, ledger, (await providerFor(ctx, args.providerScript)).provider);
+      return dryRunOutcome(
+        plan,
+        human,
+        ledger,
+        (await providerFor(ctx, args.providerScript)).provider,
+      );
     }
     const { provider, name } = await providerFor(ctx, args.providerScript);
     const call = new Caller({
