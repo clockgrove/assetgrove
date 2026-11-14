@@ -43,7 +43,7 @@ Every command follows one contract, so scripts and agents can drive Assetgrove w
 
 ## MCP server on the official SDK
 
-`assetgrove mcp` is served by the official TypeScript MCP SDK, `@modelcontextprotocol/server` 2.4.0 (Apache-2.0), over its stdio transport. The SDK negotiates the protocol revision and validates arguments against each tool's input schema, where hand-written protocol code would fall behind the protocol. It brings `@modelcontextprotocol/core` 2.4.0 (Apache-2.0) and `zod` (MIT); none of them has an install script, and 2.4.0 needs no release-age exclusion. The tool schemas stay plain JSON Schema, wrapped with the SDK's `fromJsonSchema`, so `tools/list` advertises them unchanged.
+`assetgrove mcp` is served by the official TypeScript MCP SDK, `@modelcontextprotocol/server` 2.4.0 (Apache-2.0), over its stdio transport. The SDK negotiates the protocol revision, where hand-written protocol code would fall behind the protocol. It brings `@modelcontextprotocol/core` 2.4.0 (Apache-2.0) and `zod` (MIT); none of them has an install script, and 2.4.0 needs no release-age exclusion. Each tool's input schema is derived from its command's JSON Schema input by `toolInputSchema` (src/commands/runner.ts): it drops the CLI-only properties (`providerScript`, `dryRun`, `routes`, `autoApprove`) and the help `placeholder` keyword, and allows no other property. It is wrapped with the SDK's `fromJsonSchema`, and `tools/list` advertises it as derived. The SDK's own argument check is a pass-through: the tool handler validates the arguments against the same schema, so a bad argument comes back as the CLI's `invalid_input` result document with `isError` set, not as a protocol error.
 
 ## Generation constitutions
 
