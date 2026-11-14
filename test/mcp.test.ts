@@ -13,8 +13,15 @@ import { commands } from "../src/commands/registry.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { flagName } from "../src/commands/runner.ts";
 import type { CommandSpec } from "../src/commands/types.ts";
-import { encodePng } from "../src/image/raster.ts";
+import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
+import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
+import type { TargetProfile } from "../src/types.ts";
+import { lodModel } from "./fixtures/lod.ts";
+import { quadrupedTemplate, syntheticQuadruped, walkGait } from "./fixtures/quadruped.ts";
+import { syntheticSheet } from "./fixtures/sheet.ts";
+import { syntheticStrip } from "./fixtures/strip.ts";
 import {
+  PALETTE,
   drawSubject,
   shelterSpec,
   syntheticProfile,
@@ -27,6 +34,8 @@ type Doc = Record<string, unknown>;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const synthetic = fileURLToPath(new URL("./fixtures/synthetic.ts", import.meta.url));
 const raster = fileURLToPath(new URL("../src/image/raster.ts", import.meta.url));
+const LOOKDEV_SCRIPT = fileURLToPath(new URL("./fixtures/lookdev-script.ts", import.meta.url));
+const ANIMATION_SCRIPT = fileURLToPath(new URL("./fixtures/animation-script.ts", import.meta.url));
 const temporary: string[] = [];
 const clients: Client[] = [];
 
@@ -182,12 +191,14 @@ test("tools/list names equal the registry's tool names and no tool takes a CLI-o
 
 /**
  * One row per tool: `prepare` builds what the call needs in the work directory and returns its
- * arguments. A row whose input would take a costly fixture is checked on its refusal document,
- * which is as much the CLI's --json document as a success.
+ * arguments, reaching the command's own result fields. `script` names the scripted provider when
+ * the shared one cannot answer the command; the CLI run and the tool call use the same one.
+ * `prepare` sees the previous row's tool result, for a row that takes what that call made.
  */
 interface Row {
   tool: string;
-  prepare: () => Promise<Args>;
+  prepare: (previous: Doc) => Promise<Args>;
+  script?: () => Promise<string>;
   exitCode?: number;
 }
 
@@ -207,21 +218,222 @@ async function world() {
   await writeFile(join(dir, "profile.json"), JSON.stringify(w.profile));
 }
 
-/** Arguments that name a missing file for each of a command's required inputs (1 for a number). */
-function missing(tool: string): Args {
-  const command = spec(tool);
-  return Object.fromEntries(
-    (command.input.required ?? []).map((name) => {
-      const type = command.input.properties[name]!.type;
-      const value =
-        type === "integer" || type === "number"
-          ? 1
-          : type === "array"
-            ? [join(work, `missing-${name}`)]
-            : join(work, `missing-${name}`);
-      return [name, value];
+/** A scripted provider module written into the work directory under `name`. */
+async function moduleScript(name: string, body: string): Promise<string> {
+  const path = join(work, name);
+  await writeFile(path, body);
+  return path;
+}
+
+/** The provenance a hand-made model carries into `rig` and `lod`. */
+const modelProvenance = {
+  generator: "character-3d",
+  route: "scripted:model3d:synthetic",
+  models: ["synthetic"],
+  prompt: "a synthetic quadruped",
+  parameters: { gait: "quadruped", rigType: "quadruped", heightM: 0.45 },
+  requestIds: ["req-1"],
+  referenceHashes: [],
+  bibleVersion: "2026-11-10",
+  license: "MIT",
+  providerTerms: ["synthetic"],
+  startedAt: "2026-11-10T00:00:00.000Z",
+  finishedAt: "2026-11-10T00:00:01.000Z",
+  costUsd: 0,
+  calls: [],
+};
+
+/** A quadruped target with a rig template and a groom: the `rig` and `look_dev` world. */
+async function quadrupedWorld() {
+  const dir = join(work, "quadruped");
+  await mkdir(join(dir, "refs"), { recursive: true });
+  const roles = ["turnaround-front", "turnaround-side", "turnaround-back"];
+  for (const [i, role] of roles.entries())
+    await writeFile(join(dir, "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
+  await mkdir(join(dir, "rig"));
+  await writeFile(join(dir, "rig", "quadruped.json"), JSON.stringify(quadrupedTemplate()));
+  const files = {
+    dir,
+    spec: join(dir, "spec.json"),
+    bible: join(dir, "bible.json"),
+    profile: join(dir, "profile.json"),
+    model: join(dir, "model.glb"),
+    provenance: join(dir, "provenance.json"),
+  };
+  await writeFile(
+    files.spec,
+    JSON.stringify({
+      kind: "character-3d",
+      assetId: "kit",
+      subject: "kit",
+      gait: "quadruped",
+      clips: ["walk"],
+      heightM: 0.45,
     }),
   );
+  await writeFile(
+    files.bible,
+    JSON.stringify({
+      version: "2026-11-10",
+      palette: PALETTE,
+      references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "kit" })),
+      perspective: "refs/turnaround-front.png",
+      subjects: { kit: { description: "a small synthetic quadruped" } },
+    }),
+  );
+  await writeFile(
+    files.profile,
+    JSON.stringify({
+      name: "synthetic-grove-quadruped",
+      license: "MIT",
+      frames: { width: 32, height: 32 },
+      model3d: {
+        format: "glb",
+        budgets: { triangles: 40000, textureMaxPx: 2048, materials: 4, bones: 80, lods: 1 },
+        units: "m",
+        turntable: { sizePx: 64 },
+        rig: { template: "rig/quadruped.json", kind: "synthetic-quadruped" },
+        gaits: { walk: walkGait() },
+        groom: {
+          sizePx: 256,
+          seasons: ["summer"],
+          traits: { summer: "short, sleek, grey-brown" },
+        },
+      },
+      layout: {
+        media: "characters/{{spec.assetId}}/{{spec.assetId}}.{{output.extension}}",
+        manifest: "characters/{{spec.assetId}}/manifest.json",
+      },
+      manifest: {
+        assetId: "{{spec.assetId}}",
+        source: { path: "{{output.path}}", mediaType: "{{output.mediaType}}" },
+        license: "{{profile.license}}",
+        review: { status: "pending" },
+        contentHash: "{{output.sha256}}",
+      },
+      review: { path: "review.status", pending: "pending" },
+    }),
+  );
+  await writeFile(files.model, syntheticQuadruped({ atlasUvs: true }));
+  await writeFile(files.provenance, JSON.stringify(modelProvenance));
+  return files;
+}
+
+/** A model the profile declares three detail levels for, as test/lod.test.ts builds it. */
+async function lodWorld(): Promise<Args> {
+  const dir = join(work, "lod");
+  await mkdir(dir, { recursive: true });
+  const profile = syntheticProfile({
+    layout: {
+      media: "assets/{{spec.assetId}}/{{spec.assetId}}.{{output.extension}}",
+      manifest: "assets/{{spec.assetId}}/manifest.json",
+    },
+    manifest: {
+      assetId: "{{spec.assetId}}",
+      output: { path: "{{output.path}}", lods: "{{output.lods}}" },
+      review: { status: "pending" },
+    },
+    model3d: {
+      format: "glb",
+      units: "m",
+      budgets: { triangles: 40000, textureMaxPx: 2048, materials: 4, bones: 80, lods: 3 },
+      turntable: { sizePx: 64 },
+      lods: [
+        { level: 0, triangleRatio: 1, minScreenHeight: 0.15 },
+        { level: 1, triangleRatio: 0.33, minScreenHeight: 0.05 },
+        { level: 2, triangleRatio: 0.1, minScreenHeight: 0 },
+      ],
+    },
+  } as Partial<TargetProfile>);
+  delete profile.validator;
+  const files = {
+    model: join(dir, "model.glb"),
+    provenance: join(dir, "provenance.json"),
+    spec: join(dir, "spec.json"),
+    profile: join(dir, "profile.json"),
+  };
+  await writeFile(files.model, lodModel());
+  await writeFile(
+    files.provenance,
+    JSON.stringify({ ...modelProvenance, generator: "model3d", parameters: {} }),
+  );
+  await writeFile(
+    files.spec,
+    JSON.stringify({
+      kind: "character-3d",
+      assetId: "kit",
+      fields: {
+        semantic: { role: "actor", entity: "grove.kit", archetype: null },
+        accessibilityLabel: "A small synthetic kit",
+      },
+    }),
+  );
+  await writeFile(files.profile, JSON.stringify(profile));
+  return { ...files, runs: join(dir, "runs") };
+}
+
+/** A bible with one approved identity record and its turnaround, as test/identity-cli.test.ts has. */
+async function identityWorld(): Promise<{ dir: string; bible: string }> {
+  const dir = join(work, "identity");
+  const art = join(dir, "art");
+  await mkdir(art, { recursive: true });
+  const ref = createRaster(24, 24);
+  setPixel(ref, 3, 3, [180, 90, 40, 255]);
+  await writeFile(join(art, "bram-turnaround.png"), encodePng(ref));
+  const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.world = "Synthetic";
+  data.identities = {
+    bram: {
+      version: "bram-3",
+      approved: true,
+      turnaround: "bram-turnaround.png",
+      signatureFeatures: ["striped tail"],
+      proportions: "round body",
+      palette: ["#b45a28"],
+    },
+  };
+  const bible = join(art, "BIBLE.md");
+  await writeFile(bible, serializeBible(data, "# Synthetic\n\n## Do's and Don'ts\nDo.\n"));
+  await writeFile(join(dir, "sheet.png"), syntheticSheet().png);
+  return { dir, bible };
+}
+
+/** An identity provider whose every answer is the same, so a long-lived server answers as a fresh CLI. */
+const identityScript = () =>
+  moduleScript(
+    "identity-provider.mjs",
+    `export default {
+  image() { throw new Error("no image generation"); },
+  vision() { return { text: '{"consistent": true, "conflicts": []}', costUsd: 0.0001 }; },
+  decide() { return { answer: { type: "score", score: 4 }, confidence: 0.62, costUsd: 0.00003 }; },
+};`,
+  );
+
+/** An eight-frame walk strip, its profile and the provenance fix-frame extends. */
+async function stripWorld() {
+  const dir = join(work, "strip");
+  await mkdir(dir, { recursive: true });
+  const { strip } = syntheticStrip({ count: 8, style: "painterly", motion: "walk", floatFrame: 3 });
+  const files = { dir, strip: join(dir, "walk-right.png"), profile: join(dir, "profile.json") };
+  await writeFile(files.strip, encodePng(strip));
+  await writeFile(
+    files.profile,
+    JSON.stringify({ ...syntheticProfile(), frames: { width: 64, height: 64, durationMs: 100 } }),
+  );
+  await writeFile(
+    `${files.strip}.provenance.json`,
+    JSON.stringify({
+      ...modelProvenance,
+      generator: "sheet-import",
+      route: "import:hand",
+      models: ["hand"],
+      prompt: "imported",
+      parameters: {},
+      requestIds: [],
+      providerTerms: [],
+    }),
+  );
+  return files;
 }
 
 const rows: Row[] = [
@@ -308,43 +520,289 @@ const rows: Row[] = [
       return { operation: "matte", inputs: [input], out: join(work, "out.png") };
     },
   },
-  ...[
-    "write_families",
-    "import",
-    "rig",
-    "lod",
-    "look_dev",
-    "materials",
-    "generate_sheet",
-    "identity_eval",
-    "identity_check",
-    "animation_qa",
-    "fix_frame",
-    "recipe",
-  ].map((tool) => ({ tool, prepare: async () => missing(tool), exitCode: 2 })),
+  {
+    tool: "import",
+    prepare: async () => {
+      const dir = join(work, "sheet");
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "sheet.png"), syntheticSheet().png);
+      // The style test/sheet-cli.test.ts imports under, which the target validator accepts.
+      const base = syntheticProfile();
+      const profile = {
+        ...base,
+        style: { alpha: { mode: "soft" }, color: { rule: "full" } },
+        manifest: { ...(base.manifest as Doc), style: "{{profile.style?}}" },
+      };
+      await writeFile(join(dir, "profile.json"), JSON.stringify(profile));
+      return {
+        sheet: join(dir, "sheet.png"),
+        profile: join(dir, "profile.json"),
+        asset: "fern",
+        tool: "hand drawn",
+        noPropose: true,
+        digitalSourceType: "digitalCreation",
+        imports: join(dir, "imports"),
+      };
+    },
+  },
+  {
+    tool: "write_families",
+    prepare: async () => {
+      const dir = join(work, "sheet");
+      const imported = join(dir, "imports", (await readdir(join(dir, "imports")))[0]!);
+      const proposal = JSON.parse(await readFile(join(imported, "grouping.json"), "utf8")) as Doc;
+      const grouping = join(dir, "confirmed.json");
+      await writeFile(
+        grouping,
+        JSON.stringify({
+          ...proposal,
+          status: "confirmed",
+          families: [
+            { name: "walk-right", frames: [5, 6, 7, 8, 9, 10], reason: "legs swing, facing right" },
+            { name: "walk-left", mirrorOf: "walk-right", reason: "mirror of walk-right" },
+          ],
+        }),
+      );
+      const target = join(dir, "target");
+      await mkdir(target, { recursive: true });
+      return { import: imported, target, grouping };
+    },
+  },
+  {
+    tool: "generate_sheet",
+    // The model draws the 16-figure sheet the spec asks for; the grouping call proposes nothing.
+    script: () =>
+      moduleScript(
+        "sheet-provider.mjs",
+        `const png = ${JSON.stringify(Buffer.from(syntheticSheet().png).toString("base64"))};
+export default {
+  image: () => ({ images: [{ mediaType: "image/png", bytes: Uint8Array.from(Buffer.from(png, "base64")) }], costUsd: 0.2 }),
+  vision: () => ({ text: JSON.stringify({ families: [], unassigned: [] }), costUsd: 0.01 }),
+};`,
+      ),
+    prepare: async () => {
+      const dir = paths.world();
+      await writeFile(
+        join(dir, "sheet-spec.json"),
+        JSON.stringify({ ...shelterSpec, frames: { count: 16 } }),
+      );
+      return {
+        spec: join(dir, "sheet-spec.json"),
+        bible: join(dir, "bible", "bible.json"),
+        profile: join(dir, "profile.json"),
+        imports: join(dir, "imports"),
+      };
+    },
+  },
+  {
+    tool: "rig",
+    prepare: async () => {
+      const w = await quadrupedWorld();
+      return {
+        model: w.model,
+        provenance: w.provenance,
+        spec: w.spec,
+        profile: w.profile,
+        runs: join(w.dir, "rigged"),
+      };
+    },
+  },
+  {
+    tool: "look_dev",
+    script: async () => LOOKDEV_SCRIPT,
+    prepare: async (rigged) => {
+      // The model the rig row's tool call made.
+      const dir = join(work, "quadruped");
+      const [candidate] = rigged["candidates"] as { file: string; provenance: unknown }[];
+      const provenance = join(dir, "rigged.provenance.json");
+      await writeFile(provenance, JSON.stringify(candidate!.provenance));
+      return {
+        model: join(rigged["runDir"] as string, candidate!.file),
+        provenance,
+        spec: join(dir, "spec.json"),
+        bible: join(dir, "bible.json"),
+        profile: join(dir, "profile.json"),
+        runs: join(dir, "runs"),
+      };
+    },
+  },
+  { tool: "lod", prepare: lodWorld },
+  {
+    tool: "materials",
+    // Fake-only renderer: it copies the albedo; the lit checks come from the scripted vision.
+    script: () =>
+      moduleScript(
+        "materials-provider.mjs",
+        `export default { image() { throw new Error("unexpected model generation"); }, vision() { return { text: JSON.stringify({ checks: ["flat-albedo", "normal-orientation", "emissive-placement", "dusk-rain", "night"].map((check) => ({ check, passed: true, reason: "synthetic fixture" })) }) }; } };`,
+      ),
+    prepare: async () => {
+      const dir = join(work, "materials");
+      await mkdir(dir, { recursive: true });
+      const renderer = join(dir, "render.mjs");
+      await writeFile(
+        renderer,
+        "import { copyFileSync } from 'node:fs'; copyFileSync(process.argv[2], process.argv[3]);",
+      );
+      const raster = createRaster(8, 8);
+      for (let y = 1; y < 7; y++)
+        for (let x = 1; x < 7; x++) setPixel(raster, x, y, [100, 100, 100, 255]);
+      const albedo = join(dir, "albedo.png");
+      await writeFile(albedo, encodePng(raster));
+      await writeFile(
+        join(dir, "spec.json"),
+        JSON.stringify({
+          kind: "still",
+          assetId: "synthetic",
+          frames: { count: 1, width: 4, height: 4 },
+        }),
+      );
+      await writeFile(
+        join(dir, "profile.json"),
+        JSON.stringify({
+          name: "synthetic",
+          license: "MIT",
+          frames: { width: 4, height: 4 },
+          style: {
+            materials: {
+              channels: ["height", "normal"],
+              scales: [1, 2],
+              flickerBound: 0,
+              lightRig: {
+                "dusk-rain": { direction: [0.5, -0.5, 1], intensity: 0.4 },
+                night: { direction: [0, 0, 1], intensity: 0.1 },
+              },
+              preview: {
+                version: "synthetic-copy-1",
+                command: [process.execPath, renderer, albedo, "{{output}}"],
+              },
+            },
+          },
+        }),
+      );
+      await writeFile(
+        join(dir, "derivation.json"),
+        JSON.stringify({
+          maps: {
+            height: { method: "mask-extraction", version: "1", path: "albedo.png" },
+            normal: { method: "height-derived-normal", version: "1" },
+          },
+        }),
+      );
+      return {
+        albedo,
+        spec: join(dir, "spec.json"),
+        profile: join(dir, "profile.json"),
+        derivation: join(dir, "derivation.json"),
+        out: join(dir, "out"),
+      };
+    },
+  },
+  {
+    tool: "identity_check",
+    script: identityScript,
+    prepare: async () => ({ bible: (await identityWorld()).bible }),
+  },
+  {
+    tool: "identity_eval",
+    script: identityScript,
+    prepare: async () => {
+      const { dir, bible } = await identityWorld();
+      const cases = [
+        { image: "sheet.png", subject: "bram", same: true, qa: true },
+        { image: "sheet.png", subject: "bram", same: true, qa: false },
+      ];
+      await writeFile(join(dir, "cases.json"), JSON.stringify(cases));
+      return { bible, cases: join(dir, "cases.json"), log: join(dir, "eval.jsonl") };
+    },
+  },
+  {
+    tool: "animation_qa",
+    prepare: async () => {
+      const w = await stripWorld();
+      return {
+        strip: w.strip,
+        family: "walk-right",
+        profile: w.profile,
+        out: join(w.dir, "qa"),
+        noVision: true,
+      };
+    },
+    // Frame 3 floats above the ground line: QA names it, which is the command's own result.
+    exitCode: 5,
+  },
+  {
+    tool: "fix_frame",
+    script: async () => ANIMATION_SCRIPT,
+    prepare: async () => {
+      const w = join(work, "strip");
+      return {
+        strip: join(w, "walk-right.png"),
+        family: "walk-right",
+        profile: join(w, "profile.json"),
+        frame: 3,
+        from: 2,
+        out: join(w, "fixed"),
+      };
+    },
+  },
+  {
+    tool: "recipe",
+    prepare: async () => {
+      const dir = join(work, "recipe");
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "hero.png"), encodePng(drawSubject(48)));
+      await writeFile(
+        join(dir, "recipe.json"),
+        JSON.stringify({
+          steps: [
+            { op: "trim" },
+            { op: "pad", params: { top: 2, right: 2, bottom: 2, left: 2 } },
+            { op: "renditions", params: { scales: [1, 2] } },
+          ],
+        }),
+      );
+      return {
+        recipe: join(dir, "recipe.json"),
+        inputs: [join(dir, "hero.png")],
+        out: join(dir, "out"),
+      };
+    },
+  },
 ];
 
 test("every tool's structuredContent deep-equals the CLI --json document", async () => {
   const covered = new Set(rows.map((r) => r.tool));
   for (const c of commands) if (c.tool !== null) assert.ok(covered.has(c.tool), c.tool);
+  // One server per scripted provider; the shared one serves every row that names none.
+  const servers = new Map<string, Client>([[script, server]]);
+  let previous: Doc = {};
   for (const row of rows) {
-    const args = await row.prepare();
+    const provider = row.script ? await row.script() : script;
+    if (!servers.has(provider))
+      servers.set(provider, await connect(["--provider-script", provider]));
+    const args = await row.prepare(previous);
     const label = `${row.tool} ${JSON.stringify(args)}`;
     // The command and the tool start from the same files: the work directory is restored between.
     const snapshot = `${work}.snapshot`;
     await rm(snapshot, { recursive: true, force: true });
     await cp(work, snapshot, { recursive: true });
-    const ran = await cli(commandLine(spec(row.tool), args, script));
+    const ran = await cli(commandLine(spec(row.tool), args, provider));
     const document = JSON.parse(ran.stdout) as Doc;
     await rm(work, { recursive: true, force: true });
     await cp(snapshot, work, { recursive: true });
     await rm(snapshot, { recursive: true, force: true });
-    const result = await server.callTool({ name: row.tool, arguments: args });
+    const result = await servers.get(provider)!.callTool({ name: row.tool, arguments: args });
     assert.equal(ran.code, row.exitCode ?? 0, `${label}: ${ran.stderr}`);
+    // The document carries the command's own result fields, not only a refusal.
+    const fields = Object.keys(document).filter(
+      (k) => !["ok", "exitCode", "command", "error"].includes(k),
+    );
+    assert.ok(fields.length > 0, `${label}: no result fields`);
     assert.equal(result.isError, document["ok"] !== true, label);
     assert.deepEqual(normalise(result.structuredContent), normalise(document), label);
     const [text] = result.content as { type: string; text: string }[];
     assert.deepEqual(JSON.parse(text!.text), result.structuredContent, label);
+    previous = result.structuredContent as Doc;
   }
 });
 
