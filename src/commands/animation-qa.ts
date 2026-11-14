@@ -35,7 +35,7 @@ interface AnimationQaArgs {
 
 export const animationQaCommand = defineCommand<AnimationQaArgs>({
   name: "animation-qa",
-  tool: null,
+  tool: "animation_qa",
   summary: "check strips against motion templates and for loop and continuity; write previews",
   details: `Checks each strip against its family's motion template (beats, timing, contact frames,
 silhouette variation) and runs loop and continuity QA on pixels (loop seam, ground line,
@@ -108,6 +108,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
+  confirm: "spend",
   async run(args) {
     const capUsd = args.cap ?? DEFAULT_CAP_USD;
     const routes = await loadRoutes(args.routes);

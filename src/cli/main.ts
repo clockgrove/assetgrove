@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { EXIT, EXIT_MEANING } from "../errors.ts";
 import { InputError } from "../errors.ts";
 import { commands } from "../commands/registry.ts";
-import { commandUsage, parseCommandLine, runCommand } from "../commands/runner.ts";
-import { failureOutcome, resultDocument } from "../commands/result.ts";
+import { createRunContext } from "../commands/context.ts";
+import { commandUsage, errorOutcome, parseCommandLine, runCommand } from "../commands/runner.ts";
+import { resultDocument } from "../commands/result.ts";
 import type { Outcome } from "../commands/types.ts";
 import { SPEND_ENV } from "../spend.ts";
 
@@ -73,8 +74,9 @@ export async function main(argv: string[]): Promise<number> {
       const usage = commandUsage(spec);
       return emit(json, name, { exitCode: 0, fields: { usage }, human: usage });
     }
-    return emit(json, name, await runCommand(spec, args, { log: (m) => console.error(m) }));
+    const ctx = createRunContext({ log: (m) => console.error(m) });
+    return emit(json, name, await runCommand(spec, args, ctx));
   } catch (error) {
-    return emit(json, name, failureOutcome(error));
+    return emit(json, name, errorOutcome(error));
   }
 }

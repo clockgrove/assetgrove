@@ -263,10 +263,8 @@ test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
       clientInfo: { name: "test", version: "1" },
     });
     const listed = await call("tools/list");
-    assert.deepEqual(
-      listed.tools?.map((t) => t.name),
-      ["bible_describe", "bible_init", "bible_preset", "plan", "apply"],
-    );
+    const names = listed.tools?.map((t) => t.name) ?? [];
+    for (const name of ["bible", "plan", "apply"]) assert.ok(names.includes(name), name);
     const planned = await call("tools/call", {
       name: "plan",
       arguments: {
@@ -278,16 +276,25 @@ test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
       },
     });
     assert.equal(planned.isError, false, planned.content?.[0]?.text);
-    const applied = await call("tools/call", {
+    // No tool approves spend: autoApprove is refused, and a person approves the saved plan.
+    const unapproved = await call("tools/call", {
       name: "apply",
       arguments: { plan: f.plan, autoApprove: true, out: join(f.dir, "mcp-runs") },
+    });
+    assert.equal(unapproved.isError, true);
+    assert.match(unapproved.content![0]!.text, /invalid_input/);
+    const saved = JSON.parse(await readFile(f.plan, "utf8")) as Record<string, unknown>;
+    await writeFile(f.plan, JSON.stringify({ ...saved, approved: true }));
+    const applied = await call("tools/call", {
+      name: "apply",
+      arguments: { plan: f.plan, out: join(f.dir, "mcp-runs") },
     });
     assert.equal(applied.isError, false, applied.content?.[0]?.text);
     const result = JSON.parse(applied.content![0]!.text) as { run: { candidates: unknown[] } };
     assert.equal(result.run.candidates.length, 1);
     const switched = await call("tools/call", {
-      name: "bible_preset",
-      arguments: { bible: f.biblePath, preset: "cozy-storybook" },
+      name: "bible",
+      arguments: { action: "preset", bible: f.biblePath, preset: "cozy-storybook" },
     });
     assert.equal(switched.isError, false, switched.content?.[0]?.text);
     const description = JSON.parse(switched.content![0]!.text) as { preset: string };

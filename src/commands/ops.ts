@@ -3,7 +3,7 @@ import { defineCommand } from "./types.ts";
 
 export const opsCommand = defineCommand<Record<string, never>>({
   name: "ops",
-  tool: null,
+  tool: "ops",
   summary: "list the media operations and the engines that implement them",
   details: "Lists every operation with its summary, parameters and engines.",
   input: { type: "object", properties: {}, additionalProperties: false },

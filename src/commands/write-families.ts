@@ -14,7 +14,7 @@ interface WriteFamiliesArgs {
 
 export const writeFamiliesCommand = defineCommand<WriteFamiliesArgs>({
   name: "write-families",
-  tool: null,
+  tool: "write_families",
   summary: "write the strips of a human-confirmed grouping into the target, review pending",
   details: `Writes one strip and manifest per family of a grouping whose status a human set to
 "confirmed" into the target with review pending, registered within the jitter bound in pixels.
@@ -47,6 +47,7 @@ Agents never confirm a grouping.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "never", writes: "target" },
+  confirm: "write",
   async run(args) {
     const importDir = args.import;
     const groupingPath = args.grouping ?? join(importDir, GROUPING_FILE);

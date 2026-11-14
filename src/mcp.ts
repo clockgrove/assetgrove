@@ -1,8 +1,15 @@
 import { McpServer, fromJsonSchema } from "@modelcontextprotocol/server";
+import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
+import { readFileSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { resolve } from "node:path";
 import { describeBible, initBible, useBiblePreset } from "./bible.ts";
+import { checkContextEnvironment, isPaid } from "./commands/context.ts";
+import { commands } from "./commands/registry.ts";
+import { resultDocument } from "./commands/result.ts";
+import { errorOutcome, runCommand, toolInputSchema } from "./commands/runner.ts";
+import type { CommandSpec, RunContext } from "./commands/types.ts";
 import { InputError, ProviderError } from "./errors.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { readJson } from "./loop.ts";
@@ -101,112 +108,131 @@ export async function generationTool(
   throw new InputError(`unknown generation tool ${name}`);
 }
 
-const stringProperty = { type: "string", minLength: 1 };
-const tools = [
-  {
-    name: "bible_describe",
-    description: "Read art direction, bounds, anchors, presets and identity locks as JSON.",
-    inputSchema: {
+/** The one output schema of every tool: the result document, open to each command's fields. */
+const outputSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    exitCode: { type: "integer" },
+    command: { type: ["string", "null"] },
+    error: {
       type: "object",
-      properties: { bible: stringProperty },
-      required: ["bible"],
-      additionalProperties: false,
+      properties: { code: { type: "string" }, message: { type: "string" } },
+      required: ["code", "message"],
     },
   },
-  {
-    name: "bible_init",
-    description:
-      "Explicitly install a bible preset, Agent Skill and prompt template in a target repository.",
-    inputSchema: {
-      type: "object",
-      properties: { directory: stringProperty, world: stringProperty, preset: stringProperty },
-      required: ["directory", "world", "preset"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "bible_preset",
-    description:
-      "Switch a repository-owned art preset while preserving the world's palette, anchors and identity locks.",
-    inputSchema: {
-      type: "object",
-      properties: { bible: stringProperty, preset: stringProperty },
-      required: ["bible", "preset"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "plan",
-    description:
-      "Compile a reviewable generation plan without generating images; paths are server-local.",
-    inputSchema: {
-      type: "object",
-      properties: Object.fromEntries(
-        [
-          "spec",
-          "profile",
-          "bible",
-          "brief",
-          "settings",
-          "template",
-          "routes",
-          "out",
-          "identityMode",
-        ].map((k) => [k, stringProperty]),
-      ),
-      required: ["spec", "profile", "bible", "out"],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "apply",
-    description:
-      "Generate precisely a saved plan, refusing stale inputs; approval authorizes spend, never asset approval.",
-    inputSchema: {
-      type: "object",
-      properties: { plan: stringProperty, autoApprove: { type: "boolean" }, out: stringProperty },
-      required: ["plan"],
-      additionalProperties: false,
-    },
-  },
-];
+  required: ["ok", "exitCode", "command"],
+};
 
-/** One MCP server instance with the five tools, each calling generationTool with the shared context. */
-function createServer(context: ToolContext): McpServer {
+/** The confirmation kinds headless settings answer without a person. */
+const HEADLESS_ANSWERS: ReadonlySet<string> = new Set(["spend", "pick", "write"]);
+
+/**
+ * Whether a tool is marked as requiring the person (`anthropic/requiresUserInteraction`): every
+ * tool with a confirmation, except spend, pick and write tools when the settings are headless.
+ */
+export function requiresUserInteraction(spec: CommandSpec, headless: boolean): boolean {
+  if (spec.confirm === undefined) return false;
+  return !(headless && HEADLESS_ANSWERS.has(spec.confirm));
+}
+
+/** A tool's annotations, from its command's effect (design section 5). */
+export function toolAnnotations(spec: CommandSpec): ToolAnnotations {
+  const paid = isPaid(spec);
+  return {
+    readOnlyHint: spec.effect.readOnly,
+    destructiveHint: spec.tool === "pick" || spec.tool === "write_families",
+    idempotentHint: paid,
+    openWorldHint: paid,
+  };
+}
+
+/** A tool call's arguments with the server's scripted provider and work item filled in. */
+function commandArgs(spec: CommandSpec, args: Arguments, ctx: RunContext): Arguments {
+  const properties = spec.input.properties;
+  return {
+    ...(ctx.providerScript !== undefined &&
+      "providerScript" in properties && { providerScript: ctx.providerScript }),
+    ...(ctx.workItem !== undefined && "workItem" in properties && { workItem: ctx.workItem }),
+    ...args,
+  };
+}
+
+function packageInfo(): { name: string; version: string } {
+  return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    name: string;
+    version: string;
+  };
+}
+
+/**
+ * One MCP server instance with a tool per registry command that names one. Each tool runs its
+ * command as the CLI does and returns the CLI's --json document as structuredContent and as text.
+ */
+function createServer(ctx: RunContext): McpServer {
+  const { name, version } = packageInfo();
+  const headless = ctx.settings.mode === "headless";
   // The tool list is fixed, so the server never sends list-changed notifications.
   const server = new McpServer(
-    { name: "assetgrove", version: "0.0.0" },
+    { name, version },
     { capabilities: { tools: { listChanged: false } } },
   );
-  for (const tool of tools) {
+  for (const spec of commands) {
+    if (spec.tool === null) continue;
+    const input = fromJsonSchema<Arguments>(toolInputSchema(spec));
+    // tools/list shows the schema; the handler checks it, so a refusal is a result document too.
+    const listed = {
+      "~standard": { ...input["~standard"], validate: (value: unknown) => ({ value }) },
+    };
     server.registerTool(
-      tool.name,
-      { description: tool.description, inputSchema: fromJsonSchema<Arguments>(tool.inputSchema) },
-      // The SDK turns a thrown error into the tool error result { content: [text], isError: true }.
-      async (args) => ({
-        content: [
-          { type: "text", text: JSON.stringify(await generationTool(tool.name, args, context)) },
-        ],
-        isError: false,
-      }),
+      spec.tool,
+      {
+        description: `${spec.summary[0]!.toUpperCase()}${spec.summary.slice(1)}.`,
+        inputSchema: listed as typeof input,
+        outputSchema: fromJsonSchema<Arguments>(outputSchema),
+        annotations: toolAnnotations(spec),
+        ...(requiresUserInteraction(spec, headless) && {
+          _meta: { "anthropic/requiresUserInteraction": true },
+        }),
+      },
+      async (args) => {
+        const checked = await input["~standard"].validate(args ?? {});
+        const outcome = checked.issues
+          ? errorOutcome(
+              new InputError(
+                `invalid ${spec.tool} input: ${checked.issues.map((i) => i.message).join("; ")}`,
+              ),
+            )
+          : await runCommand(spec, commandArgs(spec, args, ctx), ctx);
+        const document = resultDocument(spec.name, outcome);
+        return {
+          content: [{ type: "text", text: JSON.stringify(document) }],
+          structuredContent: document,
+          isError: document["ok"] !== true,
+        };
+      },
     );
   }
   return server;
 }
 
-/** Serves the tools over MCP stdio with the official SDK until the input closes; no logs on stdout. */
+/**
+ * Serves the tools over MCP stdio with the official SDK until the input closes; no logs on
+ * stdout. Refuses (exit 2 `settings_invalid`) to start in an environment the settings disallow.
+ */
 export async function serveMcp(
-  context: ToolContext = {},
+  ctx: RunContext,
   input: Readable = process.stdin,
   output: Writable = process.stdout,
 ): Promise<void> {
+  checkContextEnvironment(ctx);
   const ended = new Promise<void>((done) => {
     input.once("end", done);
     input.once("close", done);
   });
-  const handle = serveStdio(() => createServer(context), {
+  const handle = serveStdio(() => createServer(ctx), {
     transport: new StdioServerTransport(input, output),
-    onerror: (error) => context.log?.(`mcp: ${error.message}`),
+    onerror: (error) => ctx.log(`mcp: ${error.message}`),
   });
   await ended;
   await handle.close();

@@ -15,7 +15,7 @@ interface RigArgs {
 
 export const rigCommand = defineCommand<RigArgs>({
   name: "rig",
-  tool: null,
+  tool: "rig",
   summary: "re-rig a 3D character on the target's shared rig with generated gaits and motions",
   details: `Fits the target profile's skeleton template (model3d.rig) to an existing character model, such
 as a picked candidate, skins it, generates the clips its gait profiles (model3d.gaits) and

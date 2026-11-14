@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parseDocument } from "yaml";
 import { initBible } from "../src/bible.ts";
 import { commandNames, commands } from "../src/commands/registry.ts";
-import { cliFlags } from "../src/commands/runner.ts";
+import { cliFlags, toolInputSchema } from "../src/commands/runner.ts";
 
 /** The Agent Skills rules every SKILL.md must meet, so each harness loads it. */
 async function checkSkill(path: string): Promise<void> {
@@ -105,8 +105,29 @@ function referenceProblems(texts: Iterable<string>): string[] {
     for (const flag of mentioned)
       if (!accepted.has(flag))
         problems.push(`the ${spec.name} section names ${flag}, not a flag of it`);
-    if (spec.tool !== null && !section.includes(`MCP tool: \`${spec.tool}\``))
-      problems.push(`the ${spec.name} section does not name its tool ${spec.tool}`);
+    const toolLines = section.split("\n").filter((l) => l.startsWith("MCP tool:"));
+    if (spec.tool === null) {
+      if (toolLines.length > 0) problems.push(`the ${spec.name} section names a tool, it has none`);
+    } else if (toolLines.length === 0) {
+      problems.push(`the ${spec.name} section does not name its tool`);
+    } else {
+      const properties = Object.keys(
+        (toolInputSchema(spec) as { properties: Record<string, unknown> }).properties,
+      );
+      for (const line of toolLines) {
+        const names = [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+        const [tool, ...args] = names;
+        if (tool !== spec.tool)
+          problems.push(`the ${spec.name} section names tool ${tool}, not ${spec.tool}`);
+        for (const arg of args)
+          if (!properties.includes(arg))
+            problems.push(
+              `the ${spec.name} section names argument ${arg}, not an argument of tool ${spec.tool}`,
+            );
+        for (const arg of properties)
+          if (!args.includes(arg)) problems.push(`the ${spec.name} section lacks argument ${arg}`);
+      }
+    }
   }
   for (const name of sections.keys())
     if (!commandNames.includes(name)) problems.push(`a section for ${name}, not a command`);
@@ -139,4 +160,21 @@ test("the reference check fails when a command has no section or a section lacks
   assert.ok(withOut(noFlag).includes("the stage section lacks --dry-run"));
   const extraFlag = reference.replace("ops [--json]", "ops [--json] [--bogus]");
   assert.ok(withOut(extraFlag).includes("the ops section names --bogus, not a flag of it"));
+  const wrongTool = reference.replace("MCP tool: `look_dev`", "MCP tool: `look_devs`");
+  assert.notEqual(wrongTool, reference);
+  assert.ok(withOut(wrongTool).includes("the look-dev section names tool look_devs, not look_dev"));
+  const wrongArg = reference.replace("`jitterBound`", "`jitterBounds`");
+  assert.notEqual(wrongArg, reference);
+  assert.ok(
+    withOut(wrongArg).includes(
+      "the write-families section names argument jitterBounds, not an argument of tool write_families",
+    ),
+  );
+  assert.ok(withOut(wrongArg).includes("the write-families section lacks argument jitterBound"));
+  const noArg = reference.replace(", `jitterBound`.", ".");
+  assert.notEqual(noArg, reference);
+  assert.ok(withOut(noArg).includes("the write-families section lacks argument jitterBound"));
+  const noLine = reference.replace(/^MCP tool: `ops`.*\n/m, "");
+  assert.notEqual(noLine, reference);
+  assert.ok(withOut(noLine).includes("the ops section does not name its tool"));
 });

@@ -7,10 +7,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { machineProxyEnv } from "./fixtures/env.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("..", import.meta.url));
+// npm reaches the registry through the machine's proxy, which the fixture removed for Assetgrove.
+const npmEnv = { ...process.env, ...machineProxyEnv };
 const FIVE_MINUTES = 5 * 60 * 1000;
 
 test(
@@ -30,6 +33,7 @@ test(
       const packDir = await temp();
       const { stdout } = await exec("npm", ["pack", "--json", "--pack-destination", packDir], {
         cwd: root,
+        env: npmEnv,
       });
       const [packed] = JSON.parse(stdout) as Array<{ filename: string; files: { path: string }[] }>;
       assert.ok(packed);
@@ -60,7 +64,7 @@ test(
           "--no-package-lock",
           join(packDir, packed.filename),
         ],
-        { cwd: install },
+        { cwd: install, env: npmEnv },
       );
       await stat(join(install, "node_modules/.bin/assetgrove"));
 

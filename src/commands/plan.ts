@@ -65,6 +65,7 @@ Review the saved plan before apply; this command never generates images.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
+  confirm: "spend",
   async run(args) {
     const result = await generationTool(
       "plan",

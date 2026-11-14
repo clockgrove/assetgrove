@@ -40,7 +40,7 @@ interface OpArgs {
 
 export const opCommand = defineCommand<OpArgs>({
   name: "op",
-  tool: null,
+  tool: "op",
   summary: "run one media operation over images (matte, trim, scale, convert, ...)",
   details: `Runs one operation (see \`assetgrove ops\`) over the input images and writes the outputs and a
 provenance record. --out is a file for a single output, otherwise a directory.

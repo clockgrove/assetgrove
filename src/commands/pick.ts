@@ -10,7 +10,7 @@ interface PickArgs {
 
 export const pickCommand = defineCommand<PickArgs>({
   name: "pick",
-  tool: null,
+  tool: "pick",
   summary: "write a chosen candidate and its manifest into the target, review pending",
   details: `Writes the chosen candidate and its manifest into the target with review pending, then runs
 the target profile's validator when it declares one. A human runs pick; agents never do.`,
@@ -29,6 +29,7 @@ the target profile's validator when it declares one. A human runs pick; agents n
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "never", writes: "target" },
+  confirm: "pick",
   async run(args) {
     const result = await pick({
       runDir: args.run,

@@ -22,7 +22,7 @@ interface IdentityCheckArgs {
 
 export const identityCheckCommand = defineCommand<IdentityCheckArgs>({
   name: "identity-check",
-  tool: null,
+  tool: "identity_check",
   summary: "check that identity records agree with their own approved references",
   details: `Asks the identity-check route whether each identity record's written signature features,
 proportions and palette agree with the record's approved reference images (the source of truth).
@@ -60,6 +60,7 @@ fixes its text or its references. See docs/generation-knobs.md.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "always", writes: "none" },
+  confirm: "spend",
   async run(args, ctx) {
     const doc = await loadBible(args.bible);
     const named = args.subject ?? [];

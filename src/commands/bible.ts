@@ -12,12 +12,12 @@ interface BibleArgs {
 
 export const bibleCommand = defineCommand<BibleArgs>({
   name: "bible",
-  tool: null,
+  tool: "bible",
   summary: "describe a world's art constitution or initialize a repository preset",
-  details: `Actions, each served over MCP as a tool of its own:
-  describe  needs --bible; the tool is bible_describe
-  init      needs --directory, --world and --preset; the tool is bible_init
-  preset    needs --bible and --preset; the tool is bible_preset
+  details: `Actions (the bible tool takes the action as its action argument):
+  describe  needs --bible
+  init      needs --directory, --world and --preset
+  preset    needs --bible and --preset
 
 Presets: cozy-storybook, flat-cartoon-kids, dark-gritty-isometric.
 Initialization explicitly writes a bible, Agent Skill and repository-owned prompt template.`,

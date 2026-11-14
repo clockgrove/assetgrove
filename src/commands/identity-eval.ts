@@ -38,7 +38,7 @@ interface IdentityEvalArgs {
 
 export const identityEvalCommand = defineCommand<IdentityEvalArgs>({
   name: "identity-eval",
-  tool: null,
+  tool: "identity_eval",
   summary: "score a local labelled image set against identity locks and recommend a threshold",
   details: `Scores every case of a labelled set against its subject's identity lock through the identity
 route. cases.json is a list (or {"cases": [...]}) of {"image", "subject", "same": true|false,
@@ -82,6 +82,7 @@ hold a game's private art. See docs/generation-knobs.md.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "always", writes: "out" },
+  confirm: "spend",
   async run(args, ctx) {
     const profile = args.profile ? (await readJson<TargetProfile>(args.profile)).value : {};
     const { provider, name } = await providerFor(args.providerScript);
