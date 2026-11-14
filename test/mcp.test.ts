@@ -438,6 +438,8 @@ async function stripWorld() {
 
 const rows: Row[] = [
   { tool: "ops", prepare: async () => ({}) },
+  { tool: "settings", prepare: async () => ({ action: "show" }) },
+  { tool: "spend", prepare: async () => ({ action: "status", workItem: "mcp-parity" }) },
   {
     tool: "bible",
     prepare: async () => ({

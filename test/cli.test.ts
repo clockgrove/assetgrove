@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -196,6 +197,8 @@ test("a provider script without image and vision is invalid_input", async () => 
 });
 
 test("stage without a key and without a script is provider_error", async () => {
+  // A declared gateway limit, so the missing key is what refuses.
+  declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   const { base } = await files();
   const r = await cli(["stage", ...base, "--json"], noKey());
   assert.equal(r.code, 4);
