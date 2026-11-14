@@ -3,6 +3,8 @@ import type { ParseArgsOptionsConfig } from "node:util";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import { SettingsError } from "../env.ts";
 import { EXIT, InputError } from "../errors.ts";
+import { checkTrackedKeys } from "../guard.ts";
+import { redact } from "../redact.ts";
 import { checkContextEnvironment, isPaid } from "./context.ts";
 import { failureOutcome } from "./result.ts";
 import type {
@@ -112,15 +114,27 @@ export async function validateArgs(spec: CommandSpec, args: Args): Promise<void>
   }
 }
 
+/** The commands whose target the tracked-key guard checks before they write into it. */
+const GUARDED_TARGETS: ReadonlySet<string> = new Set(["pick", "write_families"]);
+
 /**
  * Validates a command's input and runs it; a thrown error becomes its refusal outcome. A paid
- * command first refuses an environment its settings do not allow (exit 2 `settings_invalid`).
+ * command first refuses an environment its settings do not allow (exit 2 `settings_invalid`) and a
+ * key in a tracked file of the working directory's repository (exit 2 `key_tracked`); pick and
+ * write-families refuse a key in a tracked file of their target's repository. The command's log
+ * is redacted.
  */
 export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
   try {
-    if (isPaid(spec)) checkContextEnvironment(ctx);
+    const guard = { settings: ctx.settings, ...(ctx.env && { env: ctx.env }) };
+    if (isPaid(spec)) {
+      checkContextEnvironment(ctx);
+      checkTrackedKeys(process.cwd(), guard);
+    }
     await validateArgs(spec, args);
-    return await spec.run(args, ctx);
+    if (spec.tool !== null && GUARDED_TARGETS.has(spec.tool) && typeof args["target"] === "string")
+      checkTrackedKeys(args["target"], guard);
+    return await spec.run(args, { ...ctx, log: (message) => ctx.log(redact(message)) });
   } catch (error) {
     return errorOutcome(error);
   }

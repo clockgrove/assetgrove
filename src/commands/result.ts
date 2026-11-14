@@ -3,15 +3,25 @@ import { BudgetExceededError } from "../budget.ts";
 import { EXIT, InputError, ProviderError } from "../errors.ts";
 import type { ErrorCode } from "../errors.ts";
 import { LicenseError } from "../license.ts";
+import { redact } from "../redact.ts";
 import type { RunRecord, StagePlan } from "../loop.ts";
 import { SPEND_ENV, SpendLimitError, isPaidProvider, limitLabel } from "../spend.ts";
 import type { SpendLedger, SpendStatus } from "../spend.ts";
 import type { Failure, Outcome } from "./types.ts";
 
-/** The one result document of a command: its fields, then the contract fields no field shadows. */
+/**
+ * The one result document of a command: its fields, then the contract fields no field shadows.
+ * The error message is redacted (src/redact.ts).
+ */
 export function resultDocument(command: string | null, outcome: Outcome): Record<string, unknown> {
   const { exitCode, fields, error } = outcome;
-  return { ...fields, ok: exitCode === 0, exitCode, command, ...(error && { error }) };
+  return {
+    ...fields,
+    ok: exitCode === 0,
+    exitCode,
+    command,
+    ...(error && { error: { ...error, message: redact(error.message) } }),
+  };
 }
 
 /** A refusal: the error code's exit, the fields and summary so far, and the code and message. */
@@ -21,15 +31,15 @@ export function refusal(
   fields: Record<string, unknown>,
   human: string,
 ): Outcome {
-  return { exitCode: EXIT[code], fields, human, error: { code, message } };
+  return { exitCode: EXIT[code], fields, human, error: { code, message: redact(message) } };
 }
 
 /**
  * The error code of a thrown error: its own `code` when that is an error code of the exit table,
- * else one by its class; anything unrecognised is an internal error.
+ * else one by its class; anything unrecognised is an internal error. The message is redacted.
  */
 export function classify(error: unknown): Failure {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redact(error instanceof Error ? error.message : String(error));
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === "string" && Object.hasOwn(EXIT, code)) {
     return { code: code as ErrorCode, message };
