@@ -116,7 +116,6 @@ const withoutFormat = <T extends { format?: string }>(value: T): Omit<T, "format
   return rest;
 };
 const unversionedMarkdown = (source: string) => source.replace(/^format: .*\n/m, "");
-const PROSE = "# Synthetic\n\n## Do's and Don'ts\n\nDo follow the anchors.\n";
 
 function assertMissing(run: { code: number; doc: Record<string, unknown> }, line: string) {
   assert.equal(run.code, 2, JSON.stringify(run.doc));
