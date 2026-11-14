@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { commands } from "../src/commands/registry.ts";
+import { REFUSED_VARIABLES } from "../src/env.ts";
 import { flagName } from "../src/commands/runner.ts";
 import type { CommandSpec } from "../src/commands/types.ts";
 import { encodePng } from "../src/image/raster.ts";
@@ -45,6 +46,11 @@ function childEnv(extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
   delete env["AI_GATEWAY_API_KEY"];
+  // The mark test's own settings allow no proxy or TLS variable; the server needs no network.
+  for (const name of REFUSED_VARIABLES) {
+    delete env[name];
+    delete env[name.toLowerCase()];
+  }
   return { ...env, ...extra };
 }
 

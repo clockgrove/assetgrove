@@ -3,7 +3,8 @@
  * it points the cross-run spend ledger at a new file, ASSETGROVE_CONFIG at a settings file whose
  * stateDir is a new directory, so tests never read or write the user's own ledger, settings or
  * state. It unsets every variable `checkEnvironment` refuses, so a proxy on the machine never
- * refuses a test. Child processes inherit all of this through process.env.
+ * refuses a test. Child processes inherit all of this through process.env. The removed values stay
+ * in `machineProxyEnv`, for children such as `npm install` that need the machine's proxy.
  *
  * Every top-level test starts from the base settings; the helpers rewrite the file for tests that
  * need a headless operator, approved commands or declared limits, and the change ends with that
@@ -29,9 +30,14 @@ for (const name of [
   "ASSETGROVE_WORK_ITEM_LIMIT_USD",
 ])
   delete process.env[name];
+/** The refused variables as the machine set them, removed from process.env below. */
+export const machineProxyEnv: Record<string, string> = {};
 for (const name of REFUSED_VARIABLES) {
-  delete process.env[name];
-  delete process.env[name.toLowerCase()];
+  for (const key of [name, name.toLowerCase()]) {
+    const value = process.env[key];
+    if (value !== undefined) machineProxyEnv[key] = value;
+    delete process.env[key];
+  }
 }
 
 export const stateDir: string = join(root, "state");

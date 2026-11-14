@@ -8,7 +8,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
-import { checkEnvironment, refusedVariables, SettingsError } from "../src/env.ts";
+import {
+  checkEnvironment,
+  REFUSED_VARIABLES,
+  refusedVariables,
+  SettingsError,
+} from "../src/env.ts";
 
 const refused = (error: unknown) => {
   assert.ok(error instanceof SettingsError, String(error));
@@ -59,6 +64,16 @@ function cli(args: string[], env: NodeJS.ProcessEnv) {
   });
 }
 
+/** This process's environment without a model key or any proxy or TLS variable. */
+function cleanEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const name of REFUSED_VARIABLES) {
+    delete env[name];
+    delete env[name.toLowerCase()];
+  }
+  return env;
+}
+
 /** A settings file outside every repository, allowing the given variables. */
 async function settings(allow: string[]): Promise<string> {
   const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-environment-")));
@@ -83,11 +98,10 @@ async function stageArgs(): Promise<string[]> {
 
 test("server start and a paid CLI command exit 2 settings_invalid with HTTPS_PROXY set and not allowed", async () => {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...cleanEnv(),
     HTTPS_PROXY: "http://127.0.0.1:9",
     ASSETGROVE_CONFIG: await settings([]),
   };
-  delete env["AI_GATEWAY_API_KEY"];
   const server = await cli(["mcp"], env);
   assert.equal(server.code, 2, server.stderr);
   assert.equal(server.stdout, "");
@@ -106,11 +120,10 @@ test("server start and a paid CLI command exit 2 settings_invalid with HTTPS_PRO
 
 test("server start and a paid CLI command proceed when environment.allow lists HTTPS_PROXY", async () => {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...cleanEnv(),
     HTTPS_PROXY: "http://127.0.0.1:9",
     ASSETGROVE_CONFIG: await settings(["HTTPS_PROXY"]),
   };
-  delete env["AI_GATEWAY_API_KEY"];
   const server = await cli(["mcp"], env);
   assert.equal(server.code, 0, server.stderr);
 
