@@ -16,6 +16,7 @@ import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { referenceLicenses } from "./bible.ts";
 import { InputError } from "./errors.ts";
+import { recordPath } from "./paths.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import type { IdentityAgreement } from "./identity.ts";
@@ -281,7 +282,8 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       const id = `c${index + 1}`;
       const artifacts: string[] = [];
       for (const artifact of generated.artifacts ?? []) {
-        const name = join(`${id}-${generator.kind}`, basename(artifact.name));
+        // Recorded relative to the run with '/' (src/paths.ts); join() takes '/' on every OS.
+        const name = recordPath(join(`${id}-${generator.kind}`, basename(artifact.name)));
         await mkdir(join(runDir, dirname(name)), { recursive: true });
         await writeFile(join(runDir, name), artifact.bytes);
         artifacts.push(name);

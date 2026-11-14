@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   combineDigitalSourceTypes,
@@ -12,6 +12,7 @@ import {
 import { decodeImage } from "./image/raster.ts";
 import { pixelHash } from "./transform/run.ts";
 import { InputError } from "./errors.ts";
+import { relativeRecordPath, writeFiles } from "./paths.ts";
 import { requireLicensable } from "./license.ts";
 import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
@@ -188,16 +189,14 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   if (provenancePath) {
     writes.push([provenancePath, `${JSON.stringify(provenance, null, 2)}\n`]);
   }
-  for (const [path, content] of writes) {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content);
-  }
+  // Refuses case-only collisions and ':' in a name before the first write.
+  await writeFiles(targetDir, writes);
 
   const result: TargetWriteResult = {
     mediaPath,
     manifestPath,
     ...(provenancePath !== undefined && { provenancePath }),
-    files: writes.map(([path]) => relative(targetDir, path)),
+    files: writes.map(([path]) => relativeRecordPath(targetDir, path)),
   };
   if (profile.validator) {
     const vars = { manifest: manifestRel, media: mediaRel };
