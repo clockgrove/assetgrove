@@ -155,8 +155,9 @@ export function toolInputSchema(spec: CommandSpec): JsonSchemaObject {
   const properties: Record<string, JsonSchemaProperty> = {};
   for (const [name, property] of Object.entries(spec.input.properties)) {
     if (CLI_ONLY_PROPERTIES.includes(name)) continue;
-    const { placeholder: _placeholder, ...rest } = property;
-    properties[name] = rest;
+    const listed = { ...property };
+    delete listed.placeholder;
+    properties[name] = listed;
   }
   const required = (spec.input.required ?? []).filter((n) => !CLI_ONLY_PROPERTIES.includes(n));
   return {

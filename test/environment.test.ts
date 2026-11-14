@@ -1,5 +1,13 @@
+import "./fixtures/env.ts";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 import { checkEnvironment, refusedVariables, SettingsError } from "../src/env.ts";
 
 const refused = (error: unknown) => {
@@ -34,4 +42,79 @@ test("allowing one variable does not allow another", () => {
   const env = { HTTPS_PROXY: "http://proxy:3128", NODE_EXTRA_CA_CERTS: "/ca.pem" };
   assert.deepEqual(refusedVariables(["HTTPS_PROXY"], env), ["NODE_EXTRA_CA_CERTS"]);
   assert.throws(() => checkEnvironment(["HTTPS_PROXY"], env), refused);
+});
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+
+/** Runs the CLI with stdin closed, so `mcp` serves until its input ends. */
+function cli(args: string[], env: NodeJS.ProcessEnv) {
+  return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+    const child = execFile(
+      process.execPath,
+      ["src/cli.ts", ...args],
+      { cwd: root, env, timeout: 30_000 },
+      (error, stdout, stderr) => resolve({ code: error ? Number(error.code) : 0, stdout, stderr }),
+    );
+    child.stdin?.end();
+  });
+}
+
+/** A settings file outside every repository, allowing the given variables. */
+async function settings(allow: string[]): Promise<string> {
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-environment-")));
+  const path = join(dir, "settings.json");
+  await writeFile(
+    path,
+    JSON.stringify({ format: "assetgrove-settings/1", environment: { allow } }),
+  );
+  return path;
+}
+
+async function stageArgs(): Promise<string[]> {
+  const world = await syntheticWorld();
+  const spec = join(world.dir, "spec.json");
+  const bible = join(world.bibleDir, "bible.json");
+  const profile = join(world.dir, "profile.json");
+  await writeFile(spec, JSON.stringify(shelterSpec));
+  await writeFile(bible, JSON.stringify(world.bible));
+  await writeFile(profile, JSON.stringify(world.profile));
+  return ["stage", "--spec", spec, "--bible", bible, "--profile", profile, "--dry-run", "--json"];
+}
+
+test("server start and a paid CLI command exit 2 settings_invalid with HTTPS_PROXY set and not allowed", async () => {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HTTPS_PROXY: "http://127.0.0.1:9",
+    ASSETGROVE_CONFIG: await settings([]),
+  };
+  delete env["AI_GATEWAY_API_KEY"];
+  const server = await cli(["mcp"], env);
+  assert.equal(server.code, 2, server.stderr);
+  assert.equal(server.stdout, "");
+  assert.match(server.stderr, /HTTPS_PROXY is set/);
+
+  const paid = await cli(await stageArgs(), env);
+  assert.equal(paid.code, 2, paid.stderr);
+  const document = JSON.parse(paid.stdout) as { ok: boolean; error: { code: string } };
+  assert.equal(document.ok, false);
+  assert.equal(document.error.code, "settings_invalid");
+
+  // A free command is not refused.
+  const free = await cli(["ops", "--json"], env);
+  assert.equal(free.code, 0, free.stderr);
+});
+
+test("server start and a paid CLI command proceed when environment.allow lists HTTPS_PROXY", async () => {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HTTPS_PROXY: "http://127.0.0.1:9",
+    ASSETGROVE_CONFIG: await settings(["HTTPS_PROXY"]),
+  };
+  delete env["AI_GATEWAY_API_KEY"];
+  const server = await cli(["mcp"], env);
+  assert.equal(server.code, 0, server.stderr);
+
+  const paid = await cli(await stageArgs(), env);
+  assert.equal(paid.code, 0, paid.stderr);
+  assert.equal((JSON.parse(paid.stdout) as { ok: boolean }).ok, true);
 });

@@ -8,7 +8,7 @@ import { describeBible, initBible, useBiblePreset } from "./bible.ts";
 import { checkContextEnvironment, isPaid } from "./commands/context.ts";
 import { commands } from "./commands/registry.ts";
 import { resultDocument } from "./commands/result.ts";
-import { runCommand, toolInputSchema } from "./commands/runner.ts";
+import { errorOutcome, runCommand, toolInputSchema } from "./commands/runner.ts";
 import type { CommandSpec, RunContext } from "./commands/types.ts";
 import { InputError, ProviderError } from "./errors.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
@@ -179,11 +179,16 @@ function createServer(ctx: RunContext): McpServer {
   );
   for (const spec of commands) {
     if (spec.tool === null) continue;
+    const input = fromJsonSchema<Arguments>(toolInputSchema(spec));
+    // tools/list shows the schema; the handler checks it, so a refusal is a result document too.
+    const listed = {
+      "~standard": { ...input["~standard"], validate: (value: unknown) => ({ value }) },
+    };
     server.registerTool(
       spec.tool,
       {
         description: `${spec.summary[0]!.toUpperCase()}${spec.summary.slice(1)}.`,
-        inputSchema: fromJsonSchema<Arguments>(toolInputSchema(spec)),
+        inputSchema: listed as typeof input,
         outputSchema: fromJsonSchema<Arguments>(outputSchema),
         annotations: toolAnnotations(spec),
         ...(requiresUserInteraction(spec, headless) && {
@@ -191,7 +196,14 @@ function createServer(ctx: RunContext): McpServer {
         }),
       },
       async (args) => {
-        const outcome = await runCommand(spec, commandArgs(spec, args, ctx), ctx);
+        const checked = await input["~standard"].validate(args ?? {});
+        const outcome = checked.issues
+          ? errorOutcome(
+              new InputError(
+                `invalid ${spec.tool} input: ${checked.issues.map((i) => i.message).join("; ")}`,
+              ),
+            )
+          : await runCommand(spec, commandArgs(spec, args, ctx), ctx);
         const document = resultDocument(spec.name, outcome);
         return {
           content: [{ type: "text", text: JSON.stringify(document) }],
