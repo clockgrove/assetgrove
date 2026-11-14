@@ -1,7 +1,7 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
@@ -16,6 +16,8 @@ import {
   loadBible,
   loadDesignColors,
   parseBible,
+  projectRoot,
+  requireInsideProject,
   serializeBible,
   validateBible,
   validateTokens,
@@ -476,4 +478,28 @@ test("a reference path outside the project root exits 2 invalid_input before any
   data.anchors.positive = [{ path: "bible/refs/den.png", role: "style" }];
   await writeFile(biblePath, serializeBible(data, "## Do's and Don'ts\n\nDo.\n"));
   assert.equal((await cli("bible", "describe", "--bible", biblePath)).code, 0);
+});
+
+test("the project root stops below the home directory and falls back to the shared file's directory", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "assetgrove-home-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  // A dotfiles repository at the home directory does not make the home directory the project.
+  await mkdir(join(home, ".git"));
+  const art = join(home, "work", "art");
+  await mkdir(join(home, "work", "refs"), { recursive: true });
+  await mkdir(art, { recursive: true });
+  // No marker below the home directory: the root is the bible's own directory.
+  assert.equal(projectRoot(art, home), await realpath(art));
+  assert.throws(
+    () => requireInsideProject(["../refs/x.png"], art, "bible.json", home),
+    /outside the project root/,
+  );
+  assert.throws(
+    () => requireInsideProject([join(home, ".ssh", "id.png")], art, "bible.json", home),
+    /outside the project root/,
+  );
+  // With a project marker above the bible, a sibling reference inside the project loads.
+  await mkdir(join(home, "work", ".assetgrove"));
+  assert.doesNotThrow(() => requireInsideProject(["../refs/x.png"], art, "bible.json", home));
+  assert.match(projectRoot(art, home), /work$/);
 });

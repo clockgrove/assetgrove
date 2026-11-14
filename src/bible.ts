@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse, stringify } from "yaml";
+import { homeDir } from "./env.ts";
 import { InputError } from "./errors.ts";
 import { formatLine, readFormat } from "./formats.ts";
 import type { BibleReference, ReferenceLicense } from "./types.ts";
@@ -273,15 +274,19 @@ function validateAxes(a: Obj, label: string, partial: boolean) {
 }
 /**
  * The project root of a shared file in `dir`: the nearest ancestor (inclusive) holding `.git` or
- * `.assetgrove`, else `dir` itself. Reference paths in shared files must resolve inside it.
+ * `.assetgrove`, else `dir` itself. As in settings, the home directory is never a project root (it
+ * would hold every private file), so the walk stops below it. Reference paths in shared files must
+ * resolve inside the root.
  */
-export function projectRoot(dir: string): string {
-  const start = resolve(dir);
-  for (let current = start; ; current = dirname(current)) {
+export function projectRoot(dir: string, home: string = homeDir()): string {
+  const start = realish(resolve(dir));
+  const stop = realish(resolve(home));
+  for (let current = start; current !== stop; current = dirname(current)) {
     if (existsSync(join(current, ".git")) || existsSync(join(current, ".assetgrove")))
       return current;
-    if (dirname(current) === current) return start;
+    if (dirname(current) === current) break;
   }
+  return start;
 }
 
 /** `path` with symlinks resolved as far as it exists, so a link cannot leave the root unseen. */
@@ -300,8 +305,13 @@ function realish(path: string): string {
  * Refuses (exit 2 `invalid_input`) any of `paths`, relative to `baseDir`, that resolves outside the
  * project root of `baseDir`, so a shared file cannot send a private file from elsewhere.
  */
-export function requireInsideProject(paths: string[], baseDir: string, source: string): void {
-  const root = realish(projectRoot(baseDir));
+export function requireInsideProject(
+  paths: string[],
+  baseDir: string,
+  source: string,
+  home: string = homeDir(),
+): void {
+  const root = projectRoot(baseDir, home);
   for (const path of paths) {
     const full = realish(resolve(baseDir, path));
     const rel = relative(root, full);
