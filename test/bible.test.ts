@@ -1,12 +1,14 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { recordPath } from "../src/paths.ts";
 import {
   BIBLE_PRESETS,
   biblePalette,
@@ -49,7 +51,7 @@ test("bible initializes all three repository-owned preset constitutions and skil
       assert.equal(document.hash.length, 64);
       assert.deepEqual(biblePalette(document.data), ["#292433", "#c49b70", "#7c93a8"]);
       assert.deepEqual(
-        paths.skillPaths.map((p) => relative(root, p)),
+        paths.skillPaths.map((p) => recordPath(relative(root, p))),
         [".claude/skills/art-direction/SKILL.md", ".agents/skills/art-direction/SKILL.md"],
       );
       for (const skillPath of paths.skillPaths)
@@ -488,8 +490,9 @@ test("the project root stops below the home directory and falls back to the shar
   const art = join(home, "work", "art");
   await mkdir(join(home, "work", "refs"), { recursive: true });
   await mkdir(art, { recursive: true });
-  // No marker below the home directory: the root is the bible's own directory.
-  assert.equal(projectRoot(art, home), await realpath(art));
+  // No marker below the home directory: the root is the bible's own directory. The JavaScript
+  // realpath, as projectRoot uses: the native one expands Windows 8.3 short names.
+  assert.equal(projectRoot(art, home), realpathSync(art));
   assert.throws(
     () => requireInsideProject(["../refs/x.png"], art, "bible.json", home),
     /outside the project root/,

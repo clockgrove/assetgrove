@@ -19,7 +19,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const cliPath = join(root, "src", "cli.ts");
 const temporary: string[] = [];
 after(() => {
-  for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
+  for (const dir of temporary) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
 });
 
 // Names and assignments are built at run time, so this tracked file never holds an assignment.
