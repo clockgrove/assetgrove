@@ -29,6 +29,8 @@ export interface Billing {
   paid: boolean;
   hosts: string[];
   limit?: ProviderLimit;
+  /** The key variable, when the instance was made without its key. */
+  missingKey?: string;
   limitReading?: () => Promise<LimitReading>;
 }
 

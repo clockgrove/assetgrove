@@ -63,6 +63,7 @@ function billingOf(
     paid,
     hosts: hostsOf(adapter, c.baseURL),
     ...(c.settings.limit !== undefined && { limit: c.settings.limit }),
+    ...(c.apiKey === undefined && c.keyEnv !== undefined && { missingKey: c.keyEnv }),
   };
 }
 

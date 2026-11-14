@@ -1,5 +1,4 @@
 import "./fixtures/env.ts";
-import { declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -134,7 +133,6 @@ test("animation-qa: pixel failures name the frame; --no-vision spends nothing", 
 });
 
 test("animation-qa: --dry-run forecasts the flicker calls and refuses over the cap", async () => {
-  declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   const { root } = await setup(undefined, { count: 8, style: "painterly", motion: "walk" });
   const args = [
     "animation-qa",
@@ -151,15 +149,12 @@ test("animation-qa: --dry-run forecasts the flicker calls and refuses over the c
   const over = await cli([...args, "--cap", "0.1"]);
   assert.equal(over.code, 3);
   assert.equal(doc(over).error.code, "cap_refused");
-  // Without --dry-run the same cap refuses before any call, with or without a key.
+  // Without --dry-run the same cap refuses before any call, and without a key nothing is called.
   const refused = await cli([...args.filter((a) => a !== "--dry-run"), "--cap", "0.1"]);
-  assert.equal(refused.code, 3, "the cap refuses before any call");
-  assert.equal(doc(refused).error.code, "cap_refused");
+  assert.equal(refused.code, 4, "no key: provider error before any spend");
 });
 
 test("fix-frame: regenerates only that frame and records it in provenance", async () => {
-  // A declared gateway limit, so the missing key is what refuses.
-  declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   const { root, strip } = await setup(undefined, {
     count: 8,
     style: "painterly",

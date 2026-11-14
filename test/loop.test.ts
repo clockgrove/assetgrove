@@ -1,5 +1,4 @@
 import "./fixtures/env.ts";
-import { declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -346,8 +345,6 @@ test("a validator rejection is reported, not hidden", async () => {
 });
 
 test("the CLI takes the gateway key from the environment only, and refuses without it", async () => {
-  // A declared gateway limit, so the missing key is what refuses.
-  declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   const world = await syntheticWorld();
   const spec = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");

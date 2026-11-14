@@ -5,7 +5,7 @@ import { BudgetExceededError } from "./budget.ts";
 import type { Env } from "./env.ts";
 import { InputError } from "./errors.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
-import { assertLimitsDeclared, isPaid } from "./limits.ts";
+import { assertKeysPresent, assertLimitsDeclared, isPaid } from "./limits.ts";
 import type { Settings } from "./settings.ts";
 import type { TargetProfile } from "./types.ts";
 
@@ -33,8 +33,9 @@ export const LEDGER_FILE = "spend.jsonl";
 
 /**
  * The ledger a run with this provider reserves against, with the profile's limits: none for a
- * free provider, whose runs keep only their own cap. A paid provider must declare its limit
- * first (`provider_limit_undeclared`, exit 3), before anything is reserved.
+ * free provider, whose runs keep only their own cap. A paid provider must have its key (else a
+ * provider error, exit 4) and declare its limit (`provider_limit_undeclared`, exit 3) before
+ * anything is reserved.
  */
 export function ledgerFor(
   ledger: SpendLedger | undefined,
@@ -42,6 +43,7 @@ export function ledgerFor(
   profile?: Pick<TargetProfile, "spend">,
 ): SpendLedger | undefined {
   if (!isPaid(provider)) return undefined;
+  assertKeysPresent(provider);
   assertLimitsDeclared(provider);
   return ledger?.forProfile(profile);
 }

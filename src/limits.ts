@@ -76,6 +76,20 @@ export function assertLimitDeclared(billing: Billing): void {
   }
 }
 
+/**
+ * Throws a provider error (exit 4) for a paid billing made without its key, naming the variable:
+ * a run without its key fails at its start, before any limit, cap or call.
+ */
+export function assertKeysPresent(provider: GenerationProvider | undefined): void {
+  if (provider === undefined) return;
+  for (const billing of billingsOf(provider)) {
+    if (billing.paid && billing.missingKey !== undefined)
+      throw new ProviderError(
+        `${billing.missingKey} is not set; the key of provider "${billing.provider}" must come from the environment`,
+      );
+  }
+}
+
 /** `assertLimitDeclared` for every paid billing of a provider. */
 export function assertLimitsDeclared(provider: GenerationProvider | undefined): void {
   if (provider === undefined) return;
