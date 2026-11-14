@@ -101,7 +101,7 @@ The key and `baseURL` are passed to the SDK explicitly, so `*_BASE_URL` environm
 
 ## Caps
 
-`caps` holds `runUsd` (default 5), `dailyUsd` (10) and `workItemUsd` (5). A run's cap is `--cap` when given, else the command's own default, and never above `caps.runUsd`; a `--cap` above `caps.runUsd` exits 3 (`cap_refused`) before any work. The daily and work-item limits are the settings value or the target profile's `spend.dailyLimitUsd` / `spend.workItemLimitUsd`, whichever is lower. A limit's `source` is `settings` or `profile`.
+`caps` holds `runUsd` (default 5), `dailyUsd` (10) and `workItemUsd` (5). A run's cap is `--cap` when given, else the command's own default, and never above `caps.runUsd`; a `--cap` above `caps.runUsd` exits 3 (`cap_refused`) before any work. For `plan` the run settings' `capUsd` takes the place of `--cap` and is refused the same way; `apply` lowers a saved plan's `capUsd` to `caps.runUsd`. The daily and work-item limits are the settings value or the target profile's `spend.dailyLimitUsd` / `spend.workItemLimitUsd`, whichever is lower. A limit's `source` is `settings` or `profile`.
 
 ## Ledger
 
@@ -118,7 +118,7 @@ A paid call to a provider with no declared `providers.<id>.limit` exits 3 (`prov
 | OpenAI            | Project budgets and organization usage limits | No: declared only                                         | OpenAI platform docs   | 2026-11-14 |
 | Tripo             | Prepaid credit balance                        | Yes: `GET /user/balance`                                  | Tripo API docs         | 2026-11-14 |
 
-`spend check [--provider <id>]` reports, per configured provider, `{provider, adapter, paid, declared, limit, verified, reading, readingError?, mismatch}`. The gateway reports `remainingUsd`; Tripo reports `credits`, and `remainingUsd` when `usdPerCredit` is set. Anthropic and OpenAI adapters are not in core yet, so their limits are declared only. A reading that contradicts the declaration exits 3 (`provider_limit_mismatch`): a reported `limitUsd` that differs from the declared `usd` by more than a cent, or a prepaid declared limit whose `remainingUsd` exceeds the declared `usd` by more than a cent. A gateway 402 quota error and an OpenAI quota 429 (code `insufficient_quota`) map to `cap_refused` (exit 3).
+`spend check [--provider <id>]` reports, per configured provider, `{provider, adapter, paid, declared, limit, verified, reading, readingError?, mismatch}`, and `refused`, the refused environment variables that are set (Environment, below). When `refused` is not empty no keyed reading is made: `readingError` says so and the limit is not verified. `settings check` reads limits the same way. The gateway reports `remainingUsd`; Tripo reports `credits`, and `remainingUsd` when `usdPerCredit` is set. Anthropic and OpenAI adapters are not in core yet, so their limits are declared only. A reading that contradicts the declaration exits 3 (`provider_limit_mismatch`): a reported `limitUsd` that differs from the declared `usd` by more than a cent, or a prepaid declared limit whose `remainingUsd` exceeds the declared `usd` by more than a cent. A gateway 402 quota error and an OpenAI quota 429 (code `insufficient_quota`) map to `cap_refused` (exit 3).
 
 ## Format lines
 

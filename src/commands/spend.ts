@@ -1,3 +1,4 @@
+import { refusedVariables } from "../env.ts";
 import { InputError } from "../errors.ts";
 import { checkLimit } from "../limits.ts";
 import type { LimitCheck } from "../limits.ts";
@@ -23,7 +24,8 @@ export const spendCommand = defineCommand<SpendArgs>({
   check   per configured provider (or --provider): the declared limit, what the provider
           reports (gateway credits, Tripo balance; others are declared only) and whether the
           two agree. A reading that contradicts the declared limit exits 3
-          provider_limit_mismatch.
+          provider_limit_mismatch. With a refused TLS or proxy variable set (docs/settings.md,
+          Environment) no reading is made and refused lists them.
 Spends nothing.`,
   input: {
     type: "object",
@@ -73,10 +75,12 @@ Spends nothing.`,
       return { exitCode: 0, fields, human };
     }
     if (args.action === "check") {
+      // A refused TLS or proxy variable could redirect the keyed reading: it is not made.
+      const refused = refusedVariables(ctx.settings.environment.allow, ctx.env ?? process.env);
       const providers: LimitCheck[] = [];
       for (const { billing } of await configuredProviders(ctx, args.providerScript, args.provider))
-        providers.push(await checkLimit(billing));
-      const fields = { providers };
+        providers.push(await checkLimit(billing, { refused }));
+      const fields = { providers, refused };
       const human = providers
         .map((p) => {
           const reading =

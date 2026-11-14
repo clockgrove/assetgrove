@@ -127,12 +127,25 @@ export interface LimitCheck {
   mismatch: boolean;
 }
 
-/** Declares, reads and compares one provider's limit. Never throws for a failed reading. */
-export async function checkLimit(billing: Billing): Promise<LimitCheck> {
+/**
+ * Declares, reads and compares one provider's limit. Never throws for a failed reading. With
+ * `refused` (the set TLS and proxy variables the settings do not allow, src/env.ts) the keyed
+ * reading is not made, since those variables can redirect or unwrap the TLS that carries the key;
+ * `readingError` says why and the limit is not verified.
+ */
+export async function checkLimit(
+  billing: Billing,
+  options: { refused?: readonly string[] } = {},
+): Promise<LimitCheck> {
   const limit = billing.limit ?? null;
   let reading: LimitReading | null = null;
   let readingError: string | undefined;
-  if (billing.limitReading !== undefined) {
+  const refused = options.refused ?? [];
+  if (billing.limitReading !== undefined && refused.length > 0) {
+    readingError =
+      `not read: ${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} set and not in ` +
+      "the settings' environment.allow";
+  } else if (billing.limitReading !== undefined) {
     try {
       reading = await billing.limitReading();
     } catch (error) {

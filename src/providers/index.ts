@@ -111,15 +111,16 @@ export async function planningContext(
   workItem: string | undefined,
 ): Promise<ToolContext> {
   const ledger = spendLedger(ctx, workItem);
+  const base = { ledger, runCapUsd: ctx.settings.caps.runUsd };
   const scripted = await scriptedFrom(ctx, providerScript);
-  if (scripted) return { provider: scripted.provider, providerName: scripted.name, ledger };
+  if (scripted) return { ...base, provider: scripted.provider, providerName: scripted.name };
   const id = providerIdFor(ctx.settings, GATEWAY_ADAPTER);
   const keyEnv = keyEnvOf(gatewayAdapter, ctx.settings.providers[id] ?? {});
   if (keyEnv !== undefined && (ctx.env ?? process.env)[keyEnv]) {
     const gateway = gatewayProvider(ctx);
-    return { provider: gateway.provider, providerName: gateway.name, ledger };
+    return { ...base, provider: gateway.provider, providerName: gateway.name };
   }
-  return { ledger };
+  return base;
 }
 
 /**

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createPlan, applyPlan, savePlan, assertOriginalDescription } from "../src/planning.ts";
+import { BudgetExceededError, CapRefusedError } from "../src/budget.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
@@ -652,5 +653,35 @@ test("planning reconciles profile palette constraints and mattes opaque backgrou
       profile: syntheticProfile({ style: { color: { rule: "palette", palette: ["#010203"] } } }),
     }),
     /profile palette conflicts/,
+  );
+});
+
+test("the developer settings' caps.runUsd bounds plan and apply: a higher run-settings capUsd is refused, a saved plan's cap is lowered", async () => {
+  const f = await fixture();
+  // A run-settings capUsd above caps.runUsd is refused like --cap: only a person raises a cap.
+  await assert.rejects(
+    createPlan({ biblePath: f.biblePath, spec, settings, provider: scripted(), runCapUsd: 1 }),
+    (error: unknown) => error instanceof CapRefusedError && error.code === "cap_refused",
+  );
+  // Without one, the default $5 is lowered to caps.runUsd.
+  const lowered = await createPlan({
+    biblePath: f.biblePath,
+    spec,
+    settings: { candidates: 1 },
+    provider: scripted(),
+    runCapUsd: 1,
+  });
+  assert.equal(lowered.settings.capUsd, 1);
+  // apply budgets a saved plan under min(plan capUsd, caps.runUsd).
+  const plan = await createPlan({ biblePath: f.biblePath, spec, settings, provider: scripted() });
+  assert.equal(plan.settings.capUsd, 2);
+  await assert.rejects(
+    applyPlan(plan, {
+      provider: scripted(),
+      autoApprove: true,
+      outDir: join(f.root, "runs"),
+      runCapUsd: 0.0001,
+    }),
+    (error: unknown) => error instanceof BudgetExceededError && error.capUsd === 0.0001,
   );
 });

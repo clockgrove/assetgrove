@@ -87,16 +87,16 @@ Read-only: nothing here writes the settings. A person edits the file.`,
     }
     if (args.action === "check") {
       const summary = providerSummary(ctx);
+      const refused = refusedVariables(s.environment.allow, ctx.env ?? process.env);
       const providers = [];
       for (const { billing } of await configuredProviders(ctx, args.providerScript)) {
-        const check = await checkLimit(billing);
+        const check = await checkLimit(billing, { refused });
         providers.push({
           ...check,
           keyEnv: summary[billing.provider]?.["keyEnv"] ?? null,
           keyPresent: summary[billing.provider]?.["keyPresent"] ?? false,
         });
       }
-      const refused = refusedVariables(s.environment.allow, ctx.env ?? process.env);
       const fields = { path: s.path, exists: s.exists, mode: s.mode, providers, refused };
       const human = [
         `settings ${s.path}${s.exists ? "" : " (no file: defaults)"}`,

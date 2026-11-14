@@ -8,7 +8,7 @@ import { pixelHash } from "./transform/run.ts";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { Budget } from "./budget.ts";
+import { Budget, runCap } from "./budget.ts";
 import { ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
@@ -155,6 +155,11 @@ export interface CreatePlanOptions {
   providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
+  /**
+   * The developer settings' `caps.runUsd`: the run cap is never above it, and a run-settings
+   * `capUsd` above it is refused (`cap_refused`), as `--cap` is.
+   */
+  runCapUsd?: number;
   profile?: TargetProfile;
   specDir?: string;
   /** Overrides the profile's identity mode: off, shadow or enforce. */
@@ -191,7 +196,10 @@ function settingsOf(options: CreatePlanOptions): RunSettings {
   const routes = options.routes ?? defaultRoutes;
   const settings: RunSettings = {
     candidates: values.candidates ?? 4,
-    capUsd: values.capUsd ?? 5,
+    capUsd:
+      options.runCapUsd !== undefined
+        ? runCap({ runUsd: options.runCapUsd }, values.capUsd, 5)
+        : (values.capUsd ?? 5),
     modelRoute: route(
       values.modelRoute ?? (options.spec.kind === "sprite-strip" ? routes.edit : routes.still),
       "generation",
@@ -803,6 +811,8 @@ export interface ApplyPlanOptions {
   providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
+  /** The developer settings' `caps.runUsd`: the saved plan's cap is lowered to it, never raised. */
+  runCapUsd?: number;
   autoApprove?: boolean;
   outDir?: string;
   /** Receives one line per provider decision call. */
@@ -861,10 +871,11 @@ export async function applyPlan(
     throw new InputError(
       "plan is not approved; record human approval in approved or use --auto-approve for unattended generation",
     );
-  const budget = new Budget(
-    plan.settings.capUsd,
-    ledgerFor(options.ledger, options.provider, plan.profile),
-  );
+  const capUsd =
+    options.runCapUsd !== undefined
+      ? Math.min(plan.settings.capUsd, options.runCapUsd)
+      : plan.settings.capUsd;
+  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.provider, plan.profile));
   // The compilation was spent (and recorded in any ledger) when the plan was made.
   budget.addPrior(plan.compiler.spentUsd, "prior prompt compilation");
   budget.check(plan.forecast.generationUsd, "planned generation");
@@ -885,7 +896,7 @@ export async function applyPlan(
     specDir: plan.specDir,
     profile: plan.profile,
     bibleVersion: plan.bible.version,
-    capUsd: plan.settings.capUsd,
+    capUsd,
     estimateUsd: plan.forecast.totalUsd,
     spentUsd: plan.compiler.spentUsd,
     requested: plan.settings.candidates,

@@ -25,12 +25,15 @@ function env(): NodeJS.ProcessEnv {
   return out;
 }
 
-function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+function cli(
+  args: string[],
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     execFile(
       process.execPath,
       ["src/cli.ts", ...args],
-      { cwd: root, env: env() },
+      { cwd: root, env: { ...env(), ...extraEnv } },
       (error, stdout, stderr) =>
         resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
     );
@@ -197,4 +200,32 @@ test("a reported limit must equal the declared one; a prepaid balance may not ex
     undefined,
   );
   assert.equal(contradicts({ kind: "unlimited" }, { source: "s", remainingUsd: 3 }), undefined);
+});
+
+test("spend check and settings check make no keyed reading while a refused TLS variable is set", async () => {
+  writeSettings({ providers: { scripted: { limit: { kind: "prepaid", usd: 20 } } } });
+  const marker = join(await mkdtemp(join(tmpdir(), "assetgrove-limit-")), "read.txt");
+  const script = await paidScript(
+    `limitReading: async () => { (await import("node:fs")).writeFileSync(${JSON.stringify(marker)}, "read"); return { source: "scripted balance", remainingUsd: 75 }; }`,
+  );
+  const tls = { NODE_TLS_REJECT_UNAUTHORIZED: "0" };
+  const spend = await cli(["spend", "check", "--provider-script", script, "--json"], tls);
+  assert.equal(spend.code, 0, spend.stderr);
+  const doc = JSON.parse(spend.stdout);
+  assert.deepEqual(doc.refused, ["NODE_TLS_REJECT_UNAUTHORIZED"]);
+  assert.equal(doc.providers[0].reading, null);
+  assert.equal(doc.providers[0].verified, false);
+  assert.match(doc.providers[0].readingError, /NODE_TLS_REJECT_UNAUTHORIZED/);
+  const settings = await cli(["settings", "check", "--provider-script", script, "--json"], tls);
+  assert.equal(settings.code, 0, settings.stderr);
+  assert.equal(JSON.parse(settings.stdout).providers[0].reading, null);
+  assert.equal(existsSync(marker), false);
+  // Allowed, the reading is made (and here contradicts the declared limit).
+  writeSettings({
+    providers: { scripted: { limit: { kind: "prepaid", usd: 20 } } },
+    environment: { allow: ["NODE_TLS_REJECT_UNAUTHORIZED"] },
+  });
+  const allowed = await cli(["spend", "check", "--provider-script", script, "--json"], tls);
+  assert.equal(allowed.code, 3, allowed.stderr);
+  assert.equal(existsSync(marker), true);
 });
