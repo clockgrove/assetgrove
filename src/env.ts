@@ -79,7 +79,8 @@ export function stateHome(env: Env = process.env, platform: string = process.pla
   );
 }
 
-function homeDir(env: Env): string {
+/** The user's home directory: `$HOME`, else `%USERPROFILE%`, else the system's answer. */
+export function homeDir(env: Env = process.env): string {
   const home = env["HOME"] || env["USERPROFILE"];
   return home && isAbsolute(home) ? home : homedir();
 }

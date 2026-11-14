@@ -440,3 +440,22 @@ test("unlimited needs acceptUnlimited", () => {
     invalid(/acceptUnlimited/),
   );
 });
+
+test("a repository at the home directory is not a project, so the default directories under it are accepted", () => {
+  const home = gitRepo();
+  const project = gitRepo(join(home, "work", "game"));
+  const settings = loadSettings({ env: { HOME: home }, platform: "linux", cwd: project });
+  assert.equal(settings.path, join(home, ".config", "assetgrove", "settings.json"));
+  // A repository between the home directory and the cwd still counts.
+  const outer = gitRepo(join(home, "outer"));
+  const inner = gitRepo(join(outer, "vendor", "inner"));
+  assert.throws(
+    () =>
+      loadSettings({
+        env: { HOME: home, ASSETGROVE_CONFIG: settingsFile({ format: FORMAT }, outer) },
+        platform: "linux",
+        cwd: inner,
+      }),
+    invalid(),
+  );
+});

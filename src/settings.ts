@@ -6,7 +6,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
-import { configHome, configOverride, SettingsError, stateHome, type Env } from "./env.ts";
+import { configHome, configOverride, homeDir, SettingsError, stateHome, type Env } from "./env.ts";
 import { FormatError, readFormat } from "./formats.ts";
 
 export { SettingsError } from "./env.ts";
@@ -359,7 +359,7 @@ function secretField(value: unknown, at: string[]): string[] | undefined {
 }
 
 /**
- * The projects in play, by real path: every directory holding `.git` at or above the cwd,
+ * The projects in play, by real path: every directory below the home directory holding `.git` at or above the cwd,
  * `--target` and the directory of each input file's real path; and, for a `.git` file (a linked
  * worktree or a submodule), the work tree whose Git directory it points into, with its ancestors.
  */
@@ -370,7 +370,9 @@ function projectRoots(options: LoadOptions): string[] {
     ...(options.inputs ?? []).map((input) => dirname(realIfExists(resolve(input)))),
   ];
   const roots = new Set<string>();
-  const walked = new Set<string>();
+  // A repository whose top level is the home directory (a dotfiles repository) is not a project:
+  // it would hold every default config and state directory.
+  const walked = new Set<string>([realIfExists(homeDir(options.env ?? process.env))]);
   for (let start = pending.pop(); start !== undefined; start = pending.pop()) {
     // A walked directory's ancestors are walked too, so the walk stops at the first one.
     for (let dir = start; !walked.has(dir); dir = dirname(dir)) {
