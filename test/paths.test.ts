@@ -5,7 +5,10 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { InputError } from "../src/errors.ts";
+import { classify } from "../src/commands/result.ts";
+import { EXIT, InputError } from "../src/errors.ts";
+import type { Generator } from "../src/generators/generator.ts";
+import { stage } from "../src/loop.ts";
 import {
   ioPath,
   readRecordPath,
@@ -13,7 +16,8 @@ import {
   recordRelative,
   refuseCaseCollisions,
 } from "../src/paths.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { defaultRoutes } from "../src/routes.ts";
+import { scriptedProvider, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -117,6 +121,57 @@ test("two writes differing only by case exit 2 invalid_input with nothing writte
   assert.deepEqual(await walk(world.targetDir), []);
   const run = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
   assert.equal(run.picked, undefined);
+});
+
+test("a stage candidate whose artifacts differ only by case is refused with exit 2 and none of its files written", async () => {
+  const world = await syntheticWorld();
+  let calls = 0;
+  const colliding: Generator = {
+    kind: "still",
+    planCandidate: () => [],
+    async generate() {
+      calls++;
+      return {
+        output: { mediaType: "image/png", extension: "png", bytes: new Uint8Array(), fields: {} },
+        qa: { passed: true, reasons: [] },
+        prompt: "colliding",
+        parameters: {},
+        artifacts: [
+          { name: "Mesh.glb", bytes: new Uint8Array([1]) },
+          { name: "mesh.glb", bytes: new Uint8Array([2]) },
+        ],
+      };
+    },
+  };
+  const error = await stage({
+    spec: { kind: "still", assetId: "den", animationFamily: "idle" },
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: world.profile,
+    routes: defaultRoutes,
+    provider: scriptedProvider(),
+    providerName: "scripted",
+    generators: [colliding],
+    runsDir: world.runsDir,
+    runId: "r-collide",
+    candidates: 2,
+  }).then(
+    () => assert.fail("stage should refuse"),
+    (e: unknown) => e,
+  );
+  assert.ok(error instanceof InputError);
+  const failure = classify(error);
+  assert.equal(failure.code, "invalid_input");
+  assert.equal(EXIT[failure.code], 2);
+  assert.equal(calls, 1, "the run stops at the refused candidate");
+  // What a refused stage leaves: its run directory with run.json recording the refusal, and no
+  // file of the refused candidate.
+  const runDir = join(world.runsDir, "r-collide");
+  assert.deepEqual(await walk(runDir), ["run.json"]);
+  const run = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
+  assert.match(run.stopped, /^refused: .*differ only by case/);
+  assert.deepEqual(run.candidates, []);
 });
 
 test("stage and pick into a target whose path exceeds 260 characters succeed and the records hold '/' separators", async () => {

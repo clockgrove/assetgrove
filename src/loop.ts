@@ -278,7 +278,8 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       });
       const id = `c${index + 1}`;
       const artifacts: string[] = [];
-      // Recorded with "/" on every OS; names differing only by case are refused before writing.
+      // Recorded with "/" on every OS. Names differing only by case are refused before any of
+      // this candidate's files are written; the names exist only after the generator's call.
       const names = (generated.artifacts ?? []).map((artifact) =>
         posix.join(`${id}-${generator.kind}`, basename(artifact.name)),
       );
