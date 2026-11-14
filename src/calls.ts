@@ -1,7 +1,9 @@
 import type { Budget } from "./budget.ts";
-import { InputError, ProviderError } from "./errors.ts";
-import { isPaidProvider } from "./spend.ts";
+import { InputError, ProviderError, isSpendRefusal } from "./errors.ts";
+import { requireDeclaredLimit } from "./limits.ts";
 import type {
+  Billing,
+  CallKind,
   DecisionQuestion,
   DecisionResult,
   GenerationProvider,
@@ -49,8 +51,14 @@ export class Caller {
     return route;
   }
 
+  /** The billing of the provider that serves this kind of call. */
+  billing(kind: CallKind): Billing | undefined {
+    return this.provider.billingFor?.(kind) ?? this.provider.billing;
+  }
+
   private async record<T extends ProviderResult>(
     operation: string,
+    kind: CallKind,
     prompt: string,
     references: LoadedReference[],
     parameters: Record<string, unknown>,
@@ -58,13 +66,14 @@ export class Caller {
     run: (route: Route) => Promise<T>,
   ): Promise<T> {
     const route = this.route(operation);
+    const billing = this.billing(kind);
+    // A paid call needs its provider's own limit declared, before anything is reserved.
+    requireDeclaredLimit(billing, `the ${operation} call`);
     const reservation = this.budget.reserve(
       route.estimatedCostUsd,
       `the ${operation} call`,
-      // Scripted calls cost nothing: they never reach the cross-run ledger.
-      isPaidProvider(this.providerName)
-        ? `${this.providerName}:${operation}:${route.model}`
-        : undefined,
+      // Free calls (the adapter's billing says so) never reach the cross-run ledger.
+      billing?.paid === false ? undefined : `${this.providerName}:${operation}:${route.model}`,
     );
     const startedAt = this.now().toISOString();
     let result: T;
@@ -73,7 +82,7 @@ export class Caller {
     } catch (error) {
       // A failed call may still have been billed; count the estimate so the cap stays safe.
       this.budget.settle(reservation, route.estimatedCostUsd);
-      if (error instanceof ProviderError) throw error;
+      if (error instanceof ProviderError || isSpendRefusal(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new ProviderError(`the ${operation} call failed: ${message}`, { cause: error });
     }
@@ -115,15 +124,22 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       references: references.map((r) => ({ role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    const result = await this.record(operation, prompt, references, parameters, sendSeed, (r) =>
-      this.provider.generateImage({
-        model: r.model,
-        prompt,
-        references: references.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
-        ...(r.size !== undefined && { size: r.size }),
-        ...(sendSeed !== undefined && { seed: sendSeed }),
-        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-      }),
+    const result = await this.record(
+      operation,
+      "image",
+      prompt,
+      references,
+      parameters,
+      sendSeed,
+      (r) =>
+        this.provider.generateImage({
+          model: r.model,
+          prompt,
+          references: references.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
+          ...(r.size !== undefined && { size: r.size }),
+          ...(sendSeed !== undefined && { seed: sendSeed }),
+          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+        }),
     );
     const image = result.images[0];
     if (!image) throw new ProviderError(`the ${operation} call returned no image`);
@@ -149,7 +165,7 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       views: views.map((r) => ({ view: r.view, role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    return this.record(operation, prompt, views, parameters, sendSeed, (r) => {
+    return this.record(operation, "model", prompt, views, parameters, sendSeed, (r) => {
       const generate = this.provider.generateModel?.bind(this.provider);
       if (!generate) throw new ProviderError(`the provider cannot make 3D models (${operation})`);
       return generate({
@@ -171,7 +187,7 @@ export class Caller {
       rigType,
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
     };
-    return this.record(operation, `rig: ${rigType}`, [], parameters, undefined, (r) => {
+    return this.record(operation, "rig", `rig: ${rigType}`, [], parameters, undefined, (r) => {
       const rig = this.provider.rigModel?.bind(this.provider);
       if (!rig) throw new ProviderError(`the provider cannot rig 3D models (${operation})`);
       return rig({
@@ -191,16 +207,25 @@ export class Caller {
       clips,
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
     };
-    return this.record(operation, `clips: ${clips.join(", ")}`, [], parameters, undefined, (r) => {
-      const animate = this.provider.animateModel?.bind(this.provider);
-      if (!animate) throw new ProviderError(`the provider cannot animate 3D models (${operation})`);
-      return animate({
-        model: r.model,
-        source,
-        clips,
-        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-      });
-    });
+    return this.record(
+      operation,
+      "animate",
+      `clips: ${clips.join(", ")}`,
+      [],
+      parameters,
+      undefined,
+      (r) => {
+        const animate = this.provider.animateModel?.bind(this.provider);
+        if (!animate)
+          throw new ProviderError(`the provider cannot animate 3D models (${operation})`);
+        return animate({
+          model: r.model,
+          source,
+          clips,
+          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+        });
+      },
+    );
   }
 
   /** A vision-model analysis of images; returns the model's text. */
@@ -210,13 +235,20 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       images: images.map((r) => ({ role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    const result = await this.record(operation, prompt, images, parameters, undefined, (r) =>
-      this.provider.analyzeImages({
-        model: r.model,
-        prompt,
-        images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
-        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-      }),
+    const result = await this.record(
+      operation,
+      "vision",
+      prompt,
+      images,
+      parameters,
+      undefined,
+      (r) =>
+        this.provider.analyzeImages({
+          model: r.model,
+          prompt,
+          images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
+          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+        }),
     );
     return result.text;
   }
@@ -238,17 +270,25 @@ export class Caller {
     const started = performance.now();
     let result: DecisionResult;
     try {
-      result = await this.record(operation, prompt, images, parameters, undefined, (r) => {
-        const decide = this.provider.decide?.bind(this.provider);
-        if (!decide)
-          throw new ProviderError(`the provider cannot make typed decisions (${operation})`);
-        return decide({
-          model: r.model,
-          prompt,
-          images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
-          question,
-        });
-      });
+      result = await this.record(
+        operation,
+        "decide",
+        prompt,
+        images,
+        parameters,
+        undefined,
+        (r) => {
+          const decide = this.provider.decide?.bind(this.provider);
+          if (!decide)
+            throw new ProviderError(`the provider cannot make typed decisions (${operation})`);
+          return decide({
+            model: r.model,
+            prompt,
+            images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
+            question,
+          });
+        },
+      );
     } catch (error) {
       // A failed call is charged its route's estimate (see record); log it like a completed one.
       const route = this.routes[operation];

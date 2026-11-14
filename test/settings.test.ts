@@ -434,11 +434,9 @@ test("provider ids, role names and route operations named like a secret are acce
   );
 });
 
-test("unlimited needs acceptUnlimited", () => {
-  assert.throws(
-    () => load({ format: FORMAT, providers: { p: { limit: { kind: "unlimited" } } } }),
-    invalid(/acceptUnlimited/),
-  );
+test("unlimited without acceptUnlimited loads; a paid call refuses it (src/limits.ts)", () => {
+  const settings = load({ format: FORMAT, providers: { p: { limit: { kind: "unlimited" } } } });
+  assert.deepEqual(settings.providers["p"]?.limit, { kind: "unlimited" });
 });
 
 test("a repository at the home directory is not a project, so the default directories under it are accepted", () => {

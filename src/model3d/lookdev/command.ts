@@ -899,7 +899,10 @@ export async function lookDev(
   const groomSize = look.sizePx ?? textureSize;
 
   // Spend: the whole forecast must fit the cap and the cross-run limits before the first call.
-  const budget = new Budget(plan.capUsd, ledgerFor(options.ledger, options.providerName, profile));
+  const budget = new Budget(
+    plan.capUsd,
+    ledgerFor(options.ledger, options.provider?.billing, profile),
+  );
   budget.check(plan.estimateUsd, "a look-dev of one character");
   const caller = new Caller({
     provider: options.provider,

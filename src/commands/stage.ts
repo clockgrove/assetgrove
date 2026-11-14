@@ -1,3 +1,4 @@
+import { runCap } from "../budget.ts";
 import { resolve } from "node:path";
 import { imageGenerators } from "../generators/image.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
@@ -76,9 +77,9 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
   async run(args, ctx) {
-    const ledger = spendLedger(args.workItem);
+    const ledger = spendLedger(ctx, args.workItem);
     const candidates = args.candidates ?? DEFAULT_CANDIDATES;
-    const capUsd = args.cap ?? DEFAULT_CAP_USD;
+    const capUsd = runCap(ctx.settings, args.cap, DEFAULT_CAP_USD);
     const spec = await readJson<AssetSpec>(args.spec);
     const bible = await loadStyleBible(args.bible);
     const profile = await loadProfile(args.profile);
@@ -91,14 +92,14 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       candidates,
       capUsd,
     });
-    const scripted = await scriptedFrom(args.providerScript);
+    const scripted = await scriptedFrom(ctx, args.providerScript);
 
     if (args.dryRun) {
       return dryRunOutcome(
         plan,
         formatPlan(plan),
         ledger.forProfile(profile.value),
-        scripted?.name,
+        scripted?.provider.billing,
       );
     }
 
@@ -112,7 +113,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       routes,
       ...(scripted
         ? { provider: scripted.provider, providerName: scripted.name }
-        : stageProvider(spec.value)),
+        : stageProvider(ctx, spec.value)),
       generators: stageGenerators,
       runsDir: resolve(args.runs ?? ".assetgrove/runs"),
       candidates,

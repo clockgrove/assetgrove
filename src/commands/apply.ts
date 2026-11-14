@@ -50,7 +50,7 @@ Approval authorizes this generation spend; resulting assets remain pending revie
     const result = await generationTool(
       "apply",
       { plan: args.plan, autoApprove: args.autoApprove === true, out: args.out },
-      { ...(await planningContext(args.providerScript, args.workItem)), log: ctx.log },
+      { ...(await planningContext(ctx, args.providerScript, args.workItem)), log: ctx.log },
     );
     const fields = { ...result };
     const human = formatRun(result.run, result.runDir);

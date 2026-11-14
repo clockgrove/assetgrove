@@ -4,6 +4,7 @@
  */
 import { checkEnvironment } from "../env.ts";
 import type { Env } from "../env.ts";
+import { ProviderSet } from "../providers/adapter.ts";
 import { loadSettings } from "../settings.ts";
 import type { CommandSpec, RunContext } from "./types.ts";
 
@@ -19,7 +20,10 @@ export interface ContextOptions {
   workItem?: string;
 }
 
-/** Loads the developer settings once and builds the context every command of this process runs in. */
+/**
+ * Loads the developer settings once, creates their providers through their adapters (an adapter's
+ * refusal is `settings_invalid`) and builds the context every command of this process runs in.
+ */
 export function createRunContext(options: ContextOptions): RunContext {
   const settings = loadSettings({
     ...(options.env && { env: options.env }),
@@ -27,6 +31,7 @@ export function createRunContext(options: ContextOptions): RunContext {
   });
   return {
     settings,
+    providers: new ProviderSet(settings, options.env ?? process.env),
     log: options.log,
     ...(options.providerScript !== undefined && { providerScript: options.providerScript }),
     ...(options.workItem !== undefined && { workItem: options.workItem }),

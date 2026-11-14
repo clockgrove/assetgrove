@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { runCap } from "../budget.ts";
 import { readJson, readModel, loadProfile, loadStyleBible } from "../inputs.ts";
 import { lookDev, planLookdev } from "../model3d/lookdev/command.ts";
 import { gatewayProvider, scriptedFrom, spendLedger } from "../providers/index.ts";
@@ -75,21 +76,27 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
   async run(args, ctx) {
-    const ledger = spendLedger(args.workItem);
+    const ledger = spendLedger(ctx, args.workItem);
     const spec = await readJson<AssetSpec>(args.spec);
     const bible = await loadStyleBible(args.bible);
     const profile = await loadProfile(args.profile);
     const routes = await loadRoutes(args.routes);
-    const capUsd = args.cap;
+    // The profile's look-dev cap is the default; the settings' run cap bounds either.
+    const capUsd = runCap(ctx.settings, args.cap, planLookdev(profile.value, routes).capUsd);
     const plan = planLookdev(profile.value, routes, capUsd);
-    const scripted = await scriptedFrom(args.providerScript);
+    const scripted = await scriptedFrom(ctx, args.providerScript);
     if (args.dryRun) {
       const human = [
         `look-dev: ${plan.calls.length} call(s), forecast ${usd(plan.estimateUsd)} against the $${plan.capUsd.toFixed(2)} cap`,
         ...plan.calls.map((c) => `  ${c.operation}  ${c.model}  ${usd(c.estimatedCostUsd)}`),
         `  seasons: ${plan.seasons.join(", ")}`,
       ].join("\n");
-      return dryRunOutcome(plan, human, ledger.forProfile(profile.value), scripted?.name);
+      return dryRunOutcome(
+        plan,
+        human,
+        ledger.forProfile(profile.value),
+        scripted?.provider.billing,
+      );
     }
     const model = await readModel(args.model);
     const { run, runDir, passed } = await lookDev({
@@ -102,12 +109,11 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
       profile: profile.value,
       profileDir: profile.dir,
       routes,
-      ...(scripted
-        ? { provider: scripted.provider, providerName: scripted.name }
-        : { provider: gatewayProvider(), providerName: "vercel-ai-gateway" }),
+      provider: (scripted ?? gatewayProvider(ctx)).provider,
+      providerName: (scripted ?? gatewayProvider(ctx)).name,
       ledger,
       runsDir: resolve(args.runs ?? ".assetgrove/runs"),
-      ...(capUsd !== undefined && { capUsd }),
+      capUsd,
       log: ctx.log,
     });
     const fields = { runDir, ...run };

@@ -56,10 +56,53 @@ export class InputError extends Error {
   }
 }
 
-/** A model provider call failed or returned nothing usable. Its message is redacted. */
+/**
+ * A model provider call failed or returned nothing usable. Its message is redacted. An adapter
+ * copies only the provider's message, HTTP status and error code into it, never a response body.
+ */
 export class ProviderError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  /** The provider's HTTP status, when it answered with one. */
+  readonly status: number | undefined;
+  /** The provider's own error code or type, when it reported one. */
+  readonly providerCode: string | undefined;
+  constructor(
+    message: string,
+    options?: ErrorOptions & { status?: number | undefined; providerCode?: string | undefined },
+  ) {
     super(redact(message), options);
     this.name = "ProviderError";
+    this.status = options?.status;
+    this.providerCode = options?.providerCode;
   }
+}
+
+/**
+ * The provider refused a call because the account's own quota or credits are spent: a gateway
+ * 402 or an OpenAI 429 `insufficient_quota`. Exit 3 `cap_refused`, like a cap of Assetgrove's own.
+ * Not a `ProviderError`, so nothing that tolerates a failed call goes on past it.
+ */
+export class ProviderQuotaError extends Error {
+  readonly code = "cap_refused";
+  readonly status: number | undefined;
+  readonly providerCode: string | undefined;
+  constructor(message: string, options?: { status?: number; providerCode?: string }) {
+    super(redact(message));
+    this.name = "ProviderQuotaError";
+    this.status = options?.status;
+    this.providerCode = options?.providerCode;
+  }
+}
+
+/** The codes that refuse spend (exit 3): a run stops at them rather than going on. */
+const SPEND_REFUSALS: ReadonlySet<string> = new Set([
+  "cap_refused",
+  "provider_limit_undeclared",
+  "provider_limit_mismatch",
+  "spend_hold",
+]);
+
+/** Whether an error carries a spend refusal's code (`cap_refused`, `provider_limit_*`, ...). */
+export function isSpendRefusal(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && SPEND_REFUSALS.has(code);
 }

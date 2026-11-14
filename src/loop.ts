@@ -15,7 +15,7 @@ import { ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { referenceLicenses } from "./bible.ts";
-import { InputError } from "./errors.ts";
+import { InputError, isSpendRefusal } from "./errors.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import type { IdentityAgreement } from "./identity.ts";
@@ -227,7 +227,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   const { requested, capUsd, estimateUsd } = plan;
   const generator = options.generators.find((g) => g.kind === spec.kind) as Generator;
 
-  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.providerName, profile));
+  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.provider?.billing, profile));
   // The run-level check: refuse the whole run, before any call, if it would exceed the cap or
   // cross a spend ledger limit.
   budget.check(estimateUsd, `a run of ${requested} candidates`);
@@ -345,7 +345,8 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       const message = error instanceof Error ? error.message : String(error);
       // Bad input fails every candidate the same way: refuse the run rather than go on, but
       // leave its record so the runs directory never holds a run without one.
-      if (error instanceof InputError) {
+      // So does a spend refusal: an undeclared provider limit or the provider's own quota.
+      if (error instanceof InputError || isSpendRefusal(error)) {
         run.errors.push(`candidate ${index + 1}: ${message}`);
         run.stopped = `refused: ${message}`;
         run.spentUsd = budget.spentUsd;

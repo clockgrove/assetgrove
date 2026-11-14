@@ -1,7 +1,8 @@
+import { runCap } from "../budget.ts";
 import { resolve } from "node:path";
 import { readJson, lockFor, loadProfile, loadStyleBible } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
-import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
+import { dryRunBilling, providerFor, spendLedger } from "../providers/index.ts";
 import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION, loadRoutes } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { generateSheet, planSheet, sheetBrief } from "../sheet/generate.ts";
@@ -86,9 +87,9 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
-  async run(args) {
-    const ledger = spendLedger(args.workItem);
-    const capUsd = args.cap ?? DEFAULT_CAP_USD;
+  async run(args, ctx) {
+    const ledger = spendLedger(ctx, args.workItem);
+    const capUsd = runCap(ctx.settings, args.cap, DEFAULT_CAP_USD);
     const spec = await readJson<AssetSpec>(args.spec);
     const bible = await loadStyleBible(args.bible);
     const profile = await loadProfile(args.profile);
@@ -117,7 +118,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         : []),
     ];
     if (args.dryRun) {
-      const providerName = await dryRunProvider(args.providerScript);
+      const providerName = await dryRunBilling(ctx, args.providerScript);
       const estimateUsd = perCall.reduce((sum, c) => sum + c.estimatedCostUsd, 0);
       const plan = {
         kind: "sheet",
@@ -135,7 +136,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
       ].join("\n");
       return dryRunOutcome(plan, human, ledger.forProfile(profile.value), providerName);
     }
-    const { provider, name } = await providerFor(args.providerScript);
+    const { provider, name } = await providerFor(ctx, args.providerScript);
     let generated: Awaited<ReturnType<typeof generateSheet>>;
     try {
       generated = await generateSheet({

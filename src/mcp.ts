@@ -26,6 +26,8 @@ export interface ToolContext {
   providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
+  /** The settings' run cap; a plan's own cap never exceeds it. */
+  capCeilingUsd?: number;
   /** Receives one line per provider decision call during apply. */
   log?: (message: string) => void;
 }
@@ -101,6 +103,7 @@ export async function generationTool(
       provider: context.provider,
       providerName: context.providerName,
       ...(context.ledger && { ledger: context.ledger }),
+      ...(context.capCeilingUsd !== undefined && { capCeilingUsd: context.capCeilingUsd }),
       ...(context.log && { log: context.log }),
       autoApprove: args["autoApprove"] === true,
       ...(stringArg(args, "out", false) && { outDir: args["out"] as string }),

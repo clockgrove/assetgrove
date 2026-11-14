@@ -7,7 +7,7 @@ It is a development tool. A game repository never depends on it at runtime: Asse
 ## How it works
 
 1. **Spec, not freehand.** Each request starts from the target asset's spec (asset, animation family, frame count and size, anchor) and the world's style bible (approved reference images, palette, perspective).
-2. **Candidates.** Models behind one gateway adapter produce several candidates per request, within a per-run cost cap.
+2. **Candidates.** Models behind provider adapters produce several candidates per request, within a per-run cost cap.
 3. **Post-processing to spec.** Background to true alpha, crop and scale to the frame grid, palette and pivot alignment.
 4. **Vision QA.** A vision model checks each candidate against the spec and the references; only passing candidates are shown.
 5. **Operator pick.** A person picks and approves. Nothing is accepted automatically.
@@ -51,8 +51,8 @@ The package ships its skills under `skills/`. Install them into your harness wit
 
 - Always pass `--json`. Stdout is one JSON document. Logs go to stderr. Assetgrove never prompts.
 - Run `stage --dry-run` first. It spends nothing and needs no key.
-- Name the work item (`ASSETGROVE_WORK_ITEM` or `--work-item`, for example the Objective; a Factory worker gets its Objective from `FACTORY_ISSUE` by default). Paid calls across runs are capped at $10 a day and $5 per work item by default; see [Spend limits](#spend-limits).
-- Set `AI_GATEWAY_API_KEY` in the environment. In a sandbox, allow the host `ai-gateway.vercel.sh`; it is the only host Assetgrove reaches. Inside a Factory stage, `FACTORY_GATEWAY_URL` points calls at Factory's metering relay instead, which holds the real key and counts each call against the Objective's caps.
+- Name the work item (`ASSETGROVE_WORK_ITEM` or `--work-item`, for example a campaign or a session label). Paid calls across runs are capped at $10 a day and $5 per work item by default; see [Spend limits](#spend-limits).
+- Set `AI_GATEWAY_API_KEY` in the environment. In a sandbox, allow the hosts of the providers you configure: Assetgrove reaches only those, `ai-gateway.vercel.sh` by default, or the `baseURL` host of a provider in your settings when one is set. `*_BASE_URL` environment variables never apply.
 - Agents stage, humans pick ([PRD principle 2](docs/PRD.md#principles)). Agents never run `pick` or `write-families` and never confirm a grouping.
 
 ## Commands and exit codes
@@ -85,16 +85,11 @@ The package ships its skills under `skills/`. Install them into your harness wit
 
 ## Spend limits
 
-`--cap` bounds one run. Every paid call (not scripted ones, `--provider-script`) is also recorded in a spend ledger shared by every run on the machine (or in the CI job), and refused (exit 3) before it is made when it would cross a daily limit or the limit of its work item. `--dry-run` shows the spend left under each.
+Providers and caps come from your [developer settings](docs/settings.md) (`assetgrove settings path|show|check`). `--cap` bounds one run: the run cap is the lower of `caps.runUsd` (default $5) and `--cap` or the command's own default, and a `--cap` above `caps.runUsd` exits 3 (`cap_refused`).
 
-| Variable                         | Default                                                                                                                                                |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ASSETGROVE_SPEND_LEDGER`        | `$XDG_STATE_HOME/assetgrove/spend.jsonl` (`~/.local/state/...`); `assetgrove-spend.jsonl` in `$FACTORY_STATE_DIR` (else `$TMPDIR`) in a Factory worker |
-| `ASSETGROVE_WORK_ITEM`           | none (`--work-item <label>` overrides; unset in a Factory worker: `<repo>#<FACTORY_ISSUE>`; otherwise daily limit only)                                |
-| `ASSETGROVE_DAILY_LIMIT_USD`     | $10 over the last 24 hours                                                                                                                             |
-| `ASSETGROVE_WORK_ITEM_LIMIT_USD` | $5 per work item                                                                                                                                       |
+Every paid call (not scripted ones, `--provider-script`) is also recorded in the spend ledger at `<stateDir>/spend.jsonl`, shared by every run, and refused (exit 3) before it is made when it would cross the daily cap (`caps.dailyUsd`, default $10 over the last 24 hours) or the work item's cap (`caps.workItemUsd`, default $5). A target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd` only lower these. The work item comes from `--work-item` or `ASSETGROVE_WORK_ITEM`; with none, only the daily cap applies. `--dry-run` shows the spend left under each.
 
-A target profile can set `spend.dailyLimitUsd` and `spend.workItemLimitUsd`; the stricter of the profile and the environment applies. See [docs/target-profile.md](docs/target-profile.md#spend-limits-across-runs).
+A paid call to a provider whose settings declare no `limit` (or declare `unlimited` without `acceptUnlimited: true`) exits 3 (`provider_limit_undeclared`) before any spend. `assetgrove spend status` shows the ledger, the caps, the work item, today's spend and the limits; `assetgrove spend check` reports, per configured provider, whether its limit is declared, verified and what a balance read returned. See [docs/settings.md](docs/settings.md) and [docs/target-profile.md](docs/target-profile.md#spend-limits-across-runs).
 
 ## Develop
 

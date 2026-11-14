@@ -203,7 +203,7 @@ export async function runAnimationQa(options: {
   const plan = await planAnimationQa(options.targets, options.routes, options.capUsd, vision);
   const ledger = options.targets.reduce<SpendLedger | undefined>(
     (l, t) => l?.forProfile(t.profile),
-    ledgerFor(options.ledger, options.provider?.name),
+    ledgerFor(options.ledger, options.provider?.provider.billing),
   );
   const budget = new Budget(options.capUsd, ledger);
   // Refuse up front when the whole run would not fit, before any provider call.
@@ -330,7 +330,7 @@ export async function runFixFrame(options: {
       : undefined;
   const budget = new Budget(
     options.capUsd,
-    ledgerFor(options.ledger, options.provider.name, target.profile),
+    ledgerFor(options.ledger, options.provider.provider.billing, target.profile),
   );
   const call = new Caller({
     provider: options.provider.provider,

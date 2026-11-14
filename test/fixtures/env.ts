@@ -1,8 +1,9 @@
 /**
  * Imported first by every test that runs the CLI. Under one fresh temp root outside any repository
- * it points the cross-run spend ledger at a new file, ASSETGROVE_CONFIG at a settings file whose
- * stateDir is a new directory, so tests never read or write the user's own ledger, settings or
- * state. It unsets every variable `checkEnvironment` refuses, so a proxy on the machine never
+ * it points ASSETGROVE_CONFIG at a settings file whose stateDir is a new directory, so the spend
+ * ledger (`<stateDir>/spend.jsonl`) and every other state is the test's own, never the user's. The
+ * base settings declare a limit for the `scripted` provider, so a script that sets `paid: true`
+ * can spend; a test that needs no declared limit writes its own settings. It unsets every variable `checkEnvironment` refuses, so a proxy on the machine never
  * refuses a test. Child processes inherit all of this through process.env. The removed values stay
  * in `machineProxyEnv`, for children such as `npm install` that need the machine's proxy.
  *
@@ -20,16 +21,8 @@ const FORMAT = "assetgrove-settings/1";
 
 const root = mkdtempSync(join(realpathSync(tmpdir()), "assetgrove-test-"));
 
-process.env["ASSETGROVE_SPEND_LEDGER"] = join(root, "spend.jsonl");
-// The caller's own work item and limits would change what the tests measure; a Factory worker's
-// FACTORY_ISSUE would name a work item too.
-for (const name of [
-  "ASSETGROVE_WORK_ITEM",
-  "FACTORY_ISSUE",
-  "ASSETGROVE_DAILY_LIMIT_USD",
-  "ASSETGROVE_WORK_ITEM_LIMIT_USD",
-])
-  delete process.env[name];
+// The caller's own work item would change what the tests measure.
+delete process.env["ASSETGROVE_WORK_ITEM"];
 /** The refused variables as the machine set them, removed from process.env below. */
 export const machineProxyEnv: Record<string, string> = {};
 for (const name of REFUSED_VARIABLES) {
@@ -42,6 +35,10 @@ for (const name of REFUSED_VARIABLES) {
 
 export const stateDir: string = join(root, "state");
 mkdirSync(stateDir);
+/** The spend ledger of the base settings. */
+export const ledgerPath: string = join(stateDir, "spend.jsonl");
+/** The limit the base settings declare for the scripted provider. */
+export const SCRIPTED_LIMIT = { kind: "prepaid", usd: 100 } as const;
 mkdirSync(join(root, "config"));
 export const settingsPath: string = join(root, "config", "settings.json");
 process.env["ASSETGROVE_CONFIG"] = settingsPath;
@@ -66,14 +63,14 @@ function child(parent: Settings, key: string): Settings {
   return created;
 }
 
-/** Writes the base settings (format and stateDir) with `settings` over them. */
+/** Writes `format` and `stateDir` with `settings` over them (no declared limit unless given). */
 export function writeSettings(settings: Settings): Settings {
   return save({ format: FORMAT, stateDir, ...settings });
 }
 
-/** Restores the base settings. Runs before every top-level test. */
+/** Restores the base settings: a declared limit for `scripted`. Runs before every top-level test. */
 export function resetSettings(): Settings {
-  return writeSettings({});
+  return writeSettings({ providers: { scripted: { limit: { ...SCRIPTED_LIMIT } } } });
 }
 
 export function useHeadless(operator = "ci:example/repo"): Settings {

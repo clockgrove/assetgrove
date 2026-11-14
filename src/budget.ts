@@ -91,3 +91,30 @@ export class Budget {
     }
   }
 }
+
+/** A `--cap` above the settings' run cap: only a person raises a cap, in the settings file. */
+export class CapRefusedError extends Error {
+  readonly code = "cap_refused";
+  constructor(message: string) {
+    super(message);
+    this.name = "CapRefusedError";
+  }
+}
+
+/**
+ * The run's cap: the lower of the settings' `caps.runUsd` and `--cap` (or, without one, the
+ * command's own default). A `--cap` above `caps.runUsd` throws `cap_refused` (exit 3).
+ */
+export function runCap(
+  settings: { caps: { runUsd: number } },
+  cap: number | undefined,
+  fallback: number,
+): number {
+  const ceiling = settings.caps.runUsd;
+  if (cap !== undefined && cap > ceiling + 1e-9) {
+    throw new CapRefusedError(
+      `refused: --cap $${cap.toFixed(2)} is above the settings' run cap (caps.runUsd $${ceiling.toFixed(2)}); only a person raises it, in the settings file`,
+    );
+  }
+  return Math.min(ceiling, cap ?? fallback);
+}

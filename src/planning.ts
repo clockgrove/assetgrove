@@ -166,6 +166,8 @@ export interface CreatePlanOptions {
   specDir?: string;
   /** Overrides the profile's identity mode: off, shadow or enforce. */
   identityMode?: string;
+  /** The settings' run cap; the plan's cap never exceeds it. */
+  capCeilingUsd?: number;
 }
 
 function hash(value: unknown): string {
@@ -198,7 +200,8 @@ function settingsOf(options: CreatePlanOptions): RunSettings {
   const routes = options.routes ?? defaultRoutes;
   const settings: RunSettings = {
     candidates: values.candidates ?? 4,
-    capUsd: values.capUsd ?? 5,
+    // A request may lower the settings' run cap, never raise it.
+    capUsd: Math.min(values.capUsd ?? 5, options.capCeilingUsd ?? Infinity),
     modelRoute: route(
       values.modelRoute ?? (options.spec.kind === "sprite-strip" ? routes.edit : routes.still),
       "generation",
@@ -642,7 +645,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
   const compilerEstimate = options.provider ? settings.llmRoute.estimatedCostUsd : 0;
   const budget = new Budget(
     settings.capUsd,
-    ledgerFor(options.ledger, options.providerName, options.profile),
+    ledgerFor(options.ledger, options.provider?.billing, options.profile),
   );
   budget.check(generationUsd + compilerEstimate, "planned compiler and generation calls");
   const caller = options.provider
@@ -807,6 +810,8 @@ export async function savePlan(plan: GenerationPlan, path: string): Promise<void
 
 export interface ApplyPlanOptions {
   provider: GenerationProvider;
+  /** The settings' run cap; a saved plan's cap above it is lowered to it. */
+  capCeilingUsd?: number;
   providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
@@ -870,8 +875,8 @@ export async function applyPlan(
       "plan is not approved; record human approval in approved or use --auto-approve for unattended generation",
     );
   const budget = new Budget(
-    plan.settings.capUsd,
-    ledgerFor(options.ledger, options.providerName, plan.profile),
+    Math.min(plan.settings.capUsd, options.capCeilingUsd ?? Infinity),
+    ledgerFor(options.ledger, options.provider?.billing, plan.profile),
   );
   // The compilation was spent (and recorded in any ledger) when the plan was made.
   budget.addPrior(plan.compiler.spentUsd, "prior prompt compilation");

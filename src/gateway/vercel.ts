@@ -1,5 +1,8 @@
 import { createGateway, experimental_decide, generateImage, generateText } from "ai";
+import { ProviderError } from "../errors.ts";
+import { adapterError } from "./provider.ts";
 import type {
+  Billing,
   DecisionAnswer,
   DecisionRequest,
   DecisionResult,
@@ -11,6 +14,10 @@ import type {
 } from "./provider.ts";
 
 type Gateway = ReturnType<typeof createGateway>;
+
+/** The gateway SDK's own base URL; its host is the only one the gateway reaches by default. */
+export const GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v4/ai";
+export const GATEWAY_KEY_ENV = "AI_GATEWAY_API_KEY";
 type Metadata = Record<string, Record<string, unknown> | undefined> | undefined;
 
 function toNumber(value: unknown): number | undefined {
@@ -46,44 +53,84 @@ function requestId(...candidates: unknown[]): {
  */
 export class VercelGateway implements GenerationProvider {
   readonly #gateway: Gateway;
+  readonly #missingKey: string | undefined;
+  /** The base URL every call goes to: the settings `baseURL`, else the gateway's own. */
+  readonly baseURL: string;
+  readonly billing: Billing;
 
-  constructor(options: { apiKey: string; baseURL?: string }) {
-    this.#gateway = createGateway({
-      apiKey: options.apiKey,
-      ...(options.baseURL !== undefined && { baseURL: options.baseURL }),
-    });
+  /**
+   * The key and base URL are always given to the SDK explicitly, so no environment variable (the
+   * SDK's own key or base URL variables included) decides either. Without a key every call fails
+   * with a provider error naming `keyEnv`.
+   */
+  constructor(options: {
+    apiKey?: string | undefined;
+    baseURL?: string | undefined;
+    keyEnv?: string;
+    billing?: Partial<Pick<Billing, "provider" | "limit">>;
+  }) {
+    this.baseURL = (options.baseURL ?? GATEWAY_BASE_URL).replace(/\/+$/, "");
+    const apiKey = options.apiKey ?? "";
+    this.#missingKey =
+      apiKey === ""
+        ? `${options.keyEnv ?? GATEWAY_KEY_ENV} is not set; the gateway key must come from the environment`
+        : undefined;
+    this.#gateway = createGateway({ apiKey, baseURL: this.baseURL });
+    this.billing = {
+      adapter: "vercel-ai-gateway",
+      provider: "vercel-ai-gateway",
+      paid: true,
+      hosts: [new URL(this.baseURL).host],
+      reconcile: "per-call",
+      readLimit: () => this.credits(),
+      ...options.billing,
+    };
   }
 
+  /** The gateway with the key of `AI_GATEWAY_API_KEY` and the gateway's own base URL. */
   static fromEnv(env: Record<string, string | undefined> = process.env): VercelGateway {
-    const apiKey = env["AI_GATEWAY_API_KEY"];
+    const apiKey = env[GATEWAY_KEY_ENV];
     if (apiKey === undefined || apiKey === "") {
       throw new Error(
-        "AI_GATEWAY_API_KEY is not set; the gateway key must come from the environment",
+        `${GATEWAY_KEY_ENV} is not set; the gateway key must come from the environment`,
       );
     }
-    // Inside a Factory stage the key is a relay token: calls go through Factory's metering relay,
-    // which counts them against the Objective's caps (clockgrove/factory#97). `/v4/ai` is the
-    // gateway SDK's own path, so the relay sees the requests the gateway would.
-    const relay = env["FACTORY_GATEWAY_URL"];
-    return new VercelGateway({
-      apiKey,
-      ...(relay && { baseURL: `${relay.replace(/\/$/, "")}/v4/ai` }),
-    });
+    return new VercelGateway({ apiKey });
+  }
+
+  /** The account's credit balance in USD; spends nothing. */
+  async credits(): Promise<{ source: string; balanceUsd: number }> {
+    const { balance } = await this.#call(() => this.#gateway.getCredits());
+    const balanceUsd = toNumber(balance);
+    if (balanceUsd === undefined)
+      throw new ProviderError("vercel-ai-gateway credits: no balance returned");
+    return { source: "gateway credits", balanceUsd };
+  }
+
+  async #call<T>(call: () => Promise<T>): Promise<T> {
+    if (this.#missingKey !== undefined) throw new ProviderError(this.#missingKey);
+    try {
+      return await call();
+    } catch (error) {
+      throw adapterError(error, "vercel-ai-gateway");
+    }
   }
 
   async generateImage(req: ImageRequest): Promise<ImageResult> {
-    const result = await generateImage({
-      model: this.#gateway.imageModel(req.model),
-      prompt:
-        req.references.length === 0
-          ? req.prompt
-          : { text: req.prompt, images: req.references.map((r) => r.bytes) },
-      ...(req.size !== undefined && { size: req.size as `${number}x${number}` }),
-      ...(req.seed !== undefined && { seed: req.seed }),
-      ...(req.providerOptions !== undefined && {
-        providerOptions: req.providerOptions as Record<string, never>,
+    const result = await this.#call(() =>
+      generateImage({
+        model: this.#gateway.imageModel(req.model),
+        prompt:
+          req.references.length === 0
+            ? req.prompt
+            : { text: req.prompt, images: req.references.map((r) => r.bytes) },
+        ...(req.size !== undefined && { size: req.size as `${number}x${number}` }),
+        ...(req.seed !== undefined && { seed: req.seed }),
+        ...(req.providerOptions !== undefined && {
+          providerOptions: req.providerOptions as Record<string, never>,
+        }),
       }),
-    });
+    );
     const meta = result.providerMetadata as Metadata;
     const gw = gatewayMeta(meta);
     const seed =
@@ -101,25 +148,27 @@ export class VercelGateway implements GenerationProvider {
   }
 
   async analyzeImages(req: VisionRequest): Promise<VisionResult> {
-    const result = await generateText({
-      model: this.#gateway.languageModel(req.model),
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: req.prompt },
-            ...req.images.map((i) => ({
-              type: "image" as const,
-              image: i.bytes,
-              mediaType: i.mediaType,
-            })),
-          ],
-        },
-      ],
-      ...(req.providerOptions !== undefined && {
-        providerOptions: req.providerOptions as Record<string, never>,
+    const result = await this.#call(() =>
+      generateText({
+        model: this.#gateway.languageModel(req.model),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: req.prompt },
+              ...req.images.map((i) => ({
+                type: "image" as const,
+                image: i.bytes,
+                mediaType: i.mediaType,
+              })),
+            ],
+          },
+        ],
+        ...(req.providerOptions !== undefined && {
+          providerOptions: req.providerOptions as Record<string, never>,
+        }),
       }),
-    });
+    );
     const gw = gatewayMeta(result.providerMetadata as Metadata);
     const cost = toNumber(gw["cost"]);
     return {
@@ -147,20 +196,22 @@ export class VercelGateway implements GenerationProvider {
               ...(q.whenFalse !== undefined && { false: q.whenFalse }),
             },
           };
-    const result = await experimental_decide({
-      model: this.#gateway.decisionModel(req.model),
-      state: [
-        { type: "text", text: req.prompt },
-        ...req.images.map((i) => ({
-          type: "file" as const,
-          mediaType: i.mediaType,
-          data: i.bytes,
-        })),
-      ],
-      questions: { answer: question },
-      // Decision providers rate-limit tightly (#27); back off and retry rather than fail.
-      maxRetries: 4,
-    });
+    const result = await this.#call(() =>
+      experimental_decide({
+        model: this.#gateway.decisionModel(req.model),
+        state: [
+          { type: "text", text: req.prompt },
+          ...req.images.map((i) => ({
+            type: "file" as const,
+            mediaType: i.mediaType,
+            data: i.bytes,
+          })),
+        ],
+        questions: { answer: question },
+        // Decision providers rate-limit tightly (#27); back off and retry rather than fail.
+        maxRetries: 4,
+      }),
+    );
     const raw = result.answers.answer as
       | { type: "score"; score: number; probabilities?: Record<string, number> }
       | { type: "boolean"; probability: number };

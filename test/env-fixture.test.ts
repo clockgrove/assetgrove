@@ -1,13 +1,15 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { refusedVariables } from "../src/env.ts";
 import { loadSettings } from "../src/settings.ts";
 import {
   approveCommand,
   declareLimit,
+  ledgerPath,
+  SCRIPTED_LIMIT,
   settingsPath,
   stateDir,
   useHeadless,
@@ -35,6 +37,16 @@ test("a helper's change lasts for its own test, including its subtests", async (
   assert.ok(onDisk()["providers"]);
 });
 
-test("the next test starts from the base settings", () => {
-  assert.deepEqual(onDisk(), { format: "assetgrove-settings/1", stateDir });
+test("the next test starts from the base settings: a declared limit for the scripted provider", () => {
+  assert.deepEqual(onDisk(), {
+    format: "assetgrove-settings/1",
+    stateDir,
+    providers: { scripted: { limit: SCRIPTED_LIMIT } },
+  });
+});
+
+test("the fixture sets no spend variable; the ledger is in the fixture's stateDir", () => {
+  assert.equal(process.env["ASSETGROVE_SPEND_LEDGER"], undefined);
+  assert.equal(process.env["ASSETGROVE_WORK_ITEM"], undefined);
+  assert.equal(ledgerPath, join(stateDir, "spend.jsonl"));
 });

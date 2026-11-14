@@ -17,6 +17,8 @@ import { pickCommand } from "./pick.ts";
 import { planCommand } from "./plan.ts";
 import { recipeCommand } from "./recipe.ts";
 import { rigCommand } from "./rig.ts";
+import { settingsCommand } from "./settings.ts";
+import { spendCommand } from "./spend.ts";
 import { stageCommand } from "./stage.ts";
 import type { CommandSpec } from "./types.ts";
 import { writeFamiliesCommand } from "./write-families.ts";
@@ -44,6 +46,8 @@ export const commands: readonly CommandSpec[] = [
   recipeCommand,
   opsCommand,
   migrateCommand,
+  settingsCommand,
+  spendCommand,
 ];
 
 /** The name of every registry command. */

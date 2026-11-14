@@ -2,8 +2,6 @@
 
 Developer settings are one per-user file outside every project, and the only input that steers money, code or keys. Shared files (target profile, style bible, presets, recipes) and request inputs travel between developers, so they never name an endpoint, a cap above the settings, a route, a grant or a command. `src/settings.ts` loads the file, `src/formats.ts` checks its format line and `src/env.ts` supplies every environment value they use.
 
-No command reads settings yet.
-
 ## Location
 
 1. `$ASSETGROVE_CONFIG`: an absolute path, and the file must exist.
@@ -67,6 +65,35 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 | `promptPolicy.allow`   | Prompt-policy allow terms.                                                                                                                               | none                                                                                          |
 | `confirmedBy.<path>`   | Who confirmed a field: `method`, `at`, `client`.                                                                                                         | none                                                                                          |
 
+## Providers and spend
+
+Providers come from `providers`. An entry's adapter is its `adapter`, else its id. The core adapters:
+
+- `vercel-ai-gateway`: key `AI_GATEWAY_API_KEY`, fixed host `ai-gateway.vercel.sh`; accepts a `baseURL`.
+- `tripo`: key `TRIPO_API_KEY`, fixed host `api.tripo3d.ai`; takes no `baseURL`; `usdPerCredit` prices its credits.
+- `scripted`: tests and offline runs (`--provider-script`); free unless the script sets `paid: true`. A script may supply `limitReading()` returning `{ balanceUsd }`.
+
+`keyEnv` names the key variable; the default is per adapter. `apiKey` and `baseURL` are passed to the SDK explicitly, so `*_BASE_URL` variables (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `AI_GATEWAY_BASE_URL`) never apply. Paid-ness comes from the adapter's billing descriptor, never the provider's name. Without `--provider-script`, a command uses the first configured provider with adapter `vercel-ai-gateway` (`tripo` for 3D calls), else that core adapter under its own id with no settings. Adapters copy only the message, status and provider code into errors, never a response body.
+
+Spend is recorded in `<stateDir>/spend.jsonl`. The run cap is the lower of `caps.runUsd` and `--cap` (or the command's own default); a `--cap` above `caps.runUsd` exits 3 (`cap_refused`). The daily and work-item caps are the settings value or the target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd`, whichever is lower. The work item comes from `--work-item` or `ASSETGROVE_WORK_ITEM`. A plan's `capUsd` is clipped to `caps.runUsd`.
+
+A paid call to a provider with no declared `limit`, or `unlimited` without `acceptUnlimited: true`, exits 3 (`provider_limit_undeclared`) before any spend. Only a `prepaid` limit with `usd` is verified from a balance: verified when the balance is at most `usd`, and a balance above it exits 3 (`provider_limit_mismatch`). A gateway 402 quota error and an OpenAI 429 `insufficient_quota` exit 3 (`cap_refused`).
+
+What a key can carry, and what Assetgrove reads, as checked on 2026-11-14:
+
+| Provider          | Limit a key can carry                                      | Read by Assetgrove                                                                   | Source                                                                                            | Checked    |
+| ----------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ---------- |
+| Vercel AI Gateway | Prepaid team credits; per-key budgets set in the dashboard | Yes: the credits balance, through the gateway credits endpoint (AI SDK `getCredits`) | https://vercel.com/docs/ai-gateway/pricing, https://ai-sdk.dev/docs/reference/ai-sdk-core/gateway | 2026-11-14 |
+| Anthropic         | Workspace spend limits set in the Console                  | No: not readable by an ordinary API key; declared only                               | https://docs.claude.com/en/api/rate-limits                                                        | 2026-11-14 |
+| OpenAI            | Project budgets and usage limits set in the dashboard      | No: not readable with an ordinary key; declared only                                 | https://platform.openai.com/docs/guides/rate-limits                                               | 2026-11-14 |
+| Tripo             | Prepaid credits                                            | Yes: the account balance (`/user/balance`)                                           | https://platform.tripo3d.ai/docs/balance                                                          | 2026-11-14 |
+
+## Commands
+
+- `settings path|show|check [--json]`: read-only. `show` never holds a key. `check` reports, per provider, `keyPresent`, `declared`, `verified`, `reading` and `reconcile`, plus the refused environment variables that are set.
+- `spend status [--work-item <label>]`: the ledger, caps, work item, `todayUsd` and limits.
+- `spend check [--provider <id>] [--provider-script <module>]`: per configured provider, `{ provider, adapter, paid, declared, verified, reading }`. Gateway credits and the Tripo balance are read; Anthropic and OpenAI are declared only.
+
 ## Refusals
 
 Loading throws `SettingsError`, with the code `settings_invalid`, when:
@@ -81,12 +108,11 @@ Loading throws `SettingsError`, with the code `settings_invalid`, when:
 - a `baseURL` carries a user name, a password or a query string (the message shows only its origin and path);
 - a `baseURL` is neither https nor http on a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`);
 - `free` is set on a provider without a loopback `baseURL`;
-- a role or route names a provider that is not in `providers`;
-- a limit of kind `unlimited` lacks `acceptUnlimited: true`.
+- a role or route names a provider that is not in `providers`.
 
 The projects are found from the cwd, `--target` and the directory of each input file's real path (so an input that is a symlink counts for the project it points into). Each directory at or above one of these, and below the home directory, that holds `.git`, as a directory or a file, is a project. A repository at the home directory itself (a dotfiles repository) is not a project, since it would hold every default config and state directory. A `.git` file (a linked worktree or a submodule) also makes a project of the work tree whose `.git` directory holds the Git directory it names: a linked worktree's main checkout, found through its `commondir`, or a submodule's superproject. Paths are compared by their native real path (which expands Windows 8.3 short names), case-insensitively on Windows and macOS.
 
-Refusals that depend on the adapter happen when providers are created. A command's result document keeps a thrown error's own code when it is in the exit table, so `SettingsError` reports `settings_invalid` and `FormatError` reports `format_unsupported`, both with exit 2.
+Refusals that depend on the adapter happen when providers are created, in every command: an unknown adapter id, or a `baseURL` on an adapter that takes none, is `settings_invalid`. A limit of kind `unlimited` without `acceptUnlimited: true` loads, but a paid call to that provider exits 3 (`provider_limit_undeclared`). A command's result document keeps a thrown error's own code when it is in the exit table, so `SettingsError` reports `settings_invalid` and `FormatError` reports `format_unsupported`, both with exit 2.
 
 ## Format lines
 
@@ -94,8 +120,8 @@ Refusals that depend on the adapter happen when providers are created. A command
 
 ## Environment
 
-Settings and the refusal rule read the environment through `src/env.ts`. The spend ledger (`src/spend.ts`), the provider setup (`src/providers/index.ts`) and the gateway adapters (`src/gateway/vercel.ts`, `src/gateway/tripo.ts`) read `process.env` themselves. `checkEnvironment(allow, env)` refuses with `settings_invalid` when `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` is set, in either case, and `environment.allow` does not list it. Each of these can redirect or unwrap the TLS that carries a key.
+Settings and the refusal rule read the environment through `src/env.ts`. The spend ledger and the provider setup do not read `process.env` for the ledger or the limits; the providers read only their key variables (`AI_GATEWAY_API_KEY`, `TRIPO_API_KEY`, or the `keyEnv` named in settings), and `ASSETGROVE_WORK_ITEM` is the one spend variable. `checkEnvironment(allow, env)` refuses with `settings_invalid` when `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` is set, in either case, and `environment.allow` does not list it. Each of these can redirect or unwrap the TLS that carries a key.
 
 ## Tests
 
-`test/fixtures/env.ts` makes one temporary directory outside any repository and puts the spend ledger, a settings file and that file's `stateDir` in it, then points `ASSETGROVE_SPEND_LEDGER` and `ASSETGROVE_CONFIG` there. It unsets every variable `checkEnvironment` refuses, in both cases, for the test process and its children. Its helpers `writeSettings`, `useHeadless`, `approveCommand` and `declareLimit` rewrite the settings file; `resetSettings` restores the base settings (`format` and `stateDir`) and runs before every top-level test, so a helper's change lasts only for the test that made it and its subtests.
+`test/fixtures/env.ts` makes one temporary directory outside any repository and puts a settings file and that file's `stateDir` in it, then points `ASSETGROVE_CONFIG` there; the spend ledger is `spend.jsonl` in that `stateDir`. The base settings declare a limit for the `scripted` provider; a test that needs none rewrites the settings. The fixture unsets every variable `checkEnvironment` refuses, in both cases, for the test process and its children. Its helpers `writeSettings`, `useHeadless`, `approveCommand` and `declareLimit` rewrite the settings file; `resetSettings` restores the base settings and runs before every top-level test, so a helper's change lasts only for the test that made it and its subtests.

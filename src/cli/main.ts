@@ -6,7 +6,7 @@ import { createRunContext } from "../commands/context.ts";
 import { commandUsage, errorOutcome, parseCommandLine, runCommand } from "../commands/runner.ts";
 import { resultDocument } from "../commands/result.ts";
 import type { Outcome } from "../commands/types.ts";
-import { SPEND_ENV } from "../spend.ts";
+import { WORK_ITEM_ENV } from "../spend.ts";
 
 /** The CLI's own help: every registry command with its summary, the options, spend and exits. */
 export function mainUsage(): string {
@@ -23,10 +23,11 @@ export function mainUsage(): string {
     "  --help, -h   print usage; with a command, that command's usage",
     "  --version    print the version",
     "",
-    "Spend: every paid call also reserves against a ledger shared by every run on this machine",
-    `(${SPEND_ENV.ledger}): a daily limit (${SPEND_ENV.dailyLimit}, default $10) and,`,
-    `with --work-item or ${SPEND_ENV.workItem}, a work-item limit (${SPEND_ENV.workItemLimit},`,
-    "default $5). A call that would cross either is refused with exit 3.",
+    "Spend: every cap comes from the developer settings (`assetgrove settings path`): the run cap",
+    "(caps.runUsd; --cap only lowers it), and, in the ledger <stateDir>/spend.jsonl shared by every",
+    `run, the daily cap (caps.dailyUsd) and, with --work-item or ${WORK_ITEM_ENV}, the work-item`,
+    "cap (caps.workItemUsd). A paid call to a provider with no declared limit, or one that would",
+    "cross a cap, is refused with exit 3. `assetgrove spend status` shows what is left.",
     "",
     `Exit codes: ${exits.join(", ")}.`,
     "Run `assetgrove <command> --help` for a command's options.",

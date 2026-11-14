@@ -1,5 +1,6 @@
 import type { Env } from "../env.ts";
 import type { ErrorCode } from "../errors.ts";
+import type { ProviderSet } from "../providers/adapter.ts";
 import type { Settings } from "../settings.ts";
 
 /** What running a command can do: whether it only reads, whether it spends, and where it writes. */
@@ -33,6 +34,8 @@ export interface JsonSchemaObject {
 export interface RunContext {
   /** The developer settings, loaded once per process (src/commands/context.ts). */
   settings: Settings;
+  /** The providers of the settings, each created by its adapter (src/providers/adapter.ts). */
+  providers: ProviderSet;
   /** Receives log lines; the CLI sends them to stderr. */
   log: (message: string) => void;
   /** The environment the refusal rule reads; process.env when absent. */

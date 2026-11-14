@@ -1,3 +1,5 @@
+import { ProviderError, ProviderQuotaError } from "../errors.ts";
+
 /**
  * The generation provider interface Assetgrove owns. The gateway adapter implements it; the
  * scripted provider implements it for tests. No provider SDK type appears here.
@@ -48,6 +50,13 @@ export interface VisionResult extends ProviderResult {
 }
 
 export interface GenerationProvider {
+  /**
+   * What the instance's calls cost, from its adapter. A provider without one (a hand-made test
+   * double) counts as paid with no declared limit.
+   */
+  readonly billing?: Billing;
+  /** The billing of the provider that serves one kind of call, when it differs by kind. */
+  billingFor?(kind: CallKind): Billing | undefined;
   generateImage(request: ImageRequest): Promise<ImageResult>;
   analyzeImages(request: VisionRequest): Promise<VisionResult>;
   /** A typed decision (Score or Boolean); providers without decision models leave it out. */
@@ -137,4 +146,85 @@ export interface DecisionResult extends ProviderResult {
   answer: DecisionAnswer;
   /** The provider's own confidence statistic for the answer, when it reports one. */
   confidence?: number;
+}
+
+/** What a provider's own account reports about its limit: a balance, in USD or in credits. */
+export interface LimitReading {
+  /** Where the reading came from, for example `gateway credits` or `tripo balance`. */
+  source: string;
+  balanceUsd?: number;
+  credits?: number;
+}
+
+/** A provider limit as developer settings declare it (`providers.<id>.limit`). */
+export interface DeclaredLimit {
+  kind: string;
+  usd?: number | undefined;
+  period?: string | undefined;
+  acceptUnlimited?: boolean | undefined;
+}
+
+/**
+ * What a provider instance's calls cost, decided by its adapter (src/providers/adapter.ts), never
+ * by the provider's name: whether they are paid, the hosts they reach, the limit the developer
+ * declared for it, how its usage can be reconciled and, where the provider reports one, how to
+ * read its balance.
+ */
+export interface Billing {
+  /** The adapter id, for example `vercel-ai-gateway`. */
+  adapter: string;
+  /** The settings provider id the instance was created for. */
+  provider: string;
+  paid: boolean;
+  /** The hosts the instance's calls reach. */
+  hosts: string[];
+  limit?: DeclaredLimit;
+  reconcile: "per-call" | "balance" | "unavailable";
+  /** Reads the provider's own balance; spends nothing. */
+  readLimit?(): Promise<LimitReading>;
+}
+
+/** The kinds of call a provider serves, for `GenerationProvider.billingFor`. */
+export type CallKind = "image" | "vision" | "decide" | "model" | "rig" | "animate";
+
+/**
+ * The error an adapter throws for a failed provider call: the provider's message, HTTP status and
+ * error code, and nothing else (no response body, no cause). A gateway 402 and a 429
+ * `insufficient_quota` (the OpenAI quota shape) are the account's own limit: `ProviderQuotaError`,
+ * exit 3 `cap_refused`.
+ */
+export function adapterError(error: unknown, label: string): ProviderError | ProviderQuotaError {
+  if (error instanceof ProviderError || error instanceof ProviderQuotaError) return error;
+  let e = record(error);
+  // The AI SDK's RetryError wraps the last attempt's error.
+  const last = record(e?.["lastError"]);
+  if (last !== undefined && e?.["name"] === "AI_RetryError") e = last;
+  const status = number(e?.["statusCode"]) ?? number(e?.["status"]);
+  const data = record(record(e?.["data"])?.["error"]);
+  const code =
+    text(e?.["code"]) ?? text(e?.["type"]) ?? text(data?.["code"]) ?? text(data?.["type"]);
+  const message =
+    text(e?.["message"]) ?? (error instanceof Error ? error.message : "request failed");
+  const quota = status === 402 || (status === 429 && code === "insufficient_quota");
+  const options = {
+    ...(status !== undefined && { status }),
+    ...(code !== undefined && { providerCode: code }),
+  };
+  const full = `${label}: ${message}${status !== undefined ? ` (HTTP ${status})` : ""}`;
+  return quota ? new ProviderQuotaError(full, options) : new ProviderError(full, options);
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function number(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function text(value: unknown): string | undefined {
+  if (typeof value === "number") return String(value);
+  return typeof value === "string" && value !== "" ? value : undefined;
 }
