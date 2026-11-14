@@ -42,7 +42,12 @@ export function classify(error: unknown): Failure {
   const message = redact(error instanceof Error ? error.message : String(error));
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === "string" && Object.hasOwn(EXIT, code)) {
-    return { code: code as ErrorCode, message };
+    const reason = (error as { reason?: unknown }).reason;
+    return {
+      code: code as ErrorCode,
+      message,
+      ...(code === "format_unsupported" && typeof reason === "string" && { reason }),
+    };
   }
   if (error instanceof InputError) return { code: "invalid_input", message };
   if (typeof code === "string" && code.startsWith("ERR_PARSE_ARGS")) {

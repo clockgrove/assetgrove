@@ -63,6 +63,7 @@ test("materials CLI writes native still and animation materials with scripted li
     await writeFile(
       join(dir, "profile.json"),
       JSON.stringify({
+        format: "assetgrove-target-profile/1",
         name: "synthetic",
         license: "MIT",
         frames: { width: 4, height: 4 },
@@ -128,7 +129,10 @@ test("materials dry-run forecasts defaults without provider or output writes and
     spec = join(dir, "spec.json"),
     derivation = join(dir, "derivation.json"),
     out = join(dir, "out");
-  await writeFile(profile, JSON.stringify({ frames: { width: 4, height: 4 } }));
+  await writeFile(
+    profile,
+    JSON.stringify({ format: "assetgrove-target-profile/1", frames: { width: 4, height: 4 } }),
+  );
   await writeFile(spec, JSON.stringify({ kind: "still", assetId: "synthetic" }));
   await writeFile(
     derivation,
@@ -172,7 +176,13 @@ test("materials dry-run forecasts defaults without provider or output writes and
   const refused = await cli(...args, "--cap", "0");
   assert.equal(refused.code, 3);
   assert.equal(JSON.parse(refused.stdout).error.code, "cap_refused");
-  await writeFile(profile, JSON.stringify({ style: { materials: { channels: ["unknown"] } } }));
+  await writeFile(
+    profile,
+    JSON.stringify({
+      format: "assetgrove-target-profile/1",
+      style: { materials: { channels: ["unknown"] } },
+    }),
+  );
   const invalid = await cli(...args);
   assert.equal(invalid.code, 2);
   assert.equal(JSON.parse(invalid.stdout).error.code, "invalid_input");

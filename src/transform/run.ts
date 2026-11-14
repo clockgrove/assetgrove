@@ -17,6 +17,7 @@ import {
 } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
 import { InputError } from "../errors.ts";
+import { formatLine, readFormat } from "../formats.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256, sniffMediaType } from "../request.ts";
 import { resolveStyle } from "../style.ts";
@@ -38,7 +39,7 @@ import type {
 /** The engines available by default, in preference order. */
 export const DEFAULT_ENGINES: ImageEngine[] = [rasterEngine, materialEngine];
 
-export const RECIPE_FORMAT = "assetgrove-recipe/1";
+export const RECIPE_FORMAT = formatLine("recipe");
 
 /** SHA-256 over `rgba8 <width>x<height>\n` and the RGBA bytes: a hash of the pixels, not a file. */
 export function pixelHash(r: Raster): string {
@@ -144,6 +145,18 @@ export function runOperation(
       ...(report !== undefined && { report }),
     },
   };
+}
+
+/**
+ * Reads a recipe file's value: its format line must be `assetgrove-recipe/<n>` (a refusal is exit 2
+ * `format_unsupported`), then it is parsed as `parseRecipe` does. `source` names the file.
+ */
+export function readRecipe(
+  value: unknown,
+  source: string,
+  engines: ImageEngine[] = DEFAULT_ENGINES,
+): Recipe {
+  return parseRecipe(readFormat("recipe", value, source).value, engines);
 }
 
 /** Parses and validates a recipe: its shape, every operation's name and parameters, and engines. */

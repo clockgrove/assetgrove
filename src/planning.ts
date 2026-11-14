@@ -14,7 +14,14 @@ import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { InputError, ProviderError } from "./errors.ts";
 import { licenseFields, requireGrant } from "./license.ts";
-import { biblePalette, loadBible, loadDesignColors, doDontSection } from "./bible.ts";
+import {
+  bibleReferences,
+  biblePalette,
+  doDontSection,
+  loadBible,
+  loadDesignColors,
+  referenceLicenses,
+} from "./bible.ts";
 import type { ArtBible, BibleDocument } from "./bible.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { loadReference, paletteSwatch, sha256, subjectOf } from "./request.ts";
@@ -857,6 +864,7 @@ export async function applyPlan(
   options: ApplyPlanOptions,
 ): Promise<{ run: RunRecord; runDir: string }> {
   const { plan, refs, doc } = await checkedPlan(input);
+  const bibleLicenses = referenceLicenses(doc.data.referenceLicense, bibleReferences(doc.data));
   if (!options.autoApprove && plan.approved !== true)
     throw new InputError(
       "plan is not approved; record human approval in approved or use --auto-approve for unattended generation",
@@ -1095,6 +1103,7 @@ export async function applyPlan(
         requestIds: calls.map((c) => c.requestId),
         referenceHashes: refs.map((r) => r.sha256),
         bibleVersion: plan.bible.version,
+        ...(bibleLicenses.length > 0 && { referenceLicenses: bibleLicenses }),
         ...licenseFields(plan.profile, calls),
         providerTerms: [...new Set(calls.map((c) => c.providerTerms))],
         startedAt: calls[0]?.startedAt ?? run.createdAt,

@@ -47,6 +47,8 @@ export interface RunContext {
 export interface Failure {
   code: ErrorCode;
   message: string;
+  /** For `format_unsupported`: why the format line was refused (`missing`, `too_new`, `unknown`). */
+  reason?: string;
   limit?: {
     name: string;
     workItem?: string;

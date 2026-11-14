@@ -55,6 +55,7 @@ async function fixture(preset = "cozy-storybook") {
   await mkdir(join(root, ".assetgrove/prompts"), { recursive: true });
   const biblePath = join(dir, "BIBLE.md");
   const data = structuredClone(BIBLE_PRESETS[preset]!);
+  data.referenceLicense = "NOASSERTION";
   data.world = "Woodland";
   await writeFile(
     biblePath,

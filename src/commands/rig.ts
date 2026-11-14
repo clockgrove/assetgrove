@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
-import { readJson, readModel } from "../inputs.ts";
+import { readJson, readModel, loadProfile } from "../inputs.ts";
 import { readProvenance, rerig } from "../model3d/rig/command.ts";
-import type { AssetSpec, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 
@@ -48,7 +48,7 @@ and nothing is spent (docs/characters-3d.md).`,
   async run(args) {
     const model = await readModel(args.model);
     const spec = await readJson<AssetSpec>(args.spec);
-    const profile = await readJson<TargetProfile>(args.profile);
+    const profile = await loadProfile(args.profile);
     const { run, runDir, passed } = await rerig({
       model,
       provenance: await readProvenance(args.provenance),

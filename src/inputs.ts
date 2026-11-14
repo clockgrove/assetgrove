@@ -1,15 +1,67 @@
 import { readFile } from "node:fs/promises";
-import { loadBible } from "./bible.ts";
+import {
+  checkReferenceLicense,
+  loadBible,
+  referenceLicenses,
+  requireInsideProject,
+} from "./bible.ts";
 import { InputError } from "./errors.ts";
+import { readFormat } from "./formats.ts";
 import { identitySettings, loadCast, loadIdentity } from "./identity.ts";
 import { readJson } from "./json.ts";
 import { parseDigitalSourceType } from "./metadata.ts";
 import type { DigitalSourceType } from "./metadata.ts";
 import type { SliceOptions } from "./sheet/types.ts";
+import { validateProfile } from "./profile.ts";
 import { resolveStyle } from "./style.ts";
-import type { AssetSpec, TargetProfile } from "./types.ts";
+import { readRecipe } from "./transform/run.ts";
+import type { Recipe } from "./transform/types.ts";
+import type { AssetSpec, ReferenceLicense, StyleBible, TargetProfile } from "./types.ts";
 
 export { readJson } from "./json.ts";
+
+/*
+ * Shared files (target profile, style bible, style preset, recipe) load here: each must carry its
+ * format line (`readFormat`, exit 2 `format_unsupported`) and pass its validator. Request inputs
+ * (specs, briefs, groupings) carry none and load with `readJson`.
+ */
+
+/** A target profile file: format line `assetgrove-target-profile/<n>` and its top-level fields. */
+export async function loadProfile(path: string): Promise<{ value: TargetProfile; dir: string }> {
+  const { value, dir } = await readJson<unknown>(path);
+  const current = readFormat("target-profile", value, path).value;
+  return { value: validateProfile(current, path), dir };
+}
+
+/**
+ * A JSON style bible file: format line `assetgrove-style-bible/<n>`, `referenceLicense` when it lists
+ * references, and every reference path inside the project root (exit 2 before any provider call).
+ */
+export async function loadStyleBible(path: string): Promise<{ value: StyleBible; dir: string }> {
+  const { value, dir } = await readJson<unknown>(path);
+  const bible = readFormat("style-bible", value, path).value as unknown as StyleBible;
+  const references = Array.isArray(bible.references) ? bible.references : [];
+  checkReferenceLicense(bible.referenceLicense, references, path);
+  requireInsideProject(
+    [
+      ...references.map((reference) => reference.path),
+      ...(typeof bible.perspective === "string" ? [bible.perspective] : []),
+    ],
+    dir,
+    path,
+  );
+  return { value: bible, dir };
+}
+
+/** The licence of each reference a JSON style bible lists, for provenance; empty when none. */
+export function styleBibleLicenses(bible: StyleBible): ReferenceLicense[] {
+  return referenceLicenses(bible.referenceLicense, bible.references ?? []);
+}
+
+/** A recipe file: format line `assetgrove-recipe/<n>`, then the recipe's own validation. */
+export async function loadRecipe(path: string): Promise<Recipe> {
+  return readRecipe((await readJson<unknown>(path)).value, path);
+}
 
 /** The bytes of a file; an unreadable file is an InputError naming what it is. */
 export async function readBytes(path: string, what: string): Promise<Uint8Array> {
@@ -78,7 +130,7 @@ export async function specForQa(
 /** The style and frame size a target profile supplies to a transformation, when it has them. */
 export async function profileContext(path: string | undefined) {
   if (path === undefined) return {};
-  const profile = (await readJson<TargetProfile>(path)).value;
+  const profile = (await loadProfile(path)).value;
   const frames = profile.frames as Partial<TargetProfile["frames"]> | undefined;
   return {
     ...(profile.style !== undefined && { style: resolveStyle(profile.style) }),

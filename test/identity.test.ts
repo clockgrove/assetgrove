@@ -58,6 +58,7 @@ async function lockedBible(lockVersion = "fox-1") {
   await writeFile(join(dir, "fox-turnaround.png"), png(32, 16));
   await writeFile(join(dir, "fox-side.png"), png(500, 400));
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.referenceLicense = "NOASSERTION";
   data.world = "Synthetic";
   data.identities = {
     fox: {

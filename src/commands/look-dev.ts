@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
-import { readJson, readModel } from "../inputs.ts";
+import { readJson, readModel, loadProfile, loadStyleBible } from "../inputs.ts";
 import { lookDev, planLookdev } from "../model3d/lookdev/command.ts";
 import { gatewayProvider, scriptedFrom, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
-import type { AssetSpec, StyleBible, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -77,8 +77,8 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
   async run(args, ctx) {
     const ledger = spendLedger(args.workItem);
     const spec = await readJson<AssetSpec>(args.spec);
-    const bible = await readJson<StyleBible>(args.bible);
-    const profile = await readJson<TargetProfile>(args.profile);
+    const bible = await loadStyleBible(args.bible);
+    const profile = await loadProfile(args.profile);
     const routes = await loadRoutes(args.routes);
     const capUsd = args.cap;
     const plan = planLookdev(profile.value, routes, capUsd);

@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse, stringify } from "yaml";
+import { homeDir } from "./env.ts";
 import { InputError } from "./errors.ts";
-import type { BibleReference } from "./types.ts";
+import { formatLine, readFormat } from "./formats.ts";
+import type { BibleReference, ReferenceLicense } from "./types.ts";
+
+/** The kinds of Markdown bible a file can be: the project's BIBLE.md or a style preset. */
+export type BibleKind = "style-bible" | "style-preset";
 
 export interface IdentityLock {
   version: string;
@@ -16,7 +22,11 @@ export interface IdentityLock {
   palette: string[];
 }
 export interface ArtBible {
+  /** `assetgrove-style-bible/<n>` (or `assetgrove-style-preset/<n>` in a preset file). */
+  format?: string;
   version: string;
+  /** The licence of the listed references (SPDX, `LicenseRef-*` or `NOASSERTION`); required when it lists any. */
+  referenceLicense?: string;
   world: string;
   preset: string;
   axes: {
@@ -262,6 +272,99 @@ function validateAxes(a: Obj, label: string, partial: boolean) {
   }
   if (has("shading")) choice(a["shading"], ["soft", "cel-2-3-tone", "flat"], "shading");
 }
+/**
+ * The project root of a shared file in `dir`: the nearest ancestor (inclusive) holding `.git` or
+ * `.assetgrove`, else `dir` itself. As in settings, the home directory is never a project root (it
+ * would hold every private file), so the walk stops below it. Reference paths in shared files must
+ * resolve inside the root.
+ */
+export function projectRoot(dir: string, home: string = homeDir()): string {
+  const start = realish(resolve(dir));
+  const stop = realish(resolve(home));
+  for (let current = start; current !== stop; current = dirname(current)) {
+    if (existsSync(join(current, ".git")) || existsSync(join(current, ".assetgrove")))
+      return current;
+    if (dirname(current) === current) break;
+  }
+  return start;
+}
+
+/** `path` with symlinks resolved as far as it exists, so a link cannot leave the root unseen. */
+function realish(path: string): string {
+  const missing: string[] = [];
+  let current = path;
+  while (!existsSync(current)) {
+    if (dirname(current) === current) return path;
+    missing.unshift(basename(current));
+    current = dirname(current);
+  }
+  return join(realpathSync(current), ...missing);
+}
+
+/**
+ * Refuses (exit 2 `invalid_input`) any of `paths`, relative to `baseDir`, that resolves outside the
+ * project root of `baseDir`, so a shared file cannot send a private file from elsewhere.
+ */
+export function requireInsideProject(
+  paths: string[],
+  baseDir: string,
+  source: string,
+  home: string = homeDir(),
+): void {
+  const root = projectRoot(baseDir, home);
+  for (const path of paths) {
+    const full = realish(resolve(baseDir, path));
+    const rel = relative(root, full);
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+      throw new InputError(
+        `${source}: reference ${path} resolves outside the project root ${root}; move it into the project`,
+      );
+  }
+}
+
+/**
+ * Checks the licence fields of a bible that lists `references`: the bible needs `referenceLicense`
+ * when it lists any, and each reference's own `license`, when set, must be text.
+ */
+export function checkReferenceLicense(
+  referenceLicense: unknown,
+  references: { path: string; license?: unknown }[],
+  source: string,
+): void {
+  if (referenceLicense !== undefined) text(referenceLicense, `${source} referenceLicense`);
+  for (const reference of references)
+    if (reference.license !== undefined)
+      text(reference.license, `${source} reference ${reference.path} license`);
+  if (references.length && referenceLicense === undefined)
+    throw new InputError(
+      `${source} lists references but no referenceLicense; add "referenceLicense" (an SPDX ID, LicenseRef-* or NOASSERTION)`,
+    );
+}
+
+/** Every reference image a Markdown bible lists: its anchors and its identity locks' images. */
+export function bibleReferences(bible: ArtBible): BibleReference[] {
+  return [
+    ...bible.anchors.positive,
+    ...bible.anchors.negative,
+    ...Object.values(bible.identities).flatMap((lock) => [
+      { path: lock.turnaround, role: "turnaround" },
+      ...(lock.references ?? []).map((path) => ({ path, role: "identity reference" })),
+    ]),
+  ];
+}
+
+/** The licence of each listed reference, as provenance records it; empty when none is listed. */
+export function referenceLicenses(
+  referenceLicense: string | undefined,
+  references: BibleReference[],
+): ReferenceLicense[] {
+  return references.map((reference) => ({
+    path: reference.path,
+    role: reference.role,
+    license: reference.license ?? referenceLicense ?? "NOASSERTION",
+  }));
+}
+
 export function validateBible(input: unknown): ArtBible {
   const b = object(input, "bible");
   for (const field of ["version", "world", "preset"]) text(b[field], field);
@@ -370,14 +473,34 @@ export function validateBible(input: unknown): ArtBible {
   const bible = b as unknown as ArtBible;
   if (!biblePalette(bible).length)
     throw new InputError("palette must contain at least one colour token");
+  checkReferenceLicense(b["referenceLicense"], bibleReferences(bible), "bible");
   return bible;
 }
-export function parseBible(source: string): { data: ArtBible; prose: string } {
+/** The front matter of a Markdown bible, unparsed, and the prose after it. */
+export function splitFrontMatter(source: string): { front: string; prose: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/.exec(source);
   if (!match) throw new InputError("style bible must be Markdown with YAML front matter");
+  return { front: match[1] as string, prose: match[2] as string };
+}
+/**
+ * Parses a Markdown bible: its front matter must carry the format line of `kind` (a refusal is
+ * exit 2 `format_unsupported`), then the bible is validated.
+ */
+export function parseBible(
+  source: string,
+  kind: BibleKind = "style-bible",
+  name = "style bible",
+): { data: ArtBible; prose: string } {
+  const { front, prose: body } = splitFrontMatter(source);
   try {
-    const data = validateBible(parse(match[1] as string));
-    const prose = match[2] as string;
+    let yaml: unknown;
+    try {
+      yaml = parse(front);
+    } catch (error) {
+      throw new InputError(`invalid bible YAML: ${(error as Error).message}`);
+    }
+    const data = validateBible(readFormat(kind, yaml, name).value);
+    const prose = body;
     if (!/^##\s+Do['’]s and Don['’]ts\s*$/im.test(prose))
       throw new InputError("style bible must contain a Do's and Don'ts section");
     return { data, prose };
@@ -386,11 +509,25 @@ export function parseBible(source: string): { data: ArtBible; prose: string } {
     throw new InputError(`invalid bible YAML: ${(error as Error).message}`);
   }
 }
-export function serializeBible(data: ArtBible, prose: string): string {
-  validateBible(data);
-  return `---\n${stringify(data)}---\n${prose}`;
+/** Writes a Markdown bible with the current format line of `kind` first. */
+export function serializeBible(
+  data: ArtBible,
+  prose: string,
+  kind: BibleKind = "style-bible",
+): string {
+  const versioned = { format: formatLine(kind), ...data } as ArtBible;
+  versioned.format = formatLine(kind);
+  validateBible(versioned);
+  return `---\n${stringify(versioned)}---\n${prose}`;
 }
-export async function loadBible(path: string): Promise<BibleDocument> {
+/**
+ * Loads a Markdown bible of `kind`: format line, validation, and every reference path inside the
+ * project root (exit 2 before any provider call).
+ */
+export async function loadBible(
+  path: string,
+  kind: BibleKind = "style-bible",
+): Promise<BibleDocument> {
   const full = resolve(path);
   let source: string;
   try {
@@ -398,11 +535,17 @@ export async function loadBible(path: string): Promise<BibleDocument> {
   } catch (error) {
     throw new InputError(`cannot read style bible ${full}`, { cause: error });
   }
+  const parsed = parseBible(source, kind, full);
+  requireInsideProject(
+    bibleReferences(parsed.data).map((reference) => reference.path),
+    dirname(full),
+    full,
+  );
   return {
     path: full,
     dir: dirname(full),
     hash: createHash("sha256").update(source).digest("hex"),
-    ...parseBible(source),
+    ...parsed,
   };
 }
 
@@ -422,6 +565,7 @@ function preset(
   lightingKey: string,
 ): ArtBible {
   return {
+    format: formatLine("style-bible"),
     version: "1",
     world: "Your world",
     preset: "",
@@ -567,7 +711,7 @@ export async function initBible(options: { directory: string; world: string; pre
   for (const [name, value] of Object.entries(BIBLE_PRESETS))
     await writeFile(
       join(dirname(biblePath), "presets", `${name}.md`),
-      serializeBible(value, prose),
+      serializeBible(value, prose, "style-preset"),
       { flag: "wx" },
     );
   return { biblePath, skillPaths, templatePath };
@@ -608,7 +752,10 @@ export async function useBiblePreset(options: { biblePath: string; preset: strin
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(options.preset))
     throw new InputError("preset must be a lowercase slug");
   const document = await loadBible(options.biblePath);
-  const selected = await loadBible(join(document.dir, "presets", `${options.preset}.md`));
+  const selected = await loadBible(
+    join(document.dir, "presets", `${options.preset}.md`),
+    "style-preset",
+  );
   const data = structuredClone(document.data);
   data.preset = options.preset;
   data.axes = structuredClone(selected.data.axes);

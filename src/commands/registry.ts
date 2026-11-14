@@ -10,6 +10,7 @@ import { lodCommand } from "./lod.ts";
 import { lookDevCommand } from "./look-dev.ts";
 import { materialsCommand } from "./materials.ts";
 import { mcpCommand } from "./mcp.ts";
+import { migrateCommand } from "./migrate.ts";
 import { opCommand } from "./op.ts";
 import { opsCommand } from "./ops.ts";
 import { pickCommand } from "./pick.ts";
@@ -42,6 +43,7 @@ export const commands: readonly CommandSpec[] = [
   opCommand,
   recipeCommand,
   opsCommand,
+  migrateCommand,
 ];
 
 /** The name of every registry command. */

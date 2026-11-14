@@ -33,6 +33,7 @@ async function bibleIn(root: string, folder: string, world: string): Promise<str
   await writeFile(join(dir, "fox.png"), png());
   await writeFile(join(dir, "kit.png"), png());
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.referenceLicense = "NOASSERTION";
   data.world = world;
   const lock = (name: string, scarf: string) => ({
     version: `${name}-1`,

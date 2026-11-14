@@ -202,3 +202,13 @@ ops [--json]
 Lists every operation with its summary, parameters and engines. Local.
 
 MCP tool: `ops`, no arguments.
+
+### `migrate`
+
+```text
+migrate <file> --kind <kind> [--json]
+```
+
+Adds the format line of `--kind` (`target-profile`, `style-bible`, `style-preset` or `recipe`) to a file that has none, and moves a file with an older format forward, rewriting it in place. JSON files are rewritten with two-space indentation; Markdown files keep their front matter comments, key order and prose. A file already current is not written. A newer or mismatched format is refused (exit 2). The result names the `file`, `kind`, `status` (`added`, `migrated` or `current`), `from` (the old version, or null) and `format`. Local: no model call, no spend.
+
+MCP tool: `migrate`, arguments `file`, `kind`.

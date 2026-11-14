@@ -1,8 +1,12 @@
+import "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   BIBLE_PRESETS,
   biblePalette,
@@ -12,14 +16,23 @@ import {
   loadBible,
   loadDesignColors,
   parseBible,
+  projectRoot,
+  requireInsideProject,
   serializeBible,
   validateBible,
   validateTokens,
   useBiblePreset,
 } from "../src/bible.ts";
+import { imageGenerators } from "../src/generators/image.ts";
+import { stage } from "../src/loop.ts";
+import { defaultRoutes } from "../src/routes.ts";
+import type { AssetSpec, StyleBible } from "../src/types.ts";
+import { scriptedProvider, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 function base() {
-  return structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.referenceLicense = "NOASSERTION";
+  return data;
 }
 
 test("bible initializes all three repository-owned preset constitutions and skill links", async () => {
@@ -255,6 +268,7 @@ test("switch target-owned presets preserves world palette, locks, anchors and un
     document.data.anchors.positive = [{ path: "positive.png", role: "style" }];
     document.data.anchors.negative = [{ path: "negative.png", role: "avoid" }];
     document.data["future"] = { keep: true };
+    document.data.referenceLicense = "NOASSERTION";
     document.data.tokens["palette"] = {
       ink: { $type: "color", $value: { colorSpace: "srgb", components: [0, 0, 0] } },
     };
@@ -292,4 +306,200 @@ test("switch target-owned presets preserves world palette, locks, anchors and un
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// --- Reference licences and the project root (issue #167) ---
+
+const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const exec = promisify(execFile);
+
+async function cli(...args: string[]): Promise<{ code: number; doc: Record<string, unknown> }> {
+  try {
+    const { stdout } = await exec(process.execPath, [CLI, ...args, "--json"]);
+    return { code: 0, doc: JSON.parse(stdout) };
+  } catch (error) {
+    const e = error as { code: number; stdout: string };
+    return { code: e.code, doc: JSON.parse(e.stdout) };
+  }
+}
+
+const errorOf = (run: { doc: Record<string, unknown> }) =>
+  run.doc["error"] as { code: string; message: string };
+
+/** A synthetic world written to disk: spec, JSON bible and profile beside it. */
+async function worldFiles(bible: Partial<StyleBible> = {}) {
+  const world = await syntheticWorld();
+  const files = {
+    spec: join(world.dir, "spec.json"),
+    bible: join(world.bibleDir, "bible.json"),
+    profile: join(world.dir, "profile.json"),
+  };
+  await writeFile(files.spec, JSON.stringify(shelterSpec));
+  await writeFile(files.bible, JSON.stringify({ ...world.bible, ...bible }));
+  await writeFile(files.profile, JSON.stringify(world.profile));
+  return { world, files };
+}
+
+/** A provider script that records every call in `marker`, to prove none was made. */
+async function recordingProvider(dir: string, marker: string): Promise<string> {
+  const path = join(dir, "recording-provider.mjs");
+  const record = `() => { appendFileSync(${JSON.stringify(marker)}, "call\\n"); throw new Error("called"); }`;
+  await writeFile(
+    path,
+    `import { appendFileSync } from "node:fs";\nexport default { image: ${record}, vision: ${record} };\n`,
+  );
+  return path;
+}
+
+test("a bible with references and no referenceLicense exits 2", async (t) => {
+  // The JSON bible a stage reads.
+  const { world, files } = await worldFiles();
+  t.after(() => rm(world.dir, { recursive: true, force: true }));
+  const { referenceLicense: _dropped, ...unlicensed } = world.bible;
+  void _dropped;
+  await writeFile(files.bible, JSON.stringify(unlicensed));
+  const stageArgs = ["--spec", files.spec, "--bible", files.bible, "--profile", files.profile];
+  const run = await cli("stage", ...stageArgs, "--runs", world.runsDir, "--dry-run");
+  assert.equal(run.code, 2);
+  assert.equal(errorOf(run).code, "invalid_input");
+  assert.match(errorOf(run).message, /referenceLicense/);
+  // Without references, no licence is needed.
+  await writeFile(
+    files.bible,
+    JSON.stringify({ ...unlicensed, references: [], perspective: "refs/perspective.png" }),
+  );
+  assert.equal((await cli("stage", ...stageArgs, "--runs", world.runsDir, "--dry-run")).code, 0);
+
+  // BIBLE.md front matter: anchors are references.
+  const data = base();
+  data.anchors.positive.push({ path: "anchors/style.png", role: "style" });
+  const biblePath = join(world.dir, "BIBLE.md");
+  await writeFile(
+    biblePath,
+    serializeBible(data, "## Do's and Don'ts\n\nDo.\n").replace(/^referenceLicense: .*\n/m, ""),
+  );
+  const described = await cli("bible", "describe", "--bible", biblePath);
+  assert.equal(described.code, 2);
+  assert.equal(errorOf(described).code, "invalid_input");
+  assert.match(errorOf(described).message, /referenceLicense/);
+});
+
+test("a per-reference license is recorded in provenance, the others under referenceLicense", async (t) => {
+  const world = await syntheticWorld();
+  t.after(() => rm(world.dir, { recursive: true, force: true }));
+  const bible: StyleBible = {
+    ...world.bible,
+    referenceLicense: "LicenseRef-synthetic-studio",
+    references: world.bible.references.map((reference) =>
+      reference.path === "refs/fern-sheet.png" ? { ...reference, license: "CC-BY-4.0" } : reference,
+    ),
+  };
+  const spec: AssetSpec = {
+    kind: "still",
+    assetId: "fern",
+    animationFamily: "shelter",
+    frames: { width: 96, height: 96 },
+  };
+  const { run } = await stage({
+    spec,
+    specDir: world.dir,
+    bible,
+    bibleDir: world.bibleDir,
+    profile: world.profile,
+    routes: defaultRoutes,
+    provider: scriptedProvider(),
+    providerName: "scripted",
+    generators: imageGenerators,
+    runsDir: world.runsDir,
+    candidates: 1,
+  });
+  const provenance = run.candidates[0]!.provenance;
+  assert.deepEqual(
+    provenance.referenceLicenses,
+    bible.references.map((reference) => ({
+      path: reference.path,
+      role: reference.role,
+      license:
+        reference.path === "refs/fern-sheet.png" ? "CC-BY-4.0" : "LicenseRef-synthetic-studio",
+    })),
+  );
+});
+
+test("a reference path outside the project root exits 2 invalid_input before any provider call", async (t) => {
+  const { world, files } = await worldFiles();
+  t.after(() => rm(world.dir, { recursive: true, force: true }));
+  // The project is the world directory (it holds .git); a private file sits outside it.
+  await mkdir(join(world.dir, ".git"));
+  const outside = await mkdtemp(join(tmpdir(), "assetgrove-private-"));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  const secret = join(outside, "secret.png");
+  await writeFile(secret, await readFile(join(world.bibleDir, "refs/den.png")));
+  const marker = join(world.dir, "provider-calls.log");
+  const provider = await recordingProvider(world.dir, marker);
+  const stageArgs = ["--spec", files.spec, "--bible", files.bible, "--profile", files.profile];
+  const escapes = [
+    relative(world.bibleDir, secret),
+    secret,
+    "refs/link.png", // a link inside the project that points outside it
+  ];
+  await symlink(secret, join(world.bibleDir, "refs/link.png"));
+  for (const path of escapes) {
+    await writeFile(
+      files.bible,
+      JSON.stringify({
+        ...world.bible,
+        references: [...world.bible.references, { path, role: "prop", subject: "fern" }],
+      }),
+    );
+    const run = await cli(
+      "stage",
+      ...stageArgs,
+      "--runs",
+      world.runsDir,
+      "--provider-script",
+      provider,
+    );
+    assert.equal(run.code, 2, `${path}: ${JSON.stringify(run.doc)}`);
+    assert.equal(errorOf(run).code, "invalid_input");
+    assert.match(errorOf(run).message, /outside the project root/);
+  }
+  await assert.rejects(readFile(marker), { code: "ENOENT" });
+
+  // A BIBLE.md anchor that leaves the project is refused the same way.
+  const data = base();
+  data.anchors.positive.push({ path: relative(world.dir, secret), role: "style" });
+  const biblePath = join(world.dir, "BIBLE.md");
+  await writeFile(biblePath, serializeBible(data, "## Do's and Don'ts\n\nDo.\n"));
+  const described = await cli("bible", "describe", "--bible", biblePath);
+  assert.equal(described.code, 2);
+  assert.equal(errorOf(described).code, "invalid_input");
+  assert.match(errorOf(described).message, /outside the project root/);
+  // Inside the project it loads.
+  data.anchors.positive = [{ path: "bible/refs/den.png", role: "style" }];
+  await writeFile(biblePath, serializeBible(data, "## Do's and Don'ts\n\nDo.\n"));
+  assert.equal((await cli("bible", "describe", "--bible", biblePath)).code, 0);
+});
+
+test("the project root stops below the home directory and falls back to the shared file's directory", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "assetgrove-home-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  // A dotfiles repository at the home directory does not make the home directory the project.
+  await mkdir(join(home, ".git"));
+  const art = join(home, "work", "art");
+  await mkdir(join(home, "work", "refs"), { recursive: true });
+  await mkdir(art, { recursive: true });
+  // No marker below the home directory: the root is the bible's own directory.
+  assert.equal(projectRoot(art, home), await realpath(art));
+  assert.throws(
+    () => requireInsideProject(["../refs/x.png"], art, "bible.json", home),
+    /outside the project root/,
+  );
+  assert.throws(
+    () => requireInsideProject([join(home, ".ssh", "id.png")], art, "bible.json", home),
+    /outside the project root/,
+  );
+  // With a project marker above the bible, a sibling reference inside the project loads.
+  await mkdir(join(home, "work", ".assetgrove"));
+  assert.doesNotThrow(() => requireInsideProject(["../refs/x.png"], art, "bible.json", home));
+  assert.match(projectRoot(art, home), /work$/);
 });

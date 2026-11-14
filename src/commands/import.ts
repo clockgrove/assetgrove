@@ -1,7 +1,14 @@
 import { join, resolve } from "node:path";
 import { Budget } from "../budget.ts";
 import { Caller } from "../calls.ts";
-import { declarationOption, lockFor, readBytes, readJson, sliceOptions } from "../inputs.ts";
+import {
+  declarationOption,
+  lockFor,
+  readBytes,
+  sliceOptions,
+  loadProfile,
+  loadStyleBible,
+} from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
 import { providerFor, spendLedger } from "../providers/index.ts";
 import { loadBibleInputs } from "../request.ts";
@@ -10,7 +17,7 @@ import { CONTACT_FILE, GROUPING_FILE, importSheet } from "../sheet/import.ts";
 import type { ImportOptions, ImportRecord } from "../sheet/import.ts";
 import type { Grouping } from "../sheet/types.ts";
 import { ledgerFor } from "../spend.ts";
-import type { AssetSpec, StyleBible, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { defineCommand } from "./types.ts";
 
 /** The identity score of an import as text lines. */
@@ -163,8 +170,8 @@ below the threshold, off skips scoring.`,
   async run(args, ctx) {
     const capUsd = args.cap ?? DEFAULT_CAP_USD;
     const slice = sliceOptions(args.grid, args.components, args.frames);
-    const profile = await readJson<TargetProfile>(args.profile);
-    const bible = args.bible ? await readJson<StyleBible>(args.bible) : undefined;
+    const profile = await loadProfile(args.profile);
+    const bible = args.bible ? await loadStyleBible(args.bible) : undefined;
     const subject = args.subject ?? args.asset;
     const sheet = await readBytes(args.sheet, "sheet");
     const digitalSourceType = declarationOption(args.digitalSourceType);

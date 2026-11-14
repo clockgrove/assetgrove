@@ -1,10 +1,9 @@
 import { evaluateIdentity } from "../identity-eval.ts";
 import type { Breakdown, MediumReport } from "../identity-eval.ts";
-import { readJson } from "../inputs.ts";
+import { loadProfile } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
 import { providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
-import type { TargetProfile } from "../types.ts";
 import { defineCommand } from "./types.ts";
 
 function formatMedium(medium: string, m: MediumReport, threshold: number): string[] {
@@ -84,7 +83,7 @@ hold a game's private art. See docs/generation-knobs.md.`,
   effect: { readOnly: false, spends: "always", writes: "out" },
   confirm: "spend",
   async run(args, ctx) {
-    const profile = args.profile ? (await readJson<TargetProfile>(args.profile)).value : {};
+    const profile = args.profile ? (await loadProfile(args.profile)).value : {};
     const { provider, name } = await providerFor(args.providerScript);
     const report = await evaluateIdentity({
       ...(args.bible !== undefined && { biblePath: args.bible }),

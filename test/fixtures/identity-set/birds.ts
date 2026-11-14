@@ -470,6 +470,7 @@ function bibleSource(
   refs: Record<string, string[]>,
 ) {
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!) as ArtBible;
+  data.referenceLicense = "NOASSERTION";
   data.world = world;
   data.identities = {};
   for (const name of names)

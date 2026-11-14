@@ -1,12 +1,12 @@
 import { resolve } from "node:path";
-import { readJson, lockFor } from "../inputs.ts";
+import { readJson, lockFor, loadProfile, loadStyleBible } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
 import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
 import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION, loadRoutes } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { generateSheet, planSheet, sheetBrief } from "../sheet/generate.ts";
 import { SliceError } from "../sheet/slice.ts";
-import type { AssetSpec, StyleBible, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { formatImport } from "./import.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -90,8 +90,8 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
     const ledger = spendLedger(args.workItem);
     const capUsd = args.cap ?? DEFAULT_CAP_USD;
     const spec = await readJson<AssetSpec>(args.spec);
-    const bible = await readJson<StyleBible>(args.bible);
-    const profile = await readJson<TargetProfile>(args.profile);
+    const bible = await loadStyleBible(args.bible);
+    const profile = await loadProfile(args.profile);
     const brief =
       args.brief === undefined
         ? undefined

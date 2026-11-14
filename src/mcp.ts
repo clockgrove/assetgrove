@@ -14,12 +14,12 @@ import { InputError, ProviderError } from "./errors.ts";
 import { checkTrackedKeys } from "./guard.ts";
 import { redact } from "./redact.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
-import { readJson } from "./loop.ts";
+import { loadProfile, readJson } from "./inputs.ts";
 import { applyPlan, createPlan, savePlan } from "./planning.ts";
 import type { GenerationBrief, RunSettings } from "./planning.ts";
 import { loadRoutes } from "./routes.ts";
 import type { SpendLedger } from "./spend.ts";
-import type { AssetSpec, TargetProfile } from "./types.ts";
+import type { AssetSpec } from "./types.ts";
 
 export interface ToolContext {
   provider?: GenerationProvider;
@@ -72,7 +72,7 @@ export async function generationTool(
   }
   if (name === "plan") {
     const spec = await readJson<AssetSpec>(stringArg(args, "spec")!);
-    const profile = await readJson<TargetProfile>(stringArg(args, "profile")!);
+    const profile = await loadProfile(stringArg(args, "profile")!);
     const briefPath = stringArg(args, "brief", false);
     const settingsPath = stringArg(args, "settings", false);
     const plan = await createPlan({
