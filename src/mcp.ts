@@ -11,6 +11,8 @@ import { resultDocument } from "./commands/result.ts";
 import { errorOutcome, runCommand, toolInputSchema } from "./commands/runner.ts";
 import type { CommandSpec, RunContext } from "./commands/types.ts";
 import { InputError, ProviderError } from "./errors.ts";
+import { checkTrackedKeys } from "./guard.ts";
+import { redact } from "./redact.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { readJson } from "./loop.ts";
 import { applyPlan, createPlan, savePlan } from "./planning.ts";
@@ -218,7 +220,8 @@ function createServer(ctx: RunContext): McpServer {
 
 /**
  * Serves the tools over MCP stdio with the official SDK until the input closes; no logs on
- * stdout. Refuses (exit 2 `settings_invalid`) to start in an environment the settings disallow.
+ * stdout. Refuses (exit 2 `settings_invalid`) to start in an environment the settings disallow,
+ * and (exit 2 `key_tracked`) when a tracked file of the working directory's repository holds a key.
  */
 export async function serveMcp(
   ctx: RunContext,
@@ -226,13 +229,14 @@ export async function serveMcp(
   output: Writable = process.stdout,
 ): Promise<void> {
   checkContextEnvironment(ctx);
+  checkTrackedKeys(process.cwd(), { settings: ctx.settings, ...(ctx.env && { env: ctx.env }) });
   const ended = new Promise<void>((done) => {
     input.once("end", done);
     input.once("close", done);
   });
   const handle = serveStdio(() => createServer(ctx), {
     transport: new StdioServerTransport(input, output),
-    onerror: (error) => ctx.log(`mcp: ${error.message}`),
+    onerror: (error) => ctx.log(redact(`mcp: ${error.message}`)),
   });
   await ended;
   await handle.close();

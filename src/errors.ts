@@ -2,6 +2,7 @@
  * The exit and error-code table (design section 5): every refusal names one error code, and each
  * code maps to one exit. InputError and ProviderError are the typed failures most code throws.
  */
+import { redact } from "./redact.ts";
 
 /** Each exit code with what it means. Exit 0 is success and has no error code. */
 export const EXIT_MEANING = {
@@ -55,10 +56,10 @@ export class InputError extends Error {
   }
 }
 
-/** A model provider call failed or returned nothing usable. */
+/** A model provider call failed or returned nothing usable. Its message is redacted. */
 export class ProviderError extends Error {
   constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+    super(redact(message), options);
     this.name = "ProviderError";
   }
 }
