@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { InputError } from "../../errors.ts";
+import { recordPath } from "../../paths.ts";
 import { readRun, writeRun } from "../../loop.ts";
 import type { RunRecord, StagedCandidate } from "../../loop.ts";
 import { sha256 } from "../../request.ts";
@@ -299,7 +300,7 @@ export async function lodChain(
   await mkdir(join(runDir, folder), { recursive: true });
   const artifacts: string[] = [];
   for (const artifact of chain.artifacts) {
-    const name = join(folder, artifact.name);
+    const name = recordPath(join(folder, artifact.name));
     await writeFile(join(runDir, name), artifact.bytes);
     artifacts.push(name);
   }
@@ -368,7 +369,7 @@ export async function lodChain(
     await writeFile(join(runDir, file), chain.bytes);
     const sidecars: NonNullable<StagedCandidate["sidecars"]> = [];
     for (const side of chain.sidecars) {
-      const staged = join(folder, "files", side.name);
+      const staged = recordPath(join(folder, "files", side.name));
       await mkdir(join(runDir, folder, "files"), { recursive: true });
       await writeFile(join(runDir, staged), side.bytes);
       sidecars.push({

@@ -32,7 +32,10 @@ export function checkWriteSet(root: string, paths: readonly string[]): void {
   const seen = new Map<string, string>();
   for (const path of paths) {
     const rel = recordPath(isAbsolute(path) ? relative(base, path) : path);
-    for (const segment of rel.split("/")) {
+    // Only the segments written below the root are names Assetgrove chooses; a path outside it
+    // (on Windows, another drive) keeps its own form.
+    const below = !isAbsolute(rel) && rel !== ".." && !rel.startsWith("../");
+    for (const segment of below ? rel.split("/") : []) {
       if (segment.includes(":")) {
         throw new InputError(`the file name "${rel}" has ':' in it, which Windows refuses`);
       }

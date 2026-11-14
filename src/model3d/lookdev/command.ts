@@ -10,6 +10,7 @@ import { basename, join, resolve } from "node:path";
 import { Budget } from "../../budget.ts";
 import { Caller } from "../../calls.ts";
 import { InputError, ProviderError } from "../../errors.ts";
+import { recordPath } from "../../paths.ts";
 import type { GenerationProvider } from "../../gateway/provider.ts";
 import { identityReason, identitySettings3d, scoreIdentity } from "../../identity.ts";
 import type { IdentityScore } from "../../identity.ts";
@@ -1531,11 +1532,11 @@ export async function lookDev(
   const artifactNames: string[] = [];
   for (const a of artifacts) {
     await writeFile(join(runDir, dir, a.name), a.bytes);
-    artifactNames.push(join(dir, a.name));
+    artifactNames.push(recordPath(join(dir, a.name)));
   }
   const stagedSidecars: NonNullable<StagedCandidate["sidecars"]> = [];
   for (const s of sidecars) {
-    const file = join(dir, s.name);
+    const file = recordPath(join(dir, s.name));
     await writeFile(join(runDir, file), s.bytes);
     stagedSidecars.push({
       file,
