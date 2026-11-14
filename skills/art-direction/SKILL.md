@@ -11,4 +11,4 @@ Starting presets: [Cozy storybook (painterly)](presets/cozy-storybook.md), [Flat
 
 The target repository owns the bible and [prompt template](default.md), and briefs cannot override the constitution.
 
-The `BIBLE.md` front matter starts with `format: assetgrove-style-bible/1`; `assetgrove migrate BIBLE.md --kind style-bible` adds it to an older bible. A bible that lists anchors or identity-lock references sets `referenceLicense` (an SPDX identifier, `LicenseRef-*` or `NOASSERTION`), the terms those images were provided under. An anchor or reference may set its own `license`. Provenance records these terms and does not check them. Reference paths must stay inside the project root.
+The `BIBLE.md` front matter starts with `format: assetgrove-style-bible/1`; `assetgrove migrate BIBLE.md --kind style-bible` adds it to an older bible. A bible that lists anchors or identity-lock references sets `referenceLicense` (an SPDX identifier, `LicenseRef-*` or `NOASSERTION`), the terms those images were provided under. An anchor may set its own `license`. Provenance records these terms and does not check them. Reference paths must stay inside the project root.
