@@ -112,15 +112,15 @@ function commandLine(command: CommandSpec, args: Args, script: string): string[]
 }
 
 /**
- * What legitimately differs between two runs of one command: run IDs, times, random seeds and
- * what hashes them.
+ * What legitimately differs between two runs of one command: run IDs, times, measured latencies,
+ * random seeds and what hashes them.
  */
 function normalise(value: unknown): unknown {
   return JSON.parse(
     JSON.stringify(value)
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "<time>")
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]+/g, "<run>")
-      .replace(/"(durationMs|elapsedMs|seed)":\d+(\.\d+)?/g, '"$1":0')
+      .replace(/"(durationMs|elapsedMs|latencyMs|seed)":\d+(\.\d+)?/g, '"$1":0')
       // A plan's digest covers its creation time.
       .replace(/"digest":"[0-9a-f]{64}"/g, '"digest":"<digest>"'),
   );
