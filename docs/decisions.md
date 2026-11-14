@@ -165,3 +165,11 @@ The target profile is validated with zod for its top-level fields, so an unknown
 A bible that lists references requires `referenceLicense` (an SPDX identifier, `LicenseRef-*` or `NOASSERTION`, checked as non-empty text), and a reference may set its own `license`. Provenance records `referenceLicenses`, each the reference's own licence or the bible's. They record terms and gate nothing, because Assetgrove cannot know whether a stated licence is true.
 
 Reference paths in shared files must resolve, with symlinks resolved, inside the project root: the nearest ancestor of the bible's directory holding `.git` or `.assetgrove`, else the bible's own directory. The walk stops below the home directory, which is never a project root (as in settings), so a dotfiles repository at the home directory does not open every file under it; a bible with no project marker may reference only files beside or below it. A shared file from another developer cannot then make Assetgrove read or send an image from elsewhere on the machine; the refusal is invalid input before any provider call.
+
+## Record paths use /; case-only collisions are refused
+
+Assetgrove runs on Linux, macOS and Windows, and its records and JSON output travel between them. `src/paths.ts` is the one place paths take record form: a relative path in a record (a run's candidate files and artifacts, a pick's `files`) or in JSON output uses `/`, whatever the OS separator is, and readers accept `/` only (node:path takes `/` on Windows too). Absolute paths, such as a pick's `target` or a command's `runDir`, stay in the OS's own form.
+
+Before a hand-off writes anything, its write set (media, manifest, sidecars, provenance) is checked: two paths that differ only by case, or a path segment with `:` in it, exit 2 `invalid_input` with nothing written, on every OS. A case-insensitive file system (macOS and Windows by default) would let the second write replace the first, and Windows refuses `:` in a file name. Files already in the target are not compared. Run IDs, and so run directories, replace the `:` of their timestamp with `-`.
+
+Long paths need no code: on Windows, node:fs turns every absolute path into its `\\?\` form, so Assetgrove's own file I/O works past 260 characters. A target's validator is the target's own process and inherits whatever limits its program has.
