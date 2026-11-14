@@ -4,7 +4,7 @@
  * and fills the defaults. Nothing here reads a key.
  */
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
 import { configHome, configOverride, SettingsError, stateHome, type Env } from "./env.ts";
 import { FormatError, readFormat } from "./formats.ts";
@@ -15,6 +15,9 @@ export const DEFAULT_CAPS = { runUsd: 5, dailyUsd: 10, workItemUsd: 5 } as const
 
 /** Field names that would hold a secret; refused anywhere in the file, in any case. */
 const SECRET_FIELDS = new Set(["apikey", "key", "token", "secret"]);
+
+/** Top-level fields whose keys are ids (providers, roles, operations, field paths), not field names. */
+const RECORD_FIELDS = new Set(["providers", "roles", "routes", "confirmedBy"]);
 
 const usd = z.number().finite().nonnegative();
 const hex = z.string().regex(/^[0-9a-f]+$/i, "must be hexadecimal");
@@ -53,7 +56,7 @@ const providerSchema = z.strictObject({
   limit: limitSchema.optional(),
 });
 
-const outputGrantSchema = z.looseObject({
+const outputGrantSchema = z.strictObject({
   license: z.string().optional(),
   plan: z.string().optional(),
   commercial: z.boolean().optional(),
@@ -139,7 +142,7 @@ export interface Settings {
 
 export interface LoadOptions {
   env?: Env;
-  /** The working directory; its Git top level is a project the file may not be inside. */
+  /** The working directory; every Git work tree holding it is a project the file may not be inside. */
   cwd?: string;
   /** `--target`, when the command has one. */
   target?: string;
@@ -170,21 +173,28 @@ export function loadSettings(options: LoadOptions = {}): Settings {
   const configDir = dirname(path);
   const projects = projectRoots(options);
   const defaultStateDir = join(stateHome(env, platform), "assetgrove");
+  const projectOf = (target: string) => {
+    const real = realIfExists(resolve(target));
+    return projects.find((root) => isInside(real, root, platform));
+  };
 
   if (!existsSync(path)) {
     if (configOverride(env) !== undefined) {
       throw new SettingsError(`ASSETGROVE_CONFIG names ${path}, which does not exist.`);
     }
+    refuseConfigDir(configDir, projectOf(configDir));
+    refuseDefaultStateDir(defaultStateDir, projectOf(defaultStateDir));
     return complete({ format: "assetgrove-settings/1" }, path, configDir, false, defaultStateDir);
   }
 
-  const real = realpathSync(path);
+  const real = realpathSync.native(path);
   const project = projects.find((root) => isInside(real, root, platform));
   if (project !== undefined) {
     throw new SettingsError(
       `The settings file ${path} is inside the project ${project}; developer settings must live outside every repository.`,
     );
   }
+  refuseConfigDir(configDir, projectOf(configDir));
   if (!statSync(real).isFile()) throw new SettingsError(`${path} is not a file.`);
 
   let raw: unknown;
@@ -223,18 +233,33 @@ export function loadSettings(options: LoadOptions = {}): Settings {
 
   checkProviders(file, path);
   if (file.stateDir !== undefined) {
-    const stateReal = realIfExists(resolve(file.stateDir));
-    const inside = projects.find((root) => isInside(stateReal, root, platform));
+    const inside = projectOf(file.stateDir);
     if (inside !== undefined) {
       throw new SettingsError(
         `${path}: stateDir ${file.stateDir} is inside the project ${inside}.`,
       );
     }
+  } else {
+    refuseDefaultStateDir(defaultStateDir, projectOf(defaultStateDir));
   }
 
   const settings = complete(file, path, configDir, true, defaultStateDir);
   if (migrated.migratedFrom !== undefined) settings.migratedFrom = migrated.migratedFrom;
   return settings;
+}
+
+function refuseConfigDir(configDir: string, project: string | undefined): void {
+  if (project === undefined) return;
+  throw new SettingsError(
+    `The settings directory ${configDir} is inside the project ${project}; developer settings must live outside every repository.`,
+  );
+}
+
+function refuseDefaultStateDir(stateDir: string, project: string | undefined): void {
+  if (project === undefined) return;
+  throw new SettingsError(
+    `The default stateDir ${stateDir} (under the state home) is inside the project ${project}; set stateDir to a directory outside every repository.`,
+  );
 }
 
 function complete(
@@ -278,6 +303,11 @@ function checkProviders(file: SettingsFile, path: string): void {
         `${path}: providers.${id}.baseURL ${shown} carries a user name or password; settings never hold a key. Name the environment variable that holds it with keyEnv.`,
       );
     }
+    if (url !== undefined && url.search !== "") {
+      throw new SettingsError(
+        `${path}: providers.${id}.baseURL ${shown} carries a query string; settings never hold a key. Name the environment variable that holds it with keyEnv.`,
+      );
+    }
     if (url !== undefined && url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
       throw new SettingsError(
         `${path}: providers.${id}.baseURL must be https, or http on a loopback host; got ${shown}.`,
@@ -307,7 +337,10 @@ export function isLoopback(hostname: string): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
-/** The path of the first field named like a secret, depth-first. */
+/**
+ * The path of the first field named like a secret, depth-first. The keys of the top-level records
+ * (provider ids, role names, operations, confirmed field paths) are ids, not field names.
+ */
 function secretField(value: unknown, at: string[]): string[] | undefined {
   if (Array.isArray(value)) {
     for (const [index, item] of value.entries()) {
@@ -315,8 +348,9 @@ function secretField(value: unknown, at: string[]): string[] | undefined {
       if (found) return found;
     }
   } else if (typeof value === "object" && value !== null) {
+    const ids = at.length === 1 && RECORD_FIELDS.has(at[0]!);
     for (const [field, item] of Object.entries(value)) {
-      if (SECRET_FIELDS.has(field.toLowerCase())) return [...at, field];
+      if (!ids && SECRET_FIELDS.has(field.toLowerCase())) return [...at, field];
       const found = secretField(item, [...at, field]);
       if (found) return found;
     }
@@ -324,29 +358,57 @@ function secretField(value: unknown, at: string[]): string[] | undefined {
   return undefined;
 }
 
-/** The Git top levels of the cwd, `--target` and every input file: the projects in play. */
+/**
+ * The projects in play, by real path: every directory holding `.git` at or above the cwd,
+ * `--target` and the directory of each input file's real path; and, for a `.git` file (a linked
+ * worktree or a submodule), the work tree whose Git directory it points into, with its ancestors.
+ */
 function projectRoots(options: LoadOptions): string[] {
-  const starts = [
-    options.cwd ?? process.cwd(),
-    ...(options.target !== undefined ? [options.target] : []),
-    ...(options.inputs ?? []).map((input) => dirname(resolve(input))),
+  const pending = [
+    realIfExists(resolve(options.cwd ?? process.cwd())),
+    ...(options.target !== undefined ? [realIfExists(resolve(options.target))] : []),
+    ...(options.inputs ?? []).map((input) => dirname(realIfExists(resolve(input)))),
   ];
   const roots = new Set<string>();
-  for (const start of starts) {
-    const root = gitTopLevel(start);
-    if (root !== undefined) roots.add(root);
+  const walked = new Set<string>();
+  for (let start = pending.pop(); start !== undefined; start = pending.pop()) {
+    // A walked directory's ancestors are walked too, so the walk stops at the first one.
+    for (let dir = start; !walked.has(dir); dir = dirname(dir)) {
+      walked.add(dir);
+      const dotGit = join(dir, ".git");
+      if (existsSync(dotGit)) {
+        roots.add(dir);
+        const main = mainWorkTree(dotGit);
+        if (main !== undefined) pending.push(main);
+      }
+      if (dirname(dir) === dir) break;
+    }
   }
   return [...roots];
 }
 
-/** The nearest directory at or above `start` that holds `.git`, by real path. */
-export function gitTopLevel(start: string): string | undefined {
-  let dir = realIfExists(resolve(start));
-  for (;;) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return undefined;
-    dir = parent;
+/**
+ * For a `.git` file, the work tree whose `.git` directory holds the Git directory the file names:
+ * a linked worktree's main checkout (through `commondir`), or a submodule's superproject.
+ */
+function mainWorkTree(dotGit: string): string | undefined {
+  const named = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(readFileIfAny(dotGit) ?? "")?.[1];
+  if (named === undefined) return undefined;
+  let gitDir = realIfExists(resolve(dirname(dotGit), named));
+  const common = readFileIfAny(join(gitDir, "commondir"))?.trim();
+  if (common) gitDir = realIfExists(resolve(gitDir, common));
+  for (let dir = gitDir; dirname(dir) !== dir; dir = dirname(dir)) {
+    if (basename(dir) === ".git") return dirname(dir);
+  }
+  return undefined;
+}
+
+/** The text of `path` when it is a readable file. */
+function readFileIfAny(path: string): string | undefined {
+  try {
+    return statSync(path).isFile() ? readFileSync(path, "utf8") : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -366,9 +428,12 @@ export function isInside(
   return c === p || c.startsWith(`${p}/`) || (p === "" && c.startsWith("/"));
 }
 
-/** The real path of `path`, or of its nearest existing ancestor joined with the rest. */
+/**
+ * The real path of `path`, or of its nearest existing ancestor joined with the rest. The native
+ * realpath expands Windows 8.3 short names, which the JavaScript one leaves as they are.
+ */
 function realIfExists(path: string): string {
-  if (existsSync(path)) return realpathSync(path);
+  if (existsSync(path)) return realpathSync.native(path);
   const parent = dirname(path);
   if (parent === path) return path;
   return join(realIfExists(parent), path.slice(parent.length).replace(/^[\\/]+/, ""));

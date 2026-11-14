@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { EXIT, EXIT_MEANING } from "../src/errors.ts";
+import { classify, failureOutcome } from "../src/commands/result.ts";
+import { SettingsError } from "../src/env.ts";
+import { EXIT, EXIT_MEANING, InputError } from "../src/errors.ts";
+import { FormatError, readFormat } from "../src/formats.ts";
 
 /** Design section 5: each exit with the error codes that map to it. */
 const DESIGN: Record<number, string[]> = {
@@ -68,4 +71,25 @@ test("the skill exit-table check fails on a copy that disagrees", async () => {
   const changed = skill.replace("`spend_hold`", "`spend_held`");
   assert.notEqual(changed, skill);
   assert.notDeepEqual(skillExitTable(changed), table());
+});
+
+test("classify keeps an error's own code from the exit table", () => {
+  assert.deepEqual(classify(new SettingsError("refused")), {
+    code: "settings_invalid",
+    message: "refused",
+  });
+  assert.equal(failureOutcome(new SettingsError("refused")).exitCode, 2);
+
+  let format: unknown;
+  try {
+    readFormat("settings", { format: "assetgrove-settings/99" }, "settings.json");
+  } catch (error) {
+    format = error;
+  }
+  assert.ok(format instanceof FormatError);
+  assert.equal(classify(format).code, "format_unsupported");
+  assert.equal(failureOutcome(format).exitCode, 2);
+
+  assert.equal(classify(new InputError("bad")).code, "invalid_input");
+  assert.equal(classify(Object.assign(new Error("x"), { code: "ENOENT" })).code, "internal_error");
 });

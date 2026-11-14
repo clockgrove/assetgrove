@@ -71,20 +71,22 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 
 Loading throws `SettingsError`, with the code `settings_invalid`, when:
 
-- the file's real path is inside the Git top level of the cwd, of `--target` or of any input file (case-insensitive on Windows and macOS);
+- the file's real path, or `configDir`, is inside a project (below), whether or not the file exists;
 - `$ASSETGROVE_CONFIG` is not absolute or names a missing file;
 - the file is not JSON;
 - the format is missing, unknown or newer than this build reads;
-- any field is unknown;
-- any field anywhere is named `apiKey`, `key`, `token` or `secret` (in any case);
-- `stateDir` is relative or inside a project;
-- a `baseURL` carries a user name or password (the message shows only its origin and path);
+- any field is unknown, including inside `outputGrant`;
+- any field anywhere is named `apiKey`, `key`, `token` or `secret` (in any case); the keys of `providers`, `roles`, `routes` and `confirmedBy` are ids, not field names, so a provider called `key` is accepted;
+- `stateDir` is relative or inside a project, or, when it is not set, the default one under the state home is inside a project;
+- a `baseURL` carries a user name, a password or a query string (the message shows only its origin and path);
 - a `baseURL` is neither https nor http on a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`);
 - `free` is set on a provider without a loopback `baseURL`;
 - a role or route names a provider that is not in `providers`;
 - a limit of kind `unlimited` lacks `acceptUnlimited: true`.
 
-Refusals that depend on the adapter happen when providers are created. No command surfaces these errors yet: the CLI does not yet map `settings_invalid` or `format_unsupported` to their own exit codes.
+The projects are found from the cwd, `--target` and the directory of each input file's real path (so an input that is a symlink counts for the project it points into). Each directory at or above one of these that holds `.git`, as a directory or a file, is a project. A `.git` file (a linked worktree or a submodule) also makes a project of the work tree whose `.git` directory holds the Git directory it names: a linked worktree's main checkout, found through its `commondir`, or a submodule's superproject. Paths are compared by their native real path (which expands Windows 8.3 short names), case-insensitively on Windows and macOS.
+
+Refusals that depend on the adapter happen when providers are created. A command's result document keeps a thrown error's own code when it is in the exit table, so `SettingsError` reports `settings_invalid` and `FormatError` reports `format_unsupported`, both with exit 2.
 
 ## Format lines
 
@@ -92,8 +94,8 @@ Refusals that depend on the adapter happen when providers are created. No comman
 
 ## Environment
 
-Settings and the refusal rule read the environment through `src/env.ts`; older modules (`src/cli.ts`, `src/spend.ts`, `src/gateway/*`) still read `process.env` directly. `checkEnvironment(allow, env)` refuses with `settings_invalid` when `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` is set, in either case, and `environment.allow` does not list it. Each of these can redirect or unwrap the TLS that carries a key.
+Settings and the refusal rule read the environment through `src/env.ts`. The spend ledger (`src/spend.ts`), the provider setup (`src/providers/index.ts`) and the gateway adapters (`src/gateway/vercel.ts`, `src/gateway/tripo.ts`) read `process.env` themselves. `checkEnvironment(allow, env)` refuses with `settings_invalid` when `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` is set, in either case, and `environment.allow` does not list it. Each of these can redirect or unwrap the TLS that carries a key.
 
 ## Tests
 
-`test/fixtures/env.ts` writes a settings file to a temporary directory outside any repository and points `ASSETGROVE_CONFIG` at it. Its helpers `writeSettings`, `resetSettings`, `useHeadless`, `approveCommand` and `declareLimit` rewrite that file.
+`test/fixtures/env.ts` makes one temporary directory outside any repository and puts the spend ledger, a settings file and that file's `stateDir` in it, then points `ASSETGROVE_SPEND_LEDGER` and `ASSETGROVE_CONFIG` there. It unsets every variable `checkEnvironment` refuses, in both cases, for the test process and its children. Its helpers `writeSettings`, `useHeadless`, `approveCommand` and `declareLimit` rewrite the settings file; `resetSettings` restores the base settings (`format` and `stateDir`) and runs before every top-level test, so a helper's change lasts only for the test that made it and its subtests.

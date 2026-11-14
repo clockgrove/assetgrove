@@ -1,20 +1,25 @@
 /**
- * Imported first by every test that runs the CLI: points the cross-run spend ledger at a fresh
- * file in a temp directory and ASSETGROVE_CONFIG at a minimal settings file in another temp
- * directory outside any repository, so tests never read or write the user's own ledger or
- * settings. Child processes inherit both through process.env. The helpers rewrite the settings
- * file for tests that need a headless operator, approved commands, or declared limits.
+ * Imported first by every test that runs the CLI. Under one fresh temp root outside any repository
+ * it points the cross-run spend ledger at a new file, ASSETGROVE_CONFIG at a settings file whose
+ * stateDir is a new directory, so tests never read or write the user's own ledger, settings or
+ * state. It unsets every variable `checkEnvironment` refuses, so a proxy on the machine never
+ * refuses a test. Child processes inherit all of this through process.env.
+ *
+ * Every top-level test starts from the base settings; the helpers rewrite the file for tests that
+ * need a headless operator, approved commands or declared limits, and the change ends with that
+ * test.
  */
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach } from "node:test";
+import { REFUSED_VARIABLES } from "../../src/env.ts";
 
 const FORMAT = "assetgrove-settings/1";
 
-process.env["ASSETGROVE_SPEND_LEDGER"] = join(
-  mkdtempSync(join(tmpdir(), "assetgrove-spend-")),
-  "spend.jsonl",
-);
+const root = mkdtempSync(join(realpathSync(tmpdir()), "assetgrove-test-"));
+
+process.env["ASSETGROVE_SPEND_LEDGER"] = join(root, "spend.jsonl");
 // The caller's own work item and limits would change what the tests measure; a Factory worker's
 // FACTORY_ISSUE would name a work item too.
 for (const name of [
@@ -24,11 +29,15 @@ for (const name of [
   "ASSETGROVE_WORK_ITEM_LIMIT_USD",
 ])
   delete process.env[name];
+for (const name of REFUSED_VARIABLES) {
+  delete process.env[name];
+  delete process.env[name.toLowerCase()];
+}
 
-export const settingsPath: string = join(
-  mkdtempSync(join(realpathSync(tmpdir()), "assetgrove-config-")),
-  "settings.json",
-);
+export const stateDir: string = join(root, "state");
+mkdirSync(stateDir);
+mkdirSync(join(root, "config"));
+export const settingsPath: string = join(root, "config", "settings.json");
 process.env["ASSETGROVE_CONFIG"] = settingsPath;
 
 type Settings = Record<string, unknown>;
@@ -51,10 +60,12 @@ function child(parent: Settings, key: string): Settings {
   return created;
 }
 
+/** Writes the base settings (format and stateDir) with `settings` over them. */
 export function writeSettings(settings: Settings): Settings {
-  return save({ format: FORMAT, ...settings });
+  return save({ format: FORMAT, stateDir, ...settings });
 }
 
+/** Restores the base settings. Runs before every top-level test. */
 export function resetSettings(): Settings {
   return writeSettings({});
 }
@@ -87,4 +98,13 @@ export function declareLimit(
   return save(settings);
 }
 
-writeSettings({});
+resetSettings();
+
+// Root hooks run for subtests too; the depth keeps a subtest from resetting what its parent set.
+let depth = 0;
+beforeEach(() => {
+  if (depth++ === 0) resetSettings();
+});
+afterEach(() => {
+  depth--;
+});
