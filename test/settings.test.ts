@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -284,9 +284,178 @@ test("stateDir inside a project or relative is refused", () => {
   assert.throws(() => load({ format: FORMAT, stateDir: "state" }), invalid(/stateDir/));
 });
 
+test("a settings file in an outer repository is refused from a nested repository", () => {
+  const outer = gitRepo();
+  const inner = gitRepo(join(outer, "packages", "inner"));
+  const path = settingsFile({ format: FORMAT }, outer);
+  assert.throws(
+    () => loadSettings({ env: { ASSETGROVE_CONFIG: path }, cwd: inner }),
+    invalid(/inside the project/),
+  );
+});
+
+test("a settings file in the main checkout is refused from a linked worktree", () => {
+  const main = gitRepo();
+  const git = (...args: string[]) =>
+    execFileSync("git", [
+      "-C",
+      main,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.invalid",
+      ...args,
+    ]);
+  git("-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "start");
+  const worktree = join(tempDir(), "linked");
+  git("worktree", "add", "-q", "--detach", worktree);
+  const path = settingsFile({ format: FORMAT }, main);
+  assert.throws(
+    () => loadSettings({ env: { ASSETGROVE_CONFIG: path }, cwd: worktree }),
+    invalid(/inside the project/),
+  );
+  // The worktree is outside the main checkout, so only the .git file's pointer finds it.
+  assert.equal(isInside(worktree, main), false);
+});
+
+test("an input file that is a symlink into a project is refused by the project it points into", () => {
+  const repo = gitRepo();
+  mkdirSync(join(repo, "specs"));
+  writeFileSync(join(repo, "specs", "a.json"), "{}");
+  const outside = tempDir();
+  symlinkSync(join(repo, "specs", "a.json"), join(outside, "a.json"));
+  const path = settingsFile({ format: FORMAT }, repo);
+  assert.throws(
+    () =>
+      loadSettings({
+        env: { ASSETGROVE_CONFIG: path },
+        cwd: tempDir(),
+        inputs: [join(outside, "a.json")],
+      }),
+    invalid(/inside the project/),
+  );
+});
+
+test("a default stateDir or settings directory inside a project is refused", () => {
+  const repo = gitRepo();
+  const home = tempDir();
+  // XDG_STATE_HOME inside the repository, with a settings file outside it.
+  assert.throws(
+    () =>
+      loadSettings({
+        env: {
+          ASSETGROVE_CONFIG: settingsFile({ format: FORMAT }),
+          HOME: home,
+          XDG_STATE_HOME: join(repo, "state"),
+        },
+        platform: "linux",
+        cwd: repo,
+      }),
+    invalid(/stateDir/),
+  );
+  // The same with no settings file at all.
+  assert.throws(
+    () =>
+      loadSettings({
+        env: { HOME: home, XDG_STATE_HOME: join(repo, "state") },
+        platform: "linux",
+        cwd: repo,
+      }),
+    invalid(/stateDir/),
+  );
+  // XDG_CONFIG_HOME inside the repository, where no settings file exists yet.
+  assert.throws(
+    () =>
+      loadSettings({
+        env: { HOME: home, XDG_CONFIG_HOME: join(repo, "config") },
+        platform: "linux",
+        cwd: repo,
+      }),
+    invalid(/settings directory/),
+  );
+  // An explicit stateDir outside the repository overrides the default one.
+  const stateDir = tempDir();
+  const settings = loadSettings({
+    env: {
+      ASSETGROVE_CONFIG: settingsFile({ format: FORMAT, stateDir }),
+      HOME: home,
+      XDG_STATE_HOME: join(repo, "state"),
+    },
+    platform: "linux",
+    cwd: repo,
+  });
+  assert.equal(settings.stateDir, stateDir);
+});
+
+for (const field of ["api_key", "password", "accessToken"]) {
+  test(`roles.*.outputGrant refuses an unknown field ${field}`, () => {
+    assert.throws(
+      () =>
+        load({
+          format: FORMAT,
+          providers: { p: { adapter: "a" } },
+          roles: { judge: { provider: "p", model: "m", outputGrant: { [field]: "sk-synthetic" } } },
+        }),
+      invalid(new RegExp(field)),
+    );
+  });
+}
+
+test("a baseURL with a query string is refused without printing it", () => {
+  assert.throws(
+    () =>
+      load({
+        format: FORMAT,
+        providers: { p: { adapter: "a", baseURL: "https://relay.example/v1?key=sk-synthetic" } },
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof SettingsError);
+      assert.match(error.message, /query string/);
+      assert.doesNotMatch(error.message, /sk-synthetic/);
+      return true;
+    },
+  );
+});
+
+test("provider ids, role names and route operations named like a secret are accepted", () => {
+  const settings = load({
+    format: FORMAT,
+    providers: { key: { adapter: "a" }, token: { adapter: "a" } },
+    roles: { secret: { provider: "key", model: "m" } },
+    routes: { token: { provider: "token", model: "m" } },
+    confirmedBy: { apiKey: { method: "elicitation", at: "2026-11-14T00:00:00Z" } },
+  });
+  assert.deepEqual(Object.keys(settings.providers), ["key", "token"]);
+  assert.equal(settings.roles["secret"]?.provider, "key");
+  // A field inside an entry is still a field name.
+  assert.throws(
+    () => load({ format: FORMAT, providers: { key: { adapter: "a", token: "sk-synthetic" } } }),
+    invalid(/"token" at providers\.key\.token/),
+  );
+});
+
 test("unlimited needs acceptUnlimited", () => {
   assert.throws(
     () => load({ format: FORMAT, providers: { p: { limit: { kind: "unlimited" } } } }),
     invalid(/acceptUnlimited/),
+  );
+});
+
+test("a repository at the home directory is not a project, so the default directories under it are accepted", () => {
+  const home = gitRepo();
+  const project = gitRepo(join(home, "work", "game"));
+  const settings = loadSettings({ env: { HOME: home }, platform: "linux", cwd: project });
+  assert.equal(settings.path, join(home, ".config", "assetgrove", "settings.json"));
+  // A repository between the home directory and the cwd still counts.
+  const outer = gitRepo(join(home, "outer"));
+  const inner = gitRepo(join(outer, "vendor", "inner"));
+  assert.throws(
+    () =>
+      loadSettings({
+        env: { HOME: home, ASSETGROVE_CONFIG: settingsFile({ format: FORMAT }, outer) },
+        platform: "linux",
+        cwd: inner,
+      }),
+    invalid(),
   );
 });

@@ -24,10 +24,16 @@ export function refusal(
   return { exitCode: EXIT[code], fields, human, error: { code, message } };
 }
 
-/** The error code of a thrown error; anything unrecognised is an internal error. */
+/**
+ * The error code of a thrown error: its own `code` when that is an error code of the exit table,
+ * else one by its class; anything unrecognised is an internal error.
+ */
 export function classify(error: unknown): Failure {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && Object.hasOwn(EXIT, code)) {
+    return { code: code as ErrorCode, message };
+  }
   if (error instanceof InputError) return { code: "invalid_input", message };
   if (typeof code === "string" && code.startsWith("ERR_PARSE_ARGS")) {
     return { code: "invalid_input", message };
