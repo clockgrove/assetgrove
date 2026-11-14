@@ -41,7 +41,9 @@ const clients: Client[] = [];
 
 after(async () => {
   await Promise.all(clients.map((c) => c.close()));
-  await Promise.all(temporary.map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    temporary.map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 5 })),
+  );
 });
 
 async function tempDir(prefix: string): Promise<string> {
@@ -211,7 +213,7 @@ const paths = {
 async function world() {
   const w = await syntheticWorld();
   await cp(w.dir, paths.world(), { recursive: true });
-  await rm(w.dir, { recursive: true, force: true });
+  await rm(w.dir, { recursive: true, force: true, maxRetries: 5 });
   const dir = paths.world();
   await writeFile(join(dir, "spec.json"), JSON.stringify(shelterSpec));
   await writeFile(join(dir, "bible", "bible.json"), JSON.stringify(w.bible));
@@ -798,13 +800,13 @@ test("every tool's structuredContent deep-equals the CLI --json document", async
     const label = `${row.tool} ${JSON.stringify(args)}`;
     // The command and the tool start from the same files: the work directory is restored between.
     const snapshot = `${work}.snapshot`;
-    await rm(snapshot, { recursive: true, force: true });
+    await rm(snapshot, { recursive: true, force: true, maxRetries: 5 });
     await cp(work, snapshot, { recursive: true });
     const ran = await cli(commandLine(spec(row.tool), args, provider));
     const document = JSON.parse(ran.stdout) as Doc;
-    await rm(work, { recursive: true, force: true });
+    await rm(work, { recursive: true, force: true, maxRetries: 5 });
     await cp(snapshot, work, { recursive: true });
-    await rm(snapshot, { recursive: true, force: true });
+    await rm(snapshot, { recursive: true, force: true, maxRetries: 5 });
     const result = await servers.get(provider)!.callTool({ name: row.tool, arguments: args });
     assert.equal(ran.code, row.exitCode ?? 0, `${label}: ${ran.stderr}`);
     // The document carries the command's own result fields, not only a refusal.

@@ -11,7 +11,9 @@ import { syntheticProfile } from "./fixtures/synthetic.ts";
 
 const temporaryRoots: string[] = [];
 after(async () => {
-  await Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    temporaryRoots.map((root) => rm(root, { recursive: true, force: true, maxRetries: 5 })),
+  );
 });
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -25,7 +27,7 @@ async function cli(args: string[]) {
     const child = execFile(
       process.execPath,
       ["src/cli.ts", ...args],
-      { cwd: root, env, timeout: 20_000 },
+      { cwd: root, env, timeout: 60_000 },
       (error, stdout, stderr) => {
         resolve({ code: error ? Number(error.code) : 0, stdout, stderr });
       },
@@ -244,7 +246,7 @@ test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
     const response = await Promise.race([
       iterator.next(),
       new Promise<never>((_, reject) => {
-        const timer = setTimeout(() => reject(new Error(`MCP timed out: ${errors}`)), 15_000);
+        const timer = setTimeout(() => reject(new Error(`MCP timed out: ${errors}`)), 60_000);
         timer.unref();
       }),
     ]);

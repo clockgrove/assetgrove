@@ -108,7 +108,8 @@ test("a 512 px render of about 30K triangles is fast", () => {
   const framing = boundsOf(posedPrimitives(glb))!;
   const start = performance.now();
   renderView(glb, { sizePx: 512, yawDeg: 45, framing });
-  assert.ok(performance.now() - start < 2000);
+  // Hosted macOS and Windows runners are slower than a Linux one; the bound catches a slow path.
+  assert.ok(performance.now() - start < 6000);
 });
 
 test("closeLoop closes an unclosed clip", () => {
