@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { imageGenerators } from "../generators/image.ts";
-import { readJson } from "../inputs.ts";
+import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { DEFAULT_CANDIDATES, DEFAULT_CAP_USD, planStage, stage } from "../loop.ts";
 import { character3dGenerator } from "../model3d/generator.ts";
 import { scriptedFrom, spendLedger, stageProvider } from "../providers/index.ts";
@@ -80,8 +80,8 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
     const candidates = args.candidates ?? DEFAULT_CANDIDATES;
     const capUsd = args.cap ?? DEFAULT_CAP_USD;
     const spec = await readJson<AssetSpec>(args.spec);
-    const bible = await readJson<StyleBible>(args.bible);
-    const profile = await readJson<TargetProfile>(args.profile);
+    const bible = await loadStyleBible(args.bible);
+    const profile = await loadProfile(args.profile);
     const routes = await loadRoutes(args.routes);
     const plan = planStage({
       spec: spec.value,

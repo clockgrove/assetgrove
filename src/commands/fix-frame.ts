@@ -8,7 +8,7 @@ import {
 } from "../animation/commands.ts";
 import { formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
-import { readJson, specForQa } from "../inputs.ts";
+import { readJson, specForQa, loadProfile, loadStyleBible } from "../inputs.ts";
 import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
 import type { StyleBible, TargetProfile } from "../types.ts";
@@ -136,7 +136,7 @@ limits, and needs no key.`,
     }
     const capUsd = args.cap ?? DEFAULT_FIX_CAP_USD;
     const routes = await loadRoutes(args.routes);
-    const profile = await readJson<TargetProfile>(args.profile);
+    const profile = await loadProfile(args.profile);
     const anchor = parseAnchor(args.anchor);
     const spec = await specForQa(args.spec);
     const subject = args.subject ?? spec.subject;
@@ -164,8 +164,7 @@ limits, and needs no key.`,
         providerName,
       );
     }
-    const bible =
-      args.bible !== undefined ? (await readJson<StyleBible>(args.bible)).value : undefined;
+    const bible = args.bible !== undefined ? (await loadStyleBible(args.bible)).value : undefined;
     const result = await runFixFrame({
       target,
       index,

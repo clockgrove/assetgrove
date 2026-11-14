@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { InputError } from "../errors.ts";
-import { readJson, readModel } from "../inputs.ts";
+import { readJson, readModel, loadProfile } from "../inputs.ts";
 import { lodChain } from "../model3d/lod/command.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
 import type { AssetSpec, TargetProfile } from "../types.ts";
@@ -67,8 +67,7 @@ a one-candidate run that pick hands off. No model is called and nothing is spent
   effect: { readOnly: false, spends: "never", writes: "runs" },
   async run(args) {
     const runsDir = resolve(args.runs ?? ".assetgrove/runs");
-    const profile =
-      typeof args.profile === "string" ? await readJson<TargetProfile>(args.profile) : undefined;
+    const profile = typeof args.profile === "string" ? await loadProfile(args.profile) : undefined;
     let result;
     if (typeof args.run === "string") {
       const files = need(args, { run: "--run", candidate: "--candidate" });

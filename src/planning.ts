@@ -14,7 +14,14 @@ import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { InputError, ProviderError } from "./errors.ts";
 import { licenseFields, requireGrant } from "./license.ts";
-import { biblePalette, loadBible, loadDesignColors, doDontSection } from "./bible.ts";
+import {
+  bibleReferences,
+  biblePalette,
+  doDontSection,
+  loadBible,
+  loadDesignColors,
+  referenceLicenses,
+} from "./bible.ts";
 import type { ArtBible, BibleDocument } from "./bible.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { loadReference, paletteSwatch, sha256, subjectOf } from "./request.ts";
@@ -824,6 +831,7 @@ async function checkedPlan(
     throw new InputError("invalid or edited plan; edit the brief and create a new plan");
   settingsOf({ biblePath: plan.bible.path, spec: plan.spec, settings: plan.settings });
   const doc = await loadBible(plan.bible.path);
+  const bibleLicenses = referenceLicenses(doc.data.referenceLicense, bibleReferences(doc.data));
   if (doc.hash !== plan.bible.sha256 || doc.data.version !== plan.bible.version)
     throw new InputError("stale plan: bible changed since planning");
   let template: Uint8Array;
@@ -1095,6 +1103,7 @@ export async function applyPlan(
         requestIds: calls.map((c) => c.requestId),
         referenceHashes: refs.map((r) => r.sha256),
         bibleVersion: plan.bible.version,
+        ...(bibleLicenses.length > 0 && { referenceLicenses: bibleLicenses }),
         ...licenseFields(plan.profile, calls),
         providerTerms: [...new Set(calls.map((c) => c.providerTerms))],
         startedAt: calls[0]?.startedAt ?? run.createdAt,

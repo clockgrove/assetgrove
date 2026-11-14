@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { Budget } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
-import { declarationOption, readJson } from "../inputs.ts";
+import { declarationOption, readJson, loadProfile } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
 import { runMaterials } from "../material/pipeline.ts";
 import type { MaterialDerivation } from "../material/pipeline.ts";
@@ -82,7 +82,7 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
   confirm: "spend",
   async run(args) {
     const spec = await readJson<AssetSpec>(args.spec);
-    const profile = await readJson<TargetProfile>(args.profile);
+    const profile = await loadProfile(args.profile);
     const derivation = await readJson<MaterialDerivation>(args.derivation);
     const routes = await loadRoutes(args.routes);
     routes["material-qa"] ??= routes.vision;

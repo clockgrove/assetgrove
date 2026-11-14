@@ -8,7 +8,7 @@ import {
 } from "../animation/commands.ts";
 import { formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
-import { readJson, specForQa } from "../inputs.ts";
+import { readJson, specForQa, loadProfile } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
 import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
@@ -123,7 +123,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
       if (missing.length > 0) {
         throw new InputError(`missing required option ${missing.map((n) => `--${n}`).join(", ")}`);
       }
-      const profile = await readJson<TargetProfile>(args.profile as string);
+      const profile = await loadProfile(args.profile as string);
       const anchor = parseAnchor(args.anchor);
       targets = [
         stripTarget({

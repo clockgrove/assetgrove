@@ -1,5 +1,5 @@
 import { InputError } from "../errors.ts";
-import { declarationOption, readJson } from "../inputs.ts";
+import { declarationOption, readJson, loadRecipe } from "../inputs.ts";
 import { parseRecipe } from "../transform/run.ts";
 import { runTransform } from "./op.ts";
 import { defineCommand } from "./types.ts";
@@ -53,7 +53,7 @@ provenance record. --out is a file for a single output, otherwise a directory.`,
     const inputs = args.inputs ?? [];
     if (args.recipe === undefined) throw new InputError("missing the recipe file");
     if (inputs.length === 0) throw new InputError("missing input image(s)");
-    const recipe = parseRecipe((await readJson<unknown>(args.recipe)).value);
+    const recipe = await loadRecipe(args.recipe);
     const digitalSourceType = declarationOption(args.digitalSourceType);
     return runTransform(
       { recipe, inputs, out: args.out, ...(digitalSourceType && { digitalSourceType }) },

@@ -55,6 +55,8 @@ export interface BibleReference {
   subject?: string;
   /** The look this reference belongs to; it is sent only for assets of that look. Unset: every look. */
   look?: string;
+  /** This reference's licence (SPDX, `LicenseRef-*` or `NOASSERTION`); the bible's `referenceLicense` otherwise. */
+  license?: string;
 }
 
 /** A named look in the bible (characters, environment...): style notes for assets of that look. */
@@ -63,7 +65,11 @@ export interface BibleLook {
 }
 
 export interface StyleBible {
+  /** `assetgrove-style-bible/<n>`; required in a file, optional in memory. */
+  format?: string;
   version: string;
+  /** The licence of the listed references (SPDX, `LicenseRef-*` or `NOASSERTION`); required when it lists any. */
+  referenceLicense?: string;
   palette: string[];
   references: BibleReference[];
   /** Path (relative to the bible file) of the perspective sample. */
@@ -76,6 +82,13 @@ export interface StyleBible {
   notes?: string[];
   /** Looks per domain, keyed by name; a spec's `look` adds that look's notes and references. */
   looks?: Record<string, BibleLook>;
+}
+
+/** One bible reference's licence, as provenance records it. */
+export interface ReferenceLicense {
+  path: string;
+  role: string;
+  license: string;
 }
 
 /** A reference image loaded from disk and sent to a model as an image input. */
@@ -104,6 +117,8 @@ export interface StyleProfile {
 }
 
 export interface TargetProfile {
+  /** `assetgrove-target-profile/<n>`; required in a file, optional in memory. */
+  format?: string;
   name: string;
   /** The world's style profile; post-processing of imported sheets follows it. */
   style?: StyleProfile;
@@ -263,6 +278,8 @@ export interface Provenance {
   requestIds: string[];
   referenceHashes: string[];
   bibleVersion: string;
+  /** The licence of each bible reference listed, as the bible declares it; it gates nothing. */
+  referenceLicenses?: ReferenceLicense[];
   /**
    * The licence the output is declared under: the target's licence when the output grant allows
    * relabelling (or there is none), else the granted licence the target accepts.

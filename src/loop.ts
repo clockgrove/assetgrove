@@ -14,6 +14,7 @@ import { Budget, BudgetExceededError } from "./budget.ts";
 import { ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
+import { referenceLicenses } from "./bible.ts";
 import { InputError } from "./errors.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
@@ -192,6 +193,7 @@ function provenanceOf(
   seed: number | undefined,
 ): Provenance {
   const unique = <T>(values: T[]) => [...new Set(values)];
+  const licenses = referenceLicenses(bible.referenceLicense, bible.references ?? []);
   return {
     generator: generator.kind,
     route: unique(calls.map((c) => c.route)).join(" + "),
@@ -202,6 +204,7 @@ function provenanceOf(
     requestIds: calls.map((c) => c.requestId),
     referenceHashes: unique(calls.flatMap((c) => c.referenceHashes)),
     bibleVersion: bible.version,
+    ...(licenses.length > 0 && { referenceLicenses: licenses }),
     ...licenseFields(profile, calls),
     providerTerms: unique(calls.map((c) => c.providerTerms)),
     startedAt: calls[0]?.startedAt ?? "",
