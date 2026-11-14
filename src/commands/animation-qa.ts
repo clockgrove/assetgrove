@@ -8,11 +8,10 @@ import {
 } from "../animation/commands.ts";
 import { formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
-import { readJson, specForQa, loadProfile } from "../inputs.ts";
+import { specForQa, loadProfile } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
 import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
-import type { TargetProfile } from "../types.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
 

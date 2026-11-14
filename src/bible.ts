@@ -505,8 +505,8 @@ export function serializeBible(
   prose: string,
   kind: BibleKind = "style-bible",
 ): string {
-  const { format: _format, ...rest } = data;
-  const versioned = { format: formatLine(kind), ...rest } as ArtBible;
+  const versioned = { format: formatLine(kind), ...data } as ArtBible;
+  versioned.format = formatLine(kind);
   validateBible(versioned);
   return `---\n${stringify(versioned)}---\n${prose}`;
 }

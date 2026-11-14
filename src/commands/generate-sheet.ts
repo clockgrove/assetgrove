@@ -6,7 +6,7 @@ import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION, loadRoutes } from ".
 import type { Route } from "../routes.ts";
 import { generateSheet, planSheet, sheetBrief } from "../sheet/generate.ts";
 import { SliceError } from "../sheet/slice.ts";
-import type { AssetSpec, StyleBible, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { formatImport } from "./import.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";

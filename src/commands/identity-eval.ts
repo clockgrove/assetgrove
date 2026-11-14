@@ -1,10 +1,9 @@
 import { evaluateIdentity } from "../identity-eval.ts";
 import type { Breakdown, MediumReport } from "../identity-eval.ts";
-import { readJson, loadProfile } from "../inputs.ts";
+import { loadProfile } from "../inputs.ts";
 import { DEFAULT_CAP_USD } from "../loop.ts";
 import { providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
-import type { TargetProfile } from "../types.ts";
 import { defineCommand } from "./types.ts";
 
 function formatMedium(medium: string, m: MediumReport, threshold: number): string[] {

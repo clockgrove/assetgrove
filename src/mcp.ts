@@ -19,7 +19,7 @@ import { applyPlan, createPlan, savePlan } from "./planning.ts";
 import type { GenerationBrief, RunSettings } from "./planning.ts";
 import { loadRoutes } from "./routes.ts";
 import type { SpendLedger } from "./spend.ts";
-import type { AssetSpec, TargetProfile } from "./types.ts";
+import type { AssetSpec } from "./types.ts";
 
 export interface ToolContext {
   provider?: GenerationProvider;

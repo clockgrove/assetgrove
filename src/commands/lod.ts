@@ -3,7 +3,7 @@ import { InputError } from "../errors.ts";
 import { readJson, readModel, loadProfile } from "../inputs.ts";
 import { lodChain } from "../model3d/lod/command.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
-import type { AssetSpec, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 

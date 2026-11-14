@@ -5,7 +5,6 @@ import {
   declarationOption,
   lockFor,
   readBytes,
-  readJson,
   sliceOptions,
   loadProfile,
   loadStyleBible,
@@ -18,7 +17,7 @@ import { CONTACT_FILE, GROUPING_FILE, importSheet } from "../sheet/import.ts";
 import type { ImportOptions, ImportRecord } from "../sheet/import.ts";
 import type { Grouping } from "../sheet/types.ts";
 import { ledgerFor } from "../spend.ts";
-import type { AssetSpec, StyleBible, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { defineCommand } from "./types.ts";
 
 /** The identity score of an import as text lines. */

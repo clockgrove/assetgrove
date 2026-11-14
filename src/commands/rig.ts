@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { readJson, readModel, loadProfile } from "../inputs.ts";
 import { readProvenance, rerig } from "../model3d/rig/command.ts";
-import type { AssetSpec, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 

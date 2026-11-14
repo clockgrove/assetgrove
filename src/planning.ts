@@ -831,7 +831,6 @@ async function checkedPlan(
     throw new InputError("invalid or edited plan; edit the brief and create a new plan");
   settingsOf({ biblePath: plan.bible.path, spec: plan.spec, settings: plan.settings });
   const doc = await loadBible(plan.bible.path);
-  const bibleLicenses = referenceLicenses(doc.data.referenceLicense, bibleReferences(doc.data));
   if (doc.hash !== plan.bible.sha256 || doc.data.version !== plan.bible.version)
     throw new InputError("stale plan: bible changed since planning");
   let template: Uint8Array;
@@ -865,6 +864,7 @@ export async function applyPlan(
   options: ApplyPlanOptions,
 ): Promise<{ run: RunRecord; runDir: string }> {
   const { plan, refs, doc } = await checkedPlan(input);
+  const bibleLicenses = referenceLicenses(doc.data.referenceLicense, bibleReferences(doc.data));
   if (!options.autoApprove && plan.approved !== true)
     throw new InputError(
       "plan is not approved; record human approval in approved or use --auto-approve for unattended generation",

@@ -10,7 +10,7 @@ import { resolveMaterialProfile } from "../material/profile.ts";
 import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
 import { ledgerFor } from "../spend.ts";
-import type { AssetSpec, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
 

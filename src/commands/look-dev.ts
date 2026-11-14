@@ -3,7 +3,7 @@ import { readJson, readModel, loadProfile, loadStyleBible } from "../inputs.ts";
 import { lookDev, planLookdev } from "../model3d/lookdev/command.ts";
 import { gatewayProvider, scriptedFrom, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
-import type { AssetSpec, StyleBible, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";

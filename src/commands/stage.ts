@@ -5,7 +5,7 @@ import { DEFAULT_CANDIDATES, DEFAULT_CAP_USD, planStage, stage } from "../loop.t
 import { character3dGenerator } from "../model3d/generator.ts";
 import { scriptedFrom, spendLedger, stageProvider } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
-import type { AssetSpec, StyleBible, TargetProfile } from "../types.ts";
+import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 
