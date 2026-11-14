@@ -43,6 +43,7 @@ function cli(args: string[], extraEnv: Record<string, string> = {}): Promise<Res
 const doc = (r: Result): Record<string, any> => JSON.parse(r.stdout);
 
 const profile3d = (overrides: Record<string, unknown> = {}) => ({
+  format: "assetgrove-target-profile/1",
   name: "synthetic-grove-3d",
   license: "MIT",
   values: { creator: "Synthetic Grove" },
@@ -100,6 +101,8 @@ async function world(
     await writeFile(join(dir, "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
   }
   const bible = {
+    format: "assetgrove-style-bible/1",
+    referenceLicense: "NOASSERTION",
     version: "2026-11-10",
     palette: PALETTE,
     references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "fern" })),

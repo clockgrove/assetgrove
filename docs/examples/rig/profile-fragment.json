@@ -1,4 +1,5 @@
 {
+  "format": "assetgrove-target-profile/1",
   "model3d": {
     "rig": {
       "template": "quadruped-template.json",

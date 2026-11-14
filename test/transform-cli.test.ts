@@ -73,6 +73,7 @@ test("recipe runs trim, pad, renditions and convert to webp, byte-identically tw
   const dir = await workdir();
   await writeFile(join(dir, "hero.png"), borderedPng());
   const recipe = {
+    format: "assetgrove-recipe/1",
     steps: [
       { op: "trim" },
       { op: "pad", params: { top: 2, right: 2, bottom: 2, left: 2 } },

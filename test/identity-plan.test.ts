@@ -27,6 +27,7 @@ async function fixture(withLock = true) {
   await mkdir(dir, { recursive: true });
   await mkdir(join(root, ".assetgrove/prompts"), { recursive: true });
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.referenceLicense = "NOASSERTION";
   data.world = "Woodland";
   if (withLock) {
     await writeFile(join(dir, "turn.png"), encodePng(createRaster(2, 2)));

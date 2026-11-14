@@ -96,6 +96,7 @@ async function setup(
     };
   }
   const profile = {
+    format: "assetgrove-target-profile/1",
     name: "synthetic",
     license: "MIT",
     frames: { width: 2, height: 2 },

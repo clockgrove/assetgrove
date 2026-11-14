@@ -67,6 +67,7 @@ test("an art bible's look overrides axes and anchors for specs that name it", as
   await mkdir(join(root, ".assetgrove/prompts"), { recursive: true });
   await writeFile(join(dir, "brush.png"), encodePng(createRaster(2, 2)));
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.referenceLicense = "NOASSERTION";
   data.world = "Woodland";
   data.looks = {
     character: { rendering: "naturalistic", texture: "smooth naturalistic coat, no brushwork" },

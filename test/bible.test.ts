@@ -19,7 +19,7 @@ import {
 } from "../src/bible.ts";
 
 function base() {
-  return structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  return { ...structuredClone(BIBLE_PRESETS["cozy-storybook"]!), referenceLicense: "NOASSERTION" };
 }
 
 test("bible initializes all three repository-owned preset constitutions and skill links", async () => {
@@ -255,6 +255,7 @@ test("switch target-owned presets preserves world palette, locks, anchors and un
     document.data.anchors.positive = [{ path: "positive.png", role: "style" }];
     document.data.anchors.negative = [{ path: "negative.png", role: "avoid" }];
     document.data["future"] = { keep: true };
+    document.data.referenceLicense = "NOASSERTION";
     document.data.tokens["palette"] = {
       ink: { $type: "color", $value: { colorSpace: "srgb", components: [0, 0, 0] } },
     };

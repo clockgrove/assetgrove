@@ -1,4 +1,5 @@
 ---
+format: assetgrove-style-preset/1
 version: "1"
 world: Your world
 preset: dark-gritty-isometric

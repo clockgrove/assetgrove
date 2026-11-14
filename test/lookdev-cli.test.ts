@@ -84,6 +84,8 @@ async function world(
   await writeFile(
     files.bible,
     JSON.stringify({
+      format: "assetgrove-style-bible/1",
+      referenceLicense: "NOASSERTION",
       version: "2026-11-10",
       palette: PALETTE,
       references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "kit" })),
@@ -95,6 +97,7 @@ async function world(
   await writeFile(
     files.profile,
     JSON.stringify({
+      format: "assetgrove-target-profile/1",
       name: "synthetic-grove-lookdev",
       license: "MIT",
       frames: { width: 32, height: 32 },

@@ -25,14 +25,27 @@ Assetgrove reads three JSON files. All three are data owned by the game; none of
 - `keyPose` (required for `sprite-strip`) is the author-approved key pose image; every frame becomes a reference-guided edit of it. A strip spec without one is refused before any spend. To make one through Assetgrove, stage a `still` spec of the pose (set `frames.width` and `frames.height` larger than the profile's frame size for a detailed reference), look at the staged candidates, and name the chosen file as `keyPose`.
 - `fields` holds extra values the profile's manifest template reads as `{{spec.fields.*}}`.
 
+## Format lines
+
+The shared files carry a `format` line as their first field, `assetgrove-<kind>/<n>`: `assetgrove-target-profile/1`, `assetgrove-style-bible/1` (the JSON style bible and the front matter of `BIBLE.md`), `assetgrove-style-preset/1` and `assetgrove-recipe/1`. A file with no line is refused with exit 2 (`format_unsupported`, `error.reason` `missing`) and the message names the line to add. A newer version is `too_new`, and a line that is unknown or belongs to another kind is `unknown`. An older version is migrated in memory. Specs, briefs, groupings and other request inputs carry no format line.
+
+`assetgrove migrate <file> --kind <kind>` adds the line to an unversioned file, as its first field (Markdown front matter is edited in place and the prose kept), and moves an older file forward. A file already current is reported as `current` and not written. Loaders still refuse an unversioned file until it is migrated.
+
 ## Style bible
 
 ```json
 {
+  "format": "assetgrove-style-bible/1",
   "version": "2026-11-07",
   "palette": ["#26242c", "#5f6470", "#8d939e", "#c4c9d2"],
+  "referenceLicense": "CC-BY-4.0",
   "references": [
-    { "path": "refs/fern-sheet.png", "role": "character sheet", "subject": "fern" },
+    {
+      "path": "refs/fern-sheet.png",
+      "role": "character sheet",
+      "subject": "fern",
+      "license": "LicenseRef-studio-owned"
+    },
     { "path": "refs/yard-perspective.png", "role": "perspective" }
   ],
   "perspective": "refs/yard-perspective.png",
@@ -53,12 +66,15 @@ Assetgrove reads three JSON files. All three are data owned by the game; none of
 }
 ```
 
+A bible that lists references requires `referenceLicense`, the terms they were provided under: an SPDX identifier, a `LicenseRef-*` or `NOASSERTION`. It is checked as non-empty text and not parsed. Each reference may set its own `license`. In `BIBLE.md` the same rule covers the anchors and the identity-lock turnarounds and references.
+
 `perspectiveDescription` (optional) tells the vision QA pass what view the perspective sample shows; without it QA compares against the sample alone. The subject's references, the perspective sample and a swatch of the palette are sent to the model as image references; the prompt is composed from these fields and the spec, never typed freehand. Post-processing snaps every colour to the palette, and QA compares the candidate with the references.
 
 ## Target profile
 
 ```json
 {
+  "format": "assetgrove-target-profile/1",
   "name": "my-game",
   "license": "MIT",
   "acceptedLicenses": ["CC-BY-4.0"],
@@ -103,11 +119,13 @@ An optional `identity` object configures identity lock scoring: `mode` (`shadow`
 
 The paths are illustrative.
 
+- **Validation.** The profile's top-level fields are validated: `format`, `name`, `license`, `acceptedLicenses`, `style`, `values`, `frames`, `layout`, `manifest`, `review`, `validator`, `identity`, `spend`, `model3d` and `animation`. An unknown top-level field or a value of the wrong type is invalid input (exit 2).
 - **Style.** `style` is the world's style profile: alpha mode (`soft` or `binary`, with a `threshold`), colour rule (`full` or `palette`) and edges (`antialiased` or `crisp`). The sheet import path follows it ([sheet-import.md](sheet-import.md#style-profile)). It is optional, and templates can read it as `{{profile.style}}`.
 - **Templates.** `"{{a.b}}"` as a whole string inserts the value of any JSON type; `"{{a.b?}}"` drops the key when the value is undefined; `{{a.b}}` inside a longer string interpolates text. An undefined required value is an error.
 - **Values available:** `spec.*` (the spec, with its `fields` also merged in), `profile.*` (`values`, `name`, `license`), `bible.version`, `output.*` (`path`, `mediaType`, `extension`, `sha256`, and what the generator adds: `frames`, `anchor`, `bounds`, `palette` for images; imported strips add `jitterPx` and set `palette` only under a palette colour rule), `provenance` (the full record) and `run.*` (`runId`, `candidateId`, `pickedAt`).
 - **Licences.** `license` is the target's own licence, declared for outputs whose provider grant lets the target relabel them (paid plans that give ownership). `acceptedLicenses` (optional, default none) lists licences the target takes on purpose beyond its own, such as `CC-BY-4.0` when it publishes the credit line (`{{provenance.outputGrant.attribution}}`). Hand-off (`pick`, `write-families`) re-derives the output grant from the provenance's calls and refuses, before writing anything, with exit 7 (`license_refused`) an output whose grant neither allows relabelling nor is listed, and every non-commercial grant. In hand-off templates `{{profile.license}}` and `{{provenance.license}}` are the licence the output is declared under, so a template never relabels.
-- **Provenance.** Every pick carries its full provenance record into the target. `layout.provenance`, when set, writes it as its own file at that path; the template can also embed `"{{provenance}}"`; with neither, it is written beside the media file as `<media path>.provenance.json`. The record holds the models, route, prompt, parameters, reference hashes, seed where supported, request IDs, times, cost, provider terms, bible version and license, the combined `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`; the most restrictive grant over all calls wins), plus every call with its own `outputGrant`. Each call marks `costSource` (`provider` or `estimate`) and `requestIdSource` (`provider`, or `local` when the gateway reported no ID and Assetgrove generated one).
+- **Provenance.** Every pick carries its full provenance record into the target. `layout.provenance`, when set, writes it as its own file at that path; the template can also embed `"{{provenance}}"`; with neither, it is written beside the media file as `<media path>.provenance.json`. The record holds the models, route, prompt, parameters, reference hashes, seed where supported, request IDs, times, cost, provider terms, bible version and license, `referenceLicenses` (`path`, `role` and `license` of each reference, each the reference's own licence or the bible's; they record terms and gate nothing), the combined `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`; the most restrictive grant over all calls wins), plus every call with its own `outputGrant`. Each call marks `costSource` (`provider` or `estimate`) and `requestIdSource` (`provider`, or `local` when the gateway reported no ID and Assetgrove generated one).
+- **Project root.** Reference paths in shared files (the JSON bible's references and perspective, the anchors and identity images of `BIBLE.md`) must resolve inside the project root, with symlinks resolved. The root is the nearest ancestor of the bible's directory holding `.git` or `.assetgrove`, else the bible's own directory. A path outside it is invalid input (exit 2) before any provider call.
 - **Review.** Assetgrove always sets the field at `review.path` to `review.pending` and never writes another value there.
 - **Validator.** Run in the target directory after the pick is written, with `{{manifest}}` and `{{media}}` replaced by the written paths. A non-zero exit is reported as a rejection.
 - **Media.** Each output declares its own media type and extension; `.gitattributes` in the target decides what Git LFS stores.

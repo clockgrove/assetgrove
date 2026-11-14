@@ -44,6 +44,7 @@ const MODEL3D = {
 
 const profileOf = (extra: Record<string, unknown>): TargetProfile =>
   ({
+    format: "assetgrove-target-profile/1",
     name: "motions",
     license: "MIT",
     model3d: { ...MODEL3D, ...extra },
@@ -455,6 +456,7 @@ async function world() {
   await writeFile(
     profile,
     JSON.stringify({
+      format: "assetgrove-target-profile/1",
       name: "synthetic-grove-motions",
       license: "MIT",
       frames: { width: 32, height: 32 },

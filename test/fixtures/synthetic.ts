@@ -56,6 +56,7 @@ export interface World {
 
 export function syntheticProfile(overrides: Partial<TargetProfile> = {}): TargetProfile {
   return {
+    format: "assetgrove-target-profile/1",
     name: "synthetic-grove",
     license: "MIT",
     values: { creator: "Synthetic Grove" },
@@ -108,7 +109,9 @@ export async function syntheticWorld(): Promise<World> {
     encodePng(drawSubject(48, 0, [200, 220, 200])),
   );
   const bible: StyleBible = {
+    format: "assetgrove-style-bible/1",
     version: "synthetic-1",
+    referenceLicense: "NOASSERTION",
     palette: PALETTE,
     references: [
       { path: "refs/fern-sheet.png", role: "character sheet", subject: "fern" },

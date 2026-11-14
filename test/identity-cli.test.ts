@@ -29,6 +29,7 @@ async function fixture() {
   setPixel(ref, 3, 3, [180, 90, 40, 255]);
   await writeFile(join(art, "bram-turnaround.png"), encodePng(ref));
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.referenceLicense = "NOASSERTION";
   data.world = "Synthetic";
   data.identities = {
     bram: {

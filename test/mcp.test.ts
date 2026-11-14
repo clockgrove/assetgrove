@@ -274,6 +274,8 @@ async function quadrupedWorld() {
   await writeFile(
     files.bible,
     JSON.stringify({
+      format: "assetgrove-style-bible/1",
+      referenceLicense: "NOASSERTION",
       version: "2026-11-10",
       palette: PALETTE,
       references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "kit" })),
@@ -284,6 +286,7 @@ async function quadrupedWorld() {
   await writeFile(
     files.profile,
     JSON.stringify({
+      format: "assetgrove-target-profile/1",
       name: "synthetic-grove-quadruped",
       license: "MIT",
       frames: { width: 32, height: 32 },
@@ -381,6 +384,7 @@ async function identityWorld(): Promise<{ dir: string; bible: string }> {
   setPixel(ref, 3, 3, [180, 90, 40, 255]);
   await writeFile(join(art, "bram-turnaround.png"), encodePng(ref));
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+  data.referenceLicense = "NOASSERTION";
   data.world = "Synthetic";
   data.identities = {
     bram: {
@@ -659,6 +663,7 @@ export default {
       await writeFile(
         join(dir, "profile.json"),
         JSON.stringify({
+          format: "assetgrove-target-profile/1",
           name: "synthetic",
           license: "MIT",
           frames: { width: 4, height: 4 },
@@ -754,6 +759,7 @@ export default {
       await writeFile(
         join(dir, "recipe.json"),
         JSON.stringify({
+          format: "assetgrove-recipe/1",
           steps: [
             { op: "trim" },
             { op: "pad", params: { top: 2, right: 2, bottom: 2, left: 2 } },
@@ -766,6 +772,14 @@ export default {
         inputs: [join(dir, "hero.png")],
         out: join(dir, "out"),
       };
+    },
+  },
+  {
+    tool: "migrate",
+    prepare: async () => {
+      const file = join(work, "unversioned-profile.json");
+      await writeFile(file, JSON.stringify({ name: "x", license: "MIT" }));
+      return { file, kind: "target-profile" };
     },
   },
 ];
