@@ -103,6 +103,7 @@ An optional `identity` object configures identity lock scoring: `mode` (`shadow`
 
 The paths are illustrative.
 
+- **Paths.** Layout paths are relative to the target, use `/`, and must not leave it. Two paths a pick would write that differ only by case are refused with exit 2 (`invalid_input`) before anything is written, on every OS. The run record lists what a pick wrote as `/`-separated paths relative to the target ([decisions.md](decisions.md#record-paths-use--case-only-collisions-are-refused)).
 - **Style.** `style` is the world's style profile: alpha mode (`soft` or `binary`, with a `threshold`), colour rule (`full` or `palette`) and edges (`antialiased` or `crisp`). The sheet import path follows it ([sheet-import.md](sheet-import.md#style-profile)). It is optional, and templates can read it as `{{profile.style}}`.
 - **Templates.** `"{{a.b}}"` as a whole string inserts the value of any JSON type; `"{{a.b?}}"` drops the key when the value is undefined; `{{a.b}}` inside a longer string interpolates text. An undefined required value is an error.
 - **Values available:** `spec.*` (the spec, with its `fields` also merged in), `profile.*` (`values`, `name`, `license`), `bible.version`, `output.*` (`path`, `mediaType`, `extension`, `sha256`, and what the generator adds: `frames`, `anchor`, `bounds`, `palette` for images; imported strips add `jitterPx` and set `palette` only under a palette colour rule), `provenance` (the full record) and `run.*` (`runId`, `candidateId`, `pickedAt`).

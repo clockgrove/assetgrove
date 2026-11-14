@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
+import { ioPath, refuseCaseCollisions } from "./paths.ts";
 import {
   DIGITAL_SOURCE_TYPES,
   embedDigitalSourceType,
@@ -233,7 +234,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
     options.runId ??
     `${now().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   const runDir = resolve(options.runsDir, runId);
-  await mkdir(runDir, { recursive: true });
+  await mkdir(ioPath(runDir), { recursive: true });
 
   const run: RunRecord = {
     runId,
@@ -277,10 +278,15 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       });
       const id = `c${index + 1}`;
       const artifacts: string[] = [];
-      for (const artifact of generated.artifacts ?? []) {
-        const name = join(`${id}-${generator.kind}`, basename(artifact.name));
-        await mkdir(join(runDir, dirname(name)), { recursive: true });
-        await writeFile(join(runDir, name), artifact.bytes);
+      // Recorded with "/" on every OS; names differing only by case are refused before writing.
+      const names = (generated.artifacts ?? []).map((artifact) =>
+        posix.join(`${id}-${generator.kind}`, basename(artifact.name)),
+      );
+      refuseCaseCollisions(names);
+      for (const [i, artifact] of (generated.artifacts ?? []).entries()) {
+        const name = names[i] as string;
+        await mkdir(ioPath(join(runDir, dirname(name))), { recursive: true });
+        await writeFile(ioPath(join(runDir, name)), artifact.bytes);
         artifacts.push(name);
       }
       if (!generated.qa.passed) {
@@ -324,7 +330,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         ? [pixelHash(decodeImage(generated.output.bytes))]
         : [];
       provenance.steps = [metadataStep(digitalSourceType, pixelHashes)];
-      await writeFile(join(runDir, file), bytes);
+      await writeFile(ioPath(join(runDir, file)), bytes);
       run.candidates.push({
         id,
         file,
@@ -367,7 +373,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
 }
 
 export async function writeRun(runDir: string, run: RunRecord): Promise<void> {
-  await writeFile(join(runDir, RUN_FILE), `${JSON.stringify(run, null, 2)}\n`);
+  await writeFile(ioPath(join(runDir, RUN_FILE)), `${JSON.stringify(run, null, 2)}\n`);
 }
 
 export async function readRun(runDir: string): Promise<RunRecord> {

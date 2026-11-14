@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
+import {
+  ioPath,
+  readRecordPath,
+  recordPath,
+  recordRelative,
+  refuseCaseCollisions,
+} from "./paths.ts";
 import { promisify } from "node:util";
 import {
   combineDigitalSourceTypes,
@@ -159,7 +166,7 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     if (sidecar.name === "" || /[\\/]/.test(sidecar.name) || sidecar.name.includes("..")) {
       throw new InputError(`sidecar name "${sidecar.name}" must be a bare file name`);
     }
-    const rel = posix.join(posix.dirname(mediaRel.replaceAll("\\", "/")), sidecar.name);
+    const rel = posix.join(posix.dirname(recordPath(mediaRel)), sidecar.name);
     setPath(context["output"] as Record<string, unknown>, sidecar.field, {
       ...sidecar.extra,
       path: rel,
@@ -188,16 +195,19 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   if (provenancePath) {
     writes.push([provenancePath, `${JSON.stringify(provenance, null, 2)}\n`]);
   }
+  // Before anything is written: two paths differing only by case would be one file on macOS and
+  // Windows, so they are refused on every OS.
+  refuseCaseCollisions(writes.map(([path]) => recordRelative(targetDir, path)));
   for (const [path, content] of writes) {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content);
+    await mkdir(ioPath(dirname(path)), { recursive: true });
+    await writeFile(ioPath(path), content);
   }
 
   const result: TargetWriteResult = {
     mediaPath,
     manifestPath,
     ...(provenancePath !== undefined && { provenancePath }),
-    files: writes.map(([path]) => relative(targetDir, path)),
+    files: writes.map(([path]) => recordRelative(targetDir, path)),
   };
   if (profile.validator) {
     const vars = { manifest: manifestRel, media: mediaRel };
@@ -228,13 +238,17 @@ export async function pick(options: PickOptions): Promise<PickResult> {
       `"${options.candidateId}" is not a QA-passing candidate of run ${record.runId} (passing: ${ids})`,
     );
   }
-  const bytes = new Uint8Array(await readFile(join(options.runDir, candidate.file)));
+  const bytes = new Uint8Array(
+    await readFile(ioPath(join(options.runDir, readRecordPath(candidate.file, "staged file")))),
+  );
   if (sha256(bytes) !== candidate.sha256) {
     throw new InputError(`staged file ${candidate.file} changed since it was staged`);
   }
   const sidecars = [];
   for (const staged of candidate.sidecars ?? []) {
-    const sidecarBytes = new Uint8Array(await readFile(join(options.runDir, staged.file)));
+    const sidecarBytes = new Uint8Array(
+      await readFile(ioPath(join(options.runDir, readRecordPath(staged.file, "staged file")))),
+    );
     if (sha256(sidecarBytes) !== staged.sha256) {
       throw new InputError(`staged file ${staged.file} changed since it was staged`);
     }

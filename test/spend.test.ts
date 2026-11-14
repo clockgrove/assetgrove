@@ -66,8 +66,8 @@ test("with nothing set, the daily default applies and no work item means no work
 
 test("the default ledger is under XDG_STATE_HOME, else ~/.local/state", () => {
   assert.equal(
-    SpendLedger.fromEnv({ XDG_STATE_HOME: "/state" }).path,
-    join("/state", "assetgrove", "spend.jsonl"),
+    SpendLedger.fromEnv({ XDG_STATE_HOME: resolve("/state") }).path,
+    join(resolve("/state"), "assetgrove", "spend.jsonl"),
   );
   assert.match(
     SpendLedger.fromEnv({}).path,
@@ -76,17 +76,18 @@ test("the default ledger is under XDG_STATE_HOME, else ~/.local/state", () => {
 });
 
 test("a Factory worker's default ledger is in its stage's TMPDIR, which persists across its commands", () => {
-  const worker = { FACTORY_ISSUE: "108", XDG_STATE_HOME: "/state" };
+  // resolve() gives each path a drive letter on Windows, where a bare "/x" is not absolute.
+  const [stageTmp, stateDir] = [resolve("/run/stage-tmp"), resolve("/run/state")];
+  const worker = { FACTORY_ISSUE: "108", XDG_STATE_HOME: resolve("/state") };
   assert.equal(
-    SpendLedger.fromEnv({ ...worker, TMPDIR: "/run/stage-tmp" }).path,
-    join("/run/stage-tmp", "assetgrove-spend.jsonl"),
+    SpendLedger.fromEnv({ ...worker, TMPDIR: stageTmp }).path,
+    join(stageTmp, "assetgrove-spend.jsonl"),
   );
   assert.equal(SpendLedger.fromEnv(worker).path, join(tmpdir(), "assetgrove-spend.jsonl"));
   // Factory's stage-persistent state directory, when it gives one, is preferred.
   assert.equal(
-    SpendLedger.fromEnv({ ...worker, TMPDIR: "/run/stage-tmp", FACTORY_STATE_DIR: "/run/state" })
-      .path,
-    join("/run/state", "assetgrove-spend.jsonl"),
+    SpendLedger.fromEnv({ ...worker, TMPDIR: stageTmp, FACTORY_STATE_DIR: stateDir }).path,
+    join(stateDir, "assetgrove-spend.jsonl"),
   );
   // An explicit ledger still wins.
   assert.equal(

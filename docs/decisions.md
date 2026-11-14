@@ -155,3 +155,12 @@ The tracked-key guard (`src/guard.ts`) reads `git ls-files -z --cached`, reads e
 It is hand-written because no library fits: secret scanners such as gitleaks and TruffleHog are native binaries this repository avoids, and they detect keys by pattern and entropy rather than by the configured variable names and the values in this process's environment, which is what the rule checks. The scan is a short loop over the Git index with three regular expressions per name.
 
 `redact(text)` (`src/redact.ts`) replaces each configured key variable's value (8 characters or more) with `[redacted:<ENV>]` and masks Authorization, Bearer, `Key <token>` and x-api-key values. It runs in `ProviderError`, the result builder (`classify`, `refusal`, `resultDocument`) and the log each command is given.
+
+## Record paths use /; case-only collisions are refused
+
+Assetgrove runs on Linux, macOS and Windows, and a run made on one is read on another, so its own paths are portable (`src/paths.ts`).
+
+- Relative paths in records and JSON output (a candidate's `file`, `artifacts` and sidecar `file`, `picked.files`) use `/` on every OS. Readers accept `/` only: `pick` refuses a recorded path holding `\`, an absolute path or one that leaves the run directory, with exit 2 (`invalid_input`).
+- A command whose writes hold two paths differing only by case (a profile layout's media, manifest, provenance and sidecars; a candidate's artifacts) exits 2 (`invalid_input`) before anything is written, on every OS, because macOS and Windows file systems would write both to one file.
+- Assetgrove's own reads and writes in `stage` and `pick` use namespaced absolute paths, so they work past 260 characters on Windows. A target's validator is the target's own process and runs in the target directory, which Windows cannot start a process in past its path limit.
+- No file Assetgrove writes has `:` in its name: run ids replace the timestamp's `:` and `.` with `-`.
