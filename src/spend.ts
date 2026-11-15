@@ -101,8 +101,25 @@ export function limitLabel(status: SpendLimitStatus): string {
 }
 
 type Entry =
-  | { op: "reserve"; id: string; at: string; route: string; workItem?: string; amountUsd: number }
+  | ({
+      op: "reserve";
+      id: string;
+      at: string;
+      route: string;
+      workItem?: string;
+      amountUsd: number;
+    } & ReserveMeta)
   | { op: "settle"; id: string; at: string; costUsd: number };
+
+/** What a reservation names beside its route: the provider, the run and the call (design section 3). */
+export interface ReserveMeta {
+  /** The settings id of the provider that serves the call. */
+  provider?: string;
+  /** The run (`r-<16 hex>`) the call belongs to. */
+  runId?: string;
+  /** The call's journal key (src/runs/journal.ts). */
+  callKey?: string;
+}
 
 /** A cap as the settings set it, and the profile's lower value when it has one. */
 interface LimitSetting {
@@ -189,13 +206,20 @@ export class SpendLedger {
    * the reservation cancelled) when it does not fit beside the reservations recorded before it.
    * Returns the reservation's ledger id, for `settle`.
    */
-  reserve(amountUsd: number, what: string, route: string): string {
+  reserve(amountUsd: number, what: string, route: string, meta: ReserveMeta = {}): string {
+    // A call a crashed run reserved and never settled keeps its estimate until the same run
+    // retries it: the retry settles that reservation, so the ledger counts each call once.
+    const orphan = this.unsettled(meta);
+    if (orphan !== undefined) return orphan;
     const id = randomUUID();
     this.append({
       op: "reserve",
       id,
       at: this.now().toISOString(),
       route,
+      ...(meta.provider !== undefined && { provider: meta.provider }),
+      ...(meta.runId !== undefined && { runId: meta.runId }),
+      ...(meta.callKey !== undefined && { callKey: meta.callKey }),
       ...(this.workItem !== undefined && { workItem: this.workItem }),
       amountUsd,
     });
@@ -209,6 +233,20 @@ export class SpendLedger {
       throw error;
     }
     return id;
+  }
+
+  /** The id of the run's unsettled reservation for the same call, when it has one. */
+  private unsettled(meta: ReserveMeta): string | undefined {
+    if (meta.runId === undefined || meta.callKey === undefined) return undefined;
+    const entries = this.read();
+    const settled = new Set(entries.flatMap((e) => (e.op === "settle" ? [e.id] : [])));
+    return entries.find(
+      (e) =>
+        e.op === "reserve" &&
+        e.runId === meta.runId &&
+        e.callKey === meta.callKey &&
+        !settled.has(e.id),
+    )?.id;
   }
 
   /** Records what a reserved call actually cost. */
@@ -307,7 +345,8 @@ function isEntry(value: unknown): value is Entry {
       typeof e["route"] === "string" &&
       typeof e["amountUsd"] === "number" &&
       Number.isFinite(e["amountUsd"]) &&
-      (e["workItem"] === undefined || typeof e["workItem"] === "string")
+      (e["workItem"] === undefined || typeof e["workItem"] === "string") &&
+      ["provider", "runId", "callKey"].every((k) => e[k] === undefined || typeof e[k] === "string")
     );
   return e["op"] === "settle" && typeof e["costUsd"] === "number" && Number.isFinite(e["costUsd"]);
 }

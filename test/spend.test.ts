@@ -377,7 +377,15 @@ test("two paid runs whose combined forecast crosses the work-item limit: the sec
   assert.ok(Math.abs(item.spentUsd - 0.32) < 1e-9);
   assert.ok(Math.abs(item.remainingUsd - 0.18) < 1e-9);
 
-  const second = await cli(args, env);
+  // Repeating the same request returns its finished run: no call, no ledger entry.
+  const repeat = await cli(args, env);
+  assert.equal(repeat.code, 0, repeat.stderr);
+  assert.equal(JSON.parse(repeat.stdout).reused, true);
+  assert.equal(await callCount(), 7);
+  assert.equal(await readFile(path, "utf8"), ledgerAfterFirst);
+
+  // A new round is a new run, and it does not fit.
+  const second = await cli([...args, "--round", "2"], env);
   assert.equal(second.code, 3);
   const refused = JSON.parse(second.stdout);
   assert.equal(refused.error.code, "cap_refused");
@@ -386,11 +394,15 @@ test("two paid runs whose combined forecast crosses the work-item limit: the sec
   assert.equal(refused.error.limit.limitUsd, 0.5);
   assert.ok(Math.abs(refused.error.limit.spentUsd - 0.32) < 1e-9);
   assert.ok(Math.abs(refused.error.limit.requestedUsd - 0.32) < 1e-9);
-  // Refused before any call: the script answered nothing more, the ledger is unchanged and no
-  // second run directory was made.
+  // Refused before any call: the script answered nothing more, the ledger is unchanged and the
+  // second run's directory journaled no call.
   assert.equal(await callCount(), 7);
   assert.equal(await readFile(path, "utf8"), ledgerAfterFirst);
-  assert.equal((await readdir(world.runsDir)).length, 1);
+  const runDirs = await readdir(world.runsDir);
+  assert.equal(runDirs.length, 2);
+  for (const dir of runDirs)
+    if (dir !== JSON.parse(repeat.stdout).runId)
+      assert.equal((await readdir(join(world.runsDir, dir))).includes("calls"), false);
 
   // Another work item still has room under the daily limit.
   const other = await cli(

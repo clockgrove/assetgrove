@@ -22,7 +22,7 @@ plan --spec <spec.json> --bible <BIBLE.md> --profile <profile.json> --out <plan.
 
 Compiles a reviewable generation plan into `--out` and never generates images. With a provider (`AI_GATEWAY_API_KEY` or `--provider-script`), the configured compiler LLM writes the prompt and negatives from the repository's templates in one model call; without one, a marked deterministic template fallback is recorded. `--identity-mode` overrides the profile's identity mode for a character with an identity lock, and the forecast includes the scoring calls. `--run-options` names a JSON file holding only `candidates`, `seed`, `strictness` and `exploration`; any other field (a `capUsd`, a route) exits 2 `invalid_input`; the cap comes from the developer settings' `caps.runUsd`, the routes from their routes and roles. The saved plan (`assetgrove-plan/1`) holds operation names, compiled prompts, input paths and hashes, the request digest and a hash of the planning-time resolution, and nothing else. Show the plan's prompts, clamps and cost forecast to the human. Writes only the plan file and its run directory; the run directory's `compiler.json` keeps the compiler call's record (model, route, request ID, cost), and the saved plan's `requestDigest` names that directory. Its forecast is the planning call plus every generation, QA and identity call the later `apply` runs.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `plan`, arguments `spec`, `bible`, `profile`, `out`, `brief`, `runOptions`, `template`, `identityMode`, `workItem`, `runs`, `round`.
 
@@ -34,7 +34,7 @@ apply <plan.json> [--auto-approve] [--out <runs directory>] [--work-item <label>
 
 Generates exactly a saved plan. It re-reads every input the plan names and refuses a changed one (exit 2), re-resolves the routes, estimates, output grants and run cap from the developer settings and exits 2 `plan_changed` when they differ from planning time or the plan carries any field outside its format, exits 2 `format_unsupported` for an older plan format, runs the prompt policy on the plan's prompts (exit 9 `prompt_refused`), and refuses a plan whose `approved` field a human has not set to `true`, unless `--auto-approve` is given for an unattended campaign; the MCP tool has no such option, so a plan must be approved first. Approval authorizes the generation spend only; the outputs stay pending review. Paid gateway calls; needs `AI_GATEWAY_API_KEY` or `--provider-script` (exit 4 without either). Stages the run under `--out` (default `.assetgrove/runs`), never in the target.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--out`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--out`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `apply`, arguments `plan`, `out`, `workItem`, `round`.
 
@@ -44,7 +44,7 @@ MCP tool: `apply`, arguments `plan`, `out`, `workItem`, `round`.
 mcp [--work-item <label>] [--provider-script <module>]
 ```
 
-Serves one MCP tool per command other than `mcp` over MCP stdio with the official MCP SDK; each tool takes its command's arguments and returns the same result document as the command's JSON output (as `structuredContent`, with `isError` set when the result is not ok), and file paths are local to the server. Stdout carries the protocol, so it prints no JSON document; logs go to stderr. Spends and writes as the commands it serves do. Like every paid command, it exits 2 `settings_invalid` when a TLS or proxy variable is set that the settings' `environment.allow` does not list.
+Serves one MCP tool per command other than `mcp` over MCP stdio with the official MCP SDK; each tool takes its command's arguments and returns the same result document as the command's JSON output (as `structuredContent`, with `isError` set when the result is not ok), and file paths are local to the server. A paid tool call runs in the server's process; while its client is connected, a call that carries a `progressToken` gets `notifications/progress` at least once per job. If the client drops, the run goes on until it ends or the server stops; repeating the request resumes it from its journal. Stdout carries the protocol, so it prints no JSON document; logs go to stderr. Spends and writes as the commands it serves do. Like every paid command, it exits 2 `settings_invalid` when a TLS or proxy variable is set that the settings' `environment.allow` does not list.
 
 ### `materials`
 
@@ -54,7 +54,7 @@ materials --albedo <painted.png> --spec <spec.json> --profile <profile.json> --d
 
 Derives the material channels the profile's `style.materials` requests from a painted albedo, checks alignment and temporal stability, writes native-resolution renditions into `--out`, runs the target's compression and lit previews, and judges the flat and lit images with vision QA. The compression and preview commands run only with an approval tied to each command's hash, exactly as `pick`'s validator does (cwd: the profile's directory); every one is checked before the first model call, exit 8 `confirmation_required` otherwise, and each output's provenance records the command's `hash` and approval `method`. Paid gateway calls (vision QA and any model-assisted channel). Rejected materials exit 5 and stay unapproved. Never writes into the target.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `materials`, arguments `albedo`, `spec`, `profile`, `derivation`, `out`, `cap`, `workItem`, `digitalSourceType`, `runs`, `round`.
 
@@ -66,7 +66,7 @@ stage --spec <spec.json> --bible <bible.json> --profile <profile.json> [--candid
 
 Generates candidates within the cap and stages only those that pass QA, with reasons and provenance, in a run directory under `--runs`. `--dry-run` prints the planned calls, the cost forecast and the spend left under the ledger's limits, writes nothing and needs no key. Image kinds make paid gateway calls. A `character-3d` spec makes rigged, animated `.glb` candidates from the subject's approved turnaround: its 3D calls go to Tripo (`TRIPO_API_KEY`) and its identity call to the gateway. A sprite-strip spec needs an approved `keyPose`. Never writes into the target.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `cap`, `runs`, `workItem`, `round`.
 
@@ -109,7 +109,7 @@ look-dev --model <model.glb> --provenance <provenance.json> --spec <spec.json> -
 
 Repaints a picked 3D character's base colour on its own UVs in the look the bible's approved references define, writes fur groom maps and tint textures per season the profile declares (`model3d.groom`), gives the eyes a glossy material and mask, and checks them. Stages a one-candidate run with before-and-after renders under `--runs` for a person to pick. Paid gateway calls; the cap defaults to the profile's `model3d.lookdev.capUsd` or $3. Exits 5 when the result fails its checks.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `look_dev`, arguments `model`, `provenance`, `spec`, `bible`, `profile`, `cap`, `runs`, `workItem`, `round`.
 
@@ -121,7 +121,7 @@ import --sheet <sheet.png> --profile <profile.json> --asset <id> --tool <name> [
 
 Slices a contact sheet from any tool (`--tool` names it) into frames under `--imports`, removes the background to the profile's style, and has a vision model propose animation families in `<import>/grouping.json` with status `proposed`. `--no-propose` skips that paid call. With `--lock-bible`, a locked subject's sheet is also scored against its identity lock, one paid call unless `--identity-mode off`. With `--frames`, a sheet that does not slice into exactly that many figures is refused (exit 2) before any model call. Never writes into the target.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `import`, arguments `sheet`, `profile`, `asset`, `tool`, `digitalSourceType`, `bible`, `subject`, `hints`, `frames`, `grid`, `components`, `noPropose`, `lockBible`, `identityMode`, `cap`, `imports`, `workItem`, `runs`, `round`.
 
@@ -133,7 +133,7 @@ generate-sheet --spec <spec.json> --bible <bible.json> --profile <profile.json> 
 
 Has the model draw a whole animation cycle as one sheet within the cap, then imports it as `import` does, with a proposed grouping for a person to confirm. A sheet that does not slice into the spec's `frames.count` figures exits 5; the sheet and its record are kept in the import directory. `--brief` adds the author's brief to the prompt; `--lock-bible` and `--identity-mode` score the sheet as `import` does, inside the forecast and the cap. Paid gateway calls. Never writes into the target.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `generate_sheet`, arguments `spec`, `bible`, `profile`, `brief`, `cap`, `imports`, `lockBible`, `identityMode`, `workItem`, `runs`, `round`.
 
@@ -155,7 +155,7 @@ identity-eval [--bible <BIBLE.md>] --cases <cases.json> [--profile <profile.json
 
 Scores every case of a local labelled image set against its subject's identity lock and reports accuracy per threshold, the recommended threshold, accuracy at the profile's threshold and agreement with the cases' QA verdicts. Paid gateway calls. Writes one JSON line per case to `--log` and nothing else beside its run directory; never filters or approves. Keep the set and the log local.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `identity_eval`, arguments `bible`, `cases`, `profile`, `log`, `cap`, `workItem`, `runs`, `round`.
 
@@ -167,7 +167,7 @@ identity-check --bible <BIBLE.md> [--subject <name>]... [--cap <usd>] [--work-it
 
 Asks whether each identity record's written features, proportions and palette agree with the record's own approved reference images, for every identity in the bible or each named subject. Paid gateway calls; writes nothing beside its run directory. Exits 1 when any record disagrees or could not be checked; enforce mode does not filter with that record until a person fixes its text or references.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `identity_check`, arguments `bible`, `subject`, `cap`, `workItem`, `runs`, `round`.
 
@@ -179,7 +179,7 @@ animation-qa (--strip <strip.png> --family <name> --profile <profile.json> | --i
 
 Checks one strip, or every family `write-families` wrote from an import, against its motion template and for loop and continuity on pixels. Within the cap, vision calls judge identity flicker between consecutive frames and holes inside the figure; `--no-vision` skips both and spends nothing. Writes a QA report, an onion-skin sheet and a looping preview per family into `--out`, never into the target. Exits 5 when any check fails; each failure names its frame.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `animation_qa`, arguments `strip`, `family`, `profile`, `import`, `out`, `subject`, `spec`, `anchor`, `noVision`, `cap`, `workItem`, `runs`, `round`.
 
@@ -191,7 +191,7 @@ fix-frame --strip <strip.png> --family <name> --profile <profile.json> --frame <
 
 Regenerates one frame (1-based) of a strip with one paid reference-guided edit call, from an approved neighbour frame or the approved key pose. Only that frame changes. Writes the fixed strip, its provenance with a fixes entry, and its QA report and previews into `--out`; never writes into the target or sets a review value. A provenance file that is not the strip's own record is refused (exit 2) before the call.
 
-Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `fix_frame`, arguments `strip`, `family`, `profile`, `frame`, `from`, `keyPose`, `out`, `subject`, `spec`, `note`, `provenance`, `bible`, `anchor`, `cap`, `workItem`, `runs`, `round`.
 
@@ -264,6 +264,26 @@ spend <status|check> [--provider <id>] [--work-item <label>] [--provider-script 
 `status` gives the ledger (`<stateDir>/spend.jsonl`), the caps from the settings, the last 24 hours' spend, and the work item (`--work-item` or `ASSETGROVE_WORK_ITEM`) with its spend. `check` reports per configured provider (`--provider` narrows it) `{provider, adapter, paid, declared, limit, verified, reading, mismatch, note}`: whether a limit is declared, the provider's reading where it gives one to an ordinary key (gateway credits balance, Tripo balance), and whether the reading verifies the limit. A reading verifies only a `prepaid` limit with `usd` (balance at or below it); a balance above it exits 3 with `provider_limit_mismatch`. Anthropic and OpenAI limits are declared only. `--provider-script` names the scripted provider's module, whose `limitReading` check reads. No spend, nothing written.
 
 MCP tool: `spend`, arguments `action`, `provider`, `workItem`. The provider script flag is CLI-only.
+
+### `runs list`
+
+```text
+runs list [--runs <dir>] [--json]
+```
+
+Lists every run directory (`r-<16 hex of the request digest>`) under `--runs` (default `.assetgrove/runs`): `{runId, runDir, command, digest, status, startedAt, finishedAt, exitCode, attempts, calls, forecastUsd, capUsd}`. `status` is `running`, `finished`, `failed`, or `interrupted` when the process running it is gone; `calls` counts the run's journal. Local: no model call, no spend, nothing written.
+
+MCP tool: `runs_list`, argument `runs`.
+
+### `runs show`
+
+```text
+runs show <r-16hex> [--runs <dir>] [--json]
+```
+
+Shows one run: the fields `runs list` gives, its `request` (`request.json`, the WorkPlan), `state` (`state.json`), `record` (`run.json`) and `journal`, each journaled call's `{callKey, operation, provider, model, costUsd, costSource, requestId}`. An unknown run id exits 2. Local: no model call, no spend, nothing written.
+
+MCP tool: `runs_show`, arguments `run`, `runs`.
 
 ### `estimate`
 

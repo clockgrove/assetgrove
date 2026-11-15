@@ -20,6 +20,7 @@ import { pickCommand } from "./pick.ts";
 import { planCommand } from "./plan.ts";
 import { recipeCommand } from "./recipe.ts";
 import { rigCommand } from "./rig.ts";
+import { runsListCommand, runsShowCommand } from "./runs.ts";
 import { settingsCommand } from "./settings.ts";
 import { spendCommand } from "./spend.ts";
 import { stageCommand } from "./stage.ts";
@@ -52,6 +53,8 @@ export const commands: readonly CommandSpec[] = [
   settingsCommand,
   extensionsCommand,
   spendCommand,
+  runsListCommand,
+  runsShowCommand,
   estimateCommand,
   confirmCommand,
 ];

@@ -1,6 +1,3 @@
-import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { ParseArgsOptionsConfig } from "node:util";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
@@ -8,10 +5,9 @@ import { SettingsError } from "../env.ts";
 import { EXIT, InputError } from "../errors.ts";
 import { checkTrackedKeys } from "../guard.ts";
 import { redact } from "../redact.ts";
-import { CONTACT_SHEET_FILE } from "../contact.ts";
-import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "../runs/dir.ts";
+import { executeRun } from "../runs/execute.ts";
 import { checkContextEnvironment, isPaid } from "./context.ts";
-import { failureOutcome, refusal, usd } from "./result.ts";
+import { failureOutcome } from "./result.ts";
 import type {
   CommandSpec,
   JsonSchemaObject,
@@ -156,51 +152,19 @@ export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext)
 }
 
 /**
- * A paid command's real run (design section 6): its free plan step first, then the run directory
- * `<runs>/r-<16 hex>/` with `request.json`, given to the command as `ctx.run`. A forecast over
- * the cap is refused (exit 3) before the directory exists. A command that writes no run record
- * of its own there gets the runner's.
+ * A paid command's real run (design sections 6 and 9): its free plan step, then the executor
+ * (src/runs/execute.ts) runs it in its run directory `<runs>/r-<16 hex>/`, given to the command
+ * as `ctx.run`, resuming from the run's journal or returning a finished run.
  */
 async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
   const plan = await spec.plan!(args, ctx);
-  if (plan.forecastUsd > plan.capUsd + 1e-9)
-    return refusal(
-      "cap_refused",
-      `refused: the forecast ${usd(plan.forecastUsd)} exceeds the $${plan.capUsd.toFixed(2)} cap`,
-      {},
-      "",
-    );
-  await openRunDir(plan);
-  // A record left by an earlier run of the same request is replaced by this run's.
-  await rm(join(plan.runDir, RUN_RECORD_FILE), { force: true });
-  await rm(join(plan.runDir, CONTACT_SHEET_FILE), { force: true });
-  const startedAt = new Date().toISOString();
-  let outcome: Outcome;
-  try {
-    outcome = await spec.run(args, { ...ctx, run: { dir: plan.runDir, plan } });
-  } catch (error) {
-    outcome = errorOutcome(error);
-  }
-  if (!existsSync(join(plan.runDir, RUN_RECORD_FILE))) {
-    const spent = outcome.fields["spentUsd"];
-    await writeRunRecord({
-      runId: runIdOfDir(plan.runDir),
-      runDir: plan.runDir,
-      command: spec.name,
-      digest: plan.digest,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      ok: outcome.exitCode === 0,
-      exitCode: outcome.exitCode,
-      ...(outcome.error && { error: outcome.error.code }),
-      ...(typeof spent === "number" && { spentUsd: spent }),
-      ...(plan.promptPolicy && { promptPolicy: plan.promptPolicy }),
-      ...(existsSync(join(plan.runDir, CONTACT_SHEET_FILE)) && {
-        contactSheet: CONTACT_SHEET_FILE,
-      }),
-    });
-  }
-  return outcome;
+  return executeRun({
+    command: spec.name,
+    plan,
+    ctx,
+    run: (runCtx) => spec.run(args, runCtx),
+    toOutcome: errorOutcome,
+  });
 }
 
 /** The outcome of a thrown error; a settings refusal keeps its own code, `settings_invalid`. */

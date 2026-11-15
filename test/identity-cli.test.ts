@@ -302,7 +302,10 @@ test("identity-check exits 0 when every record agrees with its references and 1 
   );
 
   // An answer that cannot be read leaves the record unchecked, which is not trusted either.
-  const garbled = await exec(process.execPath, args, { env: env("", "no json") }).then(
+  // The scripted answer changed but the request did not: a new round makes a new run.
+  const garbled = await exec(process.execPath, [...args, "--round", "2"], {
+    env: env("", "no json"),
+  }).then(
     () => assert.fail("expected exit 1"),
     (error: { code: number; stdout: string }) => error,
   );

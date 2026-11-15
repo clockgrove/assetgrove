@@ -1,5 +1,5 @@
 import { InputError } from "./errors.ts";
-import type { SpendLedger } from "./spend.ts";
+import type { ReserveMeta, SpendLedger } from "./spend.ts";
 
 /**
  * Bounded spend: every provider call reserves against the run's cap first and is refused if it
@@ -59,11 +59,13 @@ export class Budget {
   /**
    * Throws `BudgetExceededError` when the amount does not fit beside what is spent and reserved,
    * or would cross a ledger limit. Only a paid call names its `route`, and only a call with a
-   * route is reserved in the ledger; a scripted call reserves against the run's cap alone.
+   * route is reserved in the ledger; a scripted call reserves against the run's cap alone. `meta`
+   * names the provider, run and call in the ledger's reservation.
    */
-  reserve(amountUsd: number, what = "the call", route?: string): Reservation {
+  reserve(amountUsd: number, what = "the call", route?: string, meta?: ReserveMeta): Reservation {
     this.fitCap(amountUsd, what);
-    const ledgerId = route === undefined ? undefined : this.ledger?.reserve(amountUsd, what, route);
+    const ledgerId =
+      route === undefined ? undefined : this.ledger?.reserve(amountUsd, what, route, meta);
     this.reserved += amountUsd;
     return { amountUsd, settled: false, ...(ledgerId !== undefined && { ledgerId }) };
   }

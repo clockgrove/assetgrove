@@ -12,6 +12,7 @@ import type {
   ProviderResult,
 } from "./gateway/provider.ts";
 import { ProviderSet } from "./providers/set.ts";
+import { currentRunScope } from "./runs/journal.ts";
 import { RouteUnavailableError } from "./routes.ts";
 import type { Route, Routes } from "./routes.ts";
 import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
@@ -20,6 +21,10 @@ import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
  * Budgeted, recorded provider calls. Each call reserves its route's estimate against the run's cap
  * (and the budget's cross-run spend ledger, src/spend.ts) before it reaches the provider, then settles with the provider's reported cost (or the estimate)
  * and appends a provenance record.
+ *
+ * Inside a paid command's run (src/runs/execute.ts) each call first checks the run's journal
+ * (`calls/<callKey>.json`): a hit reserves nothing, counts its recorded cost against the run's
+ * cap and returns the stored result; an answered call is journaled before it is returned.
  */
 export class Caller {
   readonly records: CallRecord[] = [];
@@ -29,6 +34,7 @@ export class Caller {
   private readonly routes: Routes;
   private readonly now: () => Date;
   private readonly log: (message: string) => void;
+  private readonly index: number | undefined;
 
   constructor(options: {
     /** A `ProviderSet` serves each call on its route's provider; any other provider serves all. */
@@ -40,6 +46,8 @@ export class Caller {
     now?: () => Date;
     /** Receives one line per typed decision call: label, confidence, latency and cost. */
     log?: (message: string) => void;
+    /** The candidate or frame index these calls are for, part of each call's journal key. */
+    index?: number;
   }) {
     this.provider = options.provider;
     this.providerName = options.providerName;
@@ -47,6 +55,7 @@ export class Caller {
     this.routes = options.routes;
     this.now = options.now ?? (() => new Date());
     this.log = options.log ?? (() => {});
+    this.index = options.index;
   }
 
   route(operation: string): Route {
@@ -80,6 +89,24 @@ export class Caller {
       this.provider.checkPrompt(prompt, operation);
     const served = this.serve(route, operation);
     const name = `${served.id}:${operation}:${route.model}`;
+    const scope = currentRunScope();
+    const callKey = scope?.journal.key({
+      operation,
+      provider: served.id,
+      model: route.model,
+      prompt,
+      referenceHashes: references.map((r) => r.sha256),
+      ...(seed !== undefined && { seed }),
+      ...(this.index !== undefined && { index: this.index }),
+    });
+    const journaled = callKey === undefined ? undefined : scope?.journal.read(callKey);
+    if (journaled !== undefined) {
+      // Answered before in this run: nothing is reserved or paid again.
+      this.budget.addPrior(journaled.record.costUsd, `the journaled ${operation} call`);
+      this.records.push(journaled.record);
+      scope?.onCall?.({ operation, reused: true });
+      return journaled.result as T;
+    }
     // Paid-ness is the adapter's: only a paid call needs a declared limit and reaches the ledger.
     const billing = billingOf(served.provider, kind);
     assertLimitDeclared(billing);
@@ -87,6 +114,11 @@ export class Caller {
       route.estimatedCostUsd,
       `the ${operation} call`,
       billing.paid ? name : undefined,
+      {
+        provider: served.id,
+        ...(scope !== undefined && { runId: scope.journal.runId }),
+        ...(callKey !== undefined && { callKey }),
+      },
     );
     const startedAt = this.now().toISOString();
     let result: T;
@@ -102,7 +134,7 @@ export class Caller {
     const costUsd = result.costUsd ?? route.estimatedCostUsd;
     this.budget.settle(reservation, costUsd);
     const usedSeed = result.seed ?? seed;
-    this.records.push({
+    const record: CallRecord = {
       operation,
       model: route.model,
       route: name,
@@ -118,7 +150,19 @@ export class Caller {
       costSource: result.costUsd === undefined ? "estimate" : "provider",
       ...(route.providerTerms !== undefined && { providerTerms: route.providerTerms }),
       ...(route.outputGrant !== undefined && { outputGrant: structuredClone(route.outputGrant) }),
-    });
+    };
+    this.records.push(record);
+    if (scope !== undefined && callKey !== undefined) {
+      scope.journal.write({
+        callKey,
+        operation,
+        provider: served.id,
+        model: route.model,
+        record,
+        result,
+      });
+      scope.onCall?.({ operation, reused: false });
+    }
     return result;
   }
 

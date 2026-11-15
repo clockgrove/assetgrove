@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Budget, runCap } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
@@ -36,6 +36,26 @@ interface MaterialsArgs {
   runs?: string;
 }
 
+/**
+ * The files the profile's compression and preview commands name, as `profile/<arg>`: a changed
+ * compressor or renderer changes the request digest, so it is a new run, not a reused one.
+ */
+function commandReads(
+  config: ReturnType<typeof resolveMaterialProfile>,
+  profileDir: string,
+): Record<string, string> {
+  const argv = [config.compression?.command ?? [], config.preview?.command ?? []].flat();
+  const reads: Record<string, string> = {};
+  for (const arg of argv) {
+    if (arg === "" || arg.includes("{{")) continue;
+    const rel = relative(profileDir, resolve(profileDir, arg));
+    // Only files beside the profile: an interpreter elsewhere (node itself) is not hashed.
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) continue;
+    reads[`profile/${rel.split(sep).join("/")}`] = resolve(profileDir, arg);
+  }
+  return reads;
+}
+
 /** The plan step: the inputs, the channels' model calls and the QA call, with no call made. */
 async function prepare(args: MaterialsArgs, ctx: RunContext) {
   const spec = await readJson<AssetSpec>(args.spec);
@@ -66,6 +86,7 @@ async function prepare(args: MaterialsArgs, ctx: RunContext) {
   const work = await buildWorkPlan(materialsCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["albedo", "spec", "profile", "derivation"],
+    reads: commandReads(config, profile.dir),
     jobs,
     capUsd,
     paid: paidBy(provider, jobs),
