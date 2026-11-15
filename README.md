@@ -94,6 +94,7 @@ The package ships its skills under `skills/`. Install them into your harness wit
 - `op <operation> <input...> --out <path>`: run one image operation (crop, trim, pad, scale, slice, matte, apply-style, register, join, flip, renditions, convert) on any image, with a provenance record. Options: `--params <json>`, `--profile <profile.json>`.
 - `recipe <recipe.json> <input...> --out <path>`: run a recipe of operations, deterministically. See [docs/transform.md](docs/transform.md).
 - `ops`: list the operations, their parameter schemas and the engines.
+- `ls <address>` and `cat <address> [--out <file>]`: browse the library as an `asset://<game>/` tree (views by kind, subject and tag, stale assets, run folders, each asset's card, provenance, review, log, image and versions); the MCP server serves the same tree as resources. Free. See [docs/library.md](docs/library.md#the-asset-tree).
 - `--help`, `--version`, and `<command> --help`.
 
 | Code | Meaning                                                                                                            |

@@ -205,7 +205,8 @@ export function errorOutcome(error: unknown): Outcome {
 
 /**
  * Input properties no tool accepts: the scripted provider and routes come from the server, a dry
- * run is the CLI's. `json` and `help` are CLI flags, not properties.
+ * run is the CLI's. `json` and `help` are CLI flags, not properties. A property marked `cliOnly`
+ * is left out too.
  */
 export const CLI_ONLY_PROPERTIES: readonly string[] = ["providerScript", "dryRun", "routes"];
 
@@ -213,12 +214,14 @@ export const CLI_ONLY_PROPERTIES: readonly string[] = ["providerScript", "dryRun
 export function toolInputSchema(spec: CommandSpec): JsonSchemaObject {
   const properties: Record<string, JsonSchemaProperty> = {};
   for (const [name, property] of Object.entries(spec.input.properties)) {
-    if (CLI_ONLY_PROPERTIES.includes(name)) continue;
+    if (CLI_ONLY_PROPERTIES.includes(name) || property.cliOnly) continue;
     const listed = { ...property };
     delete listed.placeholder;
     properties[name] = listed;
   }
-  const required = (spec.input.required ?? []).filter((n) => !CLI_ONLY_PROPERTIES.includes(n));
+  const required = (spec.input.required ?? []).filter(
+    (n) => !CLI_ONLY_PROPERTIES.includes(n) && !spec.input.properties[n]?.cliOnly,
+  );
   return {
     type: "object",
     properties,

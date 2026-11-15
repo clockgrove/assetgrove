@@ -3,7 +3,7 @@ import { approve, approveProfile, settingsPath } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { after, before, test } from "node:test";
@@ -17,6 +17,7 @@ import type { CommandSpec } from "../src/commands/types.ts";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import type { TargetProfile } from "../src/types.ts";
+import { GAME, fixtureLibrary } from "./fixtures/library.ts";
 import { lodModel } from "./fixtures/lod.ts";
 import { quadrupedTemplate, syntheticQuadruped, walkGait } from "./fixtures/quadruped.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
@@ -223,6 +224,16 @@ async function world() {
   await writeFile(join(dir, "spec.json"), JSON.stringify(shelterSpec));
   await writeFile(join(dir, "bible", "bible.json"), JSON.stringify(w.bible));
   await writeFile(join(dir, "profile.json"), JSON.stringify(w.profile));
+}
+
+/** The fixture library (test/fixtures/library.ts) in the work directory, built once. */
+async function library(): Promise<string> {
+  const dir = join(work, "library");
+  if (existsSync(dir)) return dir;
+  const built = fixtureLibrary();
+  await cp(built.dir, dir, { recursive: true });
+  await rm(built.dir, { recursive: true, force: true });
+  return dir;
 }
 
 /** A scripted provider module written into the work directory under `name`. */
@@ -588,6 +599,14 @@ const rows: Row[] = [
     },
   },
   {
+    tool: "ls",
+    prepare: async () => ({ address: `asset://${GAME}/by-tag/prop/`, target: await library() }),
+  },
+  {
+    tool: "cat",
+    prepare: async () => ({ address: `asset://${GAME}/lantern/image`, target: await library() }),
+  },
+  {
     tool: "op",
     prepare: async () => {
       const input = join(work, "in.png");
@@ -926,7 +945,24 @@ test("every tool's structuredContent deep-equals the CLI --json document", async
     );
     assert.ok(fields.length > 0, `${label}: no result fields`);
     assert.equal(result.isError, document["ok"] !== true, label);
-    assert.deepEqual(normalise(result.structuredContent), normalise(document), label);
+    if (row.tool === "cat") {
+      // cat carries the read once: the document lists each content's uri and mimeType, and the
+      // contents follow as image content or embedded resources, in order.
+      const contents = document["contents"] as Array<{ uri: string; mimeType: string }>;
+      const listed = contents.map(({ uri, mimeType }) => ({ uri, mimeType }));
+      assert.deepEqual(
+        normalise(result.structuredContent),
+        normalise({ ...document, contents: listed }),
+        label,
+      );
+      const items = (result.content as Array<Doc>).slice(1);
+      const carried = items.map((item, i) =>
+        item["type"] === "image" ? { ...listed[i], blob: item["data"] } : item["resource"],
+      );
+      assert.deepEqual(carried, contents, label);
+    } else {
+      assert.deepEqual(normalise(result.structuredContent), normalise(document), label);
+    }
     const [text] = result.content as { type: string; text: string }[];
     assert.deepEqual(JSON.parse(text!.text), result.structuredContent, label);
     previous = result.structuredContent as Doc;

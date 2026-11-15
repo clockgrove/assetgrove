@@ -178,6 +178,28 @@ Each line is rendered from an annotation carrying `ag:action` (other than `resol
 - **`library stats`** gives counts by `kind` and `state`, and `changeRequests`: `total`, `approvedWithinTwoVersions` and their `share`. A change request counts when one of the next two versions after the one it targets is approved.
 - **`library drift`** lists `stale` assets (the card's `bible` is older than the style bible's `version`, read from `--bible`, default `<target>/.assetgrove/art-direction/BIBLE.md`) and `modified` ones (the file's sha256, or a Git LFS pointer's oid, differs from `lock.sha256`; a matching pointer is not modified). It is computed from the cards and stores nothing.
 
+## The asset tree
+
+The library is served as `asset://<game>/` addresses, read by one resolver (`src/tree/`): the MCP server's resources (`resources/read`) and the commands `ls` and `cat` (tools `ls`, `cat`) return the same documents. The tree serves the project at `--target` (`mcp`, `ls`, `cat`), or the working directory's Git top level: its `.assetgrove/profile.json`, the profile `init` writes, names the game and library root, and its runs are `.assetgrove/runs`. Reading never picks, spends, edits or waits on a write.
+
+```text
+asset://<game>/                          views, counts and the root index.md
+  by-kind/<kind>/  by-subject/<subject>/  by-tag/<tag>/  stale/
+  runs/  runs/<run>/  runs/<run>/<candidate>
+  <asset>/                               the asset's files and machine fields
+  <asset>/card  <asset>/provenance  <asset>/review  <asset>/log
+  <asset>/image  <asset>/image/full
+  <asset>/versions/  <asset>/versions/<n>
+```
+
+- **Assets by id.** An asset is found by its card's id (`<id>.md`), wherever its folder; its media, provenance and review record are the paths its card names, each checked by the path rule. A card naming a path outside the library root makes every read of the asset exit 2 `invalid_input`.
+- **Folders.** Every folder address returns a JSON document `{address, kind: "folder", children: [{address, name, kind, state?}], next?}` with at most 200 children per read, sorted by name (the root lists its five views first); `next` is the folder address with `?after=<last name>`. The game root carries `counts` and, after the JSON, the root `index.md` as Markdown. A card whose id is a view's name (`by-kind`, `by-subject`, `by-tag`, `stale`, `runs`) has no address of its own, so the tree leaves it out and the root lists it under `reserved`. A view lists asset folders by their own address. `stale/` holds the assets `library drift` calls stale: those whose card's bible is older than the style bible's version (`.assetgrove/art-direction/BIBLE.md`). A run folder lists each staged candidate (`staged` or `picked`) and each one QA filtered out (`rejected`, `c<n>`).
+- **Card text.** In JSON documents card text (`title`, `description`, the body) appears only under `sharedText: [{source, text}]`, with `source` `card.title`, `card.description` or `card.body`. The asset folder's `asset` holds the card's machine fields and tags.
+- **Files.** `card` and `log` (the asset's own lines, rendered from its review record) are Markdown; `provenance` and `review` are the records' JSON; `image` is a PNG thumbnail of at most 512 px, a strip's key-frame row, or for a 3D asset `{path, frames}` with a row of its turntable renders; `image/full` is the file. `versions/<n>` is the version record (its number, sha256, time, run, candidate, confirmation, status and whether it is current) with a thumbnail when the bytes are the working file's, a run candidate's or in the local Git LFS store (`image` says which), and none otherwise. `runs/<run>/<candidate>` is the candidate's QA reasons and cost, with its thumbnail.
+- **Size.** A read's encoded content (text bytes, base64 for images) stays at or under 64 KB. A thumbnail shrinks until it fits; content that cannot is replaced by `{address, kind: "file", path, mediaType, bytes, tooLarge: true, limit}`. `cat --out <file>` writes the whole file; it is CLI only, so the read-only `cat` tool never writes. Thumbnails are cached in `<stateDir>/thumbs/`.
+- **Listing.** `resources/list` returns the game root, every folder address and every card address, 200 per page by cursor, so an @-mention finds an asset; `resources/templates/list` names the asset, view and candidate address templates. The search paths (`find/`, `like/`, `where/`) belong to the search package.
+- **Live.** The server compares the project's cards, review records and run folders before and after each of its own tool calls (and at each progress update) and sends `notifications/resources/updated` for each changed `<asset>/` (a new version or annotation) and `runs/<run>/` (a staged candidate), on a 2025-era connection only to addresses the client subscribed to; a 2026-era connection's `subscriptions/listen` filter decides. It sends `notifications/resources/list_changed` after a `pick` or `write_families` it served, or when the listing changed. Other changes show at the next read. A refused read answers JSON-RPC `-32602` with `data.code` `invalid_input`.
+
 ## Merges
 
 `index.md`, `log.md` and `*.review.json` are meant for Git's union merge driver, so two branches that write into one folder never conflict; the readers above accept what that driver produces.
