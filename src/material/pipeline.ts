@@ -105,14 +105,13 @@ export async function runMaterials(options: {
 }): Promise<{ passed: boolean; reportPath: string; outputs: MaterialOutput[]; qa: QaResult }> {
   const startedAt = new Date().toISOString();
   const outDir = resolve(options.outDir);
-  await mkdir(outDir, { recursive: true });
   const reportPath = join(outDir, "materials.json");
-  await rm(reportPath, { force: true });
   const { spec, profile, derivation, call } = options;
   const config = resolveMaterialProfile(profile.style?.materials);
   const approvals = options.approvals ?? { settings: loadSettings(), tty: processTty() };
   const commandCwd = resolve(options.profileDir ?? options.baseDir);
-  // The profile's commands run only once approved (src/approvals.ts), checked before any call.
+  // The profile's commands run only once approved (src/approvals.ts), checked before any model
+  // call or output write: a refused run leaves --out as it was.
   const approvedCommands: unknown[] = [];
   const approve = async (kind: "material-compression" | "material-preview", argv: string[]) => {
     const approved = await requireApproval({ kind, argv, cwd: commandCwd }, approvals);
@@ -130,6 +129,24 @@ export async function runMaterials(options: {
   if (config.compression)
     compressionApproval = await approve("material-compression", config.compression.command);
   if (config.preview) previewApproval = await approve("material-preview", config.preview.command);
+  await mkdir(outDir, { recursive: true });
+  await rm(reportPath, { force: true });
+  // Runs an approved command; a failure's record carries the approval like a success's does.
+  const runApproved = async (
+    kind: "material-compression" | "material-preview",
+    approval: ApprovedCommand,
+    argv: string[],
+    values: Record<string, string>,
+  ) => {
+    const approvalFields = { kind, hash: approval.command.hash, method: approval.method };
+    try {
+      return { ...(await targetCommand(argv, values, commandCwd)), ...approvalFields };
+    } catch (error) {
+      if (error && typeof error === "object" && "commandRecord" in error)
+        Object.assign(error.commandRecord as object, approvalFields);
+      throw error;
+    }
+  };
   const steps: TransformStep[] = [];
   const commandResults: unknown[] = [];
   const origins = new WeakMap<Raster, DigitalSourceType>();
@@ -411,21 +428,16 @@ export async function runMaterials(options: {
             throw new InputError("compression version required");
           const compressed = path.replace(/\.png$/, ".ktx2");
           requireDeclared(digitalSourceType);
-          const result = await targetCommand(
+          const result = await runApproved(
+            "material-compression",
+            compressionApproval!,
             config.compression.command,
             { input: path, output: compressed },
-            commandCwd,
           );
           const compressedBytes = new Uint8Array(await readFile(compressed));
           checkCompressed(compressedBytes, rendition.width, rendition.height);
-          const approval = {
-            kind: "material-compression",
-            hash: compressionApproval!.command.hash,
-            method: compressionApproval!.method,
-          };
           commandResults.push({
             ...result,
-            ...approval,
             version: config.compression.version,
             sha256: sha256(compressedBytes),
             path: compressed,
@@ -446,8 +458,8 @@ export async function runMaterials(options: {
             compression: {
               version: config.compression.version,
               command: config.compression.command,
-              hash: approval.hash,
-              method: approval.method,
+              hash: result.hash,
+              method: result.method,
             },
           });
         }
@@ -458,7 +470,9 @@ export async function runMaterials(options: {
     const previews: LoadedReference[] = [ref];
     for (const scene of ["dusk-rain", "night"]) {
       const path = join(outDir, `${scene}.png`);
-      const execution = await targetCommand(
+      const execution = await runApproved(
+        "material-preview",
+        previewApproval!,
         config.preview.command,
         {
           materials: reportPath,
@@ -466,14 +480,8 @@ export async function runMaterials(options: {
           scene,
           lightRig: JSON.stringify(config.lightRig ?? {}),
         },
-        commandCwd,
       );
-      commandResults.push({
-        ...execution,
-        kind: "material-preview",
-        hash: previewApproval!.command.hash,
-        method: previewApproval!.method,
-      });
+      commandResults.push(execution);
       const sourceBytes = new Uint8Array(await readFile(path));
       const raster = decodeImage(sourceBytes);
       const digitalSourceType = combineDigitalSourceTypes(outputs.map((o) => o.digitalSourceType));

@@ -1,13 +1,18 @@
 import { approve, approveScript, settingsPath, stateDir, useHeadless } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { identifyCommand, providerScriptCommand, requireApproval } from "../src/approvals.ts";
+import {
+  identifyCommand,
+  providerScriptCommand,
+  refuseShims,
+  requireApproval,
+} from "../src/approvals.ts";
 import type { GatedCommand } from "../src/approvals.ts";
 import { confirmCommand } from "../src/commands/confirm.ts";
 import { runCommand } from "../src/commands/runner.ts";
@@ -131,8 +136,10 @@ test("pick with an unapproved validator exits 8 and writes nothing; approved in 
   assert.equal(confirmation.command.kind, "validator");
   assert.match(confirmation.command.hash, /^[0-9a-f]{64}$/);
   assert.deepEqual(confirmation.command.argv, world.profile.validator!.command);
-  assert.equal(typeof confirmation.command.cwd, "string");
-  assert.ok(Array.isArray(confirmation.command.files));
+  // The target lies outside any repository, so cwd is its absolute real path; the validator
+  // script lies outside cwd, so no file is hashed.
+  assert.equal(confirmation.command.cwd, realpathSync(world.targetDir));
+  assert.deepEqual(confirmation.command.files, []);
   assert.equal(confirmation.id, confirmation.command.hash);
   assert.equal(confirmation.confirmCommand, `assetgrove confirm ${confirmation.id}`);
   assert.deepEqual(await readdir(world.targetDir), []);
@@ -236,6 +243,20 @@ test("accepting through an injected TTY port writes configDir/approvals/<hex>.js
   const again = await requireApproval(command, { settings });
   assert.equal(again.method, "tty");
   assert.equal(asked.length, 2);
+});
+
+test("a relative shim name resolves against the command's cwd, not the process's", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "assetgrove-shim-cwd-"));
+  await mkdir(join(dir, "tools"));
+  await writeFile(join(dir, "tools", "check.cmd"), "@echo off\r\n");
+  for (const name of ["tools/check.cmd", "tools/check"]) {
+    assert.throws(
+      () => refuseShims([name, "{{manifest}}"], dir, "win32", { PATHEXT: ".EXE;.CMD" }),
+      (error: Error & { code?: string }) => error.code === "command_refused",
+      name,
+    );
+  }
+  assert.equal(refuseShims(["tools/check.cmd"], dir, "linux", {}), undefined);
 });
 
 test(

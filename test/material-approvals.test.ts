@@ -1,7 +1,7 @@
 import { approve, approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -144,9 +144,31 @@ test("an unapproved compression command exits 8; approved in settings it runs an
 test("an unapproved preview command exits 8 like a validator", async () => {
   const world = await materialWorld();
   approve({ kind: "material-compression", argv: world.compression.command, cwd: world.dir });
+  // The gate runs before any output write: a refused run leaves the previous report in place.
+  await mkdir(join(world.dir, "out"));
+  await writeFile(join(world.dir, "out", "materials.json"), '{"previous":true}');
   const refused = await world.run();
   assert.equal(refused.code, 8, refused.stdout);
   assert.equal(JSON.parse(refused.stdout).error.confirmation.command.kind, "material-preview");
+  assert.equal(
+    await readFile(join(world.dir, "out", "materials.json"), "utf8"),
+    '{"previous":true}',
+  );
+});
+
+test("a failed approved command's result records its hash and approval method", async () => {
+  const world = await materialWorld();
+  await writeFile(join(world.dir, "render.mjs"), "process.exit(3);\n");
+  approve({ kind: "material-compression", argv: world.compression.command, cwd: world.dir });
+  const hash = approve({ kind: "material-preview", argv: world.preview.command, cwd: world.dir });
+  const failed = await world.run();
+  assert.notEqual(failed.code, 0, failed.stdout);
+  const report = JSON.parse(await readFile(join(world.dir, "out", "materials.json"), "utf8"));
+  const last = report.commandResults.at(-1);
+  assert.equal(last.exitCode, 3);
+  assert.equal(last.kind, "material-preview");
+  assert.equal(last.hash, hash);
+  assert.equal(last.method, "settings");
 });
 
 test("ops does not list material-encode, and a recipe naming it exits 2", async () => {

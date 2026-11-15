@@ -248,10 +248,12 @@ const SHIMS = new Set([".cmd", ".bat"]);
 /**
  * On Windows, resolves argv[0] through PATH and PATHEXT and refuses a `.cmd` or `.bat` result
  * (exit 2 `command_refused`): those run through cmd.exe, a shell. Elsewhere does nothing.
+ * A name with a path separator resolves against the command's `cwd`, where it runs.
  * Returns the resolved file, when one was found.
  */
 export function refuseShims(
   argv: readonly string[],
+  cwd: string,
   platform: string = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
@@ -266,28 +268,29 @@ export function refuseShims(
     .filter(Boolean)
     .map((e) => e.toLowerCase());
   const named = win.extname(first).toLowerCase();
-  const names = [...(named && exts.includes(named) ? [first] : []), ...exts.map((e) => first + e)];
-  const dirs =
+  const suffixes = [...(named && exts.includes(named) ? [""] : []), ...exts];
+  // A name with a path separator runs from the command's cwd; a bare name is looked up on PATH.
+  const candidates =
     first.includes("/") || first.includes("\\") || win.isAbsolute(first)
-      ? [""]
-      : lookup("PATH").split(";").filter(Boolean);
-  for (const dir of dirs) {
-    for (const name of names) {
-      const candidate = dir === "" ? name : win.join(dir, name);
-      let isFile: boolean;
-      try {
-        isFile = statSync(candidate).isFile();
-      } catch {
-        isFile = false;
-      }
-      if (!isFile) continue;
-      if (SHIMS.has(win.extname(candidate).toLowerCase())) {
-        throw new CommandRefusedError(
-          `${first} resolves to ${candidate}, a ${win.extname(candidate)} file that runs through a shell; Assetgrove never runs commands through a shell. Name the program itself, for a script \`node <script>\`.`,
-        );
-      }
-      return candidate;
+      ? suffixes.map((e) => path.resolve(cwd, first + e))
+      : lookup("PATH")
+          .split(";")
+          .filter(Boolean)
+          .flatMap((dir) => suffixes.map((e) => win.join(dir, first + e)));
+  for (const candidate of candidates) {
+    let isFile: boolean;
+    try {
+      isFile = statSync(candidate).isFile();
+    } catch {
+      isFile = false;
     }
+    if (!isFile) continue;
+    if (SHIMS.has(win.extname(candidate).toLowerCase())) {
+      throw new CommandRefusedError(
+        `${first} resolves to ${candidate}, a ${win.extname(candidate)} file that runs through a shell; Assetgrove never runs commands through a shell. Name the program itself, for a script \`node <script>\`.`,
+      );
+    }
+    return candidate;
   }
   return undefined;
 }
@@ -301,7 +304,7 @@ export async function requireApproval(
   gated: GatedCommand,
   ctx: ApprovalContext,
 ): Promise<ApprovedCommand> {
-  if (gated.kind !== "provider-script") refuseShims(gated.argv, ctx.platform, ctx.env);
+  if (gated.kind !== "provider-script") refuseShims(gated.argv, gated.cwd, ctx.platform, ctx.env);
   const command = identifyCommand(gated);
   const { settings } = ctx;
   if (settings.commands.approved.some((a) => a.hash.toLowerCase() === command.hash)) {
