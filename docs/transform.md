@@ -97,9 +97,9 @@ The target profile's validator command runs on the final tagged media and manife
 
 The metadata adapter also supports JSON glTF through [Khronos `KHR_xmp_json_ld`](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_xmp_json_ld), with the Digital Source Type URI in a document-level XMP packet. KTX2 outputs retain disclosure in their provenance sidecars.
 
-### Later: signed Content Credentials
+### Signed Content Credentials
 
-Digital Source Type is an unsigned disclosure, not a C2PA signature. Signed C2PA Content Credentials are later work. PNG, JPEG, WebP and WAV can embed C2PA manifests; glTF and KTX2 need a sidecar `.c2pa` file.
+Digital Source Type is an unsigned disclosure, not a C2PA signature; Assetgrove does not sign. PNG, JPEG, WebP and WAV can embed C2PA manifests; glTF and KTX2 need a sidecar `.c2pa` file.
 
 ## Engines
 
@@ -109,4 +109,4 @@ Another engine, such as sharp/libvips, ImageMagick or a model-based matte, imple
 
 ## Programmatic use
 
-`runOperation`, `runRecipe`, `parseRecipe` and `transformFiles` in `src/transform/run.ts` are the entry points. The CLI calls them, and so will the MCP tools and campaigns.
+`runOperation`, `runRecipe`, `parseRecipe` and `transformFiles` in `src/transform/run.ts` are the entry points. The CLI and the MCP tools `op`, `recipe` and `ops` call them.

@@ -8,7 +8,7 @@ Assetgrove is TypeScript on Node 24, managed with pnpm. Node runs the `.ts` sour
 
 - **pnpm** is pinned through `packageManager` and enabled with corepack. CI installs with `pnpm install --frozen-lockfile --ignore-scripts`, so no dependency may need an install script.
 - **Commands:** `pnpm check` runs Prettier, ESLint (typescript-eslint) and `tsc --noEmit`. `pnpm test` runs `node:test` over `test/**/*.test.ts`, offline, with the scripted provider. `pnpm test:real` runs the opt-in real-provider checks in `test/real/`, which skip without their keys (`AI_GATEWAY_API_KEY`, `TRIPO_API_KEY`).
-- **Runtime dependencies:** `ai` (the Vercel AI SDK, imported only by `src/gateway/vercel.ts`), `pngjs` and `jpeg-js` (pure-JavaScript image codecs), `yaml` (the bible's front matter), `@modelcontextprotocol/server` (the MCP server), `gltf-validator` (the Khronos glTF validator in 3D QA) and `meshoptimizer` (mesh simplification for detail levels).
+- **Runtime dependencies:** `ai` (the Vercel AI SDK, imported only by `src/gateway/vercel.ts`) with `@ai-sdk/anthropic`, `@ai-sdk/openai` and `@ai-sdk/openai-compatible` (its provider packages), `zod` (settings and format validation), `jsonc-parser` (JSONC), `pngjs` and `jpeg-js` (pure-JavaScript image codecs), `yaml` (the bible's front matter), `@modelcontextprotocol/server` (the MCP server), `gltf-validator` (the Khronos glTF validator in 3D QA) and `meshoptimizer` (mesh simplification for detail levels).
 - **TypeScript** stays on 6.0, the newest version typescript-eslint supports.
 
 ## Release-age exclusion for the `ai` SDK
@@ -29,7 +29,7 @@ The package is `@clockgrove/assetgrove`. It ships compiled JavaScript, because N
 
 Every command follows one contract, so scripts and agents can drive Assetgrove without parsing prose.
 
-- With `--json`, stdout is one JSON document: `ok`, `exitCode`, `command` and, on refusal, `error` with `code` and `message`. Logs go to stderr. Nothing prompts.
+- With `--json`, stdout is one JSON document: `ok`, `exitCode`, `command` and, on refusal, `error` with `code` and `message`. Logs go to stderr. A command prompts only when stdin and stderr are a terminal.
 - Exit codes:
   - 0: success.
   - 1: unexpected internal error.
@@ -199,7 +199,7 @@ Reference paths in shared files must resolve, with symlinks resolved, inside the
 
 ## Record paths use /; case-only collisions are refused
 
-Runs, targets and shared files move between Linux, macOS and Windows, so relative paths in records and JSON output use `/` on every OS, and readers accept `/` only: `pick` refuses a staged record path that holds `\` as invalid input. `src/paths.ts` holds the rules. Before a hand-off or a staged candidate (from `stage`, `lod`, `look-dev` or `rerig`) writes anything, its whole write set is checked; look-dev's per-view renders, whose names Assetgrove fixes, are written as each view finishes and are checked with the candidate's set before it is staged. Two paths that differ only by case would be one file on a case-insensitive file system, so they are refused with exit 2 `invalid_input` on every OS. So is a path segment that holds `:`, which names an alternate data stream on Windows. No file Assetgrove writes has `:` in its name, and run IDs replace it. Long paths need no wrapper: on Windows, Node's fs namespaces absolute paths itself, so Assetgrove's own file I/O works past 260 characters. A target's validator is the target's process, and Windows cannot start a process in a working directory past that length.
+Runs, targets and shared files move between Linux, macOS and Windows, so relative paths in records and JSON output use `/` on every OS, and readers accept `/` only: `pick` refuses a staged record path that holds `\` as invalid input. `src/paths.ts` holds the rules. Before a hand-off or a staged candidate (from `stage`, `lod`, `look-dev` or `rig`) writes anything, its whole write set is checked; look-dev's per-view renders, whose names Assetgrove fixes, are written as each view finishes and are checked with the candidate's set before it is staged. Two paths that differ only by case would be one file on a case-insensitive file system, so they are refused with exit 2 `invalid_input` on every OS. So is a path segment that holds `:`, which names an alternate data stream on Windows. No file Assetgrove writes has `:` in its name, and run IDs replace it. Long paths need no wrapper: on Windows, Node's fs namespaces absolute paths itself, so Assetgrove's own file I/O works past 260 characters. A target's validator is the target's process, and Windows cannot start a process in a working directory past that length.
 
 ## Real checks share one 25 USD budget
 
@@ -235,11 +235,11 @@ While an MCP client is connected, a tool call that carries a `progressToken` get
 
 A request's digest covers its input files' bytes, including the files a material profile's compression and preview commands name (wherever they are; only a program named by an absolute path or found on the PATH, the interpreter, is left out) and the source images a material derivation names (`maps[channel].path`, `lightSources[].mask`), but not the settings: a route's changed grant or a provider script's changed answer is the same request. Ask for a new round to run it again.
 
-## The image XMP writer stays hand-written; C2PA signing stays after 1.0
+## The image XMP writer stays hand-written; no C2PA signing
 
 The marking module (`src/metadata.ts`) writes the IPTC digital source type, and the model names in IPTC's `AISystemUsed`, into PNG (`iTXt`), JPEG (APP1) and WebP (`XMP ` chunk) with its own XMP writer. The prompt is never written. I looked for a maintained library that writes XMP into those three formats without native code: `exiftool-vendored` and the `exiftool` it wraps are a Perl program shipped as a vendored binary, and the other XMP libraries read packets or write only into one format. A native binary at run time is what this repository avoids, and the output must be byte-for-byte stable so that marking a marked file again leaves it unchanged, which a process that rewrites whole files does not promise. `exiftool-vendored` is therefore a devDependency only: the tests read the marks back through it, independently of the writer. glTF and GLB go through `KHR_xmp_json_ld`, and KTX2 through a key-value entry (design section 6).
 
-C2PA signing stays after 1.0. A signature needs a signing identity and certificate chain Assetgrove does not manage, and the XMP marks are help for disclosure, not compliance.
+C2PA signing is not done. A signature needs a signing identity and certificate chain Assetgrove does not manage, and the XMP marks are help for disclosure, not compliance.
 
 ## The Web Annotation subset is validated by zod
 
@@ -281,7 +281,7 @@ The owner confirmed these bars, and they are committed here before the measuring
 
 **Image-similarity threshold rule.** The threshold is the lowest cosine similarity `t` such that, over every pair of library images whose similarity is at least `t`, the share that are labelled same-asset pairs is at least 0.9. The bench computes it from the labelled library and prints it; the number that ships in the search package is that printed value. The bench writes `null` when no `t` reaches 0.9.
 
-**Written card texts.** The spike measured shipped mode with card text derived from file names, which inflates it. The labelled library's card texts are written from the images by a vision model (`bench/search/write-card-texts.ts`), recording model, prompt and date per text; a person spot-checks a sample and the manifest records which texts. A card text never contains its image's file stem, except that a stem of one plain lower-case word (`bear`, `left`) names the subject and a truthful text may say it. The calls go through the AI Gateway relay, which counts them against the Objective's cap; `--max-calls` is the script's own cap.
+**Written card texts.** The spike measured shipped mode with card text derived from file names, which inflates it. The labelled library's card texts are written from the images by a vision model (`bench/search/write-card-texts.ts`), recording model, prompt and date per text; a person spot-checks a sample and the manifest records which texts. A card text never contains its image's file stem, except that a stem of one plain lower-case word (`bear`, `left`) names the subject and a truthful text may say it. The calls go through the AI Gateway relay, which counts them against its cap; `--max-calls` is the script's own cap.
 
 **Same-asset pairs.** Two images are the same asset when they share a pack and differ only by folder (a restyle) or by colour (`playerLife3_green`/`_red`, `character_black_blue`/`_green`, `barrier_red`/`barrier_red_race`). The threshold rests on these pairs.
 
@@ -291,7 +291,7 @@ The owner confirmed these bars, and they are committed here before the measuring
 
 ## A saved plan holds no money, route or grant; apply re-resolves them
 
-A saved plan is a request input a person can edit, so it must not be able to steer what is spent or what the output may become. A plan (`assetgrove-plan/1`, a run artifact) holds the operation names apply runs, the compiled prompts, each input file's path and sha256, the plan command's request digest (`requestDigest`), `resolutionSha256` (the sha256 of the canonical JSON of each operation's resolved provider, model, estimate, seed support, output grant and provider terms, and the run cap) and an integrity `digest` over everything else. Nothing else: no cap, route, estimate or grant. `apply` re-reads every input (a changed one exits 2), re-resolves routes, estimates, grants and the cap from the developer settings and exits 2 `plan_changed` when the operations or the resolution differ from planning time, or when the plan carries any field outside its format even with its digest recomputed. The identity mode at apply is the one the plan's operations imply. The run-options file (`--run-options`) holds `candidates`, `seed`, `strictness` and `exploration` only; `plan --settings` is gone, and the cap is `caps.runUsd`. An `assetgrove-plan-v1` plan exits 2 `format_unsupported`: plan again. Apply's own cap no longer counts the planning call, which was capped and recorded in its own run.
+A saved plan is a request input a person can edit, so it must not be able to steer what is spent or what the output may become. A plan (`assetgrove-plan/1`, a run artifact) holds the operation names apply runs, the compiled prompts, each input file's path and sha256, the plan command's request digest (`requestDigest`), `resolutionSha256` (the sha256 of the canonical JSON of each operation's resolved provider, model, estimate, seed support, output grant and provider terms, and the run cap) and an integrity `digest` over everything else. Nothing else: no cap, route, estimate or grant. `apply` re-reads every input (a changed one exits 2), re-resolves routes, estimates, grants and the cap from the developer settings and exits 2 `plan_changed` when the operations or the resolution differ from planning time, or when the plan carries any field outside its format even with its digest recomputed. The identity mode at apply is the one the plan's operations imply. The run-options file (`--run-options`) holds `candidates`, `seed`, `strictness` and `exploration` only; the cap is `caps.runUsd`. Apply's own cap does not count the planning call, which was capped and recorded in its own run.
 
 ## The prompt policy's names live in policy/
 
@@ -315,4 +315,4 @@ The run executor verifies the confirmation before the first reservation and on e
 
 A saved plan carries its `requestDigest`, and one plan request covers one `apply` request: the default round's, not `--round n` (n > 1), which is another paid run. That `apply` uses the plan's record when every input hash the record confirmed still matches the plan's and `apply`'s forecast is at or under the confirmed one; otherwise it asks under its own digest. Records say `selfReported: true`: they show what a client or person reported, not proof.
 
-`apply --auto-approve`, the MCP `autoApprove` argument, the plan's `approved` field and the grouping's status as authority are gone. A plan carrying `approved` exits 2 `plan_changed`. `write-families` still needs `status: "confirmed"` in the grouping, but that grants nothing: the write confirmation (the families and the grouping digest) authorizes the write.
+No plan field and no argument approves spend; a plan carrying `approved` exits 2 `plan_changed`. `write-families` still needs `status: "confirmed"` in the grouping, but that grants nothing: the write confirmation (the families and the grouping digest) authorizes the write.

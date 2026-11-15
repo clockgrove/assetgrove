@@ -1,6 +1,6 @@
 # Inputs: asset spec, style bible and target profile
 
-Assetgrove reads three JSON files. All three are data owned by the game; none of them is code here. Relative paths in a file resolve against that file's directory.
+Assetgrove reads three files: the asset spec and the target profile (JSON) and the style bible (Markdown with YAML front matter). All three are data owned by the game; none of them is code here. Briefs, run options and recipes are further shared inputs. Relative paths in a file resolve against that file's directory.
 
 ## Asset spec
 
@@ -148,11 +148,11 @@ Every hand-off (`pick`, a 3D `pick` and `write-families`) goes through one path:
 3. Each preset checks what it wrote by reading it back. A failed check exits 6 `handoff_check_failed`; with `--json`, `error.problems` lists each problem as `{ preset, problem }`. The validator does not run, and the pick is not recorded in the run.
 4. The approved validator runs.
 
-| Preset          | Options                              | Writes                                                                                                                                                           | Checks                                                                                                |
-| --------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `manifest`      | none                                 | the `manifest` template rendered at `layout.manifest`, with the field at `review.path` set to `review.pending`; byte for byte what hand-off wrote before presets | the file reads back as written, parses as a JSON object, and holds the pending value at `review.path` |
-| `atlas-json`    | `shape`: `hash` (default) or `array` | sprite-atlas JSON beside the strip: frames `<assetId>_<nnn>`, `meta`, `animations`                                                                               | shape, size, rectangles, frame count, image path, tag coverage; see [handoff.md](handoff.md)          |
-| `aseprite-json` | `shape`: `array` (default) or `hash` | the same plus `duration` per frame and `meta.frameTags`                                                                                                          | the same checks                                                                                       |
+| Preset          | Options                              | Writes                                                                                                         | Checks                                                                                                |
+| --------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `manifest`      | none                                 | the `manifest` template rendered at `layout.manifest`, with the field at `review.path` set to `review.pending` | the file reads back as written, parses as a JSON object, and holds the pending value at `review.path` |
+| `atlas-json`    | `shape`: `hash` (default) or `array` | sprite-atlas JSON beside the strip: frames `<assetId>_<nnn>`, `meta`, `animations`                             | shape, size, rectangles, frame count, image path, tag coverage; see [handoff.md](handoff.md)          |
+| `aseprite-json` | `shape`: `array` (default) or `hash` | the same plus `duration` per frame and `meta.frameTags`                                                        | the same checks                                                                                       |
 
 A layout that writes another file over the manifest, such as a `layout.provenance` equal to `layout.manifest`, fails the `manifest` check.
 
@@ -161,7 +161,7 @@ A layout that writes another file over the manifest, such as a `layout.provenanc
 A run's `--cap` bounds that run alone, and may only lower the settings' `caps.runUsd`. A spend ledger, `<stateDir>/spend.jsonl`, bounds what all runs spend together: every paid call, in every command and over MCP, reserves its estimate in the ledger before it is made and settles at its actual cost after, recording its route (`provider:operation:model`), work item, cost and time. Before each call, and for the whole forecast before a run's first call, two caps from the developer settings ([settings.md](settings.md#caps-and-ledger)) are checked beside the run's cap:
 
 - **Daily** (`caps.dailyUsd`, $10 by default): spend over the last 24 hours, by every run that uses the ledger.
-- **Work item** (`caps.workItemUsd`, $5 by default): all spend recorded under one work item, such as an Objective, a campaign or a session label. It applies only when a work item is named.
+- **Work item** (`caps.workItemUsd`, $5 by default): all spend recorded under one work item, such as a task, a ticket or a session label. It applies only when a work item is named.
 
 A call or run that would cross either limit is refused before any provider call with exit 3 (`cap_refused`). The message names the limit, what is already spent against it and what is left; with `--json`, `error.limit` holds `name` (`daily` or `work-item`), `workItem`, `limitUsd`, `spentUsd`, `requestedUsd` and `ledger`. `--dry-run` reports the spend left under each limit in `spend.limits` (and `withinLimits`), and exits 3 when the forecast does not fit what is left.
 

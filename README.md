@@ -11,7 +11,7 @@ It is a development tool. A game repository never depends on it at runtime: Asse
 3. **Post-processing to spec.** Background to true alpha, crop and scale to the frame grid, palette and pivot alignment.
 4. **QA.** Deterministic checks and a vision model check each candidate against the spec and the references. A candidate that fails a deterministic check is not shown. A vision verdict filters only where it is measured stable on the run's model; at 0.1 none is, so vision verdicts are advisory: recorded and shown beside the candidate ([docs/decisions.md](docs/decisions.md#model-backed-checks-advisory-at-01)).
 5. **Operator pick.** A person picks and approves. Nothing is accepted automatically.
-6. **Hand-off.** The chosen files and their provenance are written into the target repository for its pipeline; media is stored with Git LFS.
+6. **Hand-off.** The chosen files and their provenance are written into the target repository for its pipeline; media is stored as the target's `.gitattributes` says (Assetgrove never runs `git lfs`).
 
 Animation is generated as a whole contact sheet per cycle, sliced and registered into frames; a single bad frame is fixed by a reference-guided edit.
 
@@ -22,9 +22,28 @@ Assetgrove is published as `@clockgrove/assetgrove` once its owner publishes the
 ```sh
 pnpm add -D --save-exact @clockgrove/assetgrove@<version>
 export AI_GATEWAY_API_KEY=...   # the Vercel AI Gateway key, from the environment only
-pnpm exec assetgrove stage --spec fern-shelter.json --bible bible.json --profile profile.json
+pnpm exec assetgrove settings path   # where the developer settings file goes; create it as below
+pnpm exec assetgrove stage --spec fern-shelter.json --bible bible.json --profile profile.json --dry-run
+pnpm exec assetgrove stage --spec fern-shelter.json --bible bible.json --profile profile.json   # exits 8 with an id
+pnpm exec assetgrove confirm <id>   # a person, at a terminal; then run the same stage again
 pnpm exec assetgrove pick --run .assetgrove/runs/<run> --candidate c2 --target ../my-game
 ```
+
+A fresh machine has no providers and no routes, so `stage` exits 2 `route_unavailable` until the developer settings file (one per user, outside every project; [docs/settings.md](docs/settings.md#location)) names a provider and declares its spend limit. A paid call to a provider with no `limit` exits 3 `provider_limit_undeclared`. The smallest file for the gateway:
+
+```json
+{
+  "format": "assetgrove-settings/1",
+  "providers": {
+    "gateway": {
+      "adapter": "vercel-ai-gateway",
+      "limit": { "kind": "key-budget", "usd": 20, "period": "monthly" }
+    }
+  }
+}
+```
+
+The dry run forecasts the cost and spends nothing. The paid run needs a person's confirmation of its spend: at a terminal it asks inline, and otherwise it exits 8 `confirmation_required` and `assetgrove confirm <id>` confirms it (the `confirm` command needs a terminal; [docs/settings.md](docs/settings.md) lists the other sources). Run `stage` again after confirming.
 
 Keep the run directory out of Git by adding `.assetgrove/` to `.gitignore`.
 
@@ -49,11 +68,11 @@ pnpm exec assetgrove write-families --import .assetgrove/imports/<import> --targ
 
 The package ships its skills under `skills/`. Install them into your harness with `npx skills add clockgrove/assetgrove`, or copy `node_modules/@clockgrove/assetgrove/skills/assetgrove/` to `.claude/skills/assetgrove/` (Claude Code, Copilot) or `.agents/skills/assetgrove/` (Codex, Copilot).
 
-- Always pass `--json`. Stdout is one JSON document. Logs go to stderr. Assetgrove never prompts.
-- Run `stage --dry-run` first. It spends nothing and needs no key.
-- Name the work item (`ASSETGROVE_WORK_ITEM` or `--work-item`, for example the Objective). Paid calls across runs are capped by the developer settings, $10 a day and $5 per work item by default; see [Spend limits](#spend-limits).
+- Always pass `--json`. Stdout is one JSON document. Logs go to stderr. Assetgrove prompts only when stdin and stderr are a terminal, which an agent's shell is not.
+- Run `stage --dry-run` first. It spends nothing and needs no key, once a provider is configured.
+- Name the work item (`ASSETGROVE_WORK_ITEM` or `--work-item`). Paid calls across runs are capped by the developer settings, $10 a day and $5 per work item by default; see [Spend limits](#spend-limits).
 - Configure providers and roles in the developer settings ([docs/settings.md](docs/settings.md#roles-and-routes)). Each operation maps to a role (image, edit, vision, decisions, planning, model3d, rig3d, clips3d); a role no configured provider serves exits 2 `route_unavailable` before any spend. Grants belong to the provider and model: an output with a call that has no `outputGrant` is refused at hand-off (exit 7).
-- Set `AI_GATEWAY_API_KEY` in the environment (or the variable a provider's `keyEnv` names). In a sandbox, allow the host `ai-gateway.vercel.sh`; it is the only host Assetgrove reaches besides Tripo, api.anthropic.com and api.openai.com (when the settings configure those providers) and the `baseURL` of an openai-compatible provider. A `baseURL` on the gateway entry in the developer settings moves it.
+- Set `AI_GATEWAY_API_KEY` in the environment (or the variable a provider's `keyEnv` names). The agent's own shell sandbox keeps `ai-gateway.vercel.sh` out of its network allowlist ([docs/keys.md](docs/keys.md)); only the MCP server process reaches it. It is the only host Assetgrove reaches besides Tripo, api.anthropic.com and api.openai.com (when the settings configure those providers) and the `baseURL` of an openai-compatible provider. A `baseURL` on the gateway entry in the developer settings moves it.
 - Keys: register the server at user scope with the key in the server's env, never in the agent's shell. A project-scope harness config is code you review. Per-harness recipes and their limits are in [docs/keys.md](docs/keys.md).
 - Agents stage, humans pick ([PRD principle 2](docs/PRD.md#principles)). Agents never run `pick` or `write-families` and never confirm a grouping.
 
@@ -84,6 +103,8 @@ The package ships its skills under `skills/`. Install them into your harness wit
 | 5    | QA found nothing                                                                                                   |
 | 6    | The target's validator rejected what was written                                                                   |
 | 7    | Licence refused: the provider's output grant does not let the target declare the output (nothing written)          |
+| 8    | A person must confirm: `confirmation_required` (run `assetgrove confirm <id>`) or `confirmation_declined`          |
+| 9    | Prompt refused: the prompt policy refused a prompt (`prompt_refused`)                                              |
 
 ## Spend limits
 

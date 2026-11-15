@@ -116,4 +116,4 @@ Ask the harness to call `stage` with one candidate and a low cap, then `pick` on
 | Unattended (headless)      |                   |                    |             |       |
 | Disconnect behaviour       |                   |                    |             |       |
 
-Record the results, and the chosen third gate harness, in `docs/decisions.md`.
+Record the results in `docs/decisions.md`.
