@@ -16,8 +16,8 @@ concurrency:
 permissions:
   contents: read
 
-# check: format, lint and types, on Linux. test: the offline suite on Linux, macOS and Windows. The roll-up
-# `ci`, the one required check, needs check and all three test legs.
+# check: format, lint and types, on Linux. test: the offline suite, on Linux for pull requests and the merge
+# queue, and on Linux, macOS and Windows on main. The roll-up `ci`, the one required check, needs both.
 jobs:
   check:
     runs-on: ubuntu-26.04
@@ -47,7 +47,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-26, windows-2025]
+        # Pull requests and the merge queue run Linux only; macOS and Windows run on main after merge.
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-26.04","macos-26","windows-2025"]') || fromJSON('["ubuntu-26.04"]') }}
     runs-on: ${{ matrix.os }}
     # Decision: the offline suite is expected to take minutes; 20 bounds a hung run.
     timeout-minutes: 20
@@ -81,7 +82,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - name: Require check and every test leg
+      - name: Require check and the test legs
         env:
           CHECK: ${{ needs.check.result }}
           TEST: ${{ needs.test.result }}
