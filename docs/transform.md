@@ -99,7 +99,7 @@ The metadata adapter also supports JSON glTF through [Khronos `KHR_xmp_json_ld`]
 
 ### Signed Content Credentials
 
-Digital Source Type is an unsigned disclosure, not a C2PA signature; Assetgrove does not sign. PNG, JPEG, WebP and WAV can embed C2PA manifests; glTF and KTX2 need a sidecar `.c2pa` file.
+Digital Source Type is an unsigned disclosure. Hand-off adds a signed C2PA manifest to every PNG, JPEG and WebP it writes ([disclosure.md](disclosure.md#content-credentials)); transformation steps themselves do not sign. glTF, GLB and KTX2 keep the XMP mark only.
 
 ## Engines
 
