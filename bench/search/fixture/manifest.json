@@ -1,0 +1,456 @@
+{
+  "format": "assetgrove-search-bench/1",
+  "description": "Synthetic 20-image fixture for the offline bench test. Not the labelled library.",
+  "strata": {
+    "categories": ["characters", "tiles", "icons", "props", "pixel"],
+    "packs": ["pack-a", "pack-b", "pack-c"],
+    "minPixel16": 4
+  },
+  "prompts": {
+    "7c9eec3e647a": "Describe this game asset image in one or two plain sentences for a searchable card: what it shows, its subject, materials, colours and style. Do not mention a file name or an asset id."
+  },
+  "images": [
+    {
+      "id": "fx-01",
+      "file": "characters_1.png",
+      "url": "https://fixtures.invalid/bench/fx-01.png",
+      "sha256": "11bd513785b92211189013177986148c650bd7348ed76961840eb456b50985dc",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing armored knight with sword.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z",
+        "spotCheck": {
+          "by": "fixture",
+          "date": "2026-11-14T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "id": "fx-02",
+      "file": "characters_2.png",
+      "url": "https://fixtures.invalid/bench/fx-02.png",
+      "sha256": "4ffe6d154e68dea1f39a7e5506c30aa8ce39ed6f3741a4b55f00f2179f533e64",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing hooded mage with staff.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-03",
+      "file": "characters_3.png",
+      "url": "https://fixtures.invalid/bench/fx-03.png",
+      "sha256": "b75a47142b8a3659fbd2d595d7f05e51148ae7c2ecc9c487127ad48506098119",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing green goblin warrior.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-04",
+      "file": "characters_4.png",
+      "url": "https://fixtures.invalid/bench/fx-04.png",
+      "sha256": "404a0fc9fd00684182afcf06c4e96059365e889a51df480bf752379414c06496",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing armored knight with sword in blue.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-05",
+      "file": "tiles_5.png",
+      "url": "https://fixtures.invalid/bench/fx-05.png",
+      "sha256": "6ef141d3fd50d2549f229a605fe6155ff78955e71de18941f4e071f0976ec24f",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing grass tile with flowers.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-06",
+      "file": "tiles_6.png",
+      "url": "https://fixtures.invalid/bench/fx-06.png",
+      "sha256": "01a3dc246f5fb8fa4d22d1b2e7fdf1a742321f21deb6c3ce6fcece69ee66a178",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing cobblestone road tile.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-07",
+      "file": "tiles_7.png",
+      "url": "https://fixtures.invalid/bench/fx-07.png",
+      "sha256": "ad9aa47b0c35b5756708a55af4cfb9a24abf98dde266dbbc69d1f3b391203f85",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing sand dune tile.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-08",
+      "file": "tiles_8.png",
+      "url": "https://fixtures.invalid/bench/fx-08.png",
+      "sha256": "e03f59a575794c821f8a5a0363575a912cba3f32d175d2fb2d0094db684b10c0",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing grass tile with flowers in autumn.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-09",
+      "file": "icons_9.png",
+      "url": "https://fixtures.invalid/bench/fx-09.png",
+      "sha256": "4ec5d7a1855fd55821e2eee53ffd7233d0d4453f756d22c6d602d4a0917ff887",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing health potion icon red.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z",
+        "spotCheck": {
+          "by": "fixture",
+          "date": "2026-11-14T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "id": "fx-10",
+      "file": "icons_10.png",
+      "url": "https://fixtures.invalid/bench/fx-10.png",
+      "sha256": "bf610244342942ac87804e375b06ca07084fa86cd1898a8fad6838d104f69585",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing gold coin icon.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-11",
+      "file": "icons_11.png",
+      "url": "https://fixtures.invalid/bench/fx-11.png",
+      "sha256": "dd70c2ad0211c5db2d704a6d852d6835eede9ac0dad833990379e8a211e18bcf",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing iron key icon.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-12",
+      "file": "icons_12.png",
+      "url": "https://fixtures.invalid/bench/fx-12.png",
+      "sha256": "e7e30b6ff5100ac032ef17ab7806571a05ea08519007280c5b35995597f347ec",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing magic scroll icon.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-13",
+      "file": "props_13.png",
+      "url": "https://fixtures.invalid/bench/fx-13.png",
+      "sha256": "585f28088fb4db17e98519a6bd685b15220e339d7da35f61fc8c88656c7b0649",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing wooden treasure chest.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-14",
+      "file": "props_14.png",
+      "url": "https://fixtures.invalid/bench/fx-14.png",
+      "sha256": "4f66f1783b967890e3212fcc83c111e813c7f021f94bdd4e4897fafcd8981b2a",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing stone altar with candles.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-15",
+      "file": "props_15.png",
+      "url": "https://fixtures.invalid/bench/fx-15.png",
+      "sha256": "d5eb3fdf8ac8c5871e2d9e16d80922f41eee2f6b31f084d14a0c14503e6627cd",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing barrel of ale.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-16",
+      "file": "props_16.png",
+      "url": "https://fixtures.invalid/bench/fx-16.png",
+      "sha256": "f1fac98cc8033fa83d0a14ab3cae3a7c343c31317ab27e448043fa85688a8b55",
+      "width": 64,
+      "height": 64,
+      "card": {
+        "text": "A picture showing iron lantern hanging.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-17",
+      "file": "pixel_17.png",
+      "url": "https://fixtures.invalid/bench/fx-17.png",
+      "sha256": "d6ac9fc5b185d097de1f22eb1af5dc2e200c0623fd5df836e859aaf6726f0a9f",
+      "width": 16,
+      "height": 16,
+      "card": {
+        "text": "A picture showing pixel heart sprite.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-18",
+      "file": "pixel_18.png",
+      "url": "https://fixtures.invalid/bench/fx-18.png",
+      "sha256": "fc2be17fff43d2b5c95a0a44dbe631a56156f7d45b3b7b7a7acdf8254e59bf6e",
+      "width": 16,
+      "height": 16,
+      "card": {
+        "text": "A picture showing pixel sword sprite.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-19",
+      "file": "pixel_19.png",
+      "url": "https://fixtures.invalid/bench/fx-19.png",
+      "sha256": "5e85b00110979fcd940aff127aefd0724631ef75541eadc2a8d7affc366bd877",
+      "width": 16,
+      "height": 16,
+      "card": {
+        "text": "A picture showing pixel mushroom sprite.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    },
+    {
+      "id": "fx-20",
+      "file": "pixel_20.png",
+      "url": "https://fixtures.invalid/bench/fx-20.png",
+      "sha256": "07614ec04805e906b6a47625eb47d45dfa64e094fc612e0594d091df75a5f41f",
+      "width": 16,
+      "height": 16,
+      "card": {
+        "text": "A picture showing pixel skull sprite.",
+        "model": "scripted-vision",
+        "prompt": "7c9eec3e647a",
+        "date": "2026-11-14T00:00:00.000Z"
+      }
+    }
+  ],
+  "labels": [
+    {
+      "image": "fx-01",
+      "category": "characters",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-02",
+      "category": "characters",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-03",
+      "category": "characters",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-04",
+      "category": "characters",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-05",
+      "category": "tiles",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-06",
+      "category": "tiles",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-07",
+      "category": "tiles",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-08",
+      "category": "tiles",
+      "pack": "pack-a"
+    },
+    {
+      "image": "fx-09",
+      "category": "icons",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-10",
+      "category": "icons",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-11",
+      "category": "icons",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-12",
+      "category": "icons",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-13",
+      "category": "props",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-14",
+      "category": "props",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-15",
+      "category": "props",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-16",
+      "category": "props",
+      "pack": "pack-b"
+    },
+    {
+      "image": "fx-17",
+      "category": "pixel",
+      "pack": "pack-c",
+      "pixel": 16
+    },
+    {
+      "image": "fx-18",
+      "category": "pixel",
+      "pack": "pack-c",
+      "pixel": 16
+    },
+    {
+      "image": "fx-19",
+      "category": "pixel",
+      "pack": "pack-c",
+      "pixel": 16
+    },
+    {
+      "image": "fx-20",
+      "category": "pixel",
+      "pack": "pack-c",
+      "pixel": 16
+    }
+  ],
+  "lookQueries": [
+    "fx-01",
+    "fx-02",
+    "fx-03",
+    "fx-04",
+    "fx-05",
+    "fx-06",
+    "fx-07",
+    "fx-08",
+    "fx-09",
+    "fx-10",
+    "fx-11",
+    "fx-12",
+    "fx-13",
+    "fx-14",
+    "fx-15",
+    "fx-16",
+    "fx-17",
+    "fx-18",
+    "fx-19",
+    "fx-20"
+  ],
+  "writtenQueries": [
+    {
+      "id": "wq-1",
+      "text": "knight with sword",
+      "relevant": ["fx-01"]
+    },
+    {
+      "id": "wq-2",
+      "text": "red potion",
+      "relevant": ["fx-09"]
+    },
+    {
+      "id": "wq-3",
+      "text": "pixel heart",
+      "relevant": ["fx-17"]
+    },
+    {
+      "id": "wq-4",
+      "text": "wooden chest",
+      "relevant": ["fx-13"]
+    }
+  ],
+  "pairs": [
+    ["fx-01", "fx-04"],
+    ["fx-05", "fx-08"]
+  ]
+}
