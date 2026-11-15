@@ -327,7 +327,7 @@ test("another media type arrives through an added generator; each output declare
     candidates: 1,
   });
   const result = await pick({ runDir, candidateId: "c1", targetDir: world.targetDir });
-  assert.ok(result.mediaPath.endsWith("assets/source/rain/loop.wav"));
+  assert.ok(result.mediaPath.endsWith(join("assets", "source", "rain", "loop.wav")));
   const manifest = JSON.parse(await readFile(result.manifestPath, "utf8"));
   assert.deepEqual(manifest, { media: "audio/wav", seconds: 0.1, review: { status: "pending" } });
 });
