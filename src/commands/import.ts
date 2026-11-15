@@ -23,7 +23,9 @@ import {
   DRY_RUN_PROPERTY,
   ROUND_PROPERTY,
   RUNS_PROPERTY,
+  bibleReads,
   buildWorkPlan,
+  styleBibleReads,
   jobsOf,
   paidBy,
 } from "../runs/plan.ts";
@@ -124,6 +126,16 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
     : [];
   const work = await buildWorkPlan(importCommand, args, {
     inputs: ["sheet", "profile", "bible", "lockBible"],
+    reads: {
+      ...(bible ? styleBibleReads("bible", bible) : {}),
+      ...(lock && args.lockBible !== undefined
+        ? await bibleReads(
+            "lockBible",
+            args.lockBible,
+            lock.cast ? undefined : [lock.record.subject],
+          )
+        : {}),
+    },
     jobs,
     capUsd,
     paid: providers ? paidBy(providers, jobs) : false,

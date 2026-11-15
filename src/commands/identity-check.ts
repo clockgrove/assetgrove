@@ -12,6 +12,7 @@ import {
   DRY_RUN_PROPERTY,
   ROUND_PROPERTY,
   RUNS_PROPERTY,
+  bibleReads,
   buildWorkPlan,
   jobOf,
   paidBy,
@@ -54,6 +55,7 @@ async function prepare(args: IdentityCheckArgs, ctx: RunContext) {
   ];
   const work = await buildWorkPlan(identityCheckCommand, args, {
     inputs: ["bible"],
+    reads: await bibleReads("bible", args.bible, subjects),
     jobs,
     capUsd: runCap(args.cap, ctx.settings),
     paid: paidBy(provider, jobs),

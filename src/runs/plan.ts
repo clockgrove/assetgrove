@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
+import { bibleReferences, loadBible } from "../bible.ts";
 import { InputError } from "../errors.ts";
 import type { JsonSchemaObject } from "../commands/types.ts";
 import type { Route } from "../routes.ts";
@@ -206,6 +207,64 @@ export interface WorkPlanParts {
   /** The argument that names the runs directory; `runs` when absent. */
   runsArg?: string;
   policyTextSha256?: string;
+  /**
+   * Files the request reads through its arguments (a bible's reference images, a spec's key pose,
+   * a default template), name to path: hashed into `inputs` beside the arguments' own files, so a
+   * changed reference changes the digest. One that cannot be read is left out: the command
+   * reports it when it loads it.
+   */
+  reads?: Record<string, string>;
+}
+
+/** The sha256 of a file, or undefined when it cannot be read. */
+async function hashIfReadable(path: string): Promise<string | undefined> {
+  try {
+    return sha256Hex(await readFile(path));
+  } catch {
+    return undefined;
+  }
+}
+
+/** The files a JSON style bible names (references and perspective sample), as `<arg>/<path>`. */
+export function styleBibleReads(
+  arg: string,
+  bible: { value: { references?: { path: string }[]; perspective?: unknown }; dir: string },
+): Record<string, string> {
+  const paths = [
+    ...(Array.isArray(bible.value.references) ? bible.value.references.map((r) => r.path) : []),
+    ...(typeof bible.value.perspective === "string" ? [bible.value.perspective] : []),
+  ];
+  return Object.fromEntries(paths.map((path) => [`${arg}/${path}`, resolve(bible.dir, path)]));
+}
+
+/** The key pose an asset spec names, as `<arg>/keyPose`; none when it names none. */
+export function specReads(
+  arg: string,
+  spec: { value: { keyPose?: unknown }; dir: string },
+): Record<string, string> {
+  return typeof spec.value.keyPose === "string"
+    ? { [`${arg}/keyPose`]: resolve(spec.dir, spec.value.keyPose) }
+    : {};
+}
+
+/**
+ * The files a Markdown bible names, as `<arg>/<path>`: the identity turnaround and references of
+ * `subjects`, or every reference (anchors and all identities) when no subjects are given.
+ */
+export async function bibleReads(
+  arg: string,
+  path: string,
+  subjects?: readonly string[],
+): Promise<Record<string, string>> {
+  const doc = await loadBible(path);
+  const paths =
+    subjects === undefined
+      ? bibleReferences(doc.data).map((reference) => reference.path)
+      : subjects.flatMap((subject) => {
+          const lock = doc.data.identities[subject];
+          return lock ? [lock.turnaround, ...(lock.references ?? [])] : [];
+        });
+  return Object.fromEntries(paths.map((p) => [`${arg}/${p}`, resolve(doc.dir, p)]));
 }
 
 /**
@@ -226,6 +285,11 @@ export async function buildWorkPlan(
     paths[name] = typeof value === "string" ? value : undefined;
   }
   const inputs = await hashInputs(paths);
+  for (const [name, path] of Object.entries(parts.reads ?? {})) {
+    if (name in inputs) continue;
+    const hash = await hashIfReadable(path);
+    if (hash !== undefined) inputs[name] = hash;
+  }
   const options: Record<string, unknown> = {};
   for (const [name, property] of Object.entries(spec.input.properties)) {
     if (inputNames.has(name) || NOT_OPTIONS.has(name) || name === runsArg) continue;

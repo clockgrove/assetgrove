@@ -688,9 +688,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
     // Enforce mode first checks the record against its references, once per run.
     (identityCheck?.checkRoute?.estimatedCostUsd ?? 0);
   // The compiler runs when its route's provider can be called; otherwise the template applies.
-  const compiles =
-    options.provider !== undefined &&
-    (!(options.provider instanceof ProviderSet) || options.provider.callable(settings.llmRoute));
+  const compiles = compilerCallable(options, settings.llmRoute);
   const compilerEstimate = compiles ? settings.llmRoute.estimatedCostUsd : 0;
   const budget = new Budget(
     settings.capUsd,
@@ -858,11 +856,22 @@ export interface JobForecast {
   jobs: PlanJob[];
   candidates: number;
   capUsd: number;
+  /** Files the plan reads that no argument names: the default prompt template. */
+  reads?: Record<string, string>;
+}
+
+/** Whether the compiler runs: its route's provider can be called; otherwise the template applies. */
+function compilerCallable(options: CreatePlanOptions, llmRoute: Route): boolean {
+  return (
+    options.provider !== undefined &&
+    (!(options.provider instanceof ProviderSet) || options.provider.callable(llmRoute))
+  );
 }
 
 /**
- * Every call `createPlan` and the `applyPlan` after it can make, from the routes alone: one
- * compiler call (an upper bound: the template fallback makes none), generation, QA and identity
+ * Every call `createPlan` and the `applyPlan` after it can make, from the routes alone: the
+ * compiler call when its route is callable, as `createPlan` decides (else the template fallback
+ * makes none), generation, QA and identity
  * calls for each candidate. Validates the inputs as `createPlan` does and calls no provider.
  */
 export async function planJobs(options: CreatePlanOptions): Promise<JobForecast> {
@@ -903,7 +912,7 @@ export async function planJobs(options: CreatePlanOptions): Promise<JobForecast>
   const routes = routesOf(options);
   const count = settings.candidates;
   const jobs: PlanJob[] = [
-    jobOf("compiler", settings.llmRoute),
+    ...(compilerCallable(options, settings.llmRoute) ? [jobOf("compiler", settings.llmRoute)] : []),
     jobOf(
       options.spec.kind === "sprite-strip" ? "edit" : "still",
       settings.modelRoute,
@@ -923,7 +932,12 @@ export async function planJobs(options: CreatePlanOptions): Promise<JobForecast>
         ),
       );
   }
-  return { jobs, candidates: count, capUsd: settings.capUsd };
+  return {
+    jobs,
+    candidates: count,
+    capUsd: settings.capUsd,
+    ...(options.templatePath === undefined && { reads: { template: templatePath } }),
+  };
 }
 
 /**

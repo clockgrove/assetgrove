@@ -9,7 +9,15 @@ import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext, WorkPlan } from "./types.ts";
-import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, jobsOf, paidBy } from "../runs/plan.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  buildWorkPlan,
+  jobsOf,
+  paidBy,
+  specReads,
+  styleBibleReads,
+} from "../runs/plan.ts";
 
 /** Every generator `stage` runs: the image kinds and 3D characters. */
 const stageGenerators = [...imageGenerators, character3dGenerator];
@@ -47,6 +55,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const jobs = jobsOf(plan.perCandidate, routes, candidates);
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
     inputs: ["spec", "bible", "profile"],
+    reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

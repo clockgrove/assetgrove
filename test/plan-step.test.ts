@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
@@ -484,16 +484,10 @@ test("MCP estimate for stage deep-equals stage --dry-run --json", async () => {
       ...["--provider-script", script, "--json"],
     ]),
   );
-  assert.equal(viaCli["command"], "estimate");
-  // The result document names the command that ran: "estimate" against "stage".
+  // The result document is stage's own, its command name included.
   for (const actual of [viaTool, viaCli]) {
-    assert.equal(actual["command"], "estimate");
-    assert.equal(actual["digest"], expected["digest"]);
-    assert.deepEqual(
-      { ...actual, command: undefined },
-      { ...expected, command: undefined },
-      "estimate gives the document of stage --dry-run",
-    );
+    assert.equal(actual["command"], "stage");
+    assert.deepEqual(actual, expected, "estimate gives the document of stage --dry-run");
   }
 });
 
@@ -559,4 +553,43 @@ test("plan's forecast holds the planning call and every job of the later apply",
   const compiler = job(jobs, "compiler")!;
   const expected = apply["forecastUsd"] + compiler.count * compiler.estimatedCostUsd;
   assert.ok(Math.abs(forecast["forecastUsd"] - expected) < 1e-9, `${forecast["forecastUsd"]}`);
+});
+
+test("the digest changes with a file the request reads through its arguments", async () => {
+  // stage: a reference image the style bible names.
+  const stage = await stageFiles();
+  const dry = async (command: string, flags: string[]) =>
+    doc(await cli([command, ...flags, "--dry-run", "--json"]));
+  const before = await dry("stage", stage.flags);
+  const reference = stage.world.bible.references[0]!.path;
+  assert.ok(before["inputs"][`bible/${reference}`], JSON.stringify(before["inputs"]));
+  const image = join(stage.world.bibleDir, reference);
+  await writeFile(image, Buffer.concat([await readFile(image), Buffer.from([0])]));
+  const changed = await dry("stage", stage.flags);
+  assert.notEqual(changed["digest"], before["digest"], "a changed reference image");
+
+  // plan: the default prompt template it reads when --template is absent.
+  const dir = await tempDir("assetgrove-plan-step-reads-");
+  const f = await planFiles(dir, 1);
+  const { script } = await recorder(dir, "reads");
+  const flags = [...f.flags, "--provider-script", script];
+  const first = await dry("plan", flags);
+  assert.ok(first["inputs"]["template"], JSON.stringify(first["inputs"]));
+  const template = join(dirname(f.bible), "../prompts/default.md");
+  await writeFile(template, `${await readFile(template, "utf8")}\nchanged\n`);
+  assert.notEqual((await dry("plan", flags))["digest"], first["digest"], "a changed template");
+});
+
+test("plan forecasts the planning call only when its compiler route can be called", async () => {
+  const dir = await tempDir("assetgrove-plan-step-compiler-");
+  const f = await planFiles(dir, 1);
+  // No provider script and no key: the compiler cannot be called, so the template fallback runs.
+  const fallback = doc(await cli(["plan", ...f.flags, "--dry-run", "--json"]));
+  assert.equal(fallback["ok"], true, JSON.stringify(fallback));
+  const jobs = fallback["jobs"] as PlanJob[];
+  assert.equal(
+    jobs.some((j) => j.operation === "compiler"),
+    false,
+    JSON.stringify(jobs),
+  );
 });

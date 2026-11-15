@@ -81,6 +81,8 @@ export interface Outcome {
   fields: Record<string, unknown>;
   human: string;
   error?: Failure;
+  /** The command that answered, when not the one that ran: estimate answers as the paid command. */
+  command?: string;
 }
 
 /** One command, declared once: its input schema and effect, and how it runs. */

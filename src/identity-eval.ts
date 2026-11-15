@@ -3,7 +3,7 @@
  * recommends the threshold the logged scores support. The set stays local and is never committed.
  */
 import { appendFile, mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { loadBible } from "./bible.ts";
 import type { BibleDocument } from "./bible.ts";
 import { Budget } from "./budget.ts";
@@ -303,9 +303,31 @@ export async function planEvaluation(options: {
   biblePath?: string;
   casesPath: string;
   profile: Pick<TargetProfile, "identity" | "spend">;
-}): Promise<{ cases: number; identities: number; operation: string }> {
+}): Promise<{
+  cases: number;
+  identities: number;
+  operation: string;
+  /** The files the cases read (images, bibles, identity references), `cases/<path from the cases file>`. */
+  reads: Record<string, string>;
+}> {
   const set = await loadEvalSet(options);
-  return { cases: set.cases.length, identities: set.identities.size, operation: set.operation };
+  const files = new Set<string>();
+  for (const { c, doc } of set.prepared) {
+    files.add(resolve(set.dir, c.image));
+    files.add(doc.path);
+    const lock = doc.data.identities[c.subject];
+    for (const path of lock ? [lock.turnaround, ...(lock.references ?? [])] : [])
+      files.add(resolve(doc.dir, path));
+  }
+  const reads = Object.fromEntries(
+    [...files].map((path) => [`cases/${relative(set.dir, path).split(sep).join("/")}`, path]),
+  );
+  return {
+    cases: set.cases.length,
+    identities: set.identities.size,
+    operation: set.operation,
+    reads,
+  };
 }
 
 export async function evaluateIdentity(options: {

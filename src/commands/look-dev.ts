@@ -8,7 +8,15 @@ import { readProvenance } from "../model3d/rig/command.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext } from "./types.ts";
-import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, jobsOf, paidBy } from "../runs/plan.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  buildWorkPlan,
+  jobsOf,
+  paidBy,
+  specReads,
+  styleBibleReads,
+} from "../runs/plan.ts";
 
 interface LookDevArgs {
   model: string;
@@ -36,6 +44,7 @@ async function prepare(args: LookDevArgs, ctx: RunContext) {
   const jobs = jobsOf(plan.calls, routes);
   const work = await buildWorkPlan(lookDevCommand, args, {
     inputs: ["model", "provenance", "spec", "bible", "profile"],
+    reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

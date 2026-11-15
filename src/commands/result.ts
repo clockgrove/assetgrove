@@ -19,7 +19,7 @@ export function resultDocument(command: string | null, outcome: Outcome): Record
     ...fields,
     ok: exitCode === 0,
     exitCode,
-    command,
+    command: outcome.command ?? command,
     ...(error && { error: { ...error, message: redact(error.message) } }),
   };
 }

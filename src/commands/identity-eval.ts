@@ -67,6 +67,7 @@ async function prepare(args: IdentityEvalArgs, ctx: RunContext) {
   ];
   const work = await buildWorkPlan(identityEvalCommand, args, {
     inputs: ["cases", "bible", "profile"],
+    reads: set.reads,
     jobs,
     capUsd: runCap(args.cap, ctx.settings),
     paid: paidBy(provider, jobs),

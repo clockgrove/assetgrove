@@ -27,7 +27,8 @@ export const estimateCommand = defineCommand<EstimateArgs>({
   summary: "run a paid command's free plan step and return what its --dry-run prints",
   details: `Runs the plan step of a paid command with its arguments (--args, a JSON object of the
 command's tool arguments) and returns the same document as that command's --dry-run: its jobs,
-forecast, cap, whether it is paid, input hashes, request digest and run directory. Makes no
+forecast, cap, whether it is paid, input hashes, request digest and run directory, under that
+command's name. Makes no
 provider call, adds no ledger entry and writes nothing.`,
   input: {
     type: "object",
@@ -68,7 +69,8 @@ provider call, adds no ledger entry and writes nothing.`,
     const workItem = args.workItem ?? ctx.workItem;
     const providerScript = args.providerScript ?? ctx.providerScript;
     const properties = spec.input.properties;
-    return runCommand(
+    // The document is that command's --dry-run document, its name included (design section 5).
+    const outcome = await runCommand(
       spec,
       {
         ...(providerScript !== undefined && "providerScript" in properties && { providerScript }),
@@ -78,5 +80,6 @@ provider call, adds no ledger entry and writes nothing.`,
       },
       ctx,
     );
+    return { ...outcome, command: spec.name };
   },
 });

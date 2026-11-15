@@ -7,6 +7,8 @@ import {
   DRY_RUN_PROPERTY,
   ROUND_PROPERTY,
   RUNS_PROPERTY,
+  bibleReads,
+  specReads,
   buildWorkPlan,
   paidBy,
 } from "../runs/plan.ts";
@@ -52,6 +54,11 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
   });
   const work: WorkPlan = await buildWorkPlan(planCommand, args, {
     inputs: ["spec", "bible", "profile", "brief", "settings", "template"],
+    reads: {
+      ...(await bibleReads("bible", args.bible)),
+      ...specReads("spec", spec),
+      ...forecast.reads,
+    },
     jobs: forecast.jobs,
     capUsd: forecast.capUsd,
     paid: paidBy(providers, forecast.jobs),
