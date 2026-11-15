@@ -187,7 +187,8 @@ test("`node src/cli.ts spend check --json` lists each configured provider with d
         keyEnv: "ASSETGROVE_TEST_UNSET_KEY",
         limit: { kind: "prepaid", usd: 20 },
       },
-      tripo: { usdPerCredit: 0.01 },
+      // A key variable no shell sets keeps the balance read offline.
+      tripo: { keyEnv: "ASSETGROVE_TEST_UNSET_KEY", usdPerCredit: 0.01 },
     },
   });
   const r = await cli(["spend", "check", "--json"]);
