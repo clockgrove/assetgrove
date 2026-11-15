@@ -3,7 +3,7 @@
  * money, code or keys. `loadSettings` finds it, refuses it structurally (exit 2 `settings_invalid`)
  * and fills the defaults. Nothing here reads a key.
  */
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
 import { configHome, configOverride, homeDir, SettingsError, stateHome, type Env } from "./env.ts";
@@ -388,6 +388,7 @@ function projectRoots(options: LoadOptions): string[] {
         roots.add(dir);
         const main = mainWorkTree(dotGit);
         if (main !== undefined) pending.push(main);
+        pending.push(...linkedWorkTrees(dotGit));
       }
       if (dirname(dir) === dir) break;
     }
@@ -409,6 +410,25 @@ function mainWorkTree(dotGit: string): string | undefined {
     if (basename(dir) === ".git") return dirname(dir);
   }
   return undefined;
+}
+
+/**
+ * For a `.git` directory, the work trees of its linked worktrees, each named by the `gitdir` file
+ * of `.git/worktrees/<name>/`, so a project's sibling worktrees are projects too.
+ */
+function linkedWorkTrees(dotGit: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(join(dotGit, "worktrees"));
+  } catch {
+    return [];
+  }
+  const trees: string[] = [];
+  for (const name of names) {
+    const named = readFileIfAny(join(dotGit, "worktrees", name, "gitdir"))?.trim();
+    if (named) trees.push(dirname(realIfExists(resolve(dotGit, "worktrees", name, named))));
+  }
+  return trees;
 }
 
 /** The text of `path` when it is a readable file. */

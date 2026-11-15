@@ -38,10 +38,10 @@ export interface JsonSchemaObject {
 
 /** What a run of a command is given besides its arguments. */
 export interface RunContext {
-  /** The developer settings, loaded once per process (src/commands/context.ts). */
+  /** The developer settings, loaded for each CLI command and MCP tool call (src/commands/context.ts). */
   settings: Settings;
   /**
-   * Core and the extensions the settings list, loaded once per process (src/extensions/registry.ts);
+   * Core and the extensions the settings list, loaded with the settings (src/extensions/registry.ts);
    * core alone when absent.
    */
   extensions?: ExtensionRegistry;
