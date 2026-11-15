@@ -569,7 +569,11 @@ async function prepare(options: CreatePlanOptions): Promise<Prepared> {
   loaded.references
     .filter((r) => r.path !== "(palette swatch)")
     .forEach((r, index) => {
-      inputs[`reference/${index + 1}`] = { path: resolve(r.path), sha256: r.sha256 };
+      inputs[`reference/${index + 1}`] = {
+        // loadReference keeps the path as given: a key pose is relative to the spec, the rest to the bible.
+        path: resolve(r.role.startsWith("key-pose") ? specDir : doc.dir, r.path),
+        sha256: r.sha256,
+      };
     });
   return {
     doc,

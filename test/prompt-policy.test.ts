@@ -15,6 +15,8 @@ import { failureOutcome } from "../src/commands/result.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { checkPromptText, enforcePromptPolicy, PromptRefusedError } from "../src/policy/text.ts";
 import { ProviderSet } from "../src/providers/set.ts";
+import { planDigest } from "../src/planning.ts";
+import type { SavedPlan } from "../src/planning.ts";
 import { quadrupedTemplate, walkGait } from "./fixtures/quadruped.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { syntheticStrip } from "./fixtures/strip.ts";
@@ -252,6 +254,57 @@ async function materialFiles(dir: string, term: string) {
   return files;
 }
 
+/** A Markdown bible, a template, a profile and a spec carrying `term`, for plan. */
+async function planFiles(dir: string, term: string) {
+  const art = join(dir, ".assetgrove/art-direction");
+  await mkdir(art, { recursive: true });
+  await mkdir(join(dir, ".assetgrove/prompts"), { recursive: true });
+  const data = structuredClone(BIBLE_PRESETS["flat-cartoon-kids"]!);
+  data.referenceLicense = "NOASSERTION";
+  data.world = "Synthetic Grove";
+  const bible = join(art, "BIBLE.md");
+  await writeFile(
+    bible,
+    serializeBible(data, "## Do's and Don'ts\nDo keep silhouettes readable.\n"),
+  );
+  await writeFile(
+    join(dir, ".assetgrove/prompts/default.md"),
+    "---\nversion: 1\n---\nCreate original art.\n{{constitution}}\n{{spec}}\n{{brief}}\n",
+  );
+  const spec = join(dir, "spec.json");
+  await writeFile(
+    spec,
+    JSON.stringify({
+      kind: "still",
+      assetId: "icon",
+      fields: { description: `a round icon ${term}` },
+    }),
+  );
+  const profile = join(dir, "profile.json");
+  await writeFile(profile, JSON.stringify(syntheticProfile()));
+  const runOptions = join(dir, "run-options.json");
+  await writeFile(runOptions, JSON.stringify({ candidates: 1 }));
+  return { bible, spec, profile, runOptions, plan: join(dir, "plan.json") };
+}
+
+/** A saved plan made from clean inputs, then its prompts edited to carry `term`, digest recomputed. */
+async function editedPlan(dir: string, term: string): Promise<string> {
+  const files = await planFiles(dir, "");
+  const made = await cli([
+    ...["plan", "--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
+    ...["--run-options", files.runOptions, "--out", files.plan, "--runs", join(dir, "plan-runs")],
+    "--json",
+  ]);
+  assert.equal(made.code, 0, made.stdout + made.stderr);
+  const saved = JSON.parse(await readFile(files.plan, "utf8")) as SavedPlan;
+  saved.prompts.images = saved.prompts.images.map((p) => `${p}\n${term}`);
+  saved.prompts.generation = `${saved.prompts.generation}\n${term}`;
+  saved.approved = true;
+  saved.digest = planDigest(saved);
+  await writeFile(files.plan, JSON.stringify(saved, null, 2));
+  return files.plan;
+}
+
 /** One argument set per paid command, each carrying `term` in the file its plan step reads. */
 async function commandCases(term: string, dir: string): Promise<Array<[string, string[]]>> {
   const stage = await stageFiles(term);
@@ -260,9 +313,18 @@ async function commandCases(term: string, dir: string): Promise<Array<[string, s
   const strip = await stripFiles(await tempDir("assetgrove-policy-strip-"), term);
   const material = await materialFiles(await tempDir("assetgrove-policy-mat-"), term);
   approveProfile(JSON.parse(await readFile(material.profile, "utf8")), { profileDir: dir });
+  const plan = await planFiles(await tempDir("assetgrove-policy-plan-"), term);
+  const edited = await editedPlan(await tempDir("assetgrove-policy-apply-"), term);
   const stageArgs = ["--spec", stage.spec, "--bible", stage.bible, "--profile", stage.profile];
   return [
-    // TODO(lead): the plan and apply rows go here.
+    [
+      "plan",
+      [
+        ...["--spec", plan.spec, "--bible", plan.bible, "--profile", plan.profile],
+        ...["--run-options", plan.runOptions, "--out", plan.plan],
+      ],
+    ],
+    ["apply", [edited, "--auto-approve", "--out", join(dir, "runs")]],
     ["stage", stageArgs],
     ["generate-sheet", stageArgs],
     [
@@ -322,7 +384,7 @@ test("every paid command refuses a blocklisted prompt with exit 9, before any ca
       const run = await cli([
         name,
         ...args,
-        ...["--runs", join(dir, "runs")],
+        ...(name === "apply" ? [] : ["--runs", join(dir, "runs")]),
         ...["--provider-script", watch.script, ...mode, "--json"],
       ]);
       assert.equal(run.code, 9, `${name}: ${run.stdout}${run.stderr}`);
@@ -333,6 +395,22 @@ test("every paid command refuses a blocklisted prompt with exit 9, before any ca
     }
   }
   assert.equal(existsSync(join(dir, "runs")), false, "no run directory");
+  assert.equal(existsSync(watch.events), false, "no provider call");
+  assert.equal(await ledgerContent(), ledgerBefore, "no ledger entry");
+});
+
+test("a plan whose prompts were edited to a blocklisted term exits 9 at apply", async () => {
+  const dir = await tempDir("assetgrove-policy-edited-");
+  const watch = await recorder(dir);
+  const plan = await editedPlan(dir, STYLE);
+  const ledgerBefore = await ledgerContent();
+  const run = await cli([
+    ...["apply", plan, "--auto-approve", "--out", join(dir, "runs")],
+    ...["--provider-script", watch.script, "--json"],
+  ]);
+  assert.equal(run.code, 9, run.stdout + run.stderr);
+  assert.equal(doc(run).error.code, "prompt_refused");
+  assert.equal(doc(run).error.policy.match.term, TERM);
   assert.equal(existsSync(watch.events), false, "no provider call");
   assert.equal(await ledgerContent(), ledgerBefore, "no ledger entry");
 });

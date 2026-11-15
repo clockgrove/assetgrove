@@ -85,33 +85,39 @@ test("an art bible's look overrides axes and anchors for specs that name it", as
   await writeFile(biblePath, serializeBible(data, "## Do's and Don'ts\nDo stay original.\n"));
   const templatePath = join(root, ".assetgrove/prompts/default.md");
   await writeFile(templatePath, "{{constitution}}\n{{spec}}\n");
-  const settings = { candidates: 1, capUsd: 2 };
+  const runOptionsPath = join(root, "run-options.json");
+  await writeFile(runOptionsPath, JSON.stringify({ candidates: 1 }));
+  const specFile = async (spec: object) => {
+    const path = join(root, `${(spec as { assetId: string }).assetId}.json`);
+    await writeFile(path, JSON.stringify(spec));
+    return path;
+  };
 
   const character = await createPlan({
     biblePath,
     templatePath,
-    settings,
-    spec: { kind: "still", assetId: "fox", look: "character" },
+    runOptionsPath,
+    specPath: await specFile({ kind: "still", assetId: "fox", look: "character" }),
   });
-  assert.match(character.prompt, /"rendering":"naturalistic"/);
-  assert.match(character.prompt, /smooth naturalistic coat/);
-  assert.ok(!character.references.some((r) => r.role.includes("environment brushwork")));
+  assert.match(character.plan.prompts.generation, /"rendering":"naturalistic"/);
+  assert.match(character.plan.prompts.generation, /smooth naturalistic coat/);
+  assert.doesNotMatch(character.plan.prompts.qa, /environment brushwork/);
 
   const environment = await createPlan({
     biblePath,
     templatePath,
-    settings,
-    spec: { kind: "still", assetId: "glade", look: "environment" },
+    runOptionsPath,
+    specPath: await specFile({ kind: "still", assetId: "glade", look: "environment" }),
   });
-  assert.match(environment.prompt, /"rendering":"painterly"/);
-  assert.ok(environment.references.some((r) => r.role.includes("environment brushwork")));
+  assert.match(environment.plan.prompts.generation, /"rendering":"painterly"/);
+  assert.match(environment.plan.prompts.qa, /environment brushwork/);
 
   await assert.rejects(
     createPlan({
       biblePath,
       templatePath,
-      settings,
-      spec: { kind: "still", assetId: "x", look: "sky" },
+      runOptionsPath,
+      specPath: await specFile({ kind: "still", assetId: "x", look: "sky" }),
     }),
     /declares no look "sky"/,
   );

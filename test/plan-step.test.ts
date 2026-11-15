@@ -273,7 +273,7 @@ async function planFiles(dir: string, candidates: number) {
     spec: join(dir, "still-spec.json"),
     bible: doc(init)["biblePath"] as string,
     profile: join(dir, "plan-profile.json"),
-    settings: join(dir, "run-settings.json"),
+    runOptions: join(dir, "run-options.json"),
     out: join(dir, "plan.json"),
   };
   await writeFile(
@@ -281,10 +281,10 @@ async function planFiles(dir: string, candidates: number) {
     JSON.stringify({ kind: "still", assetId: "icon", subject: "icon", animationFamily: "still" }),
   );
   await writeFile(files.profile, JSON.stringify(syntheticProfile()));
-  await writeFile(files.settings, JSON.stringify({ candidates, capUsd: 2, strictness: 0.5 }));
+  await writeFile(files.runOptions, JSON.stringify({ candidates, strictness: 0.5 }));
   const flags = [
     ...["--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
-    ...["--settings", files.settings, "--out", files.out, "--runs", join(dir, "plan-runs")],
+    ...["--run-options", files.runOptions, "--out", files.out, "--runs", join(dir, "plan-runs")],
   ];
   return { ...files, flags };
 }
@@ -318,7 +318,7 @@ test("every paid command's --dry-run returns its plan with no provider call and 
       "plan",
       [
         ...["--spec", planned.spec, "--bible", planned.bible, "--profile", planned.profile],
-        ...["--settings", planned.settings, "--out", planned.out],
+        ...["--run-options", planned.runOptions, "--out", planned.out],
       ],
     ],
     ["apply", [planned.out]],

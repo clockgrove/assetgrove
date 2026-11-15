@@ -268,12 +268,13 @@ test("apply and generate-sheet also write contact.png", async () => {
     join(dir, ".assetgrove/prompts/default.md"),
     "# Prompt template v1\nCreate original art.\n{{constitution}}\n{{spec}}\n{{brief}}\n{{settings}}\n{{family}}\n",
   );
-  const plan = await createPlan({
-    biblePath,
-    spec: { kind: "still", assetId: "den" },
-    settings: { candidates: 2, capUsd: 5 },
-    profile: syntheticProfile(),
-  });
+  const specPath = join(dir, "spec.json");
+  const runOptionsPath = join(dir, "run-options.json");
+  const profilePath = join(dir, "profile.json");
+  await writeFile(specPath, JSON.stringify({ kind: "still", assetId: "den" }));
+  await writeFile(runOptionsPath, JSON.stringify({ candidates: 2 }));
+  await writeFile(profilePath, JSON.stringify(syntheticProfile()));
+  const { plan } = await createPlan({ biblePath, specPath, runOptionsPath, profilePath });
   const image = createRaster(4, 4);
   setPixel(image, 1, 1, [120, 90, 80, 255]);
   const provider = new ScriptedProvider({
