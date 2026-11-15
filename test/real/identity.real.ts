@@ -38,15 +38,17 @@ test(
     const rb = realBudget();
     const gw = rb.provider("vercel-ai-gateway");
     const { caller } = rb.caller(gw, defaultRoutes.identity.estimatedCostUsd, "real identity");
-    const { result, record } = await caller.decide(
-      "identity",
-      "Image 1 is the candidate. Image 2 is the approved reference. Identity record: a plain red disc.",
-      [disc("candidate", [220, 30, 30]), disc("reference", [220, 30, 30])],
-      {
-        type: "score",
-        instructions: "How well does image 1 match the identity record?",
-        levels: [...IDENTITY_LEVELS],
-      },
+    const { result, record } = await rb.cleared("real identity", () =>
+      caller.decide(
+        "identity",
+        "Image 1 is the candidate. Image 2 is the approved reference. Identity record: a plain red disc.",
+        [disc("candidate", [220, 30, 30]), disc("reference", [220, 30, 30])],
+        {
+          type: "score",
+          instructions: "How well does image 1 match the identity record?",
+          levels: [...IDENTITY_LEVELS],
+        },
+      ),
     );
     assert.equal(result.answer.type, "score");
     if (result.answer.type === "score") {

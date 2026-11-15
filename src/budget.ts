@@ -56,7 +56,7 @@ export class Budget {
    */
   check(amountUsd: number, what: string): void {
     this.fitCap(amountUsd, what);
-    const journaled = currentRunScope()?.journal.spentUsd() ?? 0;
+    const journaled = currentRunScope()?.journal?.spentUsd() ?? 0;
     this.ledger?.check(Math.max(0, amountUsd - journaled), what);
   }
 

@@ -23,6 +23,8 @@ import type { Script } from "../../src/gateway/scripted.ts";
 import { providerOfAdapter, type ConfiguredProvider } from "../../src/providers/adapter.ts";
 import { defaultRoutes, type Routes } from "../../src/routes.ts";
 import { loadSettings, type ProviderSettings, type Settings } from "../../src/settings.ts";
+import { digestOf } from "../../src/confirm/records.ts";
+import { withConfirmedSpend } from "../../src/runs/execute.ts";
 import { ledgerFor, SpendLedger } from "../../src/spend.ts";
 
 export const TOTAL_USD = 25;
@@ -92,6 +94,8 @@ export interface RealBudget {
     what: string,
     routes?: Routes,
   ): { caller: Caller; budget: Budget };
+  /** Runs `body` with the clearance of a headless spend confirmation: a paid call needs one. */
+  cleared<T>(what: string, body: () => Promise<T>): Promise<T>;
 }
 
 /** Writes the temporary settings and loads them through the product. */
@@ -105,6 +109,8 @@ export function realBudget(options: RealBudgetOptions = {}): RealBudget {
     format: "assetgrove-settings/1",
     stateDir: ledgerDir,
     caps: { runUsd: RUN_USD, dailyUsd: shareUsd, workItemUsd: shareUsd },
+    // The person who runs a real check confirms its spend by running it (design section 7).
+    headless: { operator: `real-checks:${leg}` },
     providers: {
       "vercel-ai-gateway": { limit },
       tripo: { limit },
@@ -143,6 +149,14 @@ export function realBudget(options: RealBudgetOptions = {}): RealBudget {
     runLeftUsd,
     provider,
     begin,
+    cleared(what, body) {
+      const request = { command: "real-check", what, inputs: {}, forecastUsd: 0, capUsd: 0 };
+      return withConfirmedSpend(
+        { kind: "spend", id: digestOf(request), summary: what, details: {}, body: request },
+        { settings },
+        body,
+      );
+    },
     caller(configured, forecastUsd, what, routes = defaultRoutes) {
       const budget = begin(forecastUsd, what, configured);
       const caller = new Caller({

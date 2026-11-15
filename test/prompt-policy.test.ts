@@ -338,7 +338,7 @@ async function commandCases(term: string, dir: string): Promise<Array<[string, s
         ...["--run-options", plan.runOptions, "--out", plan.plan],
       ],
     ],
-    ["apply", [edited, "--auto-approve", "--out", join(dir, "runs")]],
+    ["apply", [edited, "--out", join(dir, "runs")]],
     ["stage", stageArgs],
     ["generate-sheet", stageArgs],
     [
@@ -419,7 +419,7 @@ test("a plan whose prompts were edited to a blocklisted term exits 9 at apply", 
   const plan = await editedPlan(dir, STYLE);
   const ledgerBefore = await ledgerContent();
   const run = await cli([
-    ...["apply", plan, "--auto-approve", "--out", join(dir, "runs")],
+    ...["apply", plan, "--out", join(dir, "runs")],
     ...["--provider-script", watch.script, "--json"],
   ]);
   assert.equal(run.code, 9, run.stdout + run.stderr);

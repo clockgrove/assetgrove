@@ -205,7 +205,8 @@ export interface Clearance {
 
 /** The run a paid command is executing: its journal and where answered calls are reported. */
 export interface RunScope {
-  journal: Journal;
+  /** The run's journal; absent for a confirmed spend outside a run directory. */
+  journal?: Journal;
   onCall?: (progress: CallProgress) => void;
   /** The run's clearance to spend; absent when the request needed no confirmation. */
   clearance?: Clearance;

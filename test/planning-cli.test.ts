@@ -224,7 +224,6 @@ test("apply re-resolves the cap from the settings: a cap changed since planning 
     f.script,
     "--out",
     join(f.dir, "runs"),
-    "--auto-approve",
     "--json",
   ]);
   assert.equal(apply.code, 2, apply.stderr);
@@ -267,7 +266,6 @@ test("apply re-resolves routes from the settings: a settings route changed since
     f.script,
     "--out",
     join(f.dir, "runs"),
-    "--auto-approve",
     "--json",
   ]);
   assert.equal(apply.code, 2, apply.stderr);
@@ -297,7 +295,6 @@ test("CLI preset switching changes subsequent plans and makes the prior plan sta
   const refused = await cli([
     "apply",
     f.plan,
-    "--auto-approve",
     "--provider-script",
     f.script,
     "--json",

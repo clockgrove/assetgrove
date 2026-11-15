@@ -236,7 +236,7 @@ for (const row of [...gatewayRows, ...directRows]) {
     );
     let out: { nonEmpty: boolean };
     try {
-      out = await call(caller);
+      out = await rb.cleared(`real route ${row.adapter} ${row.name}`, () => call(caller));
     } catch (error) {
       if (row.skipOn && error instanceof ProviderError && row.skipOn(error)) {
         const facts = `HTTP ${String(error.status)}, code ${error.providerCode ?? "none"}`;

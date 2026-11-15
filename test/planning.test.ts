@@ -798,7 +798,6 @@ test("the saved plan JSON has no capUsd, route, estimate or grant field", async 
     [],
   );
   assert.deepEqual(Object.keys(saved).sort(), [
-    "approved",
     "digest",
     "format",
     "inputs",

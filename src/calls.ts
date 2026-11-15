@@ -94,7 +94,8 @@ export class Caller {
     const served = this.serve(route, operation);
     const name = `${served.id}:${operation}:${route.model}`;
     const scope = currentRunScope();
-    const callKey = scope?.journal.key({
+    const journal = scope?.journal;
+    const callKey = journal?.key({
       operation,
       provider: served.id,
       model: route.model,
@@ -103,7 +104,7 @@ export class Caller {
       ...(seed !== undefined && { seed }),
       ...(this.index !== undefined && { index: this.index }),
     });
-    const journaled = callKey === undefined ? undefined : scope?.journal.read(callKey);
+    const journaled = callKey === undefined ? undefined : journal?.read(callKey);
     if (journaled !== undefined) {
       // Answered before in this run: nothing is reserved or paid again.
       this.budget.addPrior(journaled.record.costUsd, `the journaled ${operation} call`);
@@ -126,7 +127,7 @@ export class Caller {
       billing.paid ? name : undefined,
       {
         provider: served.id,
-        ...(scope !== undefined && { runId: scope.journal.runId }),
+        ...(journal !== undefined && { runId: journal.runId }),
         ...(callKey !== undefined && { callKey }),
       },
     );
@@ -162,8 +163,8 @@ export class Caller {
       ...(route.outputGrant !== undefined && { outputGrant: structuredClone(route.outputGrant) }),
     };
     this.records.push(record);
-    if (scope !== undefined && callKey !== undefined) {
-      scope.journal.write({
+    if (journal !== undefined && callKey !== undefined) {
+      journal.write({
         callKey,
         operation,
         provider: served.id,
@@ -171,7 +172,7 @@ export class Caller {
         record,
         result,
       });
-      scope.onCall?.({ operation, reused: false });
+      scope?.onCall?.({ operation, reused: false });
     }
     return result;
   }

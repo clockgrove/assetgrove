@@ -258,7 +258,6 @@ export default {
       CLI,
       "apply",
       plan,
-      "--auto-approve",
       "--out",
       join(f.root, "runs"),
       "--provider-script",

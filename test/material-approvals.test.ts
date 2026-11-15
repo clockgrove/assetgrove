@@ -137,7 +137,8 @@ test("an unapproved compression command exits 8; with its hash in settings it ru
   const preview = commandIdentity("material-preview", f.preview, f.dir);
   assert.deepEqual(p.commands, [
     { kind: "material-compression", hash: identity.hash, method: "settings" },
-    { kind: "material-preview", hash: preview.hash, method: "terminal" },
+    // approve() also lists its commands in the fixture's (headless) settings.
+    { kind: "material-preview", hash: preview.hash, method: "settings" },
   ]);
   const report = JSON.parse(await readFile(join(f.out, "materials.json"), "utf8"));
   assert.ok(

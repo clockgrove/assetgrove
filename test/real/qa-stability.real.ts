@@ -159,7 +159,9 @@ test(
         });
         const verdicts: Map<string, boolean>[] = [];
         for (let r = 0; r < repeats; r++) {
-          const text = await caller.vision("vision", prompt, [c.candidate, c.reference]);
+          const text = await rb.cleared("qa stability", () =>
+            caller.vision("vision", prompt, [c.candidate, c.reference]),
+          );
           verdicts.push(new Map(parseVisionVerdict(text).map((x) => [x.check, x.passed])));
         }
         for (const check of checks) {

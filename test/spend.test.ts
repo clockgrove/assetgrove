@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { cleared } from "./fixtures/env.ts";
 import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -269,36 +270,37 @@ function countingProvider(counts: { image: number }, paid: boolean) {
   );
 }
 
-test("every paid Caller call reserves in the budget's ledger with its route and settles at its cost", async () => {
-  const path = await ledgerPath();
-  const l = ledger(path, { dailyUsd: 0.3 });
-  const counts = { image: 0 };
-  const call = new Caller({
-    provider: countingProvider(counts, true),
-    providerName: "paid-test",
-    budget: new Budget(5, l),
-    routes: defaultRoutes,
-  });
-  await call.image("still", "a fox", []);
-  assert.equal(limit(l, "daily")?.spentUsd, 0.1);
-  // A failed call is charged its estimate, as the run's budget charges it.
-  await assert.rejects(call.vision("vision", "check", []), ProviderError);
-  assert.equal(limit(l, "daily")?.spentUsd, 0.1 + defaultRoutes["vision"]!.estimatedCostUsd);
-  // The still route's $0.25 estimate no longer fits the $0.30 daily limit: refused, not called.
-  await assert.rejects(call.image("still", "a fox", []), SpendLimitError);
-  assert.equal(counts.image, 1);
-  const routes = (await readFile(path, "utf8"))
-    .trim()
-    .split("\n")
-    .map((x) => JSON.parse(x))
-    .filter((e) => e.op === "reserve")
-    .map((e) => e.route);
-  assert.deepEqual(routes, [
-    `paid-test:still:${defaultRoutes["still"]!.model}`,
-    `paid-test:vision:${defaultRoutes["vision"]!.model}`,
-    `paid-test:still:${defaultRoutes["still"]!.model}`,
-  ]);
-});
+test("every paid Caller call reserves in the budget's ledger with its route and settles at its cost", () =>
+  cleared(async () => {
+    const path = await ledgerPath();
+    const l = ledger(path, { dailyUsd: 0.3 });
+    const counts = { image: 0 };
+    const call = new Caller({
+      provider: countingProvider(counts, true),
+      providerName: "paid-test",
+      budget: new Budget(5, l),
+      routes: defaultRoutes,
+    });
+    await call.image("still", "a fox", []);
+    assert.equal(limit(l, "daily")?.spentUsd, 0.1);
+    // A failed call is charged its estimate, as the run's budget charges it.
+    await assert.rejects(call.vision("vision", "check", []), ProviderError);
+    assert.equal(limit(l, "daily")?.spentUsd, 0.1 + defaultRoutes["vision"]!.estimatedCostUsd);
+    // The still route's $0.25 estimate no longer fits the $0.30 daily limit: refused, not called.
+    await assert.rejects(call.image("still", "a fox", []), SpendLimitError);
+    assert.equal(counts.image, 1);
+    const routes = (await readFile(path, "utf8"))
+      .trim()
+      .split("\n")
+      .map((x) => JSON.parse(x))
+      .filter((e) => e.op === "reserve")
+      .map((e) => e.route);
+    assert.deepEqual(routes, [
+      `paid-test:still:${defaultRoutes["still"]!.model}`,
+      `paid-test:vision:${defaultRoutes["vision"]!.model}`,
+      `paid-test:still:${defaultRoutes["still"]!.model}`,
+    ]);
+  }));
 
 test("free Caller calls never reach the ledger, whatever the provider is named; the run's cap still applies", async () => {
   const path = await ledgerPath();

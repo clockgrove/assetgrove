@@ -39,7 +39,9 @@ test("real gateway: one image generation", { skip }, async () => {
     },
   };
   const { caller } = rb.caller(gw, 0.02, "real gateway image", routes);
-  const image = await caller.image("still", "a small red apple on a plain background", []);
+  const image = await rb.cleared("real gateway image", () =>
+    caller.image("still", "a small red apple on a plain background", []),
+  );
   assert.ok(image.mediaType.startsWith("image/") && image.bytes.length > 0);
   const record = caller.records[0];
   assert.ok(record);
@@ -63,9 +65,9 @@ test("real gateway: one vision call", { skip }, async () => {
   const rb = realBudget();
   const gw = rb.provider("vercel-ai-gateway");
   const { caller } = rb.caller(gw, defaultRoutes.vision.estimatedCostUsd, "real gateway vision");
-  const text = await caller.vision("vision", "Describe this image in one short sentence.", [
-    redSquare(),
-  ]);
+  const text = await rb.cleared("real gateway vision", () =>
+    caller.vision("vision", "Describe this image in one short sentence.", [redSquare()]),
+  );
   assert.ok(text.trim().length > 0);
   const record = caller.records[0];
   assert.ok(record);

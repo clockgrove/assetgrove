@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { cleared } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -36,33 +37,34 @@ async function ledgerIn(): Promise<SpendLedger> {
   return SpendLedger.fromSettings({ stateDir, caps: { ...DEFAULT_CAPS } }, { env: {} });
 }
 
-test("a scripted provider with paid true writes ledger entries; without it, none", async () => {
-  for (const paid of [true, false]) {
-    const ledger = await ledgerIn();
-    const { provider, id } = createProvider(
-      "scripted",
-      { limit: { kind: "prepaid", usd: 10 } },
-      { script: script(paid), env: {} },
-    );
-    assert.equal(provider.billing.paid, paid);
-    assert.equal(provider.billing.adapter, "scripted");
-    const call = new Caller({
-      provider,
-      providerName: id,
-      budget: new Budget(5, ledger),
-      routes: defaultRoutes,
-    });
-    await call.image("still", "a fox", []);
-    await call.vision("vision", "check", []);
-    if (paid) {
-      const entries = (await readFile(ledger.path, "utf8")).trim().split("\n");
-      assert.equal(entries.filter((e) => e.includes('"op":"reserve"')).length, 2);
-      assert.equal(entries.filter((e) => e.includes('"op":"settle"')).length, 2);
-    } else {
-      assert.equal(existsSync(ledger.path), false, "a free provider writes nothing");
+test("a scripted provider with paid true writes ledger entries; without it, none", () =>
+  cleared(async () => {
+    for (const paid of [true, false]) {
+      const ledger = await ledgerIn();
+      const { provider, id } = createProvider(
+        "scripted",
+        { limit: { kind: "prepaid", usd: 10 } },
+        { script: script(paid), env: {} },
+      );
+      assert.equal(provider.billing.paid, paid);
+      assert.equal(provider.billing.adapter, "scripted");
+      const call = new Caller({
+        provider,
+        providerName: id,
+        budget: new Budget(5, ledger),
+        routes: defaultRoutes,
+      });
+      await call.image("still", "a fox", []);
+      await call.vision("vision", "check", []);
+      if (paid) {
+        const entries = (await readFile(ledger.path, "utf8")).trim().split("\n");
+        assert.equal(entries.filter((e) => e.includes('"op":"reserve"')).length, 2);
+        assert.equal(entries.filter((e) => e.includes('"op":"settle"')).length, 2);
+      } else {
+        assert.equal(existsSync(ledger.path), false, "a free provider writes nothing");
+      }
     }
-  }
-});
+  }));
 
 interface Seen {
   method: string;
