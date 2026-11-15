@@ -55,6 +55,8 @@ export interface Failure {
   reason?: string;
   /** For exit 8: what a person must confirm, and how (design section 7). */
   confirmation?: CommandConfirmation;
+  /** For `handoff_check_failed`: each problem a hand-off preset's check found (design section 14). */
+  problems?: Array<{ preset: string; problem: string }>;
   limit?: {
     name: string;
     workItem?: string;

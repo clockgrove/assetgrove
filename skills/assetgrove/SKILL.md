@@ -61,7 +61,7 @@ Decide on the exit and `error.code`, never on the message. What the commands ret
 - 3: the run's cap or a spend limit across runs (also a dry-run forecast over either).
 - 4: no `AI_GATEWAY_API_KEY` where a gateway call is needed, no `TRIPO_API_KEY` for a `character-3d` stage, or every candidate failed to generate.
 - 5: no candidate passed, or a check failed (`animation-qa`, `materials`, `rig`, `lod`, `look-dev`, a generated sheet with the wrong number of figures).
-- 6: the target's validator rejected what `pick` or `write-families` wrote.
+- 6: a hand-off preset's check found problems in what `pick` or `write-families` wrote (`handoff_check_failed`, listed in `error.problems`; the validator did not run), or the target's validator rejected it (`validator_rejected`).
 - 7: the provider's output grant does not let the target declare the output; nothing written.
 
 ## Environment

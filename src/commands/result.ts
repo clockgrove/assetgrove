@@ -45,11 +45,13 @@ export function classify(error: unknown): Failure {
   if (typeof code === "string" && Object.hasOwn(EXIT, code)) {
     const reason = (error as { reason?: unknown }).reason;
     const confirmation = (error as { confirmation?: Failure["confirmation"] }).confirmation;
+    const problems = (error as { problems?: Failure["problems"] }).problems;
     return {
       code: code as ErrorCode,
       message,
       ...(code === "format_unsupported" && typeof reason === "string" && { reason }),
       ...(confirmation !== undefined && { confirmation }),
+      ...(code === "handoff_check_failed" && Array.isArray(problems) && { problems }),
     };
   }
   if (error instanceof InputError) return { code: "invalid_input", message };

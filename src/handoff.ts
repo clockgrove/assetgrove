@@ -21,7 +21,9 @@ import { readRun, writeRun } from "./loop.ts";
 import type { StagedCandidate } from "./loop.ts";
 import { checkWrites, readRecordPath, relativeRecordPath } from "./paths.ts";
 import { sha256 } from "./request.ts";
-import { render, renderString, setPath } from "./template.ts";
+import { renderString, setPath } from "./template.ts";
+import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
+import type { HandoffProblem, PresetFile } from "./handoff/presets/index.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "./types.ts";
 
 const run = promisify(execFile);
@@ -41,7 +43,15 @@ export interface PickResult {
   mediaPath: string;
   manifestPath: string;
   provenancePath?: string;
+  /** Each hand-off preset that ran, with the files it wrote. */
+  handoff?: PresetResult[];
   validator?: ValidatorResult;
+}
+
+/** One hand-off preset that ran: its name and the files it wrote, relative to the target. */
+export interface PresetResult {
+  preset: string;
+  files: string[];
 }
 
 /** What the target's validator said, and the approved command step that ran it. */
@@ -105,21 +115,28 @@ export interface TargetWriteResult {
   provenancePath?: string;
   /** Every written file, relative to the target directory. */
   files: string[];
+  /** Each hand-off preset of the profile's `handoff` list, in order, with the files it wrote. */
+  handoff: PresetResult[];
   validator?: ValidatorResult;
 }
 
 /**
- * Writes one output into the target in the profile's format: the media, the manifest rendered from
- * the profile's template with the review field set to the profile's pending value, and the
- * provenance. Then runs the target's validator, when the profile declares one; the validator must
- * be approved (src/approvals.ts) before anything is written, and the provenance records its hash
- * and approval method. Assetgrove never
- * writes any review value other than pending. Refuses with a LicenseError, before writing, an
+ * Writes one output into the target through the profile's hand-off presets (design section 14;
+ * src/handoff/presets): first every preset's options are validated (exit 2), then the media,
+ * sidecars and provenance are written with each preset's files (the `manifest` preset renders the
+ * profile's template with the review field set to the profile's pending value), then each preset
+ * checks what it wrote. A failed check throws a HandoffCheckError (exit 6 `handoff_check_failed`)
+ * and the validator does not run. Then runs the target's validator, when the profile declares one;
+ * the validator must be approved (src/approvals.ts) before anything is written, and the provenance
+ * records its hash and approval method. Assetgrove never writes any review value other than
+ * pending. Refuses with a LicenseError, before writing, an
  * output whose provider grant the target cannot declare (src/license.ts); `{{profile.license}}`
  * renders the licence the output is declared under.
  */
 export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResult> {
   const { profile, spec } = write;
+  // First: the profile's hand-off presets and their options.
+  const presets = resolveHandoff(profile);
   // Before anything is written: the output must be declarable under a licence the target takes.
   const licensed = requireLicensable(profile, write.provenance);
   if (write.provenance.digitalSourceType === "undeclared") requireDeclared("undeclared");
@@ -197,16 +214,15 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   });
   if (provenanceRel !== undefined) context["provenancePath"] = provenanceRel;
 
-  const manifest = render(profile.manifest, context);
-  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
-    throw new InputError("the profile's manifest template must render to a JSON object");
-  }
-  setPath(manifest as Record<string, unknown>, profile.review.path, profile.review.pending);
+  const presetContext = { profile, context, manifestRel };
+  const presetFiles: PresetFile[][] = presets.map(({ preset, options }) =>
+    preset.write(presetContext, options),
+  );
 
   // Before anything is written: no two writes differ only by case, and no segment holds ":".
   checkWrites([
     mediaRel,
-    manifestRel,
+    ...presetFiles.flat().map((file) => file.path),
     ...sidecarRels,
     ...(provenanceRel === undefined ? [] : [provenanceRel]),
   ]);
@@ -215,7 +231,9 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   const provenancePath = provenanceRel === undefined ? undefined : inside(targetDir, provenanceRel);
   const writes: Array<[string, Uint8Array | string]> = [
     [mediaPath, output.bytes],
-    [manifestPath, `${JSON.stringify(manifest, null, 2)}\n`],
+    ...presetFiles
+      .flat()
+      .map((file): [string, Uint8Array | string] => [inside(targetDir, file.path), file.content]),
   ];
   (write.output.sidecars ?? []).forEach((sidecar, i) => {
     writes.push([inside(targetDir, sidecarRels[i] as string), sidecar.bytes]);
@@ -233,7 +251,26 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     manifestPath,
     ...(provenancePath !== undefined && { provenancePath }),
     files: writes.map(([path]) => relativeRecordPath(targetDir, path)),
+    handoff: presets.map(({ preset }, i) => ({
+      preset: preset.name,
+      files: (presetFiles[i] ?? []).map((file) =>
+        relativeRecordPath(targetDir, inside(targetDir, file.path)),
+      ),
+    })),
   };
+
+  // Each preset checks what it wrote; a failed check stops the hand-off before the validator.
+  const read = (rel: string) =>
+    readFile(inside(targetDir, rel)).then(
+      (bytes) => new Uint8Array(bytes),
+      () => undefined,
+    );
+  const problems: HandoffProblem[] = [];
+  for (const [i, { preset, options }] of presets.entries()) {
+    const found = await preset.check(presetContext, options, presetFiles[i] ?? [], read);
+    problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
+  }
+  if (problems.length > 0) throw new HandoffCheckError(problems);
   if (profile.validator && validatorStep) {
     const vars = { manifest: manifestRel, media: mediaRel };
     const command = profile.validator.command.map((part) => renderString(part, vars));
