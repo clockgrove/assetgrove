@@ -16,6 +16,7 @@ import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { referenceLicenses } from "./bible.ts";
 import { InputError } from "./errors.ts";
+import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import { checkWrites } from "./paths.ts";
@@ -350,9 +351,10 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
     } catch (error) {
       run.filtered++;
       const message = error instanceof Error ? error.message : String(error);
-      // Bad input fails every candidate the same way: refuse the run rather than go on, but
-      // leave its record so the runs directory never holds a run without one.
-      if (error instanceof InputError) {
+      // Bad input, or a provider with no declared limit, fails every candidate the same way:
+      // refuse the run rather than go on, but leave its record so the runs directory never holds
+      // a run without one.
+      if (error instanceof InputError || error instanceof ProviderLimitError) {
         run.errors.push(`candidate ${index + 1}: ${message}`);
         run.stopped = `refused: ${message}`;
         run.spentUsd = budget.spentUsd;

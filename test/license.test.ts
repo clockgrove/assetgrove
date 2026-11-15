@@ -322,7 +322,7 @@ test("a gateway route whose model is overridden without its own grant is refused
   const settings = {
     providers: { gateway: { adapter: "vercel-ai-gateway" } },
     roles: {},
-    routes: { edit: { provider: "gateway", model: "bfl/flux-kontext-max" } },
+    routes: { edit: { provider: "gateway", model: "bfl/flux-kontext-max", estimatedCostUsd: 0.2 } },
     path: "settings.json",
   };
   const routes = ProviderSet.fromSettings(settings, { env: {} }).routes;

@@ -11,9 +11,11 @@ import { ProviderSet, suggestRoles } from "../src/providers/index.ts";
 import {
   defaultRoutes,
   GATEWAY_DEFAULT_ROUTES,
+  LOOKDEV_MARKINGS_OPERATION,
   resolveRoute,
   RouteUnavailableError,
 } from "../src/routes.ts";
+import { SettingsError } from "../src/env.ts";
 import type { Settings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
 import { writeSettings } from "./fixtures/env.ts";
@@ -28,10 +30,14 @@ interface Result {
   stderr: string;
 }
 
-function cli(args: string[]): Promise<Result> {
+function cli(args: string[], env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve) => {
-    execFile(process.execPath, ["src/cli.ts", ...args], { cwd: root }, (error, stdout, stderr) =>
-      resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
+    execFile(
+      process.execPath,
+      ["src/cli.ts", ...args],
+      { cwd: root, env: { ...process.env, ...env } },
+      (error, stdout, stderr) =>
+        resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
     );
   });
 }
@@ -92,23 +98,27 @@ test("overriding only the model of a gateway route resolves with no outputGrant 
 
   const model = "bfl/flux-kontext-max";
   for (const extra of [
-    { routes: { edit: { provider: "gateway", model } } },
-    { roles: { edit: { provider: "gateway", model } } },
+    { routes: { edit: { provider: "gateway", model, estimatedCostUsd: 0.2 } } },
+    { roles: { edit: { provider: "gateway", model, estimatedCostUsd: 0.2 } } },
   ]) {
     const route = ProviderSet.fromSettings(settingsOf(providers, extra), { env: {} }).routes.edit;
     assert.equal(route.provider, "gateway");
     assert.equal(route.model, model);
     assert.equal(route.outputGrant, undefined);
     assert.equal(route.providerTerms, undefined);
-    // The rest of the default (the estimate, the seed support) still applies.
-    assert.equal(route.estimatedCostUsd, defaultRoutes.edit.estimatedCostUsd);
   }
 
   const grant = { license: "LicenseRef-bfl-api", plan: "api", commercial: true, relabel: true };
   const own = ProviderSet.fromSettings(
     settingsOf(providers, {
       routes: {
-        edit: { provider: "gateway", model, outputGrant: grant, providerTerms: "BFL API terms" },
+        edit: {
+          provider: "gateway",
+          model,
+          estimatedCostUsd: 0.2,
+          outputGrant: grant,
+          providerTerms: "BFL API terms",
+        },
       },
     }),
     { env: {} },
@@ -138,7 +148,7 @@ test("a route to a provider whose adapter lacks the capability is route_unavaila
   const routes = ProviderSet.fromSettings(
     settingsOf(
       { gateway: { adapter: "vercel-ai-gateway" }, tripo: {} },
-      { routes: { vision: { provider: "tripo", model: "m" } } },
+      { routes: { vision: { provider: "tripo", model: "m", estimatedCostUsd: 0.1 } } },
     ),
     { env: {} },
   ).routes;
@@ -188,4 +198,96 @@ test("suggestRoles gives each role of the adapters' defaults, first adapter firs
   assert.equal(roles["rig3d"]?.provider, "tripo");
   assert.equal(roles["clips3d"]?.provider, "tripo");
   assert.deepEqual(suggestRoles(["openai-compatible"]), {});
+});
+
+test("an override that changes the (provider, model) pair takes nothing else from the default and must set its estimate", () => {
+  const providers = {
+    gateway: { adapter: "vercel-ai-gateway" },
+    local: { adapter: "openai-compatible", baseURL: "http://127.0.0.1:8080/v1", free: true },
+    remote: { adapter: "openai-compatible", baseURL: "https://models.example/v1" },
+  };
+  const routesOf = (extra: Parameters<typeof settingsOf>[1]) =>
+    ProviderSet.fromSettings(settingsOf(providers, extra), { env: {} }).routes;
+
+  // Another provider: none of the gateway model's options, size or estimate.
+  const markings = routesOf({
+    roles: { vision: { provider: "remote", model: "m", estimatedCostUsd: 0.03 } },
+  })[LOOKDEV_MARKINGS_OPERATION];
+  assert.deepEqual(markings, { provider: "remote", model: "m", estimatedCostUsd: 0.03 });
+  assert.notEqual(
+    defaultRoutes[LOOKDEV_MARKINGS_OPERATION]!.providerOptions,
+    undefined,
+    "the default has options",
+  );
+
+  // The same provider with another model takes nothing from the default model either.
+  const edit = routesOf({
+    routes: { edit: { provider: "gateway", model: "bfl/flux-kontext-max", estimatedCostUsd: 0.2 } },
+  }).edit;
+  assert.deepEqual(edit, {
+    provider: "gateway",
+    model: "bfl/flux-kontext-max",
+    estimatedCostUsd: 0.2,
+  });
+
+  // A paid provider with no estimate is refused, naming the field; an operation with no default too.
+  for (const extra of [
+    { roles: { vision: { provider: "remote", model: "m" } } } as Parameters<typeof settingsOf>[1],
+    { routes: { edit: { provider: "gateway", model: "bfl/flux-kontext-max" } } },
+    { routes: { fix: { provider: "remote", model: "m" } } },
+  ]) {
+    assert.throws(
+      () => routesOf(extra),
+      (error: unknown) =>
+        error instanceof SettingsError &&
+        error.code === "settings_invalid" &&
+        /estimatedCostUsd/.test(error.message),
+    );
+  }
+  // A free provider needs no estimate: it reserves nothing.
+  assert.equal(
+    routesOf({ roles: { vision: { provider: "local", model: "m" } } }).vision.estimatedCostUsd,
+    0,
+  );
+});
+
+test("the scripted stand-in serves an operation only when no other configured provider has a default for it", () => {
+  const routes = ProviderSet.fromSettings(
+    settingsOf({ scripted: {}, gateway: { adapter: "vercel-ai-gateway" }, tripo: {} }),
+    { env: {} },
+  ).routes;
+  assert.equal(routes.still.provider, "gateway");
+  assert.equal(routes.vision.provider, "gateway");
+  assert.equal(routes.model3d.provider, "tripo");
+  const alone = ProviderSet.fromSettings(settingsOf({ scripted: {}, tripo: {} }), {
+    env: {},
+  }).routes;
+  assert.equal(alone.still.provider, "scripted");
+  assert.equal(alone.model3d.provider, "tripo");
+});
+
+test("--provider-script with no route naming a scripted provider exits 2 invalid_input before any spend", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "assetgrove-routes-"));
+  writeSettings({
+    stateDir,
+    providers: { gateway: { adapter: "vercel-ai-gateway", limit: LIMIT } },
+  });
+  const r = await cli(await stageArgs(), {
+    AI_GATEWAY_API_KEY: `synthetic-${process.pid}-${Date.now()}`,
+  });
+  assert.equal(r.code, 2, r.stderr);
+  const document = JSON.parse(r.stdout) as { error: { code: string; message: string } };
+  assert.equal(document.error.code, "invalid_input");
+  assert.match(
+    document.error.message,
+    /no route of the developer settings names a scripted provider/,
+  );
+  assert.equal(existsSync(join(stateDir, "spend.jsonl")), false, "no ledger entry");
+});
+
+test("a 2D stage checks the limits of the providers it calls, not of every configured one", async () => {
+  // Tripo declares no limit but serves only the 3D roles, which a sprite strip never calls.
+  writeSettings({ providers: { scripted: { limit: LIMIT }, tripo: {} } });
+  const r = await cli(await stageArgs());
+  assert.equal(r.code, 0, r.stderr);
 });

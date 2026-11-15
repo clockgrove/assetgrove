@@ -3,6 +3,7 @@
  * only from the developer settings: `settings.routes[op]` over `settings.roles[role]` over the
  * configured adapters' `defaultRoutes`. Grants and terms belong to the (provider, model) pair.
  */
+import { SettingsError } from "./env.ts";
 import type { Settings } from "./settings.ts";
 import type { OutputGrant } from "./types.ts";
 
@@ -410,7 +411,7 @@ export class RouteUnavailableError extends Error {
   }
 }
 
-/** A configured provider as resolution sees it: its settings id and its adapter. */
+/** A configured provider as resolution sees it: its settings id, its adapter and its entry. */
 export interface RouteProvider {
   id: string;
   adapter: {
@@ -418,18 +419,28 @@ export interface RouteProvider {
     capabilities: readonly string[];
     defaultRoutes?: Readonly<Record<string, Route>>;
   };
+  /** The provider's settings entry; `free` lets an override leave out its estimate. */
+  settings?: { free?: boolean };
 }
 
 /** A route or role entry of the settings. */
 type Override = Settings["routes"][string];
 
 /**
+ * The adapter of the test stand-in. Its default routes mirror the core defaults, so it serves an
+ * operation only when no other configured provider has a default route for it.
+ */
+const STAND_IN_ADAPTER = "scripted";
+
+/**
  * The route of one operation: `settings.routes[op]` over `settings.roles[role]` over the default
- * route of the first configured provider (by id) whose adapter lists the operation. An override
- * that names the default's provider and model keeps its grant and terms; one that changes either
- * keeps the default's other fields (or the core default's) but carries only its own `outputGrant`
- * and `providerTerms`. Throws `RouteUnavailableError` when the result names no configured provider
- * whose adapter has the role's capability.
+ * route of the first configured provider (by id, the scripted stand-in last) whose adapter lists
+ * the operation. An override that names the default's provider and model keeps the whole default
+ * route. One that changes either belongs to another (provider, model) pair, so it takes nothing
+ * from the default: it carries only its own `estimatedCostUsd`, `outputGrant` and `providerTerms`,
+ * and it must set `estimatedCostUsd` unless its provider is `free` or the scripted stand-in
+ * (`settings_invalid` otherwise). Throws `RouteUnavailableError` when the result names no
+ * configured provider whose adapter has the role's capability.
  */
 export function resolveRoute(
   settings: Pick<Settings, "roles" | "routes">,
@@ -442,36 +453,53 @@ export function resolveRoute(
     .map((f) => `settings.${f}`)
     .join(" or ");
   const what = `the ${operation} operation${role !== undefined ? ` (role ${role})` : ""}`;
-  const sorted = [...providers].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const standIn = (p: RouteProvider): number => (p.adapter.id === STAND_IN_ADAPTER ? 1 : 0);
+  const sorted = [...providers].sort(
+    (a, b) => standIn(a) - standIn(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
   const serving = sorted.find((p) => p.adapter.defaultRoutes?.[operation] !== undefined);
   const fallback: Route | undefined = serving
     ? { ...structuredClone(serving.adapter.defaultRoutes![operation]!), provider: serving.id }
     : undefined;
-  const override: Override | undefined = Object.hasOwn(settings.routes, operation)
-    ? settings.routes[operation]
+  const field = Object.hasOwn(settings.routes, operation)
+    ? `routes.${operation}`
     : role !== undefined && Object.hasOwn(settings.roles, role)
-      ? settings.roles[role]
+      ? `roles.${role}`
       : undefined;
+  const override: Override | undefined =
+    field === undefined
+      ? undefined
+      : field.startsWith("routes.")
+        ? settings.routes[operation]
+        : settings.roles[role!];
   let route: Route;
+  /** The settings field of an override that changes the pair and sets no estimate. */
+  let missingEstimate: string | undefined;
   if (override !== undefined) {
-    const base: Route = fallback ??
-      structuredClone(defaultRoutes[operation]) ?? { model: override.model, estimatedCostUsd: 0 };
-    const { outputGrant, providerTerms, ...rest } = base;
     const same = fallback?.provider === override.provider && fallback?.model === override.model;
-    route = {
-      ...rest,
-      ...(same && outputGrant !== undefined && { outputGrant }),
-      ...(same && providerTerms !== undefined && { providerTerms }),
-      provider: override.provider,
-      model: override.model,
-      ...(override.estimatedCostUsd !== undefined && {
-        estimatedCostUsd: override.estimatedCostUsd,
-      }),
-      ...(override.outputGrant !== undefined && {
-        outputGrant: structuredClone(override.outputGrant) as OutputGrant,
-      }),
-      ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
-    };
+    if (same) {
+      route = {
+        ...fallback!,
+        ...(override.estimatedCostUsd !== undefined && {
+          estimatedCostUsd: override.estimatedCostUsd,
+        }),
+        ...(override.outputGrant !== undefined && {
+          outputGrant: structuredClone(override.outputGrant) as OutputGrant,
+        }),
+        ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
+      };
+    } else {
+      missingEstimate = override.estimatedCostUsd === undefined ? field : undefined;
+      route = {
+        provider: override.provider,
+        model: override.model,
+        estimatedCostUsd: override.estimatedCostUsd ?? 0,
+        ...(override.outputGrant !== undefined && {
+          outputGrant: structuredClone(override.outputGrant) as OutputGrant,
+        }),
+        ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
+      };
+    }
   } else if (fallback !== undefined) {
     route = fallback;
   } else {
@@ -491,6 +519,15 @@ export function resolveRoute(
     throw new RouteUnavailableError(
       operation,
       `route unavailable: ${what} names provider "${provider.id}", whose ${provider.adapter.id} adapter has no ${capability} capability; set ${fields} in the developer settings to a provider that has it`,
+    );
+  }
+  if (
+    missingEstimate !== undefined &&
+    provider.settings?.free !== true &&
+    provider.adapter.id !== STAND_IN_ADAPTER
+  ) {
+    throw new SettingsError(
+      `settings.${missingEstimate} routes ${what} to provider "${route.provider}" and model "${route.model}", which is not that operation's default (provider, model) pair, and sets no estimatedCostUsd; set settings.${missingEstimate}.estimatedCostUsd to the most one call can cost, since every paid call reserves its estimate before it is made`,
     );
   }
   return route;

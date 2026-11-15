@@ -135,9 +135,9 @@ Each operation maps to a role:
 | `planning`                    | `compiler`                                                                                                                            | vision              |
 | `model3d`, `rig3d`, `clips3d` | the operation of the same name                                                                                                        | model, rig, animate |
 
-An operation's route is `routes.<operation>`, else `roles.<role>`, else the default route of the first configured provider (by id) whose adapter has one for it: the gateway serves the 2D operations, Tripo the 3D ones, openai-compatible none (route each role to it), and the scripted adapter all of them. The route must name a configured provider whose adapter has the role's capability; otherwise the command exits 2 `route_unavailable` before any reservation, naming the operation and the fields that would serve it.
+An operation's route is `routes.<operation>`, else `roles.<role>`, else the default route of the first configured provider (by id) whose adapter has one for it: the gateway serves the 2D operations, Tripo the 3D ones, openai-compatible none (route each role to it), and the scripted adapter (the test stand-in) all of them, but only where no other configured provider has a default, so it never takes an operation from a real provider. The route must name a configured provider whose adapter has the role's capability; otherwise the command exits 2 `route_unavailable` before any reservation, naming the operation and the fields that would serve it.
 
-**Grants belong to (provider, model).** A default route carries the grant its provider's terms give, and its terms. An override that names the default's provider and model keeps them; one that changes either carries only its own `outputGrant` and `providerTerms`, and keeps the default's estimate and other fields. A call without a grant is refused at hand-off: see [Provider output grants](decisions.md#provider-output-grants). `estimatedCostUsd` sets the amount reserved before each call.
+**Grants belong to (provider, model).** A default route carries the grant its provider's terms give, and its terms. An override that names the default's provider and model keeps them; one that changes either, or routes an operation with no default, belongs to another pair and takes nothing from the default: it carries only its own `estimatedCostUsd`, `outputGrant` and `providerTerms`, and no size or provider options. Such an override must set `estimatedCostUsd` unless its provider is `free` or scripted; otherwise loading the routes exits 2 `settings_invalid`, since every paid call reserves its estimate before it is made. A call without a grant is refused at hand-off: see [Provider output grants](decisions.md#provider-output-grants). `estimatedCostUsd` sets the amount reserved before each call.
 
 Every call records its route as `<providerId>:<operation>:<model>`. `routeDataFlows(settings)` (src/dataflows.ts) lists, per routed operation, the provider, the host its data goes to, the model vendor behind a gateway route (`upstream`), the terms recorded and `retention` (`local` for a loopback or scripted provider; otherwise not recorded). The terms are recorded, not a licence. `suggestRoles(adapterIds)` gives the roles the adapters' default routes would serve.
 
@@ -165,10 +165,44 @@ A local-only setup routes `image` to a loopback OpenAI-compatible image server a
       },
       "providerTerms": "<the model's licence>",
     },
-    "vision": { "provider": "chat", "model": "<model>" },
+    "vision": {
+      "provider": "chat",
+      "model": "<model>",
+      "outputGrant": {
+        "license": "<SPDX or LicenseRef-*>",
+        "plan": "local",
+        "commercial": true,
+        "relabel": true,
+      },
+      "providerTerms": "<the model's licence>",
+    },
+    "decisions": {
+      "provider": "chat",
+      "model": "<model>",
+      "outputGrant": {
+        "license": "<SPDX or LicenseRef-*>",
+        "plan": "local",
+        "commercial": true,
+        "relabel": true,
+      },
+      "providerTerms": "<the model's licence>",
+    },
+    "planning": {
+      "provider": "chat",
+      "model": "<model>",
+      "outputGrant": {
+        "license": "<SPDX or LicenseRef-*>",
+        "plan": "local",
+        "commercial": true,
+        "relabel": true,
+      },
+      "providerTerms": "<the model's licence>",
+    },
   },
 }
 ```
+
+Every call in a provenance needs a grant, vision QA calls included, so each role carries the `outputGrant` its model's licence gives. A role left without one still stages, but `pick` and `write-families` refuse its output (exit 7 `license_refused`).
 
 ## Caps and ledger
 

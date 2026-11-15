@@ -39,7 +39,7 @@ Every command follows one contract, so scripts and agents can drive Assetgrove w
   - 6: the target's validator rejected what was written (`pick` or `write-families`).
   - 7: licence refused (`license_refused`): the provider's output grant does not let the target declare the output, and nothing is written.
 - `--dry-run` (on `stage`, `generate-sheet`, `animation-qa`, `fix-frame` and `materials`) prints the planned calls and the forecast, spends nothing and needs no key.
-- `--provider-script` runs a scripted provider for offline runs.
+- `--provider-script` gives the developer settings' `scripted` provider its module, for offline runs; when no route names a scripted provider, the first call exits 2 `invalid_input` before any spend, so the script is never silently ignored.
 
 ## MCP server on the official SDK
 

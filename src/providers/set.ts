@@ -4,7 +4,7 @@
  * the `Caller` records the call as `<providerId>:<operation>:<model>`.
  */
 import type { Env } from "../env.ts";
-import { ProviderError } from "../errors.ts";
+import { InputError, ProviderError } from "../errors.ts";
 import type {
   Billing,
   DecisionRequest,
@@ -38,16 +38,24 @@ export class ProviderSet implements GenerationProvider {
   readonly routes: Routes;
   readonly configured: readonly ConfiguredProvider[];
   readonly billing: Billing;
-  /** The billing of every provider some route names. */
+  /**
+   * The billing of every provider some route names. Only the billing summary uses it: each call's
+   * limit is checked on the provider that serves it (`Caller`), not on every part.
+   */
   readonly parts: readonly Billing[];
 
   /** Whether scripted providers were given a module. */
   readonly #scripted: boolean;
+  /** Whether some route names a scripted provider, which the module would serve. */
+  readonly #scriptServes: boolean;
 
   constructor(configured: readonly ConfiguredProvider[], routes: Routes, scripted = false) {
     this.configured = configured;
     this.#scripted = scripted;
     this.routes = routes;
+    this.#scriptServes = Object.values(routes).some(
+      (r) => configured.find((c) => c.id === r.provider)?.adapter.id === "scripted",
+    );
     const used = new Set(Object.values(routes).map((r) => r.provider));
     const parts = configured.filter((c) => used.has(c.id)).map((c) => c.provider.billing);
     this.parts = parts;
@@ -84,6 +92,11 @@ export class ProviderSet implements GenerationProvider {
     if (configured === undefined) {
       throw new ProviderError(
         `the ${operation} route names provider "${route.provider ?? "(none)"}", which is not configured`,
+      );
+    }
+    if (this.#scripted && !this.#scriptServes) {
+      throw new InputError(
+        `--provider-script was given, but no route of the developer settings names a scripted provider, so the script would serve no call and the ${operation} call would go to provider "${configured.id}" (${configured.adapter.id}) for real. Add a provider with "adapter": "scripted" to settings.providers and route roles to it, or leave out --provider-script.`,
       );
     }
     return { provider: configured.provider, id: configured.id };

@@ -346,3 +346,15 @@ test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
     child.kill();
   }
 });
+
+test("plan without the compiler's key falls back to the template, though the gateway declares no limit", async () => {
+  const f = await setup();
+  writeSettings({ providers: { "vercel-ai-gateway": {} } });
+  const args = f.args.filter(
+    (a, i) => a !== "--provider-script" && f.args[i - 1] !== "--provider-script",
+  );
+  const result = await cli(["plan", ...args]);
+  assert.equal(result.code, 0, result.stderr);
+  const saved = JSON.parse(await readFile(f.plan, "utf8")) as { compiler: { mode: string } };
+  assert.equal(saved.compiler.mode, "template-fallback");
+});

@@ -18,7 +18,10 @@ export type ProviderContext = Pick<RunContext, "settings" | "env" | "prompt">;
 
 /**
  * The providers and routes of the developer settings (src/providers/set.ts); `--provider-script`,
- * when given, is the module of every configured scripted provider. Makes no call.
+ * when given, is the module of every configured scripted provider; when no route names one, the
+ * first call is refused (exit 2 `invalid_input`, src/providers/set.ts), so a script is never
+ * silently ignored.
+ * Makes no call.
  */
 export async function providerSet(
   providerScript: string | undefined,
