@@ -1,0 +1,17 @@
+{
+  "id": "siglip2-base",
+  "repo": "onnx-community/siglip2-base-patch16-224-ONNX",
+  "revision": "",
+  "dimension": 768,
+  "primaryBase": "https://huggingface.co",
+  "mirrorBase": "https://github.com/clockgrove/assetgrove/releases/download/search-models-siglip2-base",
+  "files": [
+    { "path": "config.json", "sha256": "" },
+    { "path": "preprocessor_config.json", "sha256": "" },
+    { "path": "special_tokens_map.json", "sha256": "" },
+    { "path": "tokenizer.json", "sha256": "" },
+    { "path": "tokenizer_config.json", "sha256": "" },
+    { "path": "onnx/vision_model.onnx", "sha256": "" },
+    { "path": "onnx/text_model_int8.onnx", "sha256": "" }
+  ]
+}

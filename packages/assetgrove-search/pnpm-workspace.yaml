@@ -1,0 +1,6 @@
+# Makes this folder its own pnpm root: the root install never reaches it.
+autoInstallPeers: false
+packages: []
+allowBuilds:
+  onnxruntime-node: false
+  protobufjs: false
