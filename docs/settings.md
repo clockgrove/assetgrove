@@ -130,12 +130,14 @@ A target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd` lower the 
 
 What a key can carry for each core provider, and whether Assetgrove reads it. The rows describe the provider, not the adapters in this build.
 
-| Provider          | Limit a key can carry                                                   | Assetgrove reads it                                                              | Source                                                       | Checked    |
-| ----------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------ | ---------- |
-| Vercel AI Gateway | Prepaid AI Gateway credits for the team                                 | Yes: the credits balance, through the gateway SDK's `getCredits` (`/v1/credits`) | Vercel AI Gateway documentation, pricing and credits         | 2026-11-14 |
-| Anthropic         | Workspace spend limits and organization usage tiers, set in the Console | No, declared only: an ordinary API key cannot read them                          | Anthropic Console documentation, workspaces and spend limits | 2026-11-14 |
-| OpenAI            | Project budgets and organization usage limits                           | No, declared only                                                                | OpenAI platform documentation, projects and limits           | 2026-11-14 |
-| Tripo             | Prepaid credits on the account                                          | Yes: `GET /user/balance` (credits; USD with `usdPerCredit`)                      | Tripo API documentation                                      | 2026-11-14 |
+| Provider          | Limit a key can carry                                                   | Assetgrove reads it                                                              | Source                                                                       | Checked                                        |
+| ----------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------- |
+| Vercel AI Gateway | Prepaid AI Gateway credits for the team                                 | Yes: the credits balance, through the gateway SDK's `getCredits` (`/v1/credits`) | <https://vercel.com/docs/ai-gateway/pricing>; `@ai-sdk/gateway` `getCredits` | Not against the page; the SDK call, 2026-11-14 |
+| Anthropic         | Workspace spend limits and organization usage tiers, set in the Console | No, declared only: an ordinary API key cannot read them                          | <https://docs.anthropic.com/en/api/rate-limits>                              | Not yet                                        |
+| OpenAI            | Project budgets and organization usage limits                           | No, declared only                                                                | <https://platform.openai.com/docs/guides/rate-limits>                        | Not yet                                        |
+| Tripo             | Prepaid credits on the account                                          | Yes: `GET /user/balance` (credits; USD with `usdPerCredit`)                      | <https://platform.tripo3d.ai/docs>; `src/gateway/tripo.ts` `balance`         | Not against the page; the client, 2026-11-14   |
+
+The Assetgrove-reads column was checked against this build's code on 2026-11-14. The limit column was written without network access, so it has not been checked against the provider pages it names. A row's Checked cell gets a date once someone reads that page.
 
 ## Format lines
 
