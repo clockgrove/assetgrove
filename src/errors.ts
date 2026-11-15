@@ -56,6 +56,16 @@ export class InputError extends Error {
   }
 }
 
+/** A refusal of settings or the environment they allow, with the code `settings_invalid`. */
+export class SettingsError extends InputError {
+  readonly code = "settings_invalid";
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SettingsError";
+  }
+}
+
 /**
  * A model provider call failed or returned nothing usable. Its message is redacted. When the
  * provider answered, `status` is its HTTP status and `providerCode` its error code, so callers

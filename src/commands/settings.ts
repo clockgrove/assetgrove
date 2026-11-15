@@ -123,7 +123,7 @@ Read-only: never writes the settings; settings change proposes a change for a pe
         reconcile: billing.reconcile,
       });
     }
-    const refused = refusedVariables(s.environment.allow, ctx.env ?? process.env);
+    const refused = refusedVariables(s.environment.allow, ctx.env);
     const fields = { path: s.path, providers: checks, environment: { refused } };
     const human = [
       `settings ${where}`,

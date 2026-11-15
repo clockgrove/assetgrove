@@ -13,21 +13,27 @@ What the person should see, with a client that declares form elicitation:
 
 ## Setup
 
-Run `pnpm install` once. The server runs from the checkout with `node /abs/path/to/repo/src/cli.ts mcp` (Node 24 or later). Use absolute paths in every local config below; the remote-session `.mcp.json` uses `src/cli.ts` relative to the repo root, because the session runs from its own checkout. If a command has changed, check the harness's current docs.
+Run `pnpm install` once. The server runs from the checkout with `node /abs/path/to/repo/src/cli.ts mcp` (Node 24 or later). Use absolute paths in every local config below; the remote session's environment setup uses `src/cli.ts` relative to the checkout it runs from. Key handling for each harness is in [keys.md](keys.md); the steps below carry its ids. If a command has changed, check the harness's current docs.
 
 The calls use the developer's own settings (see `docs/settings.md`): a provider key, and a low run cap such as `--cap 0.10`. Generate one candidate (`candidates: 1`). The `stage` call spends a few cents. Prepare a spec, a style bible and a target profile, and give `pick` a scratch target directory, not a real project.
 
 ## Claude Code, local
 
-Register:
+Register at user scope, with the key in the server's env (`key:claude-code.user-scope`):
 
 ```sh
-claude mcp add assetgrove -- node /abs/path/to/repo/src/cli.ts mcp
+claude mcp add --scope user --env AI_GATEWAY_API_KEY=<key> assetgrove -- node /abs/path/to/repo/src/cli.ts mcp
 ```
+
+- `key:claude-code.deny-read`: deny reads of `~/.claude.json`, configDir and stateDir (permissions and sandbox `denyRead`).
+- `key:claude-code.deny-edit`: deny edits to configDir and stateDir.
+- `key:claude-code.no-provider-hosts`: no provider hosts in the sandbox network allowlist.
+- `key:claude-code.shell-env`: the key is not exported from the agent's shell profile.
 
 ## Claude Code, remote session (web or phone)
 
-Add a project `.mcp.json` entry in the checkout the session uses. Do not commit it.
+- `key:claude-code-cloud.secret-key`: the environment's setup supplies `AI_GATEWAY_API_KEY` as a secret.
+- `key:claude-code-cloud.config-outside-checkout`: the setup writes the settings outside the checkout and sets `ASSETGROVE_CONFIG`. Register the server in the environment's own user-level config. A project `.mcp.json` in the checkout is code the developer reviews; if you use one, leave it uncommitted:
 
 ```json
 {
@@ -40,9 +46,11 @@ Add a project `.mcp.json` entry in the checkout the session uses. Do not commit 
 }
 ```
 
+In this harness the key is in the session's environment, so the agent's shell can read it; expect the key-variable observation to fail and record it.
+
 ## GitHub Copilot CLI
 
-Register with `/mcp add` inside the CLI, or edit `~/.copilot/mcp-config.json`:
+- `key:copilot-cli.user-scope`: register with `/mcp add` inside the CLI, or edit `~/.copilot/mcp-config.json`, with the key in the server's `env`:
 
 ```json
 {
@@ -51,27 +59,28 @@ Register with `/mcp add` inside the CLI, or edit `~/.copilot/mcp-config.json`:
       "type": "local",
       "command": "node",
       "args": ["/abs/path/to/repo/src/cli.ts", "mcp"],
+      "env": { "AI_GATEWAY_API_KEY": "<key>" },
       "tools": ["*"]
     }
   }
 }
 ```
 
+- `key:copilot-cli.shell-env`: the key is not exported from the agent's shell profile.
+
 ## Codex
 
-Register:
-
-```sh
-codex mcp add assetgrove -- node /abs/path/to/repo/src/cli.ts mcp
-```
-
-Or edit `~/.codex/config.toml`:
+- `key:codex.user-scope`: edit `~/.codex/config.toml`, with the key in the server's `env`. `codex mcp add` can register the command; add the `env` line by hand.
 
 ```toml
 [mcp_servers.assetgrove]
 command = "node"
 args = ["/abs/path/to/repo/src/cli.ts", "mcp"]
+env = { AI_GATEWAY_API_KEY = "<key>" }
 ```
+
+- `key:codex.shell-sandbox`: the shell is sandboxed with the network off.
+- `key:codex.shell-env-policy`: `shell_environment_policy` keeps key variables out of the shell.
 
 ## Observations
 
@@ -81,6 +90,8 @@ Ask the harness to call `stage` with one candidate and a low cap, then `pick` on
 - [ ] Pick form shown: `pick` shows the run, contact-sheet path and digest, and the candidate choice (ids and `none`) can be answered.
 - [ ] Decline exits 8 `confirmation_declined`: decline a form and check the exit code and the error.
 - [ ] Record written: after accepting, `<configDir>/confirmations/<digest>.json` exists with method `elicitation` and the client's name.
+- [ ] Key variable empty in the agent's shell: ask the agent to run `printenv AI_GATEWAY_API_KEY`; it prints nothing.
+- [ ] Provider host unreachable from the shell: ask the agent to run `curl -sS https://ai-gateway.vercel.sh` in its shell; it fails.
 - [ ] Card shown on web or phone (remote session only).
 - [ ] Mark honoured in auto mode: with the harness in its auto, yolo or full-auto mode, it still asks you before calling `stage` and `pick` (both carry `_meta["anthropic/requiresUserInteraction"]`).
 - [ ] Progress seen: progress shows in the harness while `stage` runs.
@@ -97,6 +108,8 @@ Ask the harness to call `stage` with one candidate and a low cap, then `pick` on
 | Decline exits 8            |                   |                    |             |       |
 | Record written             |                   |                    |             |       |
 | Card on web or phone       | n/a               |                    | n/a         | n/a   |
+| Key variable empty (shell) |                   |                    |             |       |
+| Provider host unreachable  |                   |                    |             |       |
 | Mark honoured, auto        |                   |                    |             |       |
 | Progress seen during stage |                   |                    |             |       |
 | Contact sheet reaches you  |                   |                    |             |       |

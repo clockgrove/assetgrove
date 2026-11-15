@@ -2,15 +2,9 @@
  * Redaction (design section 4): key values and credential header values never reach a message
  * Assetgrove writes. `redact` runs in ProviderError, the one result builder and the log.
  */
-import type { Env } from "./env.ts";
+import { DEFAULT_KEY_ENV, keyValue, type Env } from "./env.ts";
 
-/** The key variable each adapter reads by default; settings may name more with `keyEnv`. */
-export const DEFAULT_KEY_ENV = [
-  "AI_GATEWAY_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "TRIPO_API_KEY",
-] as const;
+export { DEFAULT_KEY_ENV };
 
 /** Values shorter than this are not redacted: they would mangle ordinary text. */
 const MIN_REDACTED_LENGTH = 8;
@@ -45,10 +39,10 @@ const HEADER_PATTERNS: [RegExp, string][] = [
  * The text with each configured key variable's value replaced by `[redacted:<ENV>]` and the
  * values of Authorization, Bearer, Key and x-api-key masked.
  */
-export function redact(text: string, env: Env = process.env): string {
+export function redact(text: string, env?: Env): string {
   let out = text;
   const values = keyEnvNames()
-    .map((name) => [name, env[name]] as const)
+    .map((name) => [name, keyValue(name, env)] as const)
     .filter((entry): entry is readonly [string, string] => {
       const value = entry[1];
       return value !== undefined && value.trim().length >= MIN_REDACTED_LENGTH;

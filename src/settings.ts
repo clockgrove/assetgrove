@@ -166,7 +166,7 @@ export function settingsPath(env?: Env, platform: string = process.platform): st
 
 /** Finds, validates and completes the developer settings. Throws `SettingsError` on any refusal. */
 export function loadSettings(options: LoadOptions = {}): Settings {
-  // Left undefined unless a test passes one, so src/env.ts supplies process.env.
+  // Left undefined unless a test passes one, so src/env.ts supplies the process environment.
   const env = options.env;
   const platform = options.platform ?? process.platform;
   const path = settingsPath(env, platform);
@@ -378,7 +378,7 @@ function projectRoots(options: LoadOptions): string[] {
   const roots = new Set<string>();
   // A repository whose top level is the home directory (a dotfiles repository) is not a project:
   // it would hold every default config and state directory.
-  const walked = new Set<string>([realIfExists(homeDir(options.env ?? process.env))]);
+  const walked = new Set<string>([realIfExists(homeDir(options.env))]);
   for (let start = pending.pop(); start !== undefined; start = pending.pop()) {
     // A walked directory's ancestors are walked too, so the walk stops at the first one.
     for (let dir = start; !walked.has(dir); dir = dirname(dir)) {

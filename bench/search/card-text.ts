@@ -25,14 +25,17 @@ export class ScriptedVision implements VisionProvider {
 }
 
 /** The AI Gateway through the AI SDK (resolved at run time from core's install). */
-export async function gatewayVision(model: string): Promise<VisionProvider> {
+export async function gatewayVision(
+  model: string,
+  options: { baseURL?: string; apiKey?: string } = {},
+): Promise<VisionProvider> {
   const ai = (await import("ai")) as unknown as {
     generateText(o: unknown): Promise<{ text: string; response?: { id?: string } }>;
     createGateway(o: unknown): (id: string) => unknown;
   };
   const gateway = ai.createGateway({
-    apiKey: process.env["AI_GATEWAY_API_KEY"],
-    baseURL: `${process.env["FACTORY_GATEWAY_URL"] ?? "https://ai-gateway.vercel.sh"}/v4/ai`,
+    apiKey: options.apiKey ?? process.env["AI_GATEWAY_API_KEY"],
+    baseURL: options.baseURL ?? "https://ai-gateway.vercel.sh/v4/ai",
   });
   return {
     async describe(image, prompt) {

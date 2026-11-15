@@ -74,6 +74,7 @@ A model-backed QA check (a vision verdict, identity flicker, holes, look-dev mar
 ## Environment
 
 - `AI_GATEWAY_API_KEY`: the Vercel AI Gateway key, from the environment only. Not needed for `--dry-run` or `--provider-script`.
+- The key stays in the server's env, never the agent's shell. The per-harness key recipe is `docs/keys.md` in the repository.
 - `TRIPO_API_KEY`: the Tripo key, from the environment only, for the 3D calls of a `character-3d` stage.
 - `--provider-script <module>` answers every model call from a module whose default export is `{ image, vision }`. Its calls cost nothing and the ledger neither counts nor refuses them; `--cap` still applies.
 - The developer settings set the caps: `caps.runUsd` (`--cap` may only lower it), `caps.dailyUsd` (last 24 hours) and `caps.workItemUsd`, $5, $10 and $5 by default. Every paid call is recorded in the ledger `<stateDir>/spend.jsonl`, and a call that would cross a cap is refused with exit 3. A target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd` lower the daily and work-item caps. `--dry-run` shows the spend left under each.

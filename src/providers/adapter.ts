@@ -7,7 +7,7 @@
  * and `baseURL` to its SDK explicitly, so no `*_BASE_URL` variable ever applies.
  */
 import type { Env } from "../env.ts";
-import { SettingsError } from "../env.ts";
+import { keyValue, SettingsError } from "../env.ts";
 import { extensionOf, unavailableId } from "../extensions/errors.ts";
 import type { Billing, GenerationProvider } from "../gateway/provider.ts";
 import { ANTHROPIC_BASE_URL, AnthropicProvider } from "../gateway/anthropic.ts";
@@ -261,9 +261,8 @@ export function createProvider(
       `${where}providers.${id}.baseURL is not accepted: the ${adapter.id} adapter's endpoint is fixed (${adapter.fixedHosts.join(", ") || "none"}).`,
     );
   }
-  const env = options.env ?? process.env;
   const keyEnv = entry.keyEnv ?? adapter.defaultKeyEnv;
-  const apiKey = keyEnv !== undefined ? env[keyEnv] || undefined : undefined;
+  const apiKey = keyEnv !== undefined ? keyValue(keyEnv, options.env) || undefined : undefined;
   const provider = adapter.create({
     providerId: id,
     settings: entry,

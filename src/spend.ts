@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { BudgetExceededError } from "./budget.ts";
-import type { Env } from "./env.ts";
+import { WORK_ITEM_ENV, workItemEnv, type Env } from "./env.ts";
 import { InputError } from "./errors.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { assertLimitsDeclared, billingParts } from "./limits.ts";
@@ -27,8 +27,7 @@ import type { TargetProfile } from "./types.ts";
  * paid is its provider's billing (src/providers/adapter.ts); free calls are never recorded.
  */
 
-/** The one spend variable read: the work item when `--work-item` names none. */
-export const WORK_ITEM_ENV = "ASSETGROVE_WORK_ITEM";
+export { WORK_ITEM_ENV };
 
 /**
  * The ledger a run with this provider reserves against, with the profile's caps: none when no
@@ -170,8 +169,7 @@ export class SpendLedger {
     settings: Pick<Settings, "stateDir" | "caps">,
     options: { workItem?: string; env?: Env; now?: () => Date } = {},
   ): SpendLedger {
-    const env = options.env ?? process.env;
-    const workItem = (options.workItem ?? env[WORK_ITEM_ENV])?.trim() || undefined;
+    const workItem = (options.workItem ?? workItemEnv(options.env))?.trim() || undefined;
     return new SpendLedger({
       path: join(settings.stateDir, "spend.jsonl"),
       ...(workItem !== undefined && { workItem }),
