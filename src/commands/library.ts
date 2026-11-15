@@ -183,7 +183,11 @@ Read-only.`,
   effect: { readOnly: true, spends: "never", writes: "none" },
   async run(args) {
     const { targetDir, profile } = await open(args);
-    const bible = bibleVersionOf(resolve(args.bible ?? join(targetDir, BIBLE_PATH)));
+    const biblePath = resolve(args.bible ?? join(targetDir, BIBLE_PATH));
+    const bible = bibleVersionOf(biblePath);
+    if (args.bible !== undefined && bible === undefined) {
+      throw new InputError(`${args.bible}: a style bible with a version could not be read.`);
+    }
     const drift = await libraryDrift(await readLibrary(profile, targetDir), bible);
     const human = [
       `style bible version: ${drift.bibleVersion ?? "unknown"}`,

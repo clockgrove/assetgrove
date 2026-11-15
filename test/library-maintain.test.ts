@@ -58,6 +58,7 @@ const git = (dir: string, ...args: string[]) =>
 
 const LFS = "*.png filter=lfs diff=lfs merge=lfs -text\n";
 const UNION = "index.md merge=union\nlog.md merge=union\n*.review.json merge=union\n";
+const NEEDS_SAME_ASSET = ["lantern.review.json", "log.md"];
 const FOLDER = "props/lights";
 
 interface Library {
@@ -213,7 +214,7 @@ test("after a union merge of two branches' log, index and review-record lines, c
   const checked = await l.lib("check");
   assert.equal(checked.code, 0, checked.stdout + checked.stderr);
   const needs = doc(checked)["needsRebuild"] as string[];
-  assert.ok(needs.includes("log.md") || needs.includes("lantern.review.json"), needs.join());
+  assert.deepEqual(needs, NEEDS_SAME_ASSET);
 
   const rebuilt = await l.lib("rebuild");
   assert.equal(rebuilt.code, 0, rebuilt.stdout + rebuilt.stderr);
@@ -232,6 +233,56 @@ test("after a union merge of two branches' log, index and review-record lines, c
   const again = await l.lib("rebuild");
   assert.deepEqual(doc(again)["rebuilt"], []);
   assert.deepEqual(await projections(l), before);
+});
+
+test("two branches that each pick a different asset merge their index and log lines; check lists them under needsRebuild and rebuild clears it", async () => {
+  const l = await library(["lantern"], LFS + UNION);
+  git(l.target, "add", "-A");
+  git(l.target, "commit", "-q", "-m", "base");
+  const base = git(l.target, "rev-parse", "HEAD").trim();
+  for (const id of ["torch", "lamp"]) {
+    git(l.target, "checkout", "-q", "-b", id, base);
+    await pickStill(l.world, id);
+    git(l.target, "add", "-A");
+    git(l.target, "commit", "-q", "-m", id);
+  }
+  git(l.target, "checkout", "-q", "torch");
+  git(l.target, "merge", "-q", "--no-edit", "lamp");
+  const checked = await l.lib("check");
+  assert.equal(checked.code, 0, checked.stdout + checked.stderr);
+  assert.deepEqual(doc(checked)["needsRebuild"], ["log.md"]);
+  const merged = await projections(l);
+  assert.match(merged["index.md"]!, /lamp/);
+  assert.match(merged["index.md"]!, /torch/);
+  const rebuilt = await l.lib("rebuild");
+  assert.equal(rebuilt.code, 0, rebuilt.stdout + rebuilt.stderr);
+  assert.deepEqual(doc(rebuilt)["rebuilt"], ["log.md"]);
+  assert.deepEqual(doc(await l.lib("check"))["needsRebuild"], []);
+  assert.deepEqual(doc(await l.lib("rebuild"))["rebuilt"], []);
+});
+
+test("a check on an empty library, a hand-edited resource and a deleted provenance source", async () => {
+  const empty = await library([]);
+  await writeFile(empty.profile, JSON.stringify(empty.world.profile));
+  const none = await empty.lib("check");
+  assert.equal(none.code, 0, none.stdout + none.stderr);
+
+  const l = await library(["lantern"]);
+  const card = join(dir(l), "lantern.md");
+  const original = await text(card);
+  await writeFile(card, original.replace(/^resource: .*$/m, "resource: torch.png"));
+  assert.equal((await l.lib("check")).code, 6);
+  await writeFile(card, original.replace(/^ {2}- \{ id: provenance.*\n/m, ""));
+  assert.equal((await l.lib("check")).code, 6);
+  await writeFile(card, original);
+  assert.equal((await l.lib("check")).code, 0);
+});
+
+test("drift refuses a style bible that cannot be read", async () => {
+  const l = await library(["lantern"]);
+  const drift = await l.lib("drift", "--bible", join(l.world.dir, "absent.json"));
+  assert.equal(drift.code, 2);
+  assert.equal(doc(drift)["error"].code, "invalid_input");
 });
 
 test("after every index.md and log.md is deleted, rebuild restores them byte for byte", async () => {
@@ -280,6 +331,13 @@ test("a bible version change adds one root-log line on the first write, none on 
   assert.equal((await l.lib("rebuild")).code, 0);
   assert.deepEqual(await bibleLines(), lines);
   assert.equal((await l.lib("check")).code, 0);
+  // A rebuild that has the root log to re-render keeps the line.
+  const current = await text(logPath);
+  const heading = /^## .*$/m.exec(current)![0];
+  await writeFile(logPath, current.replace(heading, `${heading}\n\n${heading}`));
+  const laid = await l.lib("rebuild");
+  assert.ok(doc(laid)["rebuilt"].includes("log.md"), laid.stdout);
+  assert.deepEqual(await bibleLines(), lines);
 
   const bible = join(l.world.dir, "current-bible.json");
   await writeFile(bible, JSON.stringify({ version: "synthetic-2" }));

@@ -186,6 +186,13 @@ async function expectedFields(
   const { card, review } = asset;
   if (!card || !review || !currentVersion(review.record)) return undefined;
   const data = cardData(card.parsed);
+  // The media the records name: the pick annotation's target source, else what the card says.
+  const recorded = review.record.annotations
+    .filter((a) => a["ag:action"] === "pick" || a["ag:action"] === "replace")
+    .map((a) => (typeof a.target === "string" ? undefined : a.target.source))
+    .filter((s): s is string => s !== undefined)
+    .at(-1);
+  const resourceName = recorded ?? String(data["resource"]);
   const generated = data["generated"] as { by?: string; at?: string } | undefined;
   const byMatch = /^assetgrove\/(\S+) via (.*)$/.exec(generated?.by ?? "");
   const lock = data["lock"] as { bible?: string } | undefined;
@@ -197,10 +204,13 @@ async function expectedFields(
   };
   const sources = (data["sources"] ?? []) as { id: string; resource: string }[];
   const resource = (id: string) => sources.find((s) => s.id === id)?.resource;
-  const provenanceResource = resource("provenance");
+  // The provenance file sits beside the media as `<resource>.provenance.json` when it was copied there.
+  const beside = `${resourceName}.provenance.json`;
+  const provenanceResource =
+    (await readText(join(asset.dir, beside))) !== undefined ? beside : resource("provenance");
   const bibleResource = resource("bible");
   const fields = machineFields({
-    resource: String(data["resource"]),
+    resource: resourceName,
     provenance,
     ...(provenanceResource !== undefined && { provenanceResource }),
     review: review.record,
@@ -335,7 +345,8 @@ export async function readLibrary(
 
   // Projections: every folder from the root to each card, from the cards found.
   const cards = assets.filter((a) => a.card);
-  const folderSet = new Set<string>([config.root]);
+  // An empty library has no projections to keep: no cards, no index.
+  const folderSet = new Set<string>(cards.length > 0 ? [config.root] : []);
   for (const found of cards) {
     for (let folder = found.dir; within(config.root, folder); folder = dirname(folder)) {
       folderSet.add(folder);
