@@ -43,6 +43,11 @@ test("checkEnvironment passes a clean environment and ignores empty values", () 
   assert.doesNotThrow(() => checkEnvironment([], { PATH: "/usr/bin", HTTPS_PROXY: "" }));
 });
 
+test("a variable set in both spellings is reported once", () => {
+  const env = { HTTPS_PROXY: "http://proxy:3128", https_proxy: "http://proxy:3128" };
+  assert.deepEqual(refusedVariables([], env), ["HTTPS_PROXY"]);
+});
+
 test("allowing one variable does not allow another", () => {
   const env = { HTTPS_PROXY: "http://proxy:3128", NODE_EXTRA_CA_CERTS: "/ca.pem" };
   assert.deepEqual(refusedVariables(["HTTPS_PROXY"], env), ["NODE_EXTRA_CA_CERTS"]);
