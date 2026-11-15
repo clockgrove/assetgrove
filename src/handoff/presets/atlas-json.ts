@@ -104,6 +104,10 @@ export function buildAtlas(g: StripGeometry, shape: AtlasShape, withDuration: bo
   };
 }
 
+export const animationsOf = (g: StripGeometry): Record<string, string[]> => ({
+  [g.animation]: Array.from({ length: g.count }, (_, i) => frameName(g.assetId, i)),
+});
+
 export function atlasFile(path: string, doc: unknown): PresetFile {
   return { path, content: `${JSON.stringify(doc, null, 2)}\n` };
 }
@@ -163,7 +167,12 @@ export async function checkAtlas(
   }
   if (meta["scale"] !== "1") problems.push(`${file} meta.scale is not "1"`);
   const image = meta["image"];
-  if (typeof image !== "string" || image.includes("\\") || image.split("/").includes("..")) {
+  if (
+    typeof image !== "string" ||
+    posix.isAbsolute(image) ||
+    image.includes("\\") ||
+    image.split("/").includes("..")
+  ) {
     problems.push(`${file} meta.image is not a relative path with "/"`);
   } else {
     const imagePath = posix.join(posix.dirname(file), image);
@@ -194,9 +203,7 @@ export const atlasJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
   write(ctx, { shape }) {
     const g = stripGeometry(ctx, "atlas-json");
     const doc = buildAtlas(g, shape, false);
-    doc.animations = {
-      [g.animation]: Array.from({ length: g.count }, (_, i) => frameName(g.assetId, i)),
-    };
+    doc.animations = animationsOf(g);
     return [atlasFile(sidecarPath(g.media, ".atlas.json"), doc)];
   },
   async check(ctx, { shape }, files, read) {

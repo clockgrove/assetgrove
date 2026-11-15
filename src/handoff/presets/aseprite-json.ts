@@ -6,6 +6,7 @@
 import type { z } from "zod";
 import type { HandoffPreset } from "./index.ts";
 import {
+  animationsOf,
   atlasFile,
   atlasOptions,
   buildAtlas,
@@ -21,6 +22,7 @@ export const asepriteJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
   write(ctx, { shape }) {
     const g = stripGeometry(ctx, "aseprite-json");
     const doc = buildAtlas(g, shape, true);
+    doc.animations = animationsOf(g);
     doc.meta["frameTags"] = [{ name: g.animation, from: 0, to: g.count - 1, direction: "forward" }];
     return [atlasFile(sidecarPath(g.media, ".aseprite.json"), doc)];
   },
@@ -35,13 +37,19 @@ export const asepriteJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
           : {};
       const tags = Array.isArray(meta["frameTags"]) ? (meta["frameTags"] as unknown[]) : [];
       const covered = new Set<number>();
+      const problems: string[] = [];
       for (const t of tags) {
         const { from, to } = (t ?? {}) as { from?: unknown; to?: unknown };
         if (Number.isInteger(from) && Number.isInteger(to)) {
+          if ((from as number) < 0 || (to as number) > g.count - 1) {
+            problems.push(
+              `${file} a meta.frameTags entry names frames outside 0 to ${g.count - 1}`,
+            );
+            continue;
+          }
           for (let i = from as number; i <= (to as number); i++) covered.add(i);
         }
       }
-      const problems: string[] = [];
       if (!Array.from({ length: g.count }, (_, i) => covered.has(i)).every(Boolean)) {
         problems.push(`${file} meta.frameTags do not cover frames 0 to ${g.count - 1}`);
       }

@@ -168,6 +168,20 @@ const CORRUPTIONS: Array<[string, (doc: Doc) => Doc, RegExp]> = [
   ],
   ["null meta", (d) => ({ ...d, meta: null }), /meta\.size/],
   [
+    "absolute image path",
+    (d) => ({ ...d, meta: { ...d.meta, image: "/shelter.png" } }),
+    /meta\.image/,
+  ],
+  [
+    "tag past the last frame",
+    (d) => {
+      if (d.meta.frameTags) d.meta.frameTags[0].to = COUNT + 5;
+      else d.animations.shelter.pop();
+      return d;
+    },
+    /frameTags|animations/,
+  ],
+  [
     "tag coverage",
     (d) => {
       if (d.meta.frameTags) d.meta.frameTags[0].to = COUNT - 2;
