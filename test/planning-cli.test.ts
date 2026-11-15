@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { writeSettings } from "./fixtures/env.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 
 const temporaryRoots: string[] = [];
@@ -186,6 +187,43 @@ test("CLI apply requires explicit approval, auto-approve generates, stale templa
   const stale = await cli([...apply, "--auto-approve"]);
   assert.equal(stale.code, 2, stale.stderr);
   assert.match(stale.stderr, /stale|changed/i);
+  assert.equal(await readFile(f.events, "utf8"), before);
+});
+
+test("plan and apply are bounded by caps.runUsd: a run-settings capUsd above it exits 3 cap_refused", async () => {
+  const f = await setup();
+  // The run settings ask for capUsd 2; the developer settings allow $1 a run.
+  writeSettings({ caps: { runUsd: 1, dailyUsd: 10, workItemUsd: 5 } });
+  const refused = await cli(["plan", ...f.args]);
+  assert.equal(refused.code, 3, refused.stderr);
+  assert.equal(JSON.parse(refused.stdout).error.code, "cap_refused");
+  await assert.rejects(readFile(f.events), { code: "ENOENT" });
+
+  // Without a capUsd the run cap is the settings' cap, not a fixed default.
+  await writeFile(f.settings, JSON.stringify({ candidates: 1, strictness: 0.5 }));
+  const planned = await cli(["plan", ...f.args]);
+  assert.equal(planned.code, 0, planned.stderr);
+  assert.equal(JSON.parse(planned.stdout).plan.settings.capUsd, 1);
+
+  // A plan made under a higher cap is refused at apply once the settings lower it.
+  writeSettings({});
+  await writeFile(f.settings, JSON.stringify({ candidates: 1, capUsd: 2, strictness: 0.5 }));
+  const higher = await cli(["plan", ...f.args]);
+  assert.equal(higher.code, 0, higher.stderr);
+  writeSettings({ caps: { runUsd: 1, dailyUsd: 10, workItemUsd: 5 } });
+  const before = await readFile(f.events, "utf8");
+  const apply = await cli([
+    "apply",
+    f.plan,
+    "--provider-script",
+    f.script,
+    "--out",
+    join(f.dir, "runs"),
+    "--auto-approve",
+    "--json",
+  ]);
+  assert.equal(apply.code, 3, apply.stderr);
+  assert.equal(JSON.parse(apply.stdout).error.code, "cap_refused");
   assert.equal(await readFile(f.events, "utf8"), before);
 });
 

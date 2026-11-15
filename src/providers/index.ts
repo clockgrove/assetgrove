@@ -110,10 +110,12 @@ export async function planningContext(
   ctx: ProviderContext,
 ): Promise<ToolContext> {
   const ledger = spendLedger(ctx, workItem);
+  const runCapUsd = ctx.settings.caps.runUsd;
   const scripted = await scriptedFrom(providerScript, ctx);
-  if (scripted) return { provider: scripted.provider, providerName: scripted.name, ledger };
+  if (scripted)
+    return { provider: scripted.provider, providerName: scripted.name, ledger, runCapUsd };
   const configured = providerOfAdapter(ctx.settings, "vercel-ai-gateway", options(ctx));
   if (configured.keyPresent)
-    return { provider: configured.provider, providerName: configured.id, ledger };
-  return { ledger };
+    return { provider: configured.provider, providerName: configured.id, ledger, runCapUsd };
+  return { ledger, runCapUsd };
 }
