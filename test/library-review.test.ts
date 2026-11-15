@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,27 +105,20 @@ test("a version's number is its position in the stack", () => {
   assert.equal(versionNumber(record, "e".repeat(64)), undefined);
 });
 
+/** Joins two branches' edits of one base as Git's union merge driver does: `git merge-file --union`. */
 function union(baseText: string, ours: string, theirs: string): string {
-  const [b, o, t] = [baseText, ours, theirs].map((text) => text.split("\n"));
-  const prefix = (x: string[]) => {
-    let n = 0;
-    while (n < b!.length && n < x.length && b![n] === x[n]) n++;
-    return n;
-  };
-  const p = Math.min(prefix(o!), prefix(t!));
-  const suffix = (x: string[]) => {
-    let n = 0;
-    while (n < b!.length - p && n < x.length - p && b![b!.length - 1 - n] === x[x.length - 1 - n])
-      n++;
-    return n;
-  };
-  const s = Math.min(suffix(o!), suffix(t!));
-  return [
-    ...b!.slice(0, p),
-    ...o!.slice(p, o!.length - s),
-    ...t!.slice(p, t!.length - s),
-    ...b!.slice(b!.length - s),
-  ].join("\n");
+  const dir = mkdtempSync(join(tmpdir(), "assetgrove-union-"));
+  try {
+    const files = { base: baseText, ours, theirs };
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    return execFileSync(
+      "git",
+      ["merge-file", "--union", "-p", join(dir, "ours"), join(dir, "base"), join(dir, "theirs")],
+      { encoding: "utf8" },
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 test("two branches' appends join line by line into the union", () => {
