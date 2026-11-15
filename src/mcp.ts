@@ -17,7 +17,6 @@ import type { GenerationProvider } from "./gateway/provider.ts";
 import { loadProfile, readJson } from "./inputs.ts";
 import { applyPlan, createPlan, savePlan } from "./planning.ts";
 import type { GenerationBrief, RunSettings } from "./planning.ts";
-import { loadRoutes } from "./routes.ts";
 import type { SpendLedger } from "./spend.ts";
 import type { AssetSpec } from "./types.ts";
 
@@ -85,7 +84,6 @@ export async function generationTool(
       ...(briefPath && { brief: (await readJson<GenerationBrief>(briefPath)).value }),
       ...(settingsPath && { settings: (await readJson<Partial<RunSettings>>(settingsPath)).value }),
       ...(stringArg(args, "template", false) && { templatePath: args["template"] as string }),
-      routes: await loadRoutes(stringArg(args, "routes", false)),
       ...(stringArg(args, "identityMode", false) && {
         identityMode: args["identityMode"] as string,
       }),

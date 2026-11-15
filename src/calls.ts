@@ -1,5 +1,5 @@
 import type { Budget } from "./budget.ts";
-import { InputError, ProviderError } from "./errors.ts";
+import { ProviderError } from "./errors.ts";
 import { BudgetExceededError } from "./budget.ts";
 import { assertLimitDeclared, billingOf } from "./limits.ts";
 import type {
@@ -11,6 +11,8 @@ import type {
   ModelResult,
   ProviderResult,
 } from "./gateway/provider.ts";
+import { ProviderSet } from "./providers/set.ts";
+import { RouteUnavailableError } from "./routes.ts";
 import type { Route, Routes } from "./routes.ts";
 import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
 
@@ -22,15 +24,17 @@ import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
 export class Caller {
   readonly records: CallRecord[] = [];
   private readonly provider: GenerationProvider;
-  private readonly providerName: string;
+  private readonly providerName: string | undefined;
   private readonly budget: Budget;
   private readonly routes: Routes;
   private readonly now: () => Date;
   private readonly log: (message: string) => void;
 
   constructor(options: {
+    /** A `ProviderSet` serves each call on its route's provider; any other provider serves all. */
     provider: GenerationProvider;
-    providerName: string;
+    /** The id a single provider's calls are recorded under; a set records each route's provider. */
+    providerName?: string;
     budget: Budget;
     routes: Routes;
     now?: () => Date;
@@ -47,8 +51,19 @@ export class Caller {
 
   route(operation: string): Route {
     const route = this.routes[operation];
-    if (!route) throw new InputError(`no model route for operation "${operation}"`);
+    if (!route) {
+      throw new RouteUnavailableError(
+        operation,
+        `route unavailable: no model route for operation "${operation}"`,
+      );
+    }
     return route;
+  }
+
+  /** The provider that serves a route, and the id its call is recorded under. */
+  private serve(route: Route, operation: string): { provider: GenerationProvider; id: string } {
+    if (this.provider instanceof ProviderSet) return this.provider.serve(route, operation);
+    return { provider: this.provider, id: this.providerName ?? route.provider ?? "provider" };
   }
 
   private async record<T extends ProviderResult>(
@@ -58,21 +73,23 @@ export class Caller {
     references: LoadedReference[],
     parameters: Record<string, unknown>,
     seed: number | undefined,
-    run: (route: Route) => Promise<T>,
+    run: (route: Route, provider: GenerationProvider) => Promise<T>,
   ): Promise<T> {
     const route = this.route(operation);
+    const served = this.serve(route, operation);
+    const name = `${served.id}:${operation}:${route.model}`;
     // Paid-ness is the adapter's: only a paid call needs a declared limit and reaches the ledger.
-    const billing = billingOf(this.provider, kind);
+    const billing = billingOf(served.provider, kind);
     assertLimitDeclared(billing);
     const reservation = this.budget.reserve(
       route.estimatedCostUsd,
       `the ${operation} call`,
-      billing.paid ? `${this.providerName}:${operation}:${route.model}` : undefined,
+      billing.paid ? name : undefined,
     );
     const startedAt = this.now().toISOString();
     let result: T;
     try {
-      result = await run(route);
+      result = await run(route, served.provider);
     } catch (error) {
       // A failed call may still have been billed; count the estimate so the cap stays safe.
       this.budget.settle(reservation, route.estimatedCostUsd);
@@ -86,7 +103,7 @@ export class Caller {
     this.records.push({
       operation,
       model: route.model,
-      route: `${this.providerName}:${operation}:${route.model}`,
+      route: name,
       prompt,
       parameters,
       referenceHashes: references.map((r) => r.sha256),
@@ -97,7 +114,7 @@ export class Caller {
       finishedAt: this.now().toISOString(),
       costUsd,
       costSource: result.costUsd === undefined ? "estimate" : "provider",
-      providerTerms: route.providerTerms,
+      ...(route.providerTerms !== undefined && { providerTerms: route.providerTerms }),
       ...(route.outputGrant !== undefined && { outputGrant: structuredClone(route.outputGrant) }),
     });
     return result;
@@ -125,8 +142,8 @@ export class Caller {
       references,
       parameters,
       sendSeed,
-      (r) =>
-        this.provider.generateImage({
+      (r, provider) =>
+        provider.generateImage({
           model: r.model,
           prompt,
           references: references.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
@@ -159,8 +176,8 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       views: views.map((r) => ({ view: r.view, role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    return this.record("model", operation, prompt, views, parameters, sendSeed, (r) => {
-      const generate = this.provider.generateModel?.bind(this.provider);
+    return this.record("model", operation, prompt, views, parameters, sendSeed, (r, provider) => {
+      const generate = provider.generateModel?.bind(provider);
       if (!generate) throw new ProviderError(`the provider cannot make 3D models (${operation})`);
       return generate({
         model: r.model,
@@ -181,16 +198,24 @@ export class Caller {
       rigType,
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
     };
-    return this.record("rig", operation, `rig: ${rigType}`, [], parameters, undefined, (r) => {
-      const rig = this.provider.rigModel?.bind(this.provider);
-      if (!rig) throw new ProviderError(`the provider cannot rig 3D models (${operation})`);
-      return rig({
-        model: r.model,
-        source,
-        rigType,
-        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-      });
-    });
+    return this.record(
+      "rig",
+      operation,
+      `rig: ${rigType}`,
+      [],
+      parameters,
+      undefined,
+      (r, provider) => {
+        const rig = provider.rigModel?.bind(provider);
+        if (!rig) throw new ProviderError(`the provider cannot rig 3D models (${operation})`);
+        return rig({
+          model: r.model,
+          source,
+          rigType,
+          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+        });
+      },
+    );
   }
 
   /** Retargets library clips onto a rigged model (by its handle). */
@@ -208,8 +233,8 @@ export class Caller {
       [],
       parameters,
       undefined,
-      (r) => {
-        const animate = this.provider.animateModel?.bind(this.provider);
+      (r, provider) => {
+        const animate = provider.animateModel?.bind(provider);
         if (!animate)
           throw new ProviderError(`the provider cannot animate 3D models (${operation})`);
         return animate({
@@ -236,8 +261,8 @@ export class Caller {
       images,
       parameters,
       undefined,
-      (r) =>
-        this.provider.analyzeImages({
+      (r, provider) =>
+        provider.analyzeImages({
           model: r.model,
           prompt,
           images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
@@ -271,8 +296,8 @@ export class Caller {
         images,
         parameters,
         undefined,
-        (r) => {
-          const decide = this.provider.decide?.bind(this.provider);
+        (r, provider) => {
+          const decide = provider.decide?.bind(provider);
           if (!decide)
             throw new ProviderError(`the provider cannot make typed decisions (${operation})`);
           return decide({
@@ -285,7 +310,7 @@ export class Caller {
       );
     } catch (error) {
       // A failed call is charged its route's estimate (see record); log it like a completed one.
-      const route = this.routes[operation];
+      const route = Object.hasOwn(this.routes, operation) ? this.routes[operation] : undefined;
       const message = error instanceof Error ? error.message : String(error);
       const latencyMs = Math.round(performance.now() - started);
       this.log(

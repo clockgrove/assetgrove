@@ -45,9 +45,10 @@ export interface StageOptions {
   /** Directory the profile's relative paths resolve against (the profile file's directory). */
   profileDir?: string;
   routes: Routes;
+  /** The provider set of the settings, or one provider that serves every route. */
   provider: GenerationProvider;
-  /** Recorded in each call's route: the provider's settings id, for example `vercel-ai-gateway`. */
-  providerName: string;
+  /** One provider's settings id, recorded in each call's route; a set records each route's own. */
+  providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   generators: Generator[];
@@ -207,7 +208,9 @@ function provenanceOf(
     bibleVersion: bible.version,
     ...(licenses.length > 0 && { referenceLicenses: licenses }),
     ...licenseFields(profile, calls),
-    providerTerms: unique(calls.map((c) => c.providerTerms)),
+    providerTerms: unique(
+      calls.flatMap((c) => (c.providerTerms !== undefined ? [c.providerTerms] : [])),
+    ),
     startedAt: calls[0]?.startedAt ?? "",
     finishedAt: calls[calls.length - 1]?.finishedAt ?? "",
     costUsd: calls.reduce((sum, c) => sum + c.costUsd, 0),
@@ -258,7 +261,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   for (let index = 0; index < requested; index++) {
     const call = new Caller({
       provider: options.provider,
-      providerName: options.providerName,
+      ...(options.providerName !== undefined && { providerName: options.providerName }),
       budget,
       routes,
       now,

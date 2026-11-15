@@ -267,7 +267,7 @@ export async function evaluateIdentity(options: {
   profile: Pick<TargetProfile, "identity" | "spend">;
   routes: Routes;
   provider: GenerationProvider;
-  providerName: string;
+  providerName?: string;
   capUsd: number;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
@@ -314,7 +314,7 @@ export async function evaluateIdentity(options: {
   );
   const caller = new Caller({
     provider: options.provider,
-    providerName: options.providerName,
+    ...(options.providerName !== undefined && { providerName: options.providerName }),
     budget,
     routes: options.routes,
     ...(options.log && { log: options.log }),

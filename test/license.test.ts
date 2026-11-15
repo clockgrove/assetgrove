@@ -6,15 +6,20 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { InputError } from "../src/errors.ts";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { encodePng } from "../src/image/raster.ts";
+import { ProviderSet } from "../src/providers/set.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { pick } from "../src/handoff.ts";
 import { combineGrants, LicenseError } from "../src/license.ts";
 import { stage } from "../src/loop.ts";
-import { defaultRoutes, loadRoutes } from "../src/routes.ts";
+import { defaultRoutes } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
-import type { OutputGrant, TargetProfile } from "../src/types.ts";
+import type { AssetSpec, OutputGrant, Provenance, TargetProfile } from "../src/types.ts";
+import { writeSettings } from "./fixtures/env.ts";
 import {
+  drawSubject,
   scriptedProvider,
   shelterSpec,
   syntheticWorld as plainWorld,
@@ -196,15 +201,6 @@ test("the most restrictive grant wins when calls combine", () => {
   assert.equal(all.attribution, CC_BY.attribution);
 });
 
-test("a routes file with a malformed outputGrant is invalid input", async () => {
-  const world = await syntheticWorld();
-  const path = join(world.dir, "routes.json");
-  await writeFile(path, JSON.stringify({ edit: { outputGrant: { license: "CC-BY-4.0" } } }));
-  await assert.rejects(loadRoutes(path), InputError);
-  await writeFile(path, JSON.stringify({ edit: { outputGrant: CC_BY } }));
-  assert.deepEqual((await loadRoutes(path)).edit.outputGrant, CC_BY);
-});
-
 function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     execFile(process.execPath, ["src/cli.ts", ...args], { cwd: root }, (error, stdout, stderr) =>
@@ -213,40 +209,143 @@ function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: st
   });
 }
 
-test("pick of a refused output exits 7 with license_refused", async () => {
-  const world = await syntheticWorld();
-  const spec = join(world.dir, "spec.json");
+/** The spec, bible and profile of a world, written to files for the CLI. */
+async function worldFiles(world: World, spec: AssetSpec = shelterSpec): Promise<string[]> {
+  const specPath = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
   const profile = join(world.dir, "profile.json");
-  const routes = join(world.dir, "routes.json");
-  await writeFile(spec, JSON.stringify(shelterSpec));
+  await writeFile(specPath, JSON.stringify(spec));
   await writeFile(bible, JSON.stringify(world.bible));
   await writeFile(profile, JSON.stringify(world.profile));
-  await writeFile(
-    routes,
-    JSON.stringify({ still: { outputGrant: CC_BY }, edit: { outputGrant: CC_BY } }),
-  );
+  return ["--spec", specPath, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
+}
+
+async function stageAndPick(world: World, files: string[]) {
   const s = await cli([
     "stage",
-    ...["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir],
-    ...["--routes", routes, "--candidates", "1", "--provider-script", passingScript, "--json"],
+    ...files,
+    ...["--candidates", "1", "--provider-script", passingScript, "--json"],
   ]);
   assert.equal(s.code, 0, s.stderr);
   const runDir = JSON.parse(s.stdout)["runDir"] as string;
   const r = await cli([
-    "pick",
-    "--run",
-    runDir,
-    "--candidate",
-    "c1",
-    "--target",
-    world.targetDir,
-    "--json",
+    ...["pick", "--run", runDir, "--candidate", "c1", "--target", world.targetDir, "--json"],
   ]);
+  return { staged: JSON.parse(s.stdout) as { candidates: Array<{ provenance: Provenance }> }, r };
+}
+
+test("pick of a refused output exits 7 with license_refused", async () => {
+  const world = await syntheticWorld();
+  writeSettings({
+    roles: { edit: { provider: "scripted", model: defaultRoutes.edit.model, outputGrant: CC_BY } },
+  });
+  const { r } = await stageAndPick(world, await worldFiles(world));
   assert.equal(r.code, 7, r.stderr);
   const d = JSON.parse(r.stdout);
   assert.equal(d.ok, false);
   assert.equal(d.error.code, "license_refused");
   assert.match(r.stderr, /refused hand-off/);
+  assert.deepEqual(await readdir(world.targetDir), []);
+});
+
+/** A loopback OpenAI-compatible image server answering every image request with `png`. */
+async function imageServer(png: Uint8Array): Promise<{ baseURL: string; close: () => void }> {
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify({
+          created: 0,
+          data: [{ b64_json: Buffer.from(png).toString("base64") }],
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return { baseURL: `http://127.0.0.1:${port}/v1`, close: () => server.close() };
+}
+
+const denSpec: AssetSpec = {
+  kind: "still",
+  assetId: "den",
+  animationFamily: "idle",
+  fields: { semantic: { role: "prop", entity: "grove.den" }, accessibilityLabel: "The den" },
+};
+
+test("a grantless openai-compatible route is refused at pick; declaring roles.image.outputGrant lets it hand off", async () => {
+  const world = await syntheticWorld();
+  const server = await imageServer(encodePng(drawSubject(96, 0)));
+  try {
+    const files = await worldFiles(world, denSpec);
+    const providers = {
+      scripted: { limit: { kind: "prepaid", usd: 100 } },
+      local: { adapter: "openai-compatible", baseURL: server.baseURL, free: true },
+    };
+    writeSettings({ providers, roles: { image: { provider: "local", model: "local-image" } } });
+    const refused = await stageAndPick(world, files);
+    const calls = refused.staged.candidates[0]!.provenance.calls;
+    assert.equal(calls[0]!.route, "local:still:local-image");
+    assert.equal(calls[0]!.outputGrant, undefined);
+    assert.equal(refused.r.code, 7, refused.r.stderr);
+    const d = JSON.parse(refused.r.stdout) as { error: { code: string; message: string } };
+    assert.equal(d.error.code, "license_refused");
+    assert.match(d.error.message, /local:still:local-image/);
+    assert.match(d.error.message, /roles\.image\.outputGrant/);
+    assert.deepEqual(await readdir(world.targetDir), []);
+
+    writeSettings({
+      providers,
+      roles: {
+        image: {
+          provider: "local",
+          model: "local-image",
+          outputGrant: OWNED,
+          providerTerms: "Local model licence (synthetic)",
+        },
+      },
+    });
+    const handed = await stageAndPick(world, files);
+    assert.equal(handed.r.code, 0, handed.r.stderr);
+    const manifest = JSON.parse(
+      await readFile(join(world.targetDir, "assets/manifests/den/idle.json"), "utf8"),
+    );
+    assert.equal(manifest.license, "MIT");
+  } finally {
+    server.close();
+  }
+});
+
+test("a gateway route whose model is overridden without its own grant is refused at pick", async () => {
+  const world = await syntheticWorld();
+  const settings = {
+    providers: { gateway: { adapter: "vercel-ai-gateway" } },
+    roles: {},
+    routes: { edit: { provider: "gateway", model: "bfl/flux-kontext-max" } },
+    path: "settings.json",
+  };
+  const routes = ProviderSet.fromSettings(settings, { env: {} }).routes;
+  assert.equal(routes.edit.outputGrant, undefined);
+  // The gateway's calls are answered by the scripted stand-in, recorded under the gateway's id.
+  const { runDir } = await stage({
+    spec: shelterSpec,
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: world.profile,
+    routes,
+    provider: scriptedProvider(),
+    providerName: "gateway",
+    generators: imageGenerators,
+    runsDir: world.runsDir,
+  });
+  await assert.rejects(
+    pick({ runDir, candidateId: "c1", targetDir: world.targetDir }),
+    (error: unknown) =>
+      error instanceof LicenseError &&
+      /gateway:edit:bfl\/flux-kontext-max/.test(error.message) &&
+      /routes\.edit\.outputGrant/.test(error.message),
+  );
   assert.deepEqual(await readdir(world.targetDir), []);
 });

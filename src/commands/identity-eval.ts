@@ -2,8 +2,7 @@ import { evaluateIdentity } from "../identity-eval.ts";
 import type { Breakdown, MediumReport } from "../identity-eval.ts";
 import { loadProfile } from "../inputs.ts";
 import { runCap } from "../budget.ts";
-import { providerFor, spendLedger } from "../providers/index.ts";
-import { loadRoutes } from "../routes.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
 import { defineCommand } from "./types.ts";
 
 function formatMedium(medium: string, m: MediumReport, threshold: number): string[] {
@@ -30,7 +29,6 @@ interface IdentityEvalArgs {
   profile?: string;
   log?: string;
   cap?: number;
-  routes?: string;
   workItem?: string;
   providerScript?: string;
 }
@@ -70,7 +68,6 @@ hold a game's private art. See docs/generation-knobs.md.`,
           "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
         placeholder: "<usd>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       workItem: {
         type: "string",
         description: "the work item the spend ledger counts against",
@@ -89,14 +86,13 @@ hold a game's private art. See docs/generation-knobs.md.`,
   confirm: "spend",
   async run(args, ctx) {
     const profile = args.profile ? (await loadProfile(args.profile)).value : {};
-    const { provider, name } = await providerFor(args.providerScript, ctx);
+    const provider = await providerSet(args.providerScript, ctx);
     const report = await evaluateIdentity({
       ...(args.bible !== undefined && { biblePath: args.bible }),
       casesPath: args.cases,
       profile,
-      routes: await loadRoutes(args.routes),
+      routes: provider.routes,
       provider,
-      providerName: name,
       capUsd: runCap(args.cap, ctx.settings),
       ledger: spendLedger(ctx, args.workItem),
       ...(args.log !== undefined && { logPath: args.log }),

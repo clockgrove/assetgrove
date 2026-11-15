@@ -3,6 +3,7 @@
  * under in a target (issue #47; the field names are shared with the target's asset manifest).
  */
 import { InputError } from "./errors.ts";
+import { routeFields } from "./routes.ts";
 import type { CallRecord, OutputGrant, Provenance, TargetProfile } from "./types.ts";
 
 /** The target cannot declare an output under any licence its provider's terms allow. */
@@ -138,11 +139,30 @@ export function licenseFields(
 }
 
 /**
+ * Throws a LicenseError for the first call that records no `outputGrant`, naming its route and the
+ * developer settings fields that declare the grant of its provider and model. No grant, no
+ * hand-off.
+ */
+export function requireGrants(calls: CallRecord[]): void {
+  calls.forEach((call, index) => {
+    if (call.outputGrant !== undefined) return;
+    const fields = routeFields(call.operation)
+      .map((f) => `${f}.outputGrant`)
+      .join(" or ");
+    throw new LicenseError(
+      `refused hand-off: call ${index + 1} (route ${call.route}) records no outputGrant, so nothing says its output may be handed to a game; declare the grant its provider's terms give for that provider and model in the developer settings (${fields})`,
+    );
+  });
+}
+
+/**
  * The provenance as it is handed to the target: the grant re-derived from its calls and the licence
- * it is declared under. Throws a LicenseError when the target cannot declare it.
+ * it is declared under. Throws a LicenseError when a call records no grant, or when the target
+ * cannot declare it.
  */
 export function requireLicensable(profile: TargetProfile, provenance: Provenance): Provenance {
   const calls = Array.isArray(provenance.calls) ? provenance.calls : [];
+  requireGrants(calls);
   const outputGrant = grantOf(calls);
   const decision = licenseDecision(profile, outputGrant);
   if ("refused" in decision) throw new LicenseError(`refused hand-off: ${decision.refused}`);

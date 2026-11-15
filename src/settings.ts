@@ -8,6 +8,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
 import { configHome, configOverride, homeDir, SettingsError, stateHome, type Env } from "./env.ts";
 import { FormatError, readFormat } from "./formats.ts";
+import { grantProblems } from "./license.ts";
 
 export { SettingsError } from "./env.ts";
 
@@ -64,6 +65,15 @@ const outputGrantSchema = z.strictObject({
   attribution: z.string().optional(),
 });
 
+/** A role or route entry: the provider and model, and what the pair grants and costs. */
+const routeSchema = z.strictObject({
+  provider: name,
+  model: name,
+  outputGrant: outputGrantSchema.optional(),
+  providerTerms: z.string().optional(),
+  estimatedCostUsd: usd.optional(),
+});
+
 const settingsSchema = z.strictObject({
   format: z.string(),
   stateDir: z.string().refine(isAbsolute, "must be an absolute path").optional(),
@@ -72,18 +82,8 @@ const settingsSchema = z.strictObject({
     .strictObject({ runUsd: usd.optional(), dailyUsd: usd.optional(), workItemUsd: usd.optional() })
     .optional(),
   providers: z.record(name, providerSchema).optional(),
-  roles: z
-    .record(
-      name,
-      z.strictObject({
-        provider: name,
-        model: name,
-        outputGrant: outputGrantSchema.optional(),
-        providerTerms: z.string().optional(),
-      }),
-    )
-    .optional(),
-  routes: z.record(name, z.strictObject({ provider: name, model: name })).optional(),
+  roles: z.record(name, routeSchema).optional(),
+  routes: z.record(name, routeSchema).optional(),
   extensions: z.array(name).optional(),
   environment: z.strictObject({ allow: z.array(name) }).optional(),
   reconcile: z
@@ -324,6 +324,12 @@ function checkProviders(file: SettingsFile, path: string): void {
       if (!Object.hasOwn(providers, value.provider)) {
         throw new SettingsError(
           `${path}: ${section}.${entry} names provider "${value.provider}", which is not in providers.`,
+        );
+      }
+      const problems = value.outputGrant !== undefined ? grantProblems(value.outputGrant) : [];
+      if (problems.length > 0) {
+        throw new SettingsError(
+          `${path}: ${section}.${entry}.outputGrant is not a grant: ${problems.join("; ")}.`,
         );
       }
     }

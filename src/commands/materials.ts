@@ -6,8 +6,7 @@ import { declarationOption, readJson, loadProfile } from "../inputs.ts";
 import { runMaterials } from "../material/pipeline.ts";
 import type { MaterialDerivation } from "../material/pipeline.ts";
 import { resolveMaterialProfile } from "../material/profile.ts";
-import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
-import { loadRoutes } from "../routes.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
 import { ledgerFor } from "../spend.ts";
 import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
@@ -20,7 +19,6 @@ interface MaterialsArgs {
   derivation: string;
   out: string;
   cap?: number;
-  routes?: string;
   workItem?: string;
   digitalSourceType?: string;
   providerScript?: string;
@@ -61,7 +59,6 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
           "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
         placeholder: "<usd>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       workItem: {
         type: "string",
         description: "the work item the spend ledger counts against",
@@ -88,8 +85,8 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
     const spec = await readJson<AssetSpec>(args.spec);
     const profile = await loadProfile(args.profile);
     const derivation = await readJson<MaterialDerivation>(args.derivation);
-    const routes = await loadRoutes(args.routes);
-    routes["material-qa"] ??= routes.vision;
+    const provider = await providerSet(args.providerScript, ctx);
+    const routes = provider.routes;
     const config = resolveMaterialProfile(profile.value.style?.materials);
     const capUsd = runCap(args.cap, ctx.settings);
     const ledger = spendLedger(ctx, args.workItem).forProfile(profile.value);
@@ -123,12 +120,10 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
         withinCap: estimateUsd <= capUsd + 1e-9,
       };
       const human = `dry run: materials, ${plan.calls} planned call(s), nothing spent\nforecast ${usd(estimateUsd)} against a $${capUsd.toFixed(2)} cap`;
-      return dryRunOutcome(plan, human, ledger, await dryRunProvider(args.providerScript, ctx));
+      return dryRunOutcome(plan, human, ledger, provider.billing);
     }
-    const { provider, name } = await providerFor(args.providerScript, ctx);
     const call = new Caller({
       provider,
-      providerName: name,
       budget: new Budget(capUsd, ledgerFor(ledger, provider)),
       routes,
     });

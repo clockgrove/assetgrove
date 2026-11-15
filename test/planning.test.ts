@@ -544,9 +544,12 @@ test("recorded model routes, seed sequence and exploration settings reach the ex
       seed: 42,
       strictness: 0.9,
       exploration: 0.25,
-      modelRoute: { ...defaultRoutes.still, model: "scripted/image", supportsSeed: true },
-      llmRoute: { ...defaultRoutes.vision, model: "scripted/compiler" },
-      qaRoute: { ...defaultRoutes.vision, model: "scripted/qa" },
+    },
+    routes: {
+      ...defaultRoutes,
+      still: { ...defaultRoutes.still, model: "scripted/image", supportsSeed: true },
+      compiler: { ...defaultRoutes.vision, model: "scripted/compiler" },
+      vision: { ...defaultRoutes.vision, model: "scripted/qa" },
     },
     provider,
   });
@@ -574,6 +577,16 @@ test("recorded model routes, seed sequence and exploration settings reach the ex
   await assert.rejects(
     createPlan({ biblePath: f.biblePath, spec, settings: { seed: 1 }, provider }),
     /does not support/,
+  );
+  // Run options carry no route: routes come only from the developer settings.
+  await assert.rejects(
+    createPlan({
+      biblePath: f.biblePath,
+      spec,
+      settings: { modelRoute: { ...defaultRoutes.still, model: "x/y" } },
+      provider,
+    }),
+    /cannot set modelRoute/,
   );
 });
 

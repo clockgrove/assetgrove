@@ -10,7 +10,6 @@ interface PlanArgs {
   brief?: string;
   settings?: string;
   template?: string;
-  routes?: string;
   identityMode?: string;
   workItem?: string;
   providerScript?: string;
@@ -44,7 +43,6 @@ Review the saved plan before apply; this command never generates images.`,
         description: "the prompt template",
         placeholder: "<template.md>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       identityMode: {
         type: "string",
         description: "override the profile's identity mode",
@@ -77,7 +75,6 @@ Review the saved plan before apply; this command never generates images.`,
         brief: args.brief,
         settings: args.settings,
         template: args.template,
-        routes: args.routes,
         identityMode: args.identityMode,
       },
       await planningContext(args.providerScript, args.workItem, ctx),

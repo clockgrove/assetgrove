@@ -44,7 +44,7 @@ export interface GenerateSheetOptions {
   routes: Routes;
   provider: GenerationProvider;
   /** Recorded in each call's route, for example `vercel-ai-gateway`. */
-  providerName: string;
+  providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   importsDir: string;
@@ -207,7 +207,7 @@ export async function generateSheet(
 
   const call = new Caller({
     provider: options.provider,
-    providerName: options.providerName,
+    ...(options.providerName !== undefined && { providerName: options.providerName }),
     budget,
     routes,
     ...(options.now !== undefined && { now: options.now }),

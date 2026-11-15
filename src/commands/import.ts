@@ -9,9 +9,8 @@ import {
   loadProfile,
   loadStyleBible,
 } from "../inputs.ts";
-import { providerFor, spendLedger } from "../providers/index.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
 import { loadBibleInputs } from "../request.ts";
-import { loadRoutes } from "../routes.ts";
 import { CONTACT_FILE, GROUPING_FILE, importSheet } from "../sheet/import.ts";
 import type { ImportOptions, ImportRecord } from "../sheet/import.ts";
 import type { Grouping } from "../sheet/types.ts";
@@ -72,7 +71,6 @@ interface ImportArgs {
   lockBible?: string;
   identityMode?: string;
   cap?: number;
-  routes?: string;
   imports?: string;
   workItem?: string;
   providerScript?: string;
@@ -149,7 +147,6 @@ below the threshold, off skips scoring.`,
           "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
         placeholder: "<usd>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       imports: {
         type: "string",
         description: "where imports are staged",
@@ -183,11 +180,10 @@ below the threshold, off skips scoring.`,
     let shared: Caller | undefined;
     const caller = async (): Promise<Caller> => {
       if (!shared) {
-        const routes = await loadRoutes(args.routes);
-        const { provider, name } = await providerFor(args.providerScript, ctx);
+        const provider = await providerSet(args.providerScript, ctx);
+        const routes = provider.routes;
         shared = new Caller({
           provider,
-          providerName: name,
           budget: new Budget(
             capUsd,
             ledgerFor(spendLedger(ctx, args.workItem), provider, profile.value),

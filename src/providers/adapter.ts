@@ -1,16 +1,21 @@
 /**
  * Provider adapters (design section 11): each makes provider instances from a settings entry and
- * decides what they cost (`billing`). Core registers `vercel-ai-gateway`, `tripo` and `scripted`.
+ * decides what they cost (`billing`). Core registers `vercel-ai-gateway`, `tripo`,
+ * `openai-compatible` and `scripted`. Each lists the operations it serves by default
+ * (`defaultRoutes`, src/routes.ts).
  * An adapter reads its key from the entry's `keyEnv` or its default variable and passes `apiKey`
  * and `baseURL` to its SDK explicitly, so no `*_BASE_URL` variable ever applies.
  */
 import type { Env } from "../env.ts";
 import { SettingsError } from "../env.ts";
 import type { Billing, GenerationProvider } from "../gateway/provider.ts";
+import { OpenAICompatibleProvider } from "../gateway/openai-compatible.ts";
 import { ScriptedProvider } from "../gateway/scripted.ts";
 import type { Script } from "../gateway/scripted.ts";
 import { TRIPO_BASE_URL, TripoProvider } from "../gateway/tripo.ts";
 import { VercelGateway } from "../gateway/vercel.ts";
+import { defaultRoutes, GATEWAY_DEFAULT_ROUTES, TRIPO_DEFAULT_ROUTES } from "../routes.ts";
+import type { Route } from "../routes.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
 export type Capability = "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate";
@@ -36,6 +41,11 @@ export interface ProviderAdapter {
   fixedHosts: string[];
   /** Whether settings may set `baseURL`. */
   endpointFromSettings: boolean;
+  /**
+   * The routes it serves when the settings name no route or role for an operation, each with the
+   * grant and terms of its (provider, model) pair. None means it serves only what settings route.
+   */
+  defaultRoutes?: Readonly<Record<string, Route>>;
   create(c: AdapterContext): GenerationProvider;
 }
 
@@ -53,6 +63,7 @@ export const gatewayAdapter: ProviderAdapter = {
   defaultKeyEnv: "AI_GATEWAY_API_KEY",
   fixedHosts: [new URL(VercelGateway.defaultBaseURL).host],
   endpointFromSettings: true,
+  defaultRoutes: GATEWAY_DEFAULT_ROUTES,
   create: (c) =>
     new VercelGateway({
       apiKey: c.apiKey,
@@ -73,6 +84,7 @@ export const tripoAdapter: ProviderAdapter = {
   defaultKeyEnv: "TRIPO_API_KEY",
   fixedHosts: [new URL(TRIPO_BASE_URL).host],
   endpointFromSettings: false,
+  defaultRoutes: TRIPO_DEFAULT_ROUTES,
   create: (c) =>
     new TripoProvider({
       apiKey: c.apiKey,
@@ -85,6 +97,36 @@ export const tripoAdapter: ProviderAdapter = {
         ...billingFrom(c),
       },
     }),
+};
+
+/**
+ * Any OpenAI-compatible endpoint at the settings' `baseURL` (a loopback image or chat server, or a
+ * hosted one). It serves what the server offers, so it has no default routes: settings route each
+ * operation to it, with the grant the server's terms give. Paid unless the entry is `free` (a
+ * loopback endpoint only); the key, when the server takes one, comes from `keyEnv`.
+ */
+export const openaiCompatibleAdapter: ProviderAdapter = {
+  id: "openai-compatible",
+  capabilities: ["image", "edit", "vision", "decide"],
+  fixedHosts: [],
+  endpointFromSettings: true,
+  create: (c) => {
+    if (c.baseURL === undefined) {
+      throw new SettingsError(
+        `providers.${c.providerId} uses the openai-compatible adapter, which needs a baseURL.`,
+      );
+    }
+    return new OpenAICompatibleProvider({
+      baseURL: c.baseURL,
+      ...(c.apiKey !== undefined && { apiKey: c.apiKey }),
+      billing: {
+        adapter: "openai-compatible",
+        paid: c.settings.free !== true,
+        reconcile: "unavailable",
+        ...billingFrom(c),
+      },
+    });
+  },
 };
 
 /** Answers nothing: the scripted provider before a `--provider-script` module is given. */
@@ -102,6 +144,7 @@ export const scriptedAdapter: ProviderAdapter = {
   capabilities: ["image", "edit", "vision", "decide", "model", "rig", "animate"],
   fixedHosts: [],
   endpointFromSettings: false,
+  defaultRoutes,
   create: (c) =>
     new ScriptedProvider(c.script ?? NO_SCRIPT, {
       reconcile: "unavailable",
@@ -113,6 +156,7 @@ export const scriptedAdapter: ProviderAdapter = {
 export const CORE_ADAPTERS: readonly ProviderAdapter[] = [
   gatewayAdapter,
   tripoAdapter,
+  openaiCompatibleAdapter,
   scriptedAdapter,
 ];
 

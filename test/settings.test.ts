@@ -94,7 +94,7 @@ test("the full Phase 1 field set validates", () => {
       judge: {
         provider: "gateway",
         model: "m",
-        outputGrant: { relabel: true },
+        outputGrant: { license: "LicenseRef-x", plan: "api", commercial: true, relabel: true },
         providerTerms: "t",
       },
     },
