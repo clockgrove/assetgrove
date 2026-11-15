@@ -10,6 +10,8 @@
  */
 import { createHash, createPrivateKey, webcrypto, X509Certificate } from "node:crypto";
 import type { KeyObject } from "node:crypto";
+
+type CryptoKey = webcrypto.CryptoKey;
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,9 +119,9 @@ function algOf(key: KeyObject): Alg {
 }
 
 function pemCertificates(pem: string): Uint8Array[] {
-  return [
-    ...pem.matchAll(/-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/g),
-  ].map((m) => new Uint8Array(new X509Certificate(m[0]).raw));
+  return [...pem.matchAll(/-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/g)].map(
+    (m) => new Uint8Array(new X509Certificate(m[0]).raw),
+  );
 }
 
 function signerOf(chain: Uint8Array[], key: KeyObject, development: boolean): ContentSigner {
@@ -153,7 +155,9 @@ export function settingsSigner(settings: CredentialSettings): ContentSigner {
   }
   const chain = pemCertificates(pem);
   if (chain.length === 0)
-    throw new SettingsError(`contentCredentials.certificate ${settings.certificate} holds no certificate`);
+    throw new SettingsError(
+      `contentCredentials.certificate ${settings.certificate} holds no certificate`,
+    );
   let key: KeyObject;
   try {
     key = createPrivateKey(keyPem);
@@ -345,7 +349,11 @@ function actions(claim: CredentialClaim): Record<string, unknown>[] {
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
 /** COSE_Sign1 with a detached payload and a `pad` header that fills the reserved space exactly. */
-async function coseSign(signer: ContentSigner, claim: Uint8Array, size: number): Promise<Uint8Array> {
+async function coseSign(
+  signer: ContentSigner,
+  claim: Uint8Array,
+  size: number,
+): Promise<Uint8Array> {
   const signed = await Sign1.sign(
     new ProtectedHeaders([
       [Headers.Algorithm, COSE_ALG[signer.record.alg]],
@@ -358,7 +366,8 @@ async function coseSign(signer: ContentSigner, claim: Uint8Array, size: number):
   // The payload is detached (C2PA: the claim is the payload, carried beside the signature).
   const encode = (pad: number): Uint8Array =>
     new Sign1(
-      signed.encodedProtectedHeaders ?? signed.protectedHeaders,
+      // The protected header exactly as signed.
+      (signed as unknown as { encodedProtectedHeaders: Uint8Array }).encodedProtectedHeaders,
       new Map([["pad", new Uint8Array(pad)]]) as unknown as Map<number, unknown>,
       null as unknown as Uint8Array,
       signed.signature,
@@ -369,7 +378,8 @@ async function coseSign(signer: ContentSigner, claim: Uint8Array, size: number):
     pad = Math.max(0, pad + size - out.length);
     out = encode(pad);
   }
-  if (out.length !== size) throw new Error(`the COSE signature is ${out.length} bytes, not ${size}`);
+  if (out.length !== size)
+    throw new Error(`the COSE signature is ${out.length} bytes, not ${size}`);
   return out;
 }
 
@@ -398,7 +408,11 @@ export async function signCredentials(
   try {
     if (claim.original) {
       await builder.addIngredientFromBlob(
-        JSON.stringify({ title: claim.original.title, relationship: "parentOf", label: "original" }),
+        JSON.stringify({
+          title: claim.original.title,
+          relationship: "parentOf",
+          label: "original",
+        }),
         claim.original.mediaType,
         new BytesBlob(claim.original.bytes),
       );
@@ -478,7 +492,10 @@ export async function readCredentials(
       manifests?: Record<string, ManifestJson>;
       validation_state?: string;
       validation_results?: {
-        activeManifest?: { failure?: { code: string; explanation?: string }[]; success?: { code: string }[] };
+        activeManifest?: {
+          failure?: { code: string; explanation?: string }[];
+          success?: { code: string }[];
+        };
       };
       validation_status?: { code: string; explanation?: string }[];
     };
@@ -487,11 +504,16 @@ export async function readCredentials(
     const results = store.validation_results?.activeManifest;
     const failures = (results?.failure ?? store.validation_status ?? [])
       .filter((f) => !ACCEPTED_FAILURES.has(f.code))
-      .map((f) => ({ code: f.code, ...(f.explanation !== undefined && { explanation: f.explanation }) }));
+      .map((f) => ({
+        code: f.code,
+        ...(f.explanation !== undefined && { explanation: f.explanation }),
+      }));
     const assertions = manifest.assertions ?? [];
     const actionList = assertions
       .filter((a) => a.label === "c2pa.actions.v2" || a.label === "c2pa.actions")
-      .flatMap((a) => (Array.isArray(a.data?.["actions"]) ? (a.data["actions"] as Record<string, unknown>[]) : []))
+      .flatMap((a) =>
+        Array.isArray(a.data?.["actions"]) ? (a.data["actions"] as Record<string, unknown>[]) : [],
+      )
       .map((a) => ({
         action: String(a["action"]),
         ...(typeof a["digitalSourceType"] === "string" && {
@@ -529,9 +551,7 @@ export async function readCredentials(
 
 /** The problem codes of a file's credentials. */
 export type CredentialProblemCode =
-  | "credentials_missing"
-  | "credentials_invalid"
-  | "credentials_mismatch";
+  "credentials_missing" | "credentials_invalid" | "credentials_mismatch";
 
 /** What a file's manifest must say. */
 export interface ExpectedCredentials {
@@ -551,7 +571,9 @@ export async function credentialProblem(
   const read = await readCredentials(bytes, mediaType);
   if (read === undefined)
     return { code: "credentials_missing", problem: `${path} lacks its C2PA content credentials` };
-  const binding = read.failures.find((f) => /^assertion\.(dataHash|bmffHash|boxesHash)\./.test(f.code));
+  const binding = read.failures.find((f) =>
+    /^assertion\.(dataHash|bmffHash|boxesHash)\./.test(f.code),
+  );
   if (binding)
     return {
       code: "credentials_mismatch",

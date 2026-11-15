@@ -1,9 +1,17 @@
 import { canCarryMark, markableMediaType, markProblems } from "./handoff/mark-check.ts";
+import {
+  canCarryCredentials,
+  credentialed,
+  credentialProblem,
+  resolveSigner,
+} from "./credentials.ts";
+import type { ContentSigner, SignerRecord } from "./credentials.ts";
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import type { DigitalSourceType } from "./metadata.ts";
 import {
   combineDigitalSourceTypes,
   embedDigitalSourceType,
@@ -246,6 +254,18 @@ export interface LibraryResult {
   files: string[];
 }
 
+/** The C2PA content credentials a hand-off signed into its images (docs/handoff.md). */
+export interface CredentialsResult extends SignerRecord {
+  /** Each image carrying them, relative to the target. */
+  files: string[];
+  /** Present when the local development certificate signed: no C2PA trust list holds it. */
+  warning?: string;
+}
+
+/** What the result says when the development certificate signed. */
+export const DEVELOPMENT_SIGNER_WARNING =
+  "signed with Assetgrove's local development certificate, which no C2PA trust list holds; set contentCredentials in the developer settings to sign with your own certificate";
+
 export interface TargetWriteResult {
   mediaPath: string;
   manifestPath: string;
@@ -254,6 +274,8 @@ export interface TargetWriteResult {
   files: string[];
   /** Each hand-off preset of the profile's `handoff` list, in order, with the files it wrote. */
   handoff: PresetResult[];
+  /** The C2PA content credentials signed into the images, and which certificate signed. */
+  contentCredentials?: CredentialsResult;
   /** The card, review record, indexes and log the hand-off wrote. */
   library?: LibraryResult;
   validator?: ValidatorResult;
@@ -285,6 +307,8 @@ export interface PreparedTargetWrite {
   provenanceBytes?: string;
   /** Where each sidecar is written, relative to the target. */
   sidecarRels: string[];
+  /** The images carrying C2PA content credentials, relative to the target, and their signer. */
+  credentials?: { signer: SignerRecord; rels: string[] };
 }
 
 /**
@@ -333,7 +357,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     }
     const type = markableMediaType(sidecar.name);
     return type === undefined
-      ? sidecar
+      ? { ...sidecar }
       : {
           ...sidecar,
           bytes: embedDigitalSourceType(sidecar.bytes, type, digitalSourceType, {
@@ -355,6 +379,12 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   const targetDir = resolve(write.targetDir);
   const gate = write.gate ?? defaultGate();
   const guard = targetGuard(targetDir, gate.settings, profile.validator?.command);
+  // Every PNG, JPEG and WebP is signed with C2PA content credentials beside the IPTC mark.
+  const signs =
+    canCarryCredentials(output.mediaType) ||
+    sidecars.some((sidecar) => canCarryCredentials(markableMediaType(sidecar.name) ?? ""));
+  const signer = signs ? await resolveSigner(gate.settings) : undefined;
+  if (signer) provenance.contentCredentials = signer.record;
   // Before anything is written: the validator a profile names runs only with an approval.
   let validatorStep: CommandStep | undefined;
   if (profile.validator) {
@@ -384,7 +414,16 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     provenance,
     run: write.run,
   };
+  const signed: string[] = [];
+  const sign = signer && credentialSigner(signer, guard, digitalSourceType, provenance.models);
+  if (sign && canCarryCredentials(output.mediaType)) {
+    // The path is rendered first to find the file already there, then again with the signed bytes.
+    const rel = renderString(profile.layout.media, context);
+    output.bytes = await sign(rel, output.bytes, output.mediaType);
+    (context["output"] as Record<string, unknown>)["sha256"] = sha256(output.bytes);
+  }
   const mediaRel = renderString(profile.layout.media, context);
+  if (sign && canCarryCredentials(output.mediaType)) signed.push(mediaRel);
   const manifestRel = renderString(profile.layout.manifest, context);
   const provenanceRel =
     profile.layout.provenance !== undefined
@@ -393,24 +432,40 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
         ? undefined
         : `${mediaRel}.provenance.json`;
   (context["output"] as Record<string, unknown>)["path"] = mediaRel;
-  const sidecarRels = sidecars.map((sidecar) => {
+  const sidecarRels: string[] = [];
+  for (const sidecar of sidecars) {
     if (sidecar.name === "" || /[\\/]/.test(sidecar.name) || sidecar.name.includes("..")) {
       throw new InputError(`sidecar name "${sidecar.name}" must be a bare file name`);
     }
     const rel = posix.join(posix.dirname(mediaRel.replaceAll("\\", "/")), sidecar.name);
+    const type = markableMediaType(sidecar.name);
+    if (sign && type !== undefined && canCarryCredentials(type)) {
+      sidecar.bytes = await sign(rel, sidecar.bytes, type);
+      signed.push(rel);
+    }
     setPath(context["output"] as Record<string, unknown>, sidecar.field, {
       ...sidecar.extra,
       path: rel,
       sha256: sha256(sidecar.bytes),
     });
-    return rel;
-  });
+    sidecarRels.push(rel);
+  }
   if (provenanceRel !== undefined) context["provenancePath"] = provenanceRel;
 
   const presetContext = { profile, context, manifestRel };
   const presetFiles: PresetFile[][] = presets.map(({ preset, options }) =>
     preset.write(presetContext, options),
   );
+  // An image a preset writes is signed like the media.
+  for (const files of presetFiles) {
+    for (const [i, file] of files.entries()) {
+      const type = markableMediaType(file.path);
+      if (!sign || type === undefined || !canCarryCredentials(type)) continue;
+      if (typeof file.content === "string") continue;
+      files[i] = { ...file, content: await sign(file.path, file.content, type) };
+      signed.push(file.path);
+    }
+  }
 
   // Before anything is written: no two writes name one file or differ only by case, and Windows
   // can hold every segment.
@@ -469,6 +524,28 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     provenance,
     ...(provenanceBytes !== undefined && { provenanceBytes }),
     sidecarRels,
+    ...(signer && signed.length > 0 && { credentials: { signer: signer.record, rels: signed } }),
+  };
+}
+
+/**
+ * Signs one image for a hand-off: the file already at `rel` is kept when its manifest holds for
+ * these bytes and this signer, so re-running an unchanged hand-off leaves its bytes as they were.
+ */
+function credentialSigner(
+  signer: ContentSigner,
+  guard: TargetGuard,
+  digitalSourceType: DigitalSourceType,
+  models: readonly string[],
+): (rel: string, bytes: Uint8Array, mediaType: string) => Promise<Uint8Array> {
+  return async (rel, bytes, mediaType) => {
+    const path = targetPath(guard, rel);
+    const existing = await readFile(path).then(
+      (data) => new Uint8Array(data),
+      () => undefined,
+    );
+    const claim = { digitalSourceType, models, title: posix.basename(rel.replaceAll("\\", "/")) };
+    return credentialed(bytes, mediaType, claim, signer, assetgroveVersion(), existing);
   };
 }
 
@@ -503,6 +580,14 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
       ),
     })),
   };
+  if (prepared.credentials) {
+    const { signer, rels } = prepared.credentials;
+    result.contentCredentials = {
+      ...signer,
+      files: rels.map((rel) => relativeRecordPath(targetDir, inside(targetDir, rel))),
+      ...(signer.development && { warning: DEVELOPMENT_SIGNER_WARNING }),
+    };
+  }
 
   // Each preset checks what it wrote; a failed check stops the hand-off before the validator.
   const read = (rel: string) =>
@@ -528,8 +613,7 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
       if (type !== undefined) marked.push([file.path, type]);
     }
     for (const [path, type] of marked) {
-      const missing = markProblems(path, await read(path), type, expected);
-      problems.push(...missing.map((problem) => ({ preset: preset.name, problem })));
+      problems.push(...(await fileProblems(path, await read(path), type, expected, preset.name)));
     }
   }
   // Sidecars are read back whatever the presets are.
@@ -540,8 +624,7 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
       digitalSourceType: prepared.provenance.digitalSourceType ?? "undeclared",
       models: prepared.provenance.models,
     };
-    const missing = markProblems(rel, await read(rel), type, expected);
-    problems.push(...missing.map((problem) => ({ preset: "sidecar", problem })));
+    problems.push(...(await fileProblems(rel, await read(rel), type, expected, "sidecar")));
   }
   if (problems.length > 0) throw new HandoffCheckError(problems);
   // Every preset check passed: the version goes into the library.
@@ -585,6 +668,30 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     }
   }
   return result;
+}
+
+/**
+ * The problems of one written file's marks: its IPTC mark, and for a PNG, JPEG or WebP its C2PA
+ * content credentials, read back and validated. Each problem names the file.
+ */
+async function fileProblems(
+  path: string,
+  bytes: Uint8Array | undefined,
+  type: string,
+  expected: { digitalSourceType: DigitalSourceType; models: readonly string[] },
+  preset: string,
+): Promise<HandoffProblem[]> {
+  const problems: HandoffProblem[] = markProblems(path, bytes, type, expected).map((problem) => ({
+    preset,
+    problem,
+    file: path,
+    code: problem.includes(" lacks ") ? "mark_missing" : "mark_invalid",
+  }));
+  if (bytes !== undefined && canCarryCredentials(type)) {
+    const found = await credentialProblem(path, bytes, type, expected);
+    if (found) problems.push({ preset, file: path, ...found });
+  }
+  return problems;
 }
 
 /**

@@ -323,6 +323,8 @@ export interface Provenance {
   commands?: import("./approvals.ts").CommandStep[];
   /** The person's confirmation of the pick that wrote this output (design section 7). */
   confirmation?: ConfirmationRecord;
+  /** Which certificate signed the C2PA content credentials of the images hand-off wrote. */
+  contentCredentials?: import("./credentials.ts").SignerRecord;
 }
 
 /** How a confirmation was given (design section 7). */

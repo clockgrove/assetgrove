@@ -29,6 +29,7 @@ The `disclosure` tool takes the same arguments. It reads the cards under `root` 
 - assets by kind and by IPTC source type;
 - models and providers, with the number of assets each made;
 - provider terms, with the date each was recorded as of;
+- content credentials: how many assets were signed, by which certificate, and, when any were signed with Assetgrove's local development certificate, a note that no C2PA trust list holds it and that a certificate from a C2PA-recognised authority (developer settings `contentCredentials`) replaces it before release;
 - text for Steam's AI content survey and tags and text for itch.io's AI disclosure.
 
 No prompt text is read or shown. `--out` writes the same summary as Markdown, to a path inside the current directory. The Steam and itch.io text is a draft for the developer to check against the form as the store shows it today.

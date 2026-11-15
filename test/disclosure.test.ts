@@ -8,10 +8,11 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { disclose } from "../src/disclosure.ts";
+import { disclose, disclosureMarkdown } from "../src/disclosure.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
+import type { SignerRecord } from "../src/credentials.ts";
 import type { Provenance } from "../src/types.ts";
 import { shelterSpec, syntheticProfile } from "./fixtures/synthetic.ts";
 
@@ -159,4 +160,67 @@ test("--out writes the Markdown summary without prompt text", async () => {
   const text = await readFile(join(cwd, "summary.md"), "utf8");
   assert.match(text, /Steam AI content survey/);
   assert.ok(!text.includes(prompt));
+});
+
+test("content credentials count development and settings signers, and the note names the development one", async () => {
+  const target = await mkdtemp(join(tmpdir(), "assetgrove-disclosure-cc-"));
+  const dev: SignerRecord = {
+    development: true,
+    certificateSha256: "a".repeat(64),
+    subject: "Assetgrove development",
+    issuer: "Assetgrove development",
+    serialNumber: "01",
+    alg: "es256",
+  };
+  const configured: SignerRecord = {
+    ...dev,
+    development: false,
+    certificateSha256: "b".repeat(64),
+    subject: "Studio",
+  };
+  for (const [family, signer] of [
+    ["shelter", dev],
+    ["walk", configured],
+    ["idle", undefined],
+  ] as const) {
+    const profile = syntheticProfile({ handoff: [{ preset: "atlas-json" }] });
+    delete profile.validator;
+    profile.layout.provenance =
+      "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.provenance.json";
+    await writeToTarget({
+      profile,
+      spec: { ...shelterSpec, animationFamily: family },
+      bibleVersion: "v1",
+      output: {
+        bytes: encodePng(createRaster(96, 8)),
+        mediaType: "image/png",
+        extension: "png",
+        fields: { frames: { width: 16, height: 8, count: 6, durationMs: 120 } },
+      },
+      provenance: provenance(signer ? { contentCredentials: signer } : {}),
+      run: { runId: `r-${family}`, candidateId: "c1", pickedAt: "2026-01-01T00:00:02.000Z" },
+      targetDir: target,
+    });
+  }
+  const d = disclose(target);
+  assert.equal(d.contentCredentials.signed, 2);
+  assert.equal(d.contentCredentials.development, 1);
+  assert.deepEqual(
+    d.contentCredentials.signers.map((s) => [s.subject, s.development, s.assets]).sort(),
+    [
+      ["Assetgrove development", true, 1],
+      ["Studio", false, 1],
+    ],
+  );
+  assert.match(
+    d.contentCredentials.note ?? "",
+    /1 asset was signed with Assetgrove's local development certificate/,
+  );
+  assert.match(d.contentCredentials.note ?? "", /no C2PA trust list/);
+  const md = disclosureMarkdown(d);
+  assert.match(md, /## Content credentials\nSigned assets: 2/);
+  assert.match(md, /Studio \(sha256 b{64}\): 1/);
+  const none = disclose(await library());
+  assert.equal(none.contentCredentials.signed, 0);
+  assert.equal(none.contentCredentials.note, undefined);
 });

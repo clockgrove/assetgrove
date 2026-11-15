@@ -120,6 +120,10 @@ export function resolveHandoff(
 export interface HandoffProblem {
   preset: string;
   problem: string;
+  /** The written file the problem is in, relative to the target, when it is one file's. */
+  file?: string;
+  /** What is wrong with that file: `mark_missing`, `credentials_missing`, `credentials_invalid` or `credentials_mismatch`. */
+  code?: string;
 }
 
 /** A preset's check found problems in what was written; the validator did not run. Exit 6. */

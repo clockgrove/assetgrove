@@ -57,7 +57,7 @@ export interface CommandStep {
 
 /** What deciding an approval reads: the settings, and a channel to ask a person when there is one. */
 export interface ApprovalGate {
-  settings: Pick<Settings, "configDir" | "stateDir" | "mode" | "commands">;
+  settings: Pick<Settings, "configDir" | "stateDir" | "mode" | "commands" | "contentCredentials">;
   prompt?: ConfirmPort;
 }
 
