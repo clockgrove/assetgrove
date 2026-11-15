@@ -1,0 +1,73 @@
+name: Real checks
+
+# Real provider calls, run by hand only: each check runs through Assetgrove's own spend controls
+# under the fixed real-check budget (test/real/budget.ts). The ledger directory is cached between
+# runs, so spend accumulates across them. A check whose key is missing skips with its reason.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: real-checks
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  real:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      ASSETGROVE_REAL_LEDGER: ${{ github.workspace }}/.real-ledger
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+
+      - name: Enable pnpm from packageManager
+        run: corepack enable
+
+      - name: Install the locked dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Restore the real-check ledger
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .real-ledger
+          key: real-ledger-${{ github.run_id }}
+          restore-keys: real-ledger-
+
+      - name: Run the real checks
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.CODEX_API_KEY }}
+        run: >-
+          node --test --test-isolation=none
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination=real-checks.xml
+          "test/real/**/*.real.ts"
+
+      - name: Save the real-check ledger
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .real-ledger
+          key: real-ledger-${{ github.run_id }}
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: real-checks
+          path: |
+            real-checks.xml
+            .real-ledger/
+          if-no-files-found: warn
