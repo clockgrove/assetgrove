@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, posix, resolve } from "node:path";
 import {
   DIGITAL_SOURCE_TYPES,
   embedDigitalSourceType,
@@ -18,6 +18,7 @@ import { referenceLicenses } from "./bible.ts";
 import { InputError } from "./errors.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
+import { checkWrites } from "./paths.ts";
 import type { IdentityAgreement } from "./identity.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import type { Generator, PlannedCall } from "./generators/generator.ts";
@@ -279,12 +280,15 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         ...(options.profileDir !== undefined && { profileDir: options.profileDir }),
       });
       const id = `c${index + 1}`;
-      const artifacts: string[] = [];
-      for (const artifact of generated.artifacts ?? []) {
-        const name = join(`${id}-${generator.kind}`, basename(artifact.name));
-        await mkdir(join(runDir, dirname(name)), { recursive: true });
+      // Record paths use "/"; the candidate's writes are checked before the first one.
+      const artifacts = (generated.artifacts ?? []).map((artifact) =>
+        posix.join(`${id}-${generator.kind}`, basename(artifact.name)),
+      );
+      checkWrites([`${id}.${generated.output.extension}`, ...artifacts]);
+      for (const [i, artifact] of (generated.artifacts ?? []).entries()) {
+        const name = artifacts[i] as string;
+        await mkdir(join(runDir, posix.dirname(name)), { recursive: true });
         await writeFile(join(runDir, name), artifact.bytes);
-        artifacts.push(name);
       }
       if (!generated.qa.passed) {
         run.filtered++;
