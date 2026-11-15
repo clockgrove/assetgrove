@@ -30,14 +30,16 @@ export const WORK_ITEM_ENV = "ASSETGROVE_WORK_ITEM";
 /**
  * The ledger a run with this provider reserves against, with the profile's caps: none when no
  * part of the provider is paid. A paid part with no declared limit is refused here, before any
- * spend (`provider_limit_undeclared`).
+ * spend (`provider_limit_undeclared`). With no provider yet (a plan made without a key), the
+ * ledger still bounds the forecast, as an unknown provider counts as paid.
  */
 export function ledgerFor(
   ledger: SpendLedger | undefined,
   provider: GenerationProvider | undefined,
   profile?: Pick<TargetProfile, "spend">,
 ): SpendLedger | undefined {
-  if (provider === undefined || !billingParts(provider).some((b) => b.paid)) return undefined;
+  if (provider === undefined) return ledger?.forProfile(profile);
+  if (!billingParts(provider).some((b) => b.paid)) return undefined;
   assertLimitsDeclared(provider);
   return ledger?.forProfile(profile);
 }
