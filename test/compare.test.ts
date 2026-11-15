@@ -4,7 +4,7 @@ import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -289,4 +289,24 @@ test("stage with a note puts it in the prompt of each candidate", async () => {
   assert.equal(run.code, 0, run.stderr + run.stdout);
   const candidate = doc(run).candidates[0];
   assert.match(candidate.provenance.prompt, /Author's note: tail tip darker/);
+});
+
+test("compare names a 3D asset's view from its turntable renders", async () => {
+  const dir = await tempDir("assetgrove-compare-3d-");
+  for (const [name, shade] of [
+    ["a", [90, 120, 160]],
+    ["b", [91, 120, 160]],
+  ] as const) {
+    const views = join(dir, `${name}-character-3d`);
+    await mkdir(views, { recursive: true });
+    await writeFile(join(views, "view-1.png"), encodePng(flat(16, 16)));
+    await writeFile(join(views, "view-2.png"), encodePng(flat(16, 16, [...shade])));
+    await writeFile(join(dir, `${name}.glb`), "glb");
+  }
+  await writeFile(join(dir, "b-character-3d", "view-2.png"), encodePng(flat(16, 16, [200, 0, 0])));
+  const view = (n: string) =>
+    cli(["compare", "a.glb", "b.glb", "--view", n, "--out", join(dir, "out"), "--json"], dir);
+  assert.equal(doc(await view("1")).rows[0].identical, true);
+  assert.equal(doc(await view("2")).rows[0].identical, false);
+  assert.equal((await view("9")).code, 2);
 });
