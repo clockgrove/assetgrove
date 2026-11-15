@@ -1,5 +1,6 @@
 import { ConfirmationError } from "../approvals.ts";
 import { savePending } from "../confirm/pending.ts";
+import { describeRequest } from "../confirm/prompt.ts";
 import { refusedVariables } from "../env.ts";
 import { InputError } from "../errors.ts";
 import { checkLimit } from "../limits.ts";
@@ -15,6 +16,7 @@ import {
   settingsRequest,
 } from "../settings-write.ts";
 import type { ChangeResult, SettingsChange } from "../settings-write.ts";
+import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { Outcome, RunContext } from "./types.ts";
 
@@ -257,9 +259,11 @@ Exits 2 for a provider that is neither in the settings nor a core adapter id, or
     checkChange(change, settings);
     const request = settingsRequest(settings.path, change);
     if (settings.mode === "headless") {
-      throw new ConfirmationError(
+      return refusal(
         "confirmation_required",
         "headless settings cannot change the developer settings: a person runs settings change with attended settings",
+        { id: request.id, kind: request.kind, request: request.details, written: [] },
+        describeRequest(request),
       );
     }
     const prompt = ctx.prompt;

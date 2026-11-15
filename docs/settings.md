@@ -236,7 +236,7 @@ The ledger is an estimate. Where a provider reports its own usage to an ordinary
 
 `settings check` reports each provider's `reconcile`. The ledger side is the run's reservations in `spend.jsonl` that no earlier attempt's end has reconciled, so a resume also compares the spend of an attempt that stopped before its end; the run directory's `reconcile-state.json` keeps what was reconciled and, for a balance delta, the start reading of an attempt that has not ended (the delta then spans both attempts). A per-call-cost call the provider can never look up (no generation ID, an ID the gateway rejects, or no numeric cost) is counted in `unmatched`, on neither side. `status` is `unavailable`, `reconciled`, `held`, `pending` or `failed`: a balance that could not be read, a run none of whose paid calls could be looked up (nothing was compared), or a lookup still unanswered a day after its run.
 
-A gap, |provider − ledger|, above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger spend) appends a hold `{id, at, provider, runId, ledgerUsd, providerUsd, gapUsd}` to `<stateDir>/holds.jsonl`. From then on every paid run exits 3 `spend_hold` before it spends, until a person lists the hold's `id` in `spend.acknowledgedHolds`. `spend status` lists the holds and whether each is acknowledged.
+A gap, |provider − ledger|, above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger spend) appends a hold `{id, at, provider, runId, ledgerUsd, providerUsd, gapUsd}` to `<stateDir>/holds.jsonl`. From then on every paid run exits 3 `spend_hold` before it spends, until a person acknowledges the hold, which lists its `id` in `spend.acknowledgedHolds` (`settings change --acknowledge-holds <id>`, or a hand edit). `spend status` lists the holds and whether each is acknowledged.
 
 A lookup the provider cannot answer yet is recorded as pending in `<stateDir>/reconcile.jsonl`. The next paid run retries it at its start, before the hold check, and `spend reconcile` retries it on demand. A retry stops at the first call cost still unreported. A lookup still pending a day after its run resolves as `failed` and is not retried again.
 
@@ -252,6 +252,14 @@ What a key can carry for each core provider, and whether Assetgrove reads it. Th
 | Tripo             | Prepaid credits on the account                                          | Yes: `GET /user/balance` (credits; USD with `usdPerCredit`)                      | <https://platform.tripo3d.ai/docs>; `src/gateway/tripo.ts` `balance`         | Not against the page; the client, 2026-11-14   |
 
 The Assetgrove-reads column was checked against this build's code on 2026-11-14. The limit column was written without network access, so it has not been checked against the provider pages it names. A row's Checked cell gets a date once someone reads that page.
+
+## Who writes the file
+
+`assetgrove settings change` (MCP tool `settings_change`) is the only command that writes the file, and it writes only the caps, one provider's `limit` and `spend.acknowledgedHolds`, each on a person's confirmation. An agent may propose a change, but only a confirmed form writes it. An MCP client with form elicitation shows a flat form with the proposed values filled in and `acceptUnlimited` as its own Boolean, and an accept writes the values the person submitted. Otherwise the command exits 8 `confirmation_required`, and `assetgrove confirm <id>` at a terminal writes the change. Headless settings exit 8 and write nothing.
+
+A write edits the file in place with `jsonc-parser`: it changes only the proposed fields and adds `confirmedBy.<field path>` = `{method, at, client?}` for each (`caps.runUsd`, `providers.<id>.limit`, `spend.acknowledgedHolds`), with method `elicitation` or `terminal`. Every other byte stays as it was. A limit for a core adapter id with no provider entry creates the entry with only `limit`, so a first setup on one core key needs no hand edit. `kind: "unlimited"` is written only with `acceptUnlimited: true`. The result is loaded as settings before it replaces the file, so the command never writes a file the settings would refuse. With no file, the change creates one at the default location holding the format line.
+
+A person edits every other field by hand. Headless mode is set only by an operator who edits the file or the environment outside the repository.
 
 ## Format lines
 
