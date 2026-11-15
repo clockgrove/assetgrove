@@ -34,6 +34,7 @@ import {
 import type { Card } from "./card.ts";
 import { renderIndex, renderLog, logEntriesFromReview } from "./folder.ts";
 import type { LogEntry } from "./folder.ts";
+import { parseLfsPointer } from "./lfs.ts";
 import { libraryPath } from "./paths.ts";
 import {
   annotationId,
@@ -62,10 +63,17 @@ export const RESERVED_IDS = [
   "where",
 ] as const;
 
-/** A refused asset id: reserved (`asset_id_reserved`) or carded at another path (`asset_conflict`). Exit 2. */
+/**
+ * A refused library write, exit 2: an id reserved (`asset_id_reserved`) or carded at another path
+ * (`asset_conflict`); media identical to an older version of the asset (`version_exists`); or a
+ * current version other than the one the pick confirmed replacing (`version_changed`).
+ */
+export type AssetIdErrorCode =
+  "asset_id_reserved" | "asset_conflict" | "version_exists" | "version_changed";
+
 export class AssetIdError extends InputError {
-  readonly code: "asset_id_reserved" | "asset_conflict";
-  constructor(code: "asset_id_reserved" | "asset_conflict", message: string) {
+  readonly code: AssetIdErrorCode;
+  constructor(code: AssetIdErrorCode, message: string) {
     super(message);
     this.name = "AssetIdError";
     this.code = code;
@@ -143,6 +151,10 @@ export interface FoundCard {
   title: string;
   description?: string;
   bible?: string;
+  /** The card's `resource`: the media file name beside it. */
+  resource?: string;
+  /** The card's `lock.sha256`. */
+  sha256?: string;
 }
 
 const SKIP_DIR = (name: string) =>
@@ -183,7 +195,8 @@ export function scanCards(root: string): FoundCard[] {
           title: string;
           description?: string;
           bible?: string;
-          lock?: { bible?: string };
+          resource?: unknown;
+          lock?: { bible?: string; sha256?: unknown };
         };
         found.push({
           dir,
@@ -193,6 +206,8 @@ export function scanCards(root: string): FoundCard[] {
           ...((data.bible ?? data.lock?.bible) !== undefined && {
             bible: String(data.bible ?? data.lock?.bible),
           }),
+          ...(typeof data.resource === "string" && { resource: data.resource }),
+          ...(typeof data.lock?.sha256 === "string" && { sha256: data.lock.sha256 }),
         });
       } catch {
         // Not a card this build reads; `library check` reports it.
@@ -231,6 +246,13 @@ export async function prepareLibraryWrite(input: {
   mediaPath: string;
   provenancePath?: string;
   manifestPath: string;
+  /** The media bytes the hand-off writes: bytes of an older version exit 2 `version_exists`. */
+  mediaBytes?: Uint8Array;
+  /**
+   * The version the pick confirmed replacing (its sha256, or null for a first pick): another
+   * current version exits 2 `version_changed`. Left out, nothing is compared.
+   */
+  replaces?: string | null;
 }): Promise<LibraryPlan> {
   const config = libraryConfig(input.profile, input.targetDir);
   const assetId = assetIdOf(input.spec);
@@ -250,17 +272,33 @@ export async function prepareLibraryWrite(input: {
     );
   }
   const cards = scanCards(config.root);
-  const elsewhere = cards.find((card) => card.id === assetId && card.dir !== dir);
+  const resource = basename(resolve(input.mediaPath));
+  const elsewhere = cards.find(
+    (card) =>
+      card.id === assetId &&
+      (card.dir !== dir || (card.resource !== undefined && card.resource !== resource)),
+  );
   if (elsewhere) {
+    const at = join(elsewhere.dir, elsewhere.resource ?? `${assetId}.md`);
     throw new AssetIdError(
       "asset_conflict",
-      `asset id "${assetId}" is already carded at ${join(elsewhere.dir, `${assetId}.md`)}; asset ids are unique per game`,
+      `asset id "${assetId}" is already carded for ${at}; asset ids are unique per game`,
     );
   }
   const cardPath = join(dir, `${assetId}.md`);
   const reviewPath = join(dir, `${assetId}.review.json`);
   await readOwnCard(cardPath, config.root, dir);
-  await readOwnReview(reviewPath, config.root, dir, undefined);
+  const review = await readOwnReview(reviewPath, config.root, dir, undefined);
+  const versions = review?.versions ?? [];
+  const current = versions.at(-1)?.sha256;
+  const sha256 = input.mediaBytes && sha256Hex(input.mediaBytes);
+  if (sha256 !== undefined) olderVersionCheck(versions, sha256, assetId);
+  if (input.replaces !== undefined && sha256 !== current && (current ?? null) !== input.replaces) {
+    throw new AssetIdError(
+      "version_changed",
+      `asset "${assetId}" is now at ${current === undefined ? "no version" : `version ${versions.length} (sha256 ${current})`}, not the ${input.replaces === null ? "empty asset" : `version ${input.replaces}`} this pick confirmed replacing; pick again`,
+    );
+  }
   const source = [input.provenancePath, input.manifestPath].find(
     (path) => path !== undefined && within(config.root, resolve(path)),
   );
@@ -273,6 +311,67 @@ export async function prepareLibraryWrite(input: {
     reviewPath,
     ...(source !== undefined && { provenanceSource: resolve(source) }),
     cards,
+  };
+}
+
+/** Bytes identical to a version other than the current one exit 2 `version_exists`. */
+function olderVersionCheck(versions: ReviewRecord["versions"], sha256: string, assetId: string) {
+  const index = versions.findIndex((v) => v.sha256 === sha256);
+  if (index !== -1 && index !== versions.length - 1) {
+    throw new AssetIdError(
+      "version_exists",
+      `these bytes are version ${index + 1} of asset "${assetId}" (sha256 ${sha256}), not its current version ${versions.length}; a version is identified by its sha256, so it cannot be picked again as a new one`,
+    );
+  }
+}
+
+/** What a pick into an asset replaces: its current version, and whether its file changed outside Assetgrove. */
+export interface CurrentVersion {
+  assetId: string;
+  /** The current version's sha256 and position; absent before the first pick. */
+  sha256?: string;
+  version?: number;
+  /** Whether the working media differs from the card's `lock.sha256`. */
+  outsideChange: boolean;
+}
+
+/** The current version of a spec's asset in a target's library, read without writing. */
+export async function currentVersion(
+  profile: TargetProfile,
+  spec: AssetSpec,
+  targetDir: string,
+): Promise<CurrentVersion> {
+  const config = libraryConfig(profile, targetDir);
+  const assetId = assetIdOf(spec);
+  const card = scanCards(config.root).find((c) => c.id === assetId);
+  if (!card) return { assetId, outsideChange: false };
+  const review = await readOwnReview(
+    join(card.dir, `${assetId}.review.json`),
+    config.root,
+    card.dir,
+    undefined,
+  );
+  const versions = review?.versions ?? [];
+  let outsideChange = false;
+  if (card.resource !== undefined && card.sha256 !== undefined) {
+    const media = resolve(card.dir, card.resource);
+    if (within(config.root, media)) {
+      let bytes: Uint8Array | undefined;
+      try {
+        bytes = new Uint8Array(await readFile(media));
+      } catch {
+        bytes = undefined;
+      }
+      // A Git LFS pointer counts as present: its oid stands for the bytes (design section 1).
+      const held = bytes && (parseLfsPointer(bytes)?.oid ?? sha256Hex(bytes));
+      outsideChange = held !== card.sha256;
+    }
+  }
+  const sha256 = versions.at(-1)?.sha256;
+  return {
+    assetId,
+    ...(sha256 !== undefined && { sha256, version: versions.length }),
+    outsideChange,
   };
 }
 
@@ -476,6 +575,7 @@ export async function commitLibraryWrite(
   if (input.candidateReview) {
     record = await carryAnnotations(record, input.candidateReview, plan, resource, sha256, copies);
   }
+  olderVersionCheck(record.versions, sha256, assetId);
   const appended = !record.versions.some((v) => v.sha256 === sha256);
   if (appended) {
     const first = record.versions.length === 0;

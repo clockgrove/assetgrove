@@ -59,6 +59,8 @@ export interface PickOptions {
   registry?: PresetRegistry;
   /** The person's confirmation of this pick (design section 7), copied into its provenance. */
   confirmation?: ConfirmationRecord;
+  /** The version the confirmed pick replaces (sha256), or null for a first pick (TargetWrite.replaces). */
+  replaces?: string | null;
 }
 
 export interface PickResult {
@@ -221,6 +223,11 @@ export interface TargetWrite {
   confirmation?: ConfirmationRecord;
   /** The candidate's review record, whose annotations are carried into the asset's. */
   candidateReview?: CandidateReview;
+  /**
+   * The asset's version this hand-off confirmed replacing: its sha256, or null when it confirmed
+   * a first pick. Another current version exits 2 `version_changed` before any write.
+   */
+  replaces?: string | null;
   /** The clock the library's version and log line are stamped with. */
   now?: () => Date;
 }
@@ -417,6 +424,8 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     mediaPath,
     manifestPath,
     ...(provenancePath !== undefined && { provenancePath }),
+    mediaBytes: output.bytes,
+    ...(write.replaces !== undefined && { replaces: write.replaces }),
   });
   sameFile([...writes.map(([path]) => path), ...libraryFiles(library)]);
   return {
@@ -590,6 +599,7 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     ...(options.gate && { gate: options.gate }),
     ...(options.registry && { registry: options.registry }),
     ...(options.confirmation && { confirmation: options.confirmation }),
+    ...(options.replaces !== undefined && { replaces: options.replaces }),
     candidateReview: {
       path: join(options.runDir, "reviews", `${candidate.id}.review.json`),
       root: resolve(options.runDir),

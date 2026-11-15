@@ -24,6 +24,8 @@ const DESIGN: Record<number, string[]> = {
     "command_refused",
     "asset_id_reserved",
     "asset_conflict",
+    "version_exists",
+    "version_changed",
   ],
   3: ["cap_refused", "provider_limit_undeclared", "provider_limit_mismatch", "spend_hold"],
   4: ["provider_error"],

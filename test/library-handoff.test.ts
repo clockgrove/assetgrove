@@ -18,9 +18,11 @@ import { fileURLToPath } from "node:url";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { confirmCommand } from "../src/commands/confirm.ts";
+import { pickRequest } from "../src/commands/pick.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import type { ConfirmPort } from "../src/confirm/prompt.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
+import { pick as handoffPick } from "../src/handoff.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { loadProfile } from "../src/inputs.ts";
 import { parseCard } from "../src/library/card.ts";
@@ -576,6 +578,99 @@ test("a second pick of the same asset with different bytes replaces the media, a
 
   const lines = await logLines(join(dir, "log.md"));
   assert.deepEqual(lines.map((line) => LOG_LINE.exec(line)?.[1]).sort(), ["pick", "replace"]);
+});
+
+test("picking the bytes of an older version again exits 2 version_exists before any write", async () => {
+  const { world, runDir: runA } = await stagedWorld();
+  await picked(runA, world.targetDir);
+  const second = await stage(world, { ...shelterSpec, frames: { count: 4 } });
+  assert.equal(second.code, 0, second.stdout + second.stderr);
+  await picked(doc(second)["runDir"], world.targetDir);
+  const dir = join(world.targetDir, "assets/source/fern");
+  const files = ["shelter.png", "fern-shelter.md", "fern-shelter.review.json", "log.md"];
+  const before = await Promise.all(files.map((name) => readFile(join(dir, name))));
+
+  const r = await pick(runA, world.targetDir);
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(doc(r)["error"].code, "version_exists");
+  const after = await Promise.all(files.map((name) => readFile(join(dir, name))));
+  files.forEach((name, i) => assert.deepEqual(after[i], before[i], name));
+});
+
+test("the pick form names the version it replaces in its digest and warns of an outside change", async () => {
+  const { world, runDir } = await stagedWorld();
+  const first = await pickRequest({ run: runDir, candidate: "c1", target: world.targetDir });
+  assert.equal(first.body["replaces"], undefined);
+  await picked(runDir, world.targetDir);
+  const dir = join(world.targetDir, "assets/source/fern");
+  const current = sha256(await readFile(join(dir, "shelter.png")));
+
+  const second = await stage(world, { ...shelterSpec, frames: { count: 4 } });
+  assert.equal(second.code, 0, second.stdout + second.stderr);
+  const args = { run: doc(second)["runDir"] as string, candidate: "c1", target: world.targetDir };
+  const request = await pickRequest(args);
+  assert.equal(request.body["replaces"], current);
+  assert.deepEqual((request.details as Record<string, unknown>)["replaces"], {
+    assetId: "fern-shelter",
+    version: 1,
+    sha256: current,
+  });
+  assert.match(
+    request.summary,
+    new RegExp(`replacing version 1 of fern-shelter \\(sha256 ${current}\\)`),
+  );
+  assert.equal((request.details as Record<string, unknown>)["outsideChange"], undefined);
+
+  // A change outside Assetgrove: the form warns, and its digest is the same request's.
+  await writeFile(
+    join(dir, "shelter.png"),
+    encodePng({ width: 2, height: 2, data: new Uint8Array(16) }),
+  );
+  const changed = await pickRequest(args);
+  assert.equal((changed.details as Record<string, unknown>)["outsideChange"], true);
+  assert.match(changed.summary, /discards an outside change/);
+  assert.equal(changed.id, request.id);
+});
+
+test("a pick whose confirmed replaced version is no longer current exits 2 version_changed before any write", async () => {
+  const { world, runDir } = await stagedStill("lantern", "props");
+  const gate = { settings: loadSettings() };
+  await assert.rejects(
+    handoffPick({
+      runDir,
+      candidateId: "c1",
+      targetDir: world.targetDir,
+      gate,
+      replaces: "0".repeat(64),
+    }),
+    (error: Error & { code?: string }) => error.code === "version_changed",
+  );
+  assert.deepEqual(await tree(world.targetDir), []);
+  const done = await handoffPick({
+    runDir,
+    candidateId: "c1",
+    targetDir: world.targetDir,
+    gate,
+    replaces: null,
+  });
+  assert.equal(done.library?.version, 1);
+});
+
+test("an asset id carded in the same folder for another media file exits 2 asset_conflict", async () => {
+  const { world, runDir } = await stagedWorld();
+  await picked(runDir, world.targetDir);
+  const before = await tree(world.targetDir);
+  // A still whose plain id is the strip's joined id, written into the same folder.
+  const other = await stagedStill(
+    "fern-shelter",
+    "assets/source/fern",
+    { root: "assets/source" },
+    world,
+  );
+  const r = await pick(other.runDir, world.targetDir);
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(doc(r)["error"].code, "asset_conflict");
+  assert.deepEqual(await tree(world.targetDir), before);
 });
 
 test("a pick interrupted after the media write is completed by repeating it: one version, card, indexes and log", async () => {
