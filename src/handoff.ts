@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -31,6 +31,15 @@ import {
 import { sha256 } from "./request.ts";
 import { isInside } from "./settings.ts";
 import { renderString, setPath } from "./template.ts";
+import { acquireLibraryLock } from "./runs/lock.ts";
+import {
+  assetgroveVersion,
+  commitLibraryWrite,
+  prepareLibraryWrite,
+  writeAtomic,
+} from "./library/write.ts";
+import type { CandidateReview, LibraryPlan } from "./library/write.ts";
+import type { VersionStatus } from "./library/review.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
 import type { PresetRegistry, ResolvedPreset } from "./handoff/presets/index.ts";
 import type { HandoffProblem, PresetFile } from "./handoff/presets/index.ts";
@@ -50,6 +59,8 @@ export interface PickOptions {
   registry?: PresetRegistry;
   /** The person's confirmation of this pick (design section 7), copied into its provenance. */
   confirmation?: ConfirmationRecord;
+  /** The version the confirmed pick replaces (sha256), or null for a first pick (TargetWrite.replaces). */
+  replaces?: string | null;
 }
 
 export interface PickResult {
@@ -59,6 +70,8 @@ export interface PickResult {
   provenancePath?: string;
   /** Each hand-off preset that ran, with the files it wrote. */
   handoff?: PresetResult[];
+  /** The card, review record, indexes and log the pick wrote. */
+  library?: LibraryResult;
   validator?: ValidatorResult;
 }
 
@@ -169,7 +182,14 @@ function sameFile(paths: readonly string[]): void {
  */
 export function checkPreparedWrites(prepared: readonly PreparedTargetWrite[]): void {
   checkWrites(prepared.flatMap((p) => p.rels));
-  sameFile(prepared.flatMap((p) => p.writes.map(([path]) => path)));
+  sameFile(
+    prepared.flatMap((p) => [...p.writes.map(([path]) => path), ...libraryFiles(p.library)]),
+  );
+}
+
+/** The asset's own library files, which no hand-off write may also name. */
+function libraryFiles(plan: LibraryPlan): string[] {
+  return [plan.cardPath, plan.reviewPath];
 }
 
 /** What a hand-off writes: one media file with its fields and provenance. */
@@ -199,6 +219,30 @@ export interface TargetWrite {
   gate?: ApprovalGate;
   /** The presets the profile's `handoff` list chooses among; core's when absent. */
   registry?: PresetRegistry;
+  /** The person's confirmation of the hand-off, recorded with the version in the review record. */
+  confirmation?: ConfirmationRecord;
+  /** The candidate's review record, whose annotations are carried into the asset's. */
+  candidateReview?: CandidateReview;
+  /**
+   * The asset's version this hand-off confirmed replacing: its sha256, or null when it confirmed
+   * a first pick. Another current version exits 2 `version_changed` before any write.
+   */
+  replaces?: string | null;
+  /** The clock the library's version and log line are stamped with. */
+  now?: () => Date;
+}
+
+/** What a hand-off wrote into the library (docs/library.md). */
+export interface LibraryResult {
+  assetId: string;
+  /** The current version's position in the stack. */
+  version: number;
+  sha256: string;
+  state: VersionStatus;
+  /** Whether this hand-off appended the version; false when completing an earlier one. */
+  appended: boolean;
+  /** Every library file this hand-off changed, relative to the target, in write order. */
+  files: string[];
 }
 
 export interface TargetWriteResult {
@@ -209,6 +253,8 @@ export interface TargetWriteResult {
   files: string[];
   /** Each hand-off preset of the profile's `handoff` list, in order, with the files it wrote. */
   handoff: PresetResult[];
+  /** The card, review record, indexes and log the hand-off wrote. */
+  library?: LibraryResult;
   validator?: ValidatorResult;
 }
 
@@ -230,6 +276,12 @@ export interface PreparedTargetWrite {
   provenancePath?: string;
   writes: Array<[string, Uint8Array | string]>;
   validatorStep?: CommandStep;
+  /** The library write, checked. */
+  library: LibraryPlan;
+  /** The media bytes and provenance as written. */
+  mediaBytes: Uint8Array;
+  provenance: Provenance;
+  provenanceBytes?: string;
 }
 
 /**
@@ -361,10 +413,21 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   (write.output.sidecars ?? []).forEach((sidecar, i) => {
     writes.push([targetPath(guard, sidecarRels[i] as string), sidecar.bytes]);
   });
-  if (provenancePath) {
-    writes.push([provenancePath, `${JSON.stringify(provenance, null, 2)}\n`]);
-  }
-  sameFile(writes.map(([path]) => path));
+  const provenanceBytes = provenancePath ? `${JSON.stringify(provenance, null, 2)}\n` : undefined;
+  if (provenancePath && provenanceBytes !== undefined)
+    writes.push([provenancePath, provenanceBytes]);
+  // Before anything is written: the asset id is free and the library's own files are readable.
+  const library = await prepareLibraryWrite({
+    profile,
+    spec,
+    targetDir,
+    mediaPath,
+    manifestPath,
+    ...(provenancePath !== undefined && { provenancePath }),
+    mediaBytes: output.bytes,
+    ...(write.replaces !== undefined && { replaces: write.replaces }),
+  });
+  sameFile([...writes.map(([path]) => path), ...libraryFiles(library)]);
   return {
     rels,
     write,
@@ -381,17 +444,31 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     ...(provenancePath !== undefined && { provenancePath }),
     writes,
     ...(validatorStep !== undefined && { validatorStep }),
+    library,
+    mediaBytes: output.bytes,
+    provenance,
+    ...(provenanceBytes !== undefined && { provenanceBytes }),
   };
 }
 
-/** Writes a prepared hand-off, then runs each preset's check and the approved validator. */
+/**
+ * Writes a prepared hand-off under the library write lock, each file through a temporary file
+ * renamed over it: the media, its files and provenance, then each preset's check, then the library
+ * (review record, card, indexes, log); then runs the approved validator.
+ */
 export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
+  const lock = acquireLibraryLock(prepared.targetDir, prepared.gate.settings.stateDir);
+  try {
+    return await commitLocked(prepared);
+  } finally {
+    lock.release();
+  }
+}
+
+async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
   const { targetDir, guard, presets, presetContext, presetFiles, writes } = prepared;
   const { profile } = prepared.write;
-  for (const [path, content] of writes) {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content);
-  }
+  for (const [path, content] of writes) await writeAtomic(path, content);
 
   const result: TargetWriteResult = {
     mediaPath: prepared.mediaPath,
@@ -418,6 +495,24 @@ export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<
     problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
   }
   if (problems.length > 0) throw new HandoffCheckError(problems);
+  // Every preset check passed: the version goes into the library.
+  const { write } = prepared;
+  const library = await commitLibraryWrite(prepared.library, {
+    mediaBytes: prepared.mediaBytes,
+    provenance: prepared.provenance,
+    ...(prepared.provenanceBytes !== undefined && { provenanceBytes: prepared.provenanceBytes }),
+    spec: write.spec,
+    run: String(write.run["runId"] ?? ""),
+    candidate: String(write.run["candidateId"] ?? ""),
+    ...(write.confirmation && { confirmation: write.confirmation }),
+    ...(write.candidateReview && { candidateReview: write.candidateReview }),
+    now: (write.now ?? (() => new Date()))(),
+    assetgrove: assetgroveVersion(),
+  });
+  result.library = {
+    ...library,
+    files: library.files.map((path) => relativeRecordPath(targetDir, path)),
+  };
   if (profile.validator && prepared.validatorStep) {
     // The approval must hold for the command as the written target now has it.
     const identity = commandIdentity("validator", profile.validator.command, targetDir);
@@ -503,6 +598,13 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     targetDir,
     ...(options.gate && { gate: options.gate }),
     ...(options.registry && { registry: options.registry }),
+    ...(options.confirmation && { confirmation: options.confirmation }),
+    ...(options.replaces !== undefined && { replaces: options.replaces }),
+    candidateReview: {
+      path: join(options.runDir, "reviews", `${candidate.id}.review.json`),
+      root: resolve(options.runDir),
+    },
+    now,
   });
   const { files, ...rest } = written;
   record.picked = {

@@ -4,10 +4,19 @@
  * same pid. A lock held by a live process refuses the run (exit 2 `run_in_progress`); a dead
  * process's lock is taken over.
  */
-import { randomBytes } from "node:crypto";
-import { linkSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { uptime } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { findGitDir } from "../library/lfs.ts";
 
 export const LOCK_FILE = "lock";
 
@@ -197,36 +206,39 @@ function clearDeadGuard(guard: string, dead: Holder | undefined, pid: number): v
 }
 
 /**
- * Takes the run directory's lock for this process, or throws `RunInProgressError` when a live
- * process holds it. A lock whose holder is dead or unreadable is taken over by exactly one
- * process: the one that creates the takeover guard `lock.takeover` exclusively. Only the guard's
- * holder removes a dead lock, and it then creates `lock` exclusively again, so two processes
- * repeating the same interrupted request never both run it.
+ * Takes the lock at `path` for this process, or throws `busy(pid)` when a live process holds it. A
+ * lock whose holder is dead or unreadable is taken over by exactly one process: the one that
+ * creates the takeover guard `<path>.takeover` exclusively. Only the guard's holder removes a dead
+ * lock, and it then creates the lock exclusively again, so two processes repeating the same
+ * interrupted request never both run it.
  */
-export function acquireRunLock(runDir: string, pid: number = process.pid): RunLock {
-  const path = join(runDir, LOCK_FILE);
+export function acquireLock(
+  path: string,
+  busy: (pid: number) => Error,
+  pid: number = process.pid,
+): RunLock {
+  mkdirSync(dirname(path), { recursive: true });
   const guard = `${path}.takeover`;
   let tookOver = false;
   for (let attempt = 0; ; attempt++) {
     if (createExclusive(path, pid)) break;
     const held = holder(path);
-    if (live(path, held, pid) || attempt >= 8)
-      throw new RunInProgressError(runDir, held?.pid ?? -1);
+    if (live(path, held, pid) || attempt >= 8) throw busy(held?.pid ?? -1);
     if (!createExclusive(guard, pid)) {
       // Another process is taking the dead lock over; a guard whose process died is cleared.
       const guardHeld = holder(guard);
-      if (live(guard, guardHeld, pid)) throw new RunInProgressError(runDir, guardHeld?.pid ?? -1);
+      if (live(guard, guardHeld, pid)) throw busy(guardHeld?.pid ?? -1);
       clearDeadGuard(guard, guardHeld, pid);
       continue;
     }
     try {
-      // Holding the guard, no other process removes `lock`; its owner only removes a live one.
+      // Holding the guard, no other process removes the lock; its owner only removes a live one.
       const now = holder(path);
-      if (live(path, now, pid)) throw new RunInProgressError(runDir, now?.pid ?? -1);
+      if (live(path, now, pid)) throw busy(now?.pid ?? -1);
       rmSync(path, { force: true });
       if (!createExclusive(path, pid)) {
         const fresh = holder(path);
-        throw new RunInProgressError(runDir, fresh?.pid ?? -1);
+        throw busy(fresh?.pid ?? -1);
       }
       tookOver = true;
     } finally {
@@ -243,4 +255,60 @@ export function acquireRunLock(runDir: string, pid: number = process.pid): RunLo
       if (holder(path)?.pid === pid) rmSync(path, { force: true });
     },
   };
+}
+
+/** Takes the run directory's lock for this process, or throws `RunInProgressError`. */
+export function acquireRunLock(runDir: string, pid: number = process.pid): RunLock {
+  return acquireLock(join(runDir, LOCK_FILE), (p) => new RunInProgressError(runDir, p), pid);
+}
+
+/** Another live process is writing the library. Exit 2 `run_in_progress`. */
+export class LibraryInProgressError extends Error {
+  readonly code = "run_in_progress";
+  readonly pid: number;
+  readonly lockPath: string;
+  constructor(lockPath: string, pid: number) {
+    super(
+      `refused: another Assetgrove process (${pid}) is writing the library; repeat the request once it ends` +
+        ` (if process ${pid} is not running, remove ${lockPath} and repeat it)`,
+    );
+    this.name = "LibraryInProgressError";
+    this.pid = pid;
+    this.lockPath = lockPath;
+  }
+}
+
+/** The common Git directory of the repository containing `start`; undefined outside one. */
+export function gitCommonDir(start: string): string | undefined {
+  return findGitDir(start);
+}
+
+/** The real path of `path`, or the path resolved when it does not exist yet. */
+function realOrResolved(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/**
+ * Takes the one library write lock: `assetgrove/library.lock` in the repository's common Git
+ * directory, or, for a target in no repository, a file in `stateDir` named for the target.
+ */
+export function acquireLibraryLock(
+  targetDir: string,
+  stateDir: string,
+  pid: number = process.pid,
+): RunLock {
+  const common = gitCommonDir(targetDir);
+  const path =
+    common !== undefined
+      ? join(common, "assetgrove", "library.lock")
+      : join(
+          stateDir,
+          "library-locks",
+          `${createHash("sha256").update(realOrResolved(targetDir)).digest("hex").slice(0, 16)}.lock`,
+        );
+  return acquireLock(path, (p) => new LibraryInProgressError(path, p), pid);
 }

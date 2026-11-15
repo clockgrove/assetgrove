@@ -55,7 +55,7 @@ test("a missing format is refused with reason missing, naming the line to add", 
 
 test("a newer format is refused with reason too_new", () => {
   assert.throws(
-    () => readFormat("target-profile", { format: "assetgrove-target-profile/2" }, "p.json"),
+    () => readFormat("target-profile", { format: "assetgrove-target-profile/3" }, "p.json"),
     refusal("too_new"),
   );
 });

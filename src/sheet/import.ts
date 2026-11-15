@@ -60,7 +60,7 @@ import { splitStrip } from "../animation/strip.ts";
 import { templatesFor, thresholdsFor } from "../animation/templates.ts";
 import type { AnimationReport } from "../animation/types.ts";
 import type { Grouping, MatteQuality, SliceOptions } from "./types.ts";
-import type { LoadedReference } from "../types.ts";
+import type { ConfirmationRecord, LoadedReference } from "../types.ts";
 import { scoreIdentity } from "../identity.ts";
 import type { CastMember, IdentityRecord, IdentityScore, IdentitySettings } from "../identity.ts";
 
@@ -518,6 +518,8 @@ export interface WriteFamiliesOptions {
   gate?: ApprovalGate;
   /** The presets the profile's `handoff` list chooses among; core's when absent. */
   registry?: PresetRegistry;
+  /** The person's confirmation of the write, recorded with each family's version. */
+  confirmation?: ConfirmationRecord;
 }
 
 export interface WrittenFamily {
@@ -824,6 +826,12 @@ export async function writeFamilies(
       targetDir: options.targetDir,
       ...(options.gate && { gate: options.gate }),
       ...(options.registry && { registry: options.registry }),
+      ...(options.confirmation && { confirmation: options.confirmation }),
+      candidateReview: {
+        path: join(options.importDir, "reviews", `${s.family.name}.review.json`),
+        root: resolve(options.importDir),
+      },
+      now,
     });
     pending.push({ s, count, bytes, strip, digitalSourceType, prepared });
   }

@@ -37,7 +37,7 @@ test("migrate adds the format line to an unversioned profile, then reports it cu
   const result = JSON.parse(added.stdout) as Record<string, unknown>;
   assert.equal(result["status"], "added");
   assert.equal(result["from"], null);
-  assert.equal(result["format"], "assetgrove-target-profile/1");
+  assert.equal(result["format"], "assetgrove-target-profile/2");
   const text = await readFile(file, "utf8");
   assert.equal(Object.keys(JSON.parse(text) as object)[0], "format");
   assert.ok(text.endsWith("}\n"));
@@ -46,6 +46,22 @@ test("migrate adds the format line to an unversioned profile, then reports it cu
   const again = await cli("migrate", file, "--kind", "target-profile", "--json");
   assert.equal((JSON.parse(again.stdout) as Record<string, unknown>)["status"], "current");
   assert.equal(await readFile(file, "utf8"), text);
+});
+
+test("migrate moves a target profile from /1 to /2 and changes nothing else", async () => {
+  const file = join(await workdir(), "profile.json");
+  const profile = { name: "x", license: "MIT" };
+  await writeFile(file, JSON.stringify({ format: "assetgrove-target-profile/1", ...profile }));
+  const run = await cli("migrate", file, "--kind", "target-profile", "--json");
+  assert.equal(run.code, 0);
+  const result = JSON.parse(run.stdout) as Record<string, unknown>;
+  assert.equal(result["status"], "migrated");
+  assert.equal(result["from"], 1);
+  assert.equal(result["format"], "assetgrove-target-profile/2");
+  assert.deepEqual(JSON.parse(await readFile(file, "utf8")), {
+    format: "assetgrove-target-profile/2",
+    ...profile,
+  });
 });
 
 test("migrate adds the format line to a Markdown style preset and keeps the prose", async () => {

@@ -27,7 +27,7 @@ Assetgrove reads three files: the asset spec and the target profile (JSON) and t
 
 ## Format lines
 
-The shared files carry a `format` line as their first field, `assetgrove-<kind>/<n>`: `assetgrove-target-profile/1`, `assetgrove-style-bible/1` (the JSON style bible and the front matter of `BIBLE.md`), `assetgrove-style-preset/1` and `assetgrove-recipe/1`. A file with no line is refused with exit 2 (`format_unsupported`, `error.reason` `missing`) and the message names the line to add. A newer version is `too_new`, and a line that is unknown or belongs to another kind is `unknown`. An older version is migrated in memory. Specs, briefs, groupings and other request inputs carry no format line.
+The shared files carry a `format` line as their first field, `assetgrove-<kind>/<n>`: `assetgrove-target-profile/2`, `assetgrove-style-bible/1` (the JSON style bible and the front matter of `BIBLE.md`), `assetgrove-style-preset/1` and `assetgrove-recipe/1`. A file with no line is refused with exit 2 (`format_unsupported`, `error.reason` `missing`) and the message names the line to add. A newer version is `too_new`, and a line that is unknown or belongs to another kind is `unknown`. An older version is migrated in memory. Specs, briefs, groupings and other request inputs carry no format line.
 
 `assetgrove migrate <file> --kind <kind>` adds the line to an unversioned file, as its first field (Markdown front matter is edited in place and the prose kept), and moves an older file forward. A file already current is reported as `current` and not written. Loaders still refuse an unversioned file until it is migrated.
 
@@ -74,7 +74,7 @@ A bible that lists references requires `referenceLicense`, the terms they were p
 
 ```json
 {
-  "format": "assetgrove-target-profile/1",
+  "format": "assetgrove-target-profile/2",
   "name": "my-game",
   "license": "MIT",
   "acceptedLicenses": ["CC-BY-4.0"],
@@ -121,7 +121,7 @@ The paths are illustrative.
 
 `validator.command` is an argv array run in the target directory without a shell after `pick` or `write-families` writes. It is code a shared file names, so it runs only with an approval tied to its exact hash; see [decisions.md](decisions.md#command-approvals-are-hashed-relative-to-the-git-top-level-shims-are-refused). An unapproved validator exits 8 `confirmation_required` before anything is written, unless a person accepts it in an MCP client's form or at a TTY; `assetgrove confirm <hex>` approves a pending one. The provenance's `commands` records its hash and approval method.
 
-- **Validation.** The profile's top-level fields are validated: `format`, `name`, `license`, `acceptedLicenses`, `style`, `values`, `frames`, `layout`, `manifest`, `review`, `validator`, `identity`, `spend`, `model3d`, `animation` and `handoff`. An unknown top-level field or a value of the wrong type is invalid input (exit 2).
+- **Validation.** The profile's top-level fields are validated: `format`, `name`, `license`, `acceptedLicenses`, `style`, `values`, `frames`, `layout`, `manifest`, `review`, `validator`, `identity`, `spend`, `model3d`, `animation`, `library` and `handoff`. An unknown top-level field or a value of the wrong type is invalid input (exit 2).
 - **Style.** `style` is the world's style profile: alpha mode (`soft` or `binary`, with a `threshold`), colour rule (`full` or `palette`) and edges (`antialiased` or `crisp`). The sheet import path follows it ([sheet-import.md](sheet-import.md#style-profile)). It is optional, and templates can read it as `{{profile.style}}`.
 - **Templates.** `"{{a.b}}"` as a whole string inserts the value of any JSON type; `"{{a.b?}}"` drops the key when the value is undefined; `{{a.b}}` inside a longer string interpolates text. An undefined required value is an error.
 - **Values available:** `spec.*` (the spec, with its `fields` also merged in), `profile.*` (`values`, `name`, `license`), `bible.version`, `output.*` (`path`, `mediaType`, `extension`, `sha256`, and what the generator adds: `frames`, `anchor`, `bounds`, `palette` for images; imported strips add `jitterPx` and set `palette` only under a palette colour rule), `provenance` (the full record) and `run.*` (`runId`, `candidateId`, `pickedAt`).
@@ -134,6 +134,16 @@ The paths are illustrative.
 - **Media.** Each output declares its own media type and extension; `.gitattributes` in the target decides what Git LFS stores.
 - **3D detail levels and tiers.** `model3d.lods` declares the detail-level chain: each level's `triangleRatio` of the full model and the `minScreenHeight` it shows down to. `model3d.tiers` declares each quality tier's budgets (`triangles`, `textureMaxPx` and, optionally, `materials`, `bones` and `lods`), either directly or nested by class. A tier may also set `fur: false`. `model3d.lodQa.silhouette` sets the level QA tolerance, and `model3d.handoff.lods` (`embedded` or `files`) sets how the levels are packaged. `assetgrove lod` makes the chain and the tier renditions within these budgets ([characters-3d.md](characters-3d.md#detail-levels-and-tiers)).
 - **Spend.** An optional `spend` object, `{ "dailyLimitUsd": 10, "workItemLimitUsd": 5 }`, sets the cross-run spend limits below. Each is a non-negative USD amount.
+
+## Library
+
+An optional `library` block says where the asset library sits and what it is called; every field is optional.
+
+- `root`: a path inside the target. Default: the static directory prefix of `layout.media` (the part before the first `{{`), else the target root.
+- `game`: the game id, the first segment of `asset://` addresses. Default: a slug of `name`.
+- `log`: `false` turns `log.md` off. Default `true`.
+
+The hand-off writes the card `<assetId>.md`, `<assetId>.review.json`, an `index.md` in every folder from the library root down, and a line in `log.md`; see [library.md](library.md). `assetgrove migrate --kind target-profile` moves a `/1` profile to `/2`; nothing else changes.
 
 ## Hand-off presets
 
