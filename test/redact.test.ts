@@ -1,5 +1,5 @@
 import "./fixtures/env.ts";
-import { approve } from "./fixtures/env.ts";
+import { approve, SCRIPTED_LIMIT, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
@@ -158,4 +158,35 @@ test("a ProviderError carrying a key shows [redacted:...] in the MCP error text"
   assertRedacted(text, "MCP text");
   assertRedacted(JSON.stringify(result.structuredContent), "MCP structuredContent");
   assertRedacted(stderr, "MCP stderr");
+});
+
+test("a custom keyEnv's value is redacted on a free command, where no guard runs", async () => {
+  const name = "ASSETGROVE_TEST_OWN_KEY";
+  const value = `own-${"abcdef0123456789".split("").reverse().join("")}-synthetic`;
+  const world = await syntheticWorld();
+  const script = join(world.dir, "echo-limit.mjs");
+  await writeFile(
+    script,
+    [
+      `export default {`,
+      `  image() { throw new Error("unused"); },`,
+      `  vision() { throw new Error("unused"); },`,
+      `  limitReading() { throw new Error("upstream echoed " + process.env[${JSON.stringify(name)}]); },`,
+      `};`,
+    ].join("\n"),
+  );
+  approve(script);
+  writeSettings({ providers: { scripted: { limit: { ...SCRIPTED_LIMIT }, keyEnv: name } } });
+  const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+    execFile(
+      process.execPath,
+      ["src/cli.ts", "spend", "check", "--provider-script", script, "--json"],
+      { cwd: root, env: { ...childEnv(), [name]: value } },
+      (error, stdout, stderr) =>
+        resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
+    );
+  });
+  assert.match(r.stdout, new RegExp(`upstream echoed \\[redacted:${name}\\]`), r.stderr);
+  assert.ok(!r.stdout.includes(value), "stdout holds the key value");
+  assert.ok(!r.stderr.includes(value), "stderr holds the key value");
 });

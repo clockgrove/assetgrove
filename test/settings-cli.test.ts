@@ -1,11 +1,13 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { settingsPath as defaultSettingsPath } from "../src/settings.ts";
 import { SpendLedger } from "../src/spend.ts";
 import { settingsPath, stateDir, writeSettings } from "./fixtures/env.ts";
 
@@ -61,6 +63,38 @@ test("`settings show --json` with a key value in the environment never contains 
       ["vercel-ai-gateway", "AI_GATEWAY_API_KEY", true],
     ].sort(),
   );
+});
+
+test("HOME set to a project does not exempt it: the project's own settings file is refused", async () => {
+  const project = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-home-project-")));
+  await mkdir(join(project, ".git"));
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: project, USERPROFILE: project };
+  for (const name of ["ASSETGROVE_CONFIG", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPDATA"])
+    delete env[name];
+  // The settings file the default location finds is one the project holds.
+  const path = defaultSettingsPath(env);
+  assert.ok(path.startsWith(project), path);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    JSON.stringify({ format: "assetgrove-settings/1", caps: { runUsd: 500 }, stateDir }),
+  );
+  // The settings directory differs by platform; it exists and is inside the project on each.
+  for (const cwd of [project, dirname(path)]) {
+    const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      execFile(
+        process.execPath,
+        [join(root, "src", "cli.ts"), "settings", "show", "--json"],
+        { cwd, env },
+        (error, stdout, stderr) =>
+          resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
+      );
+    });
+    assert.equal(r.code, 2, r.stdout);
+    const document = JSON.parse(r.stdout) as { error: { code: string; message: string } };
+    assert.equal(document.error.code, "settings_invalid");
+    assert.match(document.error.message, /inside the project/);
+  }
 });
 
 test("`settings path --json` prints the fixture path", async () => {

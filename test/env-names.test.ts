@@ -25,11 +25,14 @@ const ALLOWED = [
   "PATH",
   "PATHEXT",
   "NODE_EXTRA_CA_CERTS",
+  "NODE_USE_SYSTEM_CA",
   "NODE_TLS_REJECT_UNAUTHORIZED",
   "NODE_USE_ENV_PROXY",
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "ALL_PROXY",
+  "ANTHROPIC_BASE_URL",
+  "OPENAI_BASE_URL",
 ];
 
 /** The functions in src/env.ts that index the environment by a name they are given. */

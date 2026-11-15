@@ -7,6 +7,7 @@ import type { Env } from "../env.ts";
 import { ttyPort } from "../confirm/prompt.ts";
 import { loadExtensions } from "../extensions/registry.ts";
 import { createProviders } from "../providers/adapter.ts";
+import { registerKeyEnv } from "../redact.ts";
 import { loadSettings } from "../settings.ts";
 import type { CommandSpec, RunContext } from "./types.ts";
 
@@ -97,10 +98,16 @@ export async function createRunContext(options: ContextOptions): Promise<RunCont
   const extensions = await loadExtensions(settings, options.cwd ?? process.cwd());
   // Each provider is made by its adapter now, so an adapter-aware refusal (an unknown adapter, a
   // baseURL the adapter does not take) exits 2 settings_invalid before any command runs.
-  createProviders(settings, {
+  const configured = createProviders(settings, {
     ...(options.env && { env: options.env }),
     adapters: extensions.adapters,
   });
+  // Every key variable in play is redacted from here on, whether or not a guard runs: each
+  // provider's and each adapter's default.
+  registerKeyEnv([
+    ...configured.flatMap((c) => (c.keyEnv !== undefined ? [c.keyEnv] : [])),
+    ...extensions.adapters.flatMap((a) => (a.defaultKeyEnv !== undefined ? [a.defaultKeyEnv] : [])),
+  ]);
   const prompt = options.interactive ? ttyPort() : undefined;
   return {
     settings,
@@ -120,8 +127,8 @@ export function isPaid(spec: CommandSpec): boolean {
 
 /**
  * Throws `settings_invalid` (exit 2) when a variable that can redirect or unwrap TLS is set and
- * the settings' `environment.allow` does not list it. Run at server start and before every paid
- * command.
+ * the settings' `environment.allow` does not list it. Run at server start and before every command
+ * that can send a key (src/commands/runner.ts).
  */
 export function checkContextEnvironment(ctx: RunContext): void {
   checkEnvironment(ctx.settings.environment.allow, ctx.env);

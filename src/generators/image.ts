@@ -13,6 +13,7 @@ import {
   subjectOf,
 } from "../request.ts";
 import type { FrameGrid } from "../request.ts";
+import { requireInsideProject } from "../bible.ts";
 import type { Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, Point } from "../types.ts";
 import type { GeneratedCandidate, Generator, GeneratorContext, PlannedCall } from "./generator.ts";
@@ -160,6 +161,8 @@ export const spriteStripGenerator: Generator = {
     const grid = frameGrid(spec, ctx.profile, 1);
     const inputs = await loadBibleInputs(spec, bible, ctx.bibleDir);
     const prompt = buildStillPrompt(spec, bible, grid, inputs);
+    // A request input, like a shared bible, may not send an image from outside its project.
+    requireInsideProject([requireKeyPose(spec)], ctx.specDir, "the spec's keyPose");
     const keyPose = await loadReference(requireKeyPose(spec), "key pose (approved)", ctx.specDir);
     const frames: Raster[] = [];
     for (let i = 0; i < grid.count; i++) {

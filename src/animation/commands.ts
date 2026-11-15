@@ -15,6 +15,7 @@ import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { embedDigitalSourceType, readDigitalSourceType } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
+import { requireInsideProject } from "../bible.ts";
 import { loadReference, sniffMediaType } from "../request.ts";
 import type { Routes } from "../routes.ts";
 import { readImport } from "../sheet/import.ts";
@@ -325,6 +326,8 @@ export async function runFixFrame(options: {
   if (provenance && origin !== undefined && provenance.digitalSourceType === undefined) {
     provenance = { ...provenance, digitalSourceType: origin };
   }
+  if ("keyPose" in options.from)
+    requireInsideProject([options.from.keyPose], process.cwd(), "the key pose");
   const keyPose =
     "keyPose" in options.from
       ? await loadReference(options.from.keyPose, "approved key pose", process.cwd())

@@ -163,6 +163,22 @@ test("a listed package whose entry the project's Git tracks is refused before im
   assert.equal(existsSync(marker), false);
 });
 
+test("an entry an outer project's Git tracks is refused from a nested repository too", async () => {
+  const { dir, marker } = await project();
+  execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["add", "-f", join("node_modules", PACKAGE, "index.js")], { cwd: dir });
+  // A nested repository (a submodule's or a vendored game's checkout) resolves the outer package.
+  const nested = join(dir, "game");
+  await mkdir(nested);
+  execFileSync("git", ["init", "-q"], { cwd: nested });
+  settings([PACKAGE]);
+  const r = await cli(["extensions", "--json"], nested);
+  assert.equal(r.code, 2, r.stderr);
+  assert.equal(doc(r)["error"].code, "extension_refused");
+  assert.match(doc(r)["error"].message, /tracks its entry/);
+  assert.equal(existsSync(marker), false);
+});
+
 test("an api mismatch is refused before import", async () => {
   const { dir, pkg, marker } = await project();
   const manifest = JSON.parse(await readFile(join(pkg, "package.json"), "utf8"));

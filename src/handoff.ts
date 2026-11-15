@@ -16,6 +16,7 @@ import { InputError } from "./errors.ts";
 import { commandIdentity, defaultGate, requireApproval, resolveProgram } from "./approvals.ts";
 import type { ApprovalGate, CommandStep } from "./approvals.ts";
 import { requireLicensable } from "./license.ts";
+import { keyFreeEnv, redact } from "./redact.ts";
 import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
 import { readRun, writeRun } from "./loop.ts";
@@ -429,12 +430,14 @@ export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<
     const [file, ...args] = command;
     if (!file) throw new InputError("the profile's validator command is empty");
     const program = resolveProgram(file, targetDir);
+    // The validator runs without any key variable, and its output is redacted before it is kept.
     try {
-      const { stdout, stderr } = await run(program, args, { cwd: targetDir });
-      result.validator = { accepted: true, command, output: `${stdout}${stderr}`.trim(), approval };
+      const { stdout, stderr } = await run(program, args, { cwd: targetDir, env: keyFreeEnv() });
+      const output = redact(`${stdout}${stderr}`.trim());
+      result.validator = { accepted: true, command, output, approval };
     } catch (error) {
       const e = error as { stdout?: string; stderr?: string; message: string };
-      const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim() || e.message;
+      const out = redact(`${e.stdout ?? ""}${e.stderr ?? ""}`.trim() || e.message);
       result.validator = { accepted: false, command, output: out, approval };
     }
   }

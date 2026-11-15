@@ -4,7 +4,7 @@
  */
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
-import { loadBible } from "./bible.ts";
+import { loadBible, requireInsideProject } from "./bible.ts";
 import type { BibleDocument } from "./bible.ts";
 import { Budget } from "./budget.ts";
 import { ledgerFor } from "./spend.ts";
@@ -283,6 +283,8 @@ async function loadEvalSet(options: {
   const identities = new Map<string, NonNullable<Awaited<ReturnType<typeof loadIdentity>>>>();
   const prepared: Array<{ c: EvalCase; doc: BibleDocument; key: string }> = [];
   for (const c of cases) {
+    // A request input, like a shared bible, may not send an image from outside its project.
+    requireInsideProject([c.image], dir, options.casesPath);
     const doc = await bibleOf(c);
     const key = `${doc.path}\0${c.subject}`;
     if (!identities.has(key)) {

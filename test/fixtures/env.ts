@@ -12,7 +12,14 @@
  * rewrite the file for tests that need attended settings, approved commands or declared limits,
  * and the change ends with that test.
  */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach } from "node:test";
@@ -147,17 +154,22 @@ export function approve(
       typeof command === "string"
         ? scriptIdentity(command)
         : commandIdentity(command.kind, command.argv, command.cwd);
-    const { hash, kind, argv, cwd, files } = identity;
+    const { hash, kind, argv, cwd, files, root: project } = identity;
+    const path = join(approvalsDir, `${hash}.json`);
+    const earlier = existsSync(path)
+      ? (JSON.parse(readFileSync(path, "utf8")) as { roots?: string[] }).roots
+      : undefined;
     const record = {
       kind,
       hash,
       argv,
       cwd,
       files,
+      roots: [...new Set([...(earlier ?? []), project])],
       method: "terminal",
       at: new Date(0).toISOString(),
     };
-    writeFileSync(join(approvalsDir, `${hash}.json`), `${JSON.stringify(record, null, 2)}\n`);
+    writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
     if (!approvedCommands.some((c) => c.hash === hash)) {
       approvedCommands.push({ hash, kind, argv, cwd });
       approveCommand({ hash, kind, argv, cwd });

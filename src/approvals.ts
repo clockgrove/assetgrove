@@ -38,6 +38,11 @@ export interface CommandIdentity {
   files: Record<string, string>;
   /** sha256 hex of the canonical `{kind, argv, cwd, files}`. */
   hash: string;
+  /**
+   * The project the command runs in, outside the hash: the real path of cwd's Git top level, or of
+   * cwd outside one. An approval record holds only for the projects it lists.
+   */
+  root: string;
 }
 
 /** How a command came to be approved. */
@@ -63,6 +68,8 @@ export interface ApprovalRecord {
   argv: string[];
   cwd: string;
   files: Record<string, string>;
+  /** The projects (`CommandIdentity.root`) a person approved the command in. */
+  roots: string[];
   method: "tty" | "terminal" | "elicitation";
   at: string;
 }
@@ -73,7 +80,7 @@ export interface CommandConfirmation {
   id: string;
   summary: string;
   confirmCommand: string;
-  command: Omit<CommandIdentity, "hash"> & { hash: string };
+  command: CommandIdentity;
 }
 
 /** The `error.confirmation` of a settings change no one confirmed (src/settings-write.ts). */
@@ -145,7 +152,7 @@ function isFile(path: string): boolean {
 }
 
 /** The canonical JSON of an identity: fixed key order, files sorted by path. */
-function canonical(identity: Omit<CommandIdentity, "hash">): string {
+function canonical(identity: Omit<CommandIdentity, "hash" | "root">): string {
   const files = Object.fromEntries(
     Object.entries(identity.files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
   );
@@ -153,8 +160,8 @@ function canonical(identity: Omit<CommandIdentity, "hash">): string {
 }
 
 /**
- * The identity a stored `{kind, argv, cwd, files}` describes, when it is well formed and hashes to
- * `hash`; otherwise undefined. `assetgrove confirm` approves only a pending request whose shown
+ * The identity a stored `{kind, argv, cwd, files, root}` describes, when it is well formed and
+ * `{kind, argv, cwd, files}` hashes to `hash`; otherwise undefined. `assetgrove confirm` approves only a pending request whose shown
  * command is the one its id names.
  */
 export function verifiedIdentity(details: unknown, hash: string): CommandIdentity | undefined {
@@ -169,13 +176,20 @@ export function verifiedIdentity(details: unknown, hash: string): CommandIdentit
   if (typeof d.files !== "object" || d.files === null || Array.isArray(d.files)) return undefined;
   const files = d.files as Record<string, unknown>;
   if (!Object.values(files).every((v) => typeof v === "string")) return undefined;
+  if (typeof d.root !== "string" || d.root === "") return undefined;
   const identity = {
     kind: kind as CommandKind,
     argv: [...(d.argv as string[])],
     cwd: d.cwd,
     files: { ...(files as Record<string, string>) },
   };
-  return sha256Hex(canonical(identity)) === hash ? { ...identity, hash } : undefined;
+  return sha256Hex(canonical(identity)) === hash ? { ...identity, hash, root: d.root } : undefined;
+}
+
+/** The project of a cwd: the real path of its Git top level, or of the cwd outside one. */
+function projectOf(cwd: string): string {
+  const full = real(resolve(cwd));
+  return gitTopLevel(full) ?? full;
 }
 
 /** The cwd as hashed: relative to its Git top level with `/`, or absolute outside a repository. */
@@ -201,7 +215,7 @@ export function commandIdentity(kind: CommandKind, argv: string[], cwd: string):
     files[toPosix(rel)] = sha256Hex(readFileSync(path));
   }
   const identity = { kind, argv: [...argv], cwd: hashedCwd(full), files };
-  return { ...identity, hash: sha256Hex(canonical(identity)) };
+  return { ...identity, hash: sha256Hex(canonical(identity)), root: projectOf(full) };
 }
 
 /**
@@ -218,7 +232,7 @@ export function scriptIdentity(modulePath: string): CommandIdentity {
       cwd: hashedCwd(dirname(full)),
       files: {},
     };
-    return { ...identity, hash: sha256Hex(canonical(identity)) };
+    return { ...identity, hash: sha256Hex(canonical(identity)), root: projectOf(dirname(full)) };
   }
   return commandIdentity("provider-script", [basename(full)], dirname(full));
 }
@@ -235,6 +249,7 @@ function confirmation(identity: CommandIdentity): CommandConfirmation {
       argv: identity.argv,
       cwd: identity.cwd,
       files: identity.files,
+      root: identity.root,
     },
   };
 }
@@ -250,6 +265,7 @@ export function commandRequest(identity: CommandIdentity): ConfirmRequest {
       argv: identity.argv,
       cwd: identity.cwd,
       files: identity.files,
+      root: identity.root,
       hash: identity.hash,
     },
   };
@@ -260,18 +276,23 @@ export function approvalPath(configDir: string, hash: string): string {
   return join(configDir, "approvals", `${hash}.json`);
 }
 
-/** Writes an approval record for a command a person accepted. */
+/**
+ * Writes an approval record for a command a person accepted in the project `identity.root`,
+ * keeping the projects an earlier record of the same hash lists.
+ */
 export async function writeApproval(
   configDir: string,
   identity: CommandIdentity,
   method: ApprovalRecord["method"],
 ): Promise<string> {
+  const earlier = await readRecord(configDir, identity.hash);
   const record: ApprovalRecord = {
     kind: identity.kind,
     hash: identity.hash,
     argv: identity.argv,
     cwd: identity.cwd,
     files: identity.files,
+    roots: [...new Set([...(earlier?.roots ?? []), identity.root])],
     method,
     at: new Date().toISOString(),
   };
@@ -281,24 +302,35 @@ export async function writeApproval(
   return path;
 }
 
-/** The approval record of a hash, when one exists and names that hash. */
-export async function readApproval(
-  configDir: string,
-  hash: string,
-): Promise<ApprovalRecord | undefined> {
+/** The approval record of a hash, when one exists, names that hash and lists its projects. */
+async function readRecord(configDir: string, hash: string): Promise<ApprovalRecord | undefined> {
   let record: Partial<ApprovalRecord>;
   try {
     record = JSON.parse(await readFile(approvalPath(configDir, hash), "utf8")) as ApprovalRecord;
   } catch {
     return undefined;
   }
-  return record.hash === hash ? (record as ApprovalRecord) : undefined;
+  const listed = Array.isArray(record.roots) && record.roots.every((r) => typeof r === "string");
+  return record.hash === hash && listed ? (record as ApprovalRecord) : undefined;
+}
+
+/**
+ * The approval record of a command, when one exists for its hash and lists its project: the same
+ * command in another project is asked again.
+ */
+export async function readApproval(
+  configDir: string,
+  identity: Pick<CommandIdentity, "hash" | "root">,
+): Promise<ApprovalRecord | undefined> {
+  const record = await readRecord(configDir, identity.hash);
+  return record?.roots.includes(identity.root) ? record : undefined;
 }
 
 /**
  * Returns how a command is approved, asking a person when no approval exists and a channel can.
- * Sources, in order: `settings.commands.approved`; under headless settings nothing else counts;
- * the record at `<configDir>/approvals/<hex>.json`; the prompt, whose accept writes that record.
+ * Sources, in order: `settings.commands.approved` (in any project); under headless settings
+ * nothing else counts; the record at `<configDir>/approvals/<hex>.json` when it lists the
+ * command's project; the prompt, whose accept writes that record.
  * Otherwise the request is saved to `<stateDir>/pending/<hex>.json` and exit 8 carries the command.
  */
 export async function requireApproval(
@@ -321,7 +353,7 @@ export async function requireApproval(
       asked,
     );
   }
-  const record = await readApproval(settings.configDir, identity.hash);
+  const record = await readApproval(settings.configDir, identity);
   if (record !== undefined) return step(record.method);
   const request = commandRequest(identity);
   if (gate.prompt) {
@@ -349,9 +381,11 @@ export function defaultGate(): ApprovalGate {
 }
 
 /**
- * The program a command starts. On Windows `argv[0]` is resolved through the cwd, PATH and PATHEXT
- * the way the process would be found, and a `.cmd` or `.bat` result is refused (exit 2
- * `command_refused`): a shim runs through cmd.exe, a shell. Elsewhere `argv[0]` is returned as is.
+ * The program a command starts. On Windows a bare `argv[0]` is resolved through PATH and PATHEXT
+ * only, never the cwd, whose program no hash covers: one found only in the cwd is refused (exit 2
+ * `command_refused`); a path is resolved against the cwd. A `.cmd` or `.bat` result is refused
+ * (exit 2 `command_refused`): a shim runs through cmd.exe, a shell. Elsewhere `argv[0]` is
+ * returned as is.
  */
 export function resolveProgram(
   argv0: string,
@@ -365,20 +399,17 @@ export function resolveProgram(
     .split(";")
     .filter(Boolean)
     .map((e) => e.toLowerCase());
-  const bases =
-    /[\\/]/.test(argv0) || win32.isAbsolute(argv0)
-      ? [win32.resolve(cwd, argv0)]
-      : [
-          win32.join(cwd, argv0),
-          ...(search.path ?? "")
-            .split(";")
-            .filter(Boolean)
-            .map((dir) => win32.join(dir, argv0)),
-        ];
+  const bare = !(/[\\/]/.test(argv0) || win32.isAbsolute(argv0));
+  const bases = bare
+    ? (search.path ?? "")
+        .split(";")
+        .filter(Boolean)
+        .map((dir) => win32.join(dir, argv0))
+    : [win32.resolve(cwd, argv0)];
   const hasExt = exts.includes(win32.extname(argv0).toLowerCase());
+  const candidatesOf = (base: string) => (hasExt ? [base] : exts.map((ext) => base + ext));
   for (const base of bases) {
-    const candidates = hasExt ? [base] : exts.map((ext) => base + ext);
-    const found = candidates.find(isFile);
+    const found = candidatesOf(base).find(isFile);
     if (found === undefined) continue;
     if (/\.(cmd|bat)$/i.test(found)) {
       throw new CommandRefusedError(
@@ -386,6 +417,13 @@ export function resolveProgram(
       );
     }
     return found;
+  }
+  // Not on PATH: Windows would start a program of that name from the cwd, which no hash covers.
+  const local = bare ? candidatesOf(win32.join(cwd, argv0)).find(isFile) : undefined;
+  if (local !== undefined) {
+    throw new CommandRefusedError(
+      `"${argv0}" is not on PATH and resolves to ${local} in the command's directory, which its approval does not cover; name the program by its path`,
+    );
   }
   return argv0;
 }

@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -446,6 +447,31 @@ test("a per-reference license is recorded in provenance, the others under refere
         reference.path === "refs/fern-sheet.png" ? "CC-BY-4.0" : "LicenseRef-synthetic-studio",
     })),
   );
+});
+
+test("a spec's key pose outside the project root exits 2 invalid_input before any provider call", async (t) => {
+  const { world, files } = await worldFiles();
+  t.after(() => rm(world.dir, { recursive: true, force: true }));
+  await mkdir(join(world.dir, ".git"));
+  const outside = await mkdtemp(join(tmpdir(), "assetgrove-private-pose-"));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  const secret = join(outside, "private.png");
+  await writeFile(secret, await readFile(join(world.dir, "key-pose.png")));
+  const marker = join(world.dir, "provider-calls.log");
+  const provider = await recordingProvider(world.dir, marker);
+  approve(provider);
+  for (const keyPose of [secret, relative(world.dir, secret)]) {
+    await writeFile(files.spec, JSON.stringify({ ...shelterSpec, keyPose }));
+    const run = await cli(
+      "stage",
+      ...["--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
+      ...["--runs", world.runsDir, "--provider-script", provider],
+    );
+    assert.equal(run.code, 2, `${keyPose}: ${JSON.stringify(run.doc)}`);
+    assert.equal(errorOf(run).code, "invalid_input");
+    assert.match(errorOf(run).message, /keyPose: reference .* resolves outside the project root/);
+  }
+  await assert.rejects(readFile(marker), { code: "ENOENT" });
 });
 
 test("a reference path outside the project root exits 2 invalid_input before any provider call", async (t) => {

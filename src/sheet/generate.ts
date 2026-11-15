@@ -25,6 +25,7 @@ import {
   subjectOf,
 } from "../request.ts";
 import type { BibleInputs, FrameGrid } from "../request.ts";
+import { requireInsideProject } from "../bible.ts";
 import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
 import type { Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, StyleBible, TargetProfile } from "../types.ts";
@@ -224,6 +225,7 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
     ...(options.now !== undefined && { now: options.now }),
   });
   const inputs = await loadBibleInputs(spec, bible, options.bibleDir);
+  if (spec.keyPose) requireInsideProject([spec.keyPose], options.specDir, "the spec's keyPose");
   const keyPose: LoadedReference[] = spec.keyPose
     ? [await loadReference(spec.keyPose, "key pose (approved)", options.specDir)]
     : [];
