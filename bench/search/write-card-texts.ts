@@ -2,8 +2,10 @@
  * Orchestrator step o-6 runs this once: it writes the card texts into the manifest with a vision
  * model. `node bench/search/write-card-texts.ts --provider gateway --model <id>`.
  * `--provider scripted` runs offline. `--max-calls` caps the vision calls of one run (default 700).
- * `--base-url <url>` is the gateway's base URL, as the gateway adapter's `baseURL` setting; default its
- * fixed endpoint.
+ * The endpoint and key come from the developer settings, as for core: the first provider entry (by id)
+ * of the `vercel-ai-gateway` adapter gives `baseURL` (the full base URL, path included) and `keyEnv`;
+ * with no such entry, the gateway's fixed endpoint and `AI_GATEWAY_API_KEY`. The endpoint's host is
+ * printed before the first call.
  * `--sample <n> [--seed s]` prints the image ids a person should spot-check;
  * `--mark <id,id> --by <name>` records that they did.
  */
@@ -20,6 +22,22 @@ import {
 } from "./card-text.ts";
 import { fetchImages } from "./fetch.ts";
 import { checkManifest, type Manifest } from "./manifest.ts";
+import { keyValue } from "../../src/env.ts";
+import { adapterOf } from "../../src/providers/adapter.ts";
+import { loadSettings } from "../../src/settings.ts";
+
+/** The gateway entry of the developer settings, as core's gateway adapter reads it. */
+function gatewaySettings(): { baseURL?: string; keyEnv: string } {
+  const settings = loadSettings();
+  const id = Object.keys(settings.providers)
+    .sort()
+    .find((key) => adapterOf(key, settings.providers[key]!)?.id === "vercel-ai-gateway");
+  const entry = id !== undefined ? settings.providers[id]! : undefined;
+  return {
+    ...(entry?.baseURL !== undefined && { baseURL: entry.baseURL }),
+    keyEnv: entry?.keyEnv ?? "AI_GATEWAY_API_KEY",
+  };
+}
 
 const { values } = parseArgs({
   options: {
@@ -27,7 +45,6 @@ const { values } = parseArgs({
     images: { type: "string", default: join(import.meta.dirname, ".cache") },
     provider: { type: "string", default: "gateway" },
     model: { type: "string", default: "anthropic/claude-sonnet-5-5" },
-    "base-url": { type: "string" },
     force: { type: "boolean", default: false },
     "max-calls": { type: "string", default: "700" },
     sample: { type: "string" },
@@ -63,11 +80,20 @@ if (values.sample) {
           ),
       }
     : await fetchImages(manifest, values.images as string);
-  const provider = scripted
-    ? new ScriptedVision()
-    : await gatewayVision(values.model as string, {
-        ...(values["base-url"] !== undefined && { baseURL: values["base-url"] }),
-      });
+  let provider;
+  if (scripted) {
+    provider = new ScriptedVision();
+  } else {
+    const gateway = gatewaySettings();
+    const apiKey = keyValue(gateway.keyEnv);
+    console.error(
+      `gateway endpoint: ${gateway.baseURL !== undefined ? new URL(gateway.baseURL).host : "the fixed endpoint"} (key from ${gateway.keyEnv})`,
+    );
+    provider = await gatewayVision(values.model as string, {
+      ...(gateway.baseURL !== undefined && { baseURL: gateway.baseURL }),
+      ...(apiKey !== undefined && { apiKey }),
+    });
+  }
   const n = await writeCardTexts({
     manifest,
     source,

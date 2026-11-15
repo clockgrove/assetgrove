@@ -57,16 +57,64 @@ function walk(node: ts.Node, visit: (node: ts.Node) => void): void {
 const where = (file: ts.SourceFile, node: ts.Node) =>
   `${relative(root, file.fileName)}:${file.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
 
-const isProcessEnv = (node: ts.Node): boolean =>
+/** `process` or `globalThis.process` (also `global.process`). */
+const isProcess = (node: ts.Node): boolean =>
+  (ts.isIdentifier(node) && node.text === "process") ||
   (ts.isPropertyAccessExpression(node) &&
     ts.isIdentifier(node.expression) &&
-    node.expression.text === "process" &&
-    node.name.text === "env") ||
-  (ts.isElementAccessExpression(node) &&
+    ["globalThis", "global"].includes(node.expression.text) &&
+    node.name.text === "process");
+
+/** The property a member access names, when the name is static. */
+const memberName = (node: ts.Node): string | undefined =>
+  ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+
+const isProcessEnv = (node: ts.Node): boolean =>
+  (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+  isProcess(node.expression) &&
+  memberName(node) === "env";
+
+/**
+ * Why a node reads the environment outside src/env.ts, else undefined: a `process.env` access
+ * (through `process` or `globalThis.process`), `process` used other than as `process.<static name>`
+ * (an alias, a destructuring, a pass), or an import from the `process` module.
+ */
+function envRead(node: ts.Node): string | undefined {
+  if (isProcessEnv(node)) return "reads process.env";
+  if (
+    isProcess(node) &&
+    !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
+    !(ts.isPropertyAccessExpression(node) && isProcess(node.parent))
+  ) {
+    const parent = node.parent;
+    const member =
+      (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === node
+        ? memberName(parent)
+        : undefined;
+    if (member === undefined) return "uses process other than by a static member";
+  }
+  if (
+    ts.isImportDeclaration(node) &&
+    ts.isStringLiteral(node.moduleSpecifier) &&
+    ["process", "node:process"].includes(node.moduleSpecifier.text)
+  ) {
+    return "imports the process module";
+  }
+  if (
+    ts.isCallExpression(node) &&
     ts.isIdentifier(node.expression) &&
-    node.expression.text === "process" &&
-    ts.isStringLiteralLike(node.argumentExpression) &&
-    node.argumentExpression.text === "env");
+    node.expression.text === "require" &&
+    node.arguments.some((a) => ts.isStringLiteralLike(a) && ["process", "node:process"].includes(a.text))
+  ) {
+    return "requires the process module";
+  }
+  return undefined;
+}
 
 test("no module under src/ but env.ts reads process.env", () => {
   const offenders: string[] = [];
@@ -74,21 +122,70 @@ test("no module under src/ but env.ts reads process.env", () => {
     if (path === join(root, "src", "env.ts")) continue;
     const file = parse(path);
     walk(file, (node) => {
-      const destructured =
-        ts.isVariableDeclaration(node) &&
-        node.initializer !== undefined &&
-        ts.isIdentifier(node.initializer) &&
-        node.initializer.text === "process" &&
-        ts.isObjectBindingPattern(node.name) &&
-        node.name.elements.some((e) => (e.propertyName ?? e.name).getText() === "env");
-      if (isProcessEnv(node) || destructured) offenders.push(where(file, node));
+      const why = envRead(node);
+      if (why !== undefined) offenders.push(`${where(file, node)} ${why}`);
     });
   }
   assert.deepEqual(
     offenders,
     [],
-    `process.env is read outside src/env.ts at ${offenders.join(", ")}`,
+    `the environment is read outside src/env.ts at ${offenders.join(", ")}`,
   );
+});
+
+test("the environment check catches every way to reach process.env", () => {
+  const reads = (source: string) => {
+    const file = ts.createSourceFile("x.ts", source, ts.ScriptTarget.Latest, true);
+    const found: string[] = [];
+    walk(file, (node) => {
+      const why = envRead(node);
+      if (why !== undefined) found.push(why);
+    });
+    return found.length > 0;
+  };
+  for (const source of [
+    "process.env.X;",
+    'process["env"];',
+    "globalThis.process.env;",
+    "const p = process; p.env;",
+    "const { env } = process;",
+    'import { env } from "node:process";',
+    'import process2 from "process";',
+    'require("node:process");',
+  ]) {
+    assert.equal(reads(source), true, source);
+  }
+  for (const source of ["process.platform;", "process.exitCode = 1;", "globalThis.process.cwd();"]) {
+    assert.equal(reads(source), false, source);
+  }
+});
+
+test("every keyValue call under src/ with a literal name names an allowed name", () => {
+  const bad: string[] = [];
+  for (const path of files(join(root, "src"), /\.ts$/)) {
+    const file = parse(path);
+    walk(file, (node) => {
+      if (!ts.isCallExpression(node)) return;
+      const callee = node.expression;
+      const name = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : undefined;
+      if (name !== "keyValue") return;
+      const arg = node.arguments[0];
+      if (arg === undefined) return;
+      const literal = ts.isStringLiteralLike(arg)
+        ? arg.text
+        : ts.isTemplateExpression(arg)
+          ? "a template"
+          : undefined;
+      if (literal !== undefined && !ALLOWED.includes(literal)) {
+        bad.push(`${where(file, node)} reads ${literal}`);
+      }
+    });
+  }
+  assert.deepEqual(bad, [], `keyValue reads a name outside the allowed list: ${bad.join("; ")}`);
 });
 
 test("the names src/env.ts reads equal the allowed list", () => {
