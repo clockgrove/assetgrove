@@ -41,6 +41,7 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
     jobs: forecast.jobs,
     capUsd: forecast.capUsd,
     paid: paidBy(providers, forecast.jobs),
+    providers,
     candidates: forecast.candidates,
     runsArg: "out",
     promptAllow: ctx.settings.promptPolicy.allow,

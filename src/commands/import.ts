@@ -113,17 +113,19 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
         ]
       : []),
   ];
-  const providers = operations.length > 0 ? await providerSet(args.providerScript, ctx) : undefined;
-  const jobs = providers
-    ? jobsOf(
-        operations.map((operation) => ({
-          operation,
-          model: (providers.routes[operation] as Route).model,
-          estimatedCostUsd: (providers.routes[operation] as Route).estimatedCostUsd,
-        })),
-        providers.routes,
-      )
-    : [];
+  // Always made: the prompt policy's model check runs on the bible's prompt text (makes no call).
+  const providers = await providerSet(args.providerScript, ctx);
+  const jobs =
+    operations.length > 0
+      ? jobsOf(
+          operations.map((operation) => ({
+            operation,
+            model: (providers.routes[operation] as Route).model,
+            estimatedCostUsd: (providers.routes[operation] as Route).estimatedCostUsd,
+          })),
+          providers.routes,
+        )
+      : [];
   const work = await buildWorkPlan(importCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["sheet", "profile", "bible", "lockBible"],
@@ -139,7 +141,8 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
     },
     jobs,
     capUsd,
-    paid: providers ? paidBy(providers, jobs) : false,
+    paid: paidBy(providers, jobs),
+    providers,
     candidates: 1,
   });
   return {

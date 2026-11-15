@@ -170,6 +170,8 @@ export interface DecisionRequest {
   /** Images, in the order the prompt names them. */
   images: ImageInput[];
   question: DecisionQuestion;
+  /** The operation the decision is for (`identity`, `prompt-policy`); adapters may ignore it. */
+  operation?: string;
 }
 
 export type DecisionAnswer =

@@ -14,6 +14,8 @@ import type {
   VisionResult,
 } from "./provider.ts";
 
+import { PROMPT_POLICY_OPERATION } from "../routes.ts";
+
 /**
  * A scripted generation provider for tests and offline runs. It never calls a model: each call is
  * answered by the script, and every request is kept in `calls` so tests can inspect it.
@@ -32,6 +34,13 @@ export interface Script {
     request: DecisionRequest,
     index: number,
   ): Omit<DecisionResult, "requestId"> & { requestId?: string };
+  /**
+   * Answers the prompt policy's model check (the `prompt-policy` decision). A script without it
+   * allows every prompt (probability 0); its calls do not count toward `decide`'s index.
+   */
+  promptPolicy?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -73,6 +82,7 @@ export class ScriptedProvider implements GenerationProvider {
   private imageCount = 0;
   private visionCount = 0;
   private decideCount = 0;
+  private policyCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -108,6 +118,13 @@ export class ScriptedProvider implements GenerationProvider {
 
   async decide(request: DecisionRequest): Promise<DecisionResult> {
     this.calls.push({ kind: "decide", request });
+    if (request.operation === PROMPT_POLICY_OPERATION) {
+      const index = this.policyCount++;
+      const answer = this.script.promptPolicy
+        ? this.script.promptPolicy(request)
+        : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
+      return { requestId: `scripted-prompt-policy-${index}`, ...answer };
+    }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");
     const result = this.script.decide(request, index);

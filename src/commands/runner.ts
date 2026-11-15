@@ -167,6 +167,7 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
     plan,
     ctx,
     round: typeof args["round"] === "number" ? args["round"] : DEFAULT_ROUND,
+    ...(typeof args["workItem"] === "string" && { workItem: args["workItem"] }),
     ...(prior && { prior: () => prior(args, ctx, plan) }),
     run: (runCtx) => spec.run(args, runCtx),
     toOutcome: errorOutcome,

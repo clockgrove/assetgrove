@@ -38,6 +38,9 @@ export class Budget {
     if (!(capUsd >= 0)) throw new InputError(`invalid cost cap: ${capUsd}`);
     this.capUsd = capUsd;
     this.ledger = ledger;
+    // One run, one cap: what the executor's own calls spent before the command (the prompt
+    // policy's model check) counts against every budget the command makes in the run.
+    this.spent = currentRunScope()?.priorSpentUsd ?? 0;
   }
 
   get spentUsd(): number {
@@ -56,7 +59,9 @@ export class Budget {
    */
   check(amountUsd: number, what: string): void {
     this.fitCap(amountUsd, what);
-    const journaled = currentRunScope()?.journal?.spentUsd() ?? 0;
+    const run = currentRunScope();
+    // The executor's own journaled calls are not answered from the journal by this budget's calls.
+    const journaled = Math.max(0, (run?.journal?.spentUsd() ?? 0) - (run?.priorSpentUsd ?? 0));
     this.ledger?.check(Math.max(0, amountUsd - journaled), what);
   }
 

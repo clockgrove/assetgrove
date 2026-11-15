@@ -1,5 +1,5 @@
 import "./fixtures/env.ts";
-import { approve, approveProfile, writeSettings } from "./fixtures/env.ts";
+import { SCRIPTED_LIMIT, approve, approveProfile, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -384,11 +384,12 @@ test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
 
 test("plan without the compiler's key falls back to the template, though the gateway declares no limit", async () => {
   const f = await setup();
-  writeSettings({ providers: { "vercel-ai-gateway": {} } });
-  const args = f.args.filter(
-    (a, i) => a !== "--provider-script" && f.args[i - 1] !== "--provider-script",
-  );
-  const result = await cli(["plan", ...args]);
+  // The prompt policy's model check needs a decisions route it can call: the scripted one.
+  writeSettings({
+    providers: { "vercel-ai-gateway": {}, scripted: { limit: { ...SCRIPTED_LIMIT } } },
+    roles: { decisions: { provider: "scripted", model: "scripted-decider" } },
+  });
+  const result = await cli(["plan", ...f.args]);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).compiler.mode, "template-fallback");
 });

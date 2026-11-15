@@ -11,8 +11,10 @@ import {
   bibleReads,
   specReads,
   buildWorkPlan,
+  jobOf,
   paidBy,
 } from "../runs/plan.ts";
+import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, formatWork } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -54,6 +56,11 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
   });
+  // The apply after this plan runs its own prompt-policy check first: forecast it too.
+  const jobs = [
+    jobOf(PROMPT_POLICY_OPERATION, providers.routes[PROMPT_POLICY_OPERATION]!),
+    ...forecast.jobs,
+  ];
   const work: WorkPlan = await buildWorkPlan(planCommand, args, {
     inputs: ["spec", "bible", "profile", "brief", "runOptions", "template"],
     reads: {
@@ -61,9 +68,10 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
       ...specReads("spec", spec),
       ...forecast.reads,
     },
-    jobs: forecast.jobs,
+    jobs,
     capUsd: forecast.capUsd,
-    paid: paidBy(providers, forecast.jobs),
+    paid: paidBy(providers, jobs),
+    providers,
     candidates: forecast.candidates,
     promptAllow: ctx.settings.promptPolicy.allow,
   });

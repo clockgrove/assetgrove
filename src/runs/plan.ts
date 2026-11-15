@@ -11,6 +11,7 @@ import { InputError } from "../errors.ts";
 import type { JsonSchemaObject } from "../commands/types.ts";
 import { collectPromptText, enforcePromptPolicy } from "../policy/text.ts";
 import type { PromptPolicyRecord } from "../policy/text.ts";
+import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { runDirOf } from "./dir.ts";
 
@@ -208,6 +209,12 @@ export interface WorkPlanParts {
   capUsd: number;
   /** Whether the provider of a job bills (`billing.paid`); see `paidOf`. */
   paid: boolean;
+  /**
+   * The command's providers and routes. When the request carries prompt text, the plan adds one
+   * `prompt-policy` job on their route (the run's first call, src/runs/execute.ts); reading a
+   * route no provider serves throws `RouteUnavailableError` (exit 2 `route_unavailable`).
+   */
+  providers: PolicyProviders;
   candidates: number;
   /** The argument that names the runs directory; `runs` when absent. */
   runsArg?: string;
@@ -220,6 +227,19 @@ export interface WorkPlanParts {
    * reports it when it loads it.
    */
   reads?: Record<string, string>;
+}
+
+/** What the plan step reads from a command's provider set: its routes and its providers' billing. */
+export type PolicyProviders = Parameters<typeof paidBy>[0] & {
+  routes: Readonly<Record<string, Route>>;
+};
+
+/** The prompt text each plan checked, kept beside the plan (never printed or digested as text). */
+const policyTexts = new WeakMap<WorkPlan, string>();
+
+/** The prompt text a plan's prompt-policy job decides on; undefined when it has none. */
+export function policyTextOf(plan: WorkPlan): string | undefined {
+  return policyTexts.get(plan);
 }
 
 /** The sha256 of a file, or undefined when it cannot be read. */
@@ -300,10 +320,13 @@ export async function buildWorkPlan(
   for (const [name, path] of Object.entries(paths))
     if (path !== undefined) promptFiles[name] = path;
   for (const [name, path] of Object.entries(parts.reads ?? {})) promptFiles[name] ??= path;
-  const promptPolicy = enforcePromptPolicy(
-    await collectPromptText(promptFiles),
-    parts.promptAllow ?? [],
-  );
+  const promptTexts = await collectPromptText(promptFiles);
+  const promptPolicy = enforcePromptPolicy(promptTexts, parts.promptAllow ?? []);
+  const policyText = promptTexts.join("\n");
+  // The model check (design section 16): one decide call when there is text to check.
+  const policyJobs = policyText.trim()
+    ? [jobOf(PROMPT_POLICY_OPERATION, parts.providers.routes[PROMPT_POLICY_OPERATION]!)]
+    : [];
   const policyTextSha256 = promptPolicy.textSha256;
   const options: Record<string, unknown> = {};
   for (const [name, property] of Object.entries(spec.input.properties)) {
@@ -312,7 +335,7 @@ export async function buildWorkPlan(
     if (value !== undefined) options[name] = value;
   }
   const round = typeof args["round"] === "number" ? args["round"] : DEFAULT_ROUND;
-  const jobs = mergeJobs(parts.jobs);
+  const jobs = mergeJobs([...policyJobs, ...parts.jobs]);
   const forecastUsd = forecastOf(jobs);
   const digest = requestDigest({
     command: spec.name,
@@ -325,12 +348,12 @@ export async function buildWorkPlan(
     policyTextSha256,
   });
   const runs = typeof args[runsArg] === "string" ? (args[runsArg] as string) : DEFAULT_RUNS;
-  return {
+  const plan: WorkPlan = {
     jobs,
     candidates: parts.candidates,
     forecastUsd,
     capUsd: parts.capUsd,
-    paid: parts.paid,
+    paid: parts.paid || paidBy(parts.providers, policyJobs),
     inputs,
     options,
     policyTextSha256,
@@ -338,6 +361,8 @@ export async function buildWorkPlan(
     digest,
     runDir: runDirOf(resolve(runs), digest),
   };
+  if (policyJobs.length > 0) policyTexts.set(plan, policyText);
+  return plan;
 }
 
 /** Whether a provider of the jobs bills: `paid(id)` reads a provider's billing by settings id. */

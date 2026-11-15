@@ -362,6 +362,7 @@ export class Caller {
             prompt,
             images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
             question,
+            operation,
           });
         },
       );

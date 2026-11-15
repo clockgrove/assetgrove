@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { encodePng } from "../../src/image/raster.ts";
+import { PROMPT_POLICY_QUESTION } from "../../src/policy/model.ts";
 import { drawSubject } from "./synthetic.ts";
 
 /** What a vision QA of a still accepts: every check passes. */
@@ -41,7 +42,12 @@ function structuredReply(body: unknown): string | undefined {
   if (format?.type !== "json_schema") return undefined;
   const properties = format.json_schema?.schema?.properties ?? {};
   if ("score" in properties) return JSON.stringify({ score: properties["score"]?.maximum ?? 1 });
-  if ("probability" in properties) return JSON.stringify({ probability: 0.9 });
+  // The prompt policy's model check allows the fixture's synthetic prompts; other Boolean
+  // questions answer true.
+  if ("probability" in properties)
+    return JSON.stringify({
+      probability: JSON.stringify(body).includes(PROMPT_POLICY_QUESTION.instructions) ? 0.05 : 0.9,
+    });
   return "{}";
 }
 

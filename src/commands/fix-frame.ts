@@ -73,6 +73,7 @@ async function prepare(args: FixFrameArgs, ctx: RunContext) {
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
+    providers,
     candidates: 1,
   });
   return { capUsd, providers, routes, profile, target, plan, work };

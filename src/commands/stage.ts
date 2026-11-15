@@ -62,6 +62,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
+    providers,
     candidates,
   });
   return {

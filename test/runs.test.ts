@@ -102,6 +102,7 @@ export default {
   paid: true,
   image: (r, i) => (count("image"), ${answers.image ?? "base.image(r, i)"}),
   vision: (r, i) => (count("vision"), ${answers.vision ?? "base.vision(r, i)"}),
+  promptPolicy: () => (count("prompt-policy"), { answer: { type: "boolean", probability: 0 } }),
 };`,
   );
   approve(script);

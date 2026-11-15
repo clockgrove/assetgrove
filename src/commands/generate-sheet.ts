@@ -89,6 +89,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
+    providers,
     candidates: 1,
   });
   return { spec, bible, profile, brief, providers, routes, capUsd, lock, perCall, work };

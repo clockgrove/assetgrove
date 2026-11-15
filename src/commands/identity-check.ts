@@ -60,6 +60,7 @@ async function prepare(args: IdentityCheckArgs, ctx: RunContext) {
     jobs,
     capUsd: runCap(args.cap, ctx.settings),
     paid: paidBy(provider, jobs),
+    providers: provider,
     candidates: 0,
   });
   return { loaded, provider, work };

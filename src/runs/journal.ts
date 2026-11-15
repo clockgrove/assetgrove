@@ -18,6 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { PromptPolicyRecord } from "../policy/text.ts";
 import type { CallRecord } from "../types.ts";
 import { canonicalJson } from "./plan.ts";
 
@@ -210,6 +211,16 @@ export interface RunScope {
   onCall?: (progress: CallProgress) => void;
   /** The run's clearance to spend; absent when the request needed no confirmation. */
   clearance?: Clearance;
+  /**
+   * The prompt policy's record once the run's model check has passed (src/policy/model.ts), with
+   * its model and probability; run records and provenance written in the run carry it.
+   */
+  promptPolicy?: PromptPolicyRecord;
+  /**
+   * What the executor's own calls (the prompt policy's model check) spent before the command ran;
+   * every `Budget` made in the run counts it against the run's one cap.
+   */
+  priorSpentUsd?: number;
 }
 
 const scope = new AsyncLocalStorage<RunScope>();

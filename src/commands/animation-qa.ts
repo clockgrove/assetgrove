@@ -87,6 +87,7 @@ async function prepare(args: AnimationQaArgs, ctx: RunContext) {
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
+    providers,
     candidates: 0,
   });
   return { capUsd, providers, routes, vision, targets, plan, work };
