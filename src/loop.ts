@@ -20,7 +20,7 @@ import { extensionOf, unavailableId } from "./extensions/errors.ts";
 import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
-import { checkWrites } from "./paths.ts";
+import { checkWrites, safeSegment } from "./paths.ts";
 import type { IdentityAgreement } from "./identity.ts";
 import { applyStability, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
@@ -102,6 +102,9 @@ export function planStage(options: {
   }
   if (typeof capUsd !== "number" || !Number.isFinite(capUsd) || capUsd < 0) {
     throw new InputError(`invalid cost cap: ${capUsd}`);
+  }
+  if (typeof options.spec.kind !== "string") {
+    throw new InputError(`the spec's "kind" must be a string naming an asset kind`);
   }
   const generator = options.generators.find((g) => g.kind === options.spec.kind);
   if (!generator) {
@@ -256,6 +259,10 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   const plan = planStage(options);
   const { requested, capUsd, estimateUsd } = plan;
   const generator = options.generators.find((g) => g.kind === spec.kind) as Generator;
+  // Artifacts go in `c<n>-<kind as a slug>/`, so an extension kind's ":" never names a directory;
+  // the name is checked here, before any paid call.
+  const artifactDir = safeSegment(generator.kind);
+  checkWrites([`c${requested}-${artifactDir}`]);
 
   const budget = new Budget(capUsd, ledgerFor(options.ledger, options.provider, profile));
   // The run-level check: refuse the whole run, before any call, if it would exceed the cap or
@@ -312,7 +319,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       const id = `c${index + 1}`;
       // Record paths use "/"; the candidate's writes are checked before the first one.
       const artifacts = (generated.artifacts ?? []).map((artifact) =>
-        posix.join(`${id}-${generator.kind}`, basename(artifact.name)),
+        posix.join(`${id}-${artifactDir}`, basename(artifact.name)),
       );
       checkWrites([`${id}.${generated.output.extension}`, ...artifacts]);
       for (const [i, artifact] of (generated.artifacts ?? []).entries()) {

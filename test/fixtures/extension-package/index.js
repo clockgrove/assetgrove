@@ -1,5 +1,6 @@
 /**
- * A synthetic Assetgrove extension: the asset kind `fixture:tile`, the hand-off preset
+ * A synthetic Assetgrove extension: the asset kind `fixture:tile` (one PNG and one text
+ * artifact per candidate), the hand-off preset
  * `fixture:list` and the provider adapter `fixture:echo`, which answers every image call with one
  * small PNG and reaches no host. Importing it writes `imported.marker` beside it, so a test can
  * tell whether core imported it. It imports nothing from core: zod comes through the context.
@@ -50,6 +51,8 @@ export default function extension({ z }) {
             },
             prompt,
             parameters: {},
+            // Written beside the candidate, in a directory named after the kind.
+            artifacts: [{ name: "tile.txt", bytes: new Uint8Array(Buffer.from(`${prompt}\n`)) }],
           };
         },
       },

@@ -240,3 +240,77 @@ test("an unknown id exits 2 extension_unavailable naming the settings line", asy
   assert.equal(doc(adapter)["error"].code, "extension_unavailable");
   assert.match(doc(adapter)["error"].message, /fixture:echo/);
 });
+
+test("an extension kind's artifacts stage in a directory whose name holds no ':'", async () => {
+  const { dir } = await project();
+  settings([PACKAGE], true);
+  const staged = await cli(["stage", ...(await inputs(dir)), "--candidates", "1", "--json"], dir);
+  assert.equal(staged.code, 0, staged.stderr);
+  const run = doc(staged);
+  assert.equal(run["candidates"].length, 1);
+  assert.deepEqual(run["candidates"][0].artifacts, ["c1-fixture-tile/tile.txt"]);
+  assert.equal(
+    await readFile(join(run["runDir"], "c1-fixture-tile", "tile.txt"), "utf8"),
+    "a tile named tile-1\n",
+  );
+  assert.ok(existsSync(join(run["runDir"], run["candidates"][0].file)));
+});
+
+test("a spec without a kind exits 2 invalid_input from stage, --dry-run and estimate", async () => {
+  const { dir } = await project();
+  settings([PACKAGE], true);
+  const base = await inputs(dir);
+  const spec = base[1] as string;
+  await writeFile(spec, JSON.stringify({ assetId: "tile-1" }));
+  for (const args of [
+    ["stage", ...base, "--json"],
+    ["stage", ...base, "--dry-run", "--json"],
+    [
+      "estimate",
+      "stage",
+      "--args",
+      JSON.stringify({ spec, bible: base[3], profile: base[5], runs: base[7] }),
+      "--json",
+    ],
+  ]) {
+    const r = await cli(args, dir);
+    assert.equal(r.code, 2, `${args.join(" ")}: ${r.stderr}`);
+    assert.equal(doc(r)["error"].code, "invalid_input", args.join(" "));
+    assert.match(doc(r)["error"].message, /"kind"/);
+  }
+});
+
+test("a package whose import, factory or package.json fails is refused naming its settings line", async () => {
+  const line = `extensions[0] "${PACKAGE}" of ${settingsPath}`;
+  const cases: Array<[string, (pkg: string) => Promise<void>, RegExp]> = [
+    [
+      "an entry whose import throws",
+      (pkg) => writeFile(join(pkg, "index.js"), `import "assetgrove-no-such-dependency";\n`),
+      /importing its entry .* failed: .*assetgrove-no-such-dependency/,
+    ],
+    [
+      "a factory that throws",
+      (pkg) =>
+        writeFile(
+          join(pkg, "index.js"),
+          `export default function extension() { throw new Error("fixture factory failed"); }\n`,
+        ),
+      /its entry's default export threw: fixture factory failed/,
+    ],
+    [
+      "a package.json that parses to null",
+      (pkg) => writeFile(join(pkg, "package.json"), "null\n"),
+      /its package\.json is not a JSON object/,
+    ],
+  ];
+  for (const [what, breakIt, message] of cases) {
+    const { dir, pkg } = await project();
+    await breakIt(pkg);
+    settings([PACKAGE]);
+    const r = await cli(["extensions", "--json"], dir);
+    assert.equal(r.code, 2, `${what}: ${r.stderr}`);
+    assert.equal(doc(r)["error"].code, "extension_refused", what);
+    assert.ok(doc(r)["error"].message.includes(line), `${what}: ${doc(r)["error"].message}`);
+    assert.match(doc(r)["error"].message, message, what);
+  }
+});
