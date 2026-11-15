@@ -1,10 +1,10 @@
 import { resetSettings, settingsPath, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parseDocument } from "yaml";
@@ -28,6 +28,7 @@ const KEY_VALUE = `agk-test-${"fedcba9876543210"}-synthetic-init`;
 function tempDir(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-init-")));
   temporary.push(dir);
+  execFileSync("git", ["init", "-q", dir]);
   return dir;
 }
 
@@ -273,7 +274,7 @@ test("bible init is gone", async () => {
     "cozy-storybook",
   ]);
   assert.equal(result.code, 2);
-  assert.deepEqual(await readdir(dir), []);
+  assert.deepEqual(await readdir(dir), [".git"]);
 });
 
 test("the skills init writes meet the Agent Skills rules and are identical", async () => {
@@ -347,4 +348,100 @@ test("with a remote store configured, init's output carries the shared-index not
   } finally {
     resetSettings();
   }
+});
+
+const LIBRARY = "assets/source";
+const gitOut = (dir: string, ...args: string[]) =>
+  execFileSync("git", args, { cwd: dir, encoding: "utf8" });
+
+test("init writes one marked block in the library root's .gitattributes and none at the repository root", async () => {
+  const dir = tempDir();
+  const first = await cli(initArgs(dir));
+  assert.equal(first.code, 0, first.stderr);
+  const path = join(dir, LIBRARY, ".gitattributes");
+  const text = await readFile(path, "utf8");
+  assert.equal(text.match(/# BEGIN assetgrove/g)?.length, 1);
+  for (const ext of ["png", "jpg", "jpeg", "webp", "gif", "glb", "ktx2"])
+    assert.ok(text.includes(`*.${ext} filter=lfs diff=lfs merge=lfs -text\n`), ext);
+  for (const rule of [
+    "*.md text eol=lf",
+    "*.review.json text eol=lf",
+    "*.provenance.json text eol=lf",
+    "index.md merge=union",
+    "log.md merge=union",
+    "*.review.json merge=union",
+  ])
+    assert.ok(text.includes(`${rule}\n`), rule);
+  await assert.rejects(readFile(join(dir, ".gitattributes"), "utf8"), { code: "ENOENT" });
+  assert.deepEqual(
+    first.json.files.filter((f) => f.role === "gitattributes").map((f) => f.path),
+    [path],
+  );
+  const before = await snapshot(dir);
+  const second = await cli(initArgs(dir));
+  assert.equal(second.code, 0, second.stderr);
+  assert.ok(second.json.files.every((f) => f.status === "unchanged"));
+  assert.deepEqual(await snapshot(dir), before);
+  // Git itself maps a library PNG to lfs and one outside the library to nothing.
+  assert.match(gitOut(dir, "check-attr", "filter", "--", `${LIBRARY}/a/b.png`), /filter: lfs/);
+  assert.match(gitOut(dir, "check-attr", "filter", "--", "elsewhere/b.png"), /filter: unspecified/);
+});
+
+test("init keeps the lines around its block and replaces a stale block in place", async () => {
+  const dir = tempDir();
+  await mkdir(join(dir, LIBRARY), { recursive: true });
+  const path = join(dir, LIBRARY, ".gitattributes");
+  await writeFile(
+    path,
+    "*.psd filter=lfs diff=lfs merge=lfs -text\n# BEGIN assetgrove (old)\n*.png -text\n# END assetgrove\n*.bin binary\n",
+  );
+  assert.equal((await cli(initArgs(dir))).code, 0);
+  const text = await readFile(path, "utf8");
+  assert.ok(text.startsWith("*.psd filter=lfs"));
+  assert.ok(text.endsWith("*.bin binary\n"));
+  assert.equal(text.match(/# BEGIN assetgrove/g)?.length, 1);
+  assert.ok(!text.includes("*.png -text\n"));
+});
+
+test("init outside a Git work tree stops with git_required and writes nothing", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-nogit-")));
+  temporary.push(dir);
+  const result = await cli(initArgs(dir));
+  assert.equal(result.code, 2);
+  assert.equal(result.json.error.code, "git_required");
+  assert.deepEqual(await readdir(dir), []);
+});
+
+test("init reports Git LFS steps, never commits and never runs git lfs install", async () => {
+  const dir = tempDir();
+  const result = await cli(initArgs(dir));
+  assert.equal(result.code, 0, result.stderr);
+  const lfs = result.json.steps.find((s) => s.id === "git-lfs")!;
+  assert.ok(["done", "needs-person"].includes(lfs.status));
+  if (lfs.status === "done") {
+    const hooks = result.json.steps.find((s) => s.id === "git-lfs-install")!;
+    assert.equal(hooks.status, "needs-person");
+    assert.equal(
+      result.json.steps.find((s) => s.id === "notice.lfs-metering")!.detail.includes("0.00 MiB"),
+      true,
+    );
+  }
+  assert.equal(gitOut(dir, "rev-list", "--all", "--count").trim(), "0");
+  await assert.rejects(readFile(join(dir, ".git", "hooks", "pre-push")), { code: "ENOENT" });
+});
+
+test("with no git-lfs on PATH init gives a needs-person step", async () => {
+  const dir = tempDir();
+  const bin = tempDir();
+  const git = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  await writeFile(join(bin, "git"), `#!/bin/sh\nexec ${git} "$@"\n`, { mode: 0o755 });
+  // Every other PATH directory stays, except those that hold git-lfs.
+  const rest = (process.env["PATH"] ?? "")
+    .split(delimiter)
+    .filter((entry) => entry !== "" && !existsSync(join(entry, "git-lfs")));
+  const result = await cli(initArgs(dir), { PATH: [bin, ...rest].join(delimiter) });
+  assert.equal(result.code, 0, result.stderr);
+  const step = result.json.steps.find((s) => s.id === "git-lfs")!;
+  assert.equal(step.status, "needs-person");
+  assert.match(step.detail, /git-lfs\.com/);
 });

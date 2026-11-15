@@ -18,7 +18,17 @@ Every path Assetgrove reads from a card, a review record or an index or log row 
 
 ## Media and Git LFS
 
-A media file that is a Git LFS pointer (spec v1: `version`, `oid sha256:<64 hex>`, `size`) counts as present. Its oid is the media's sha256 and is compared with the expected one (`lock.sha256`). Its bytes come from `<git dir>/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>` when that object is local and its size and hash match the pointer; the git directory is the nearest `.git` at or above the file, following a `gitdir:` file and a worktree's `commondir`. Otherwise the read reports a pointer with no bytes. A file that looks like a pointer (it starts with the spec's `version` line) but fails the strict parse is refused with exit 2 `invalid_input`. Assetgrove never runs `git lfs`, never fetches, and never returns pointer text as media.
+A media file that is a Git LFS pointer (spec v1: `version`, `oid sha256:<64 hex>`, `size`) counts as present. Its oid is the media's sha256 and is compared with the expected one (`lock.sha256`). Its bytes come from `<git dir>/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>` when that object is local and its size and hash match the pointer; the git directory is the nearest `.git` at or above the file, following a `gitdir:` file and a worktree's `commondir`. Otherwise the read reports a pointer with no bytes. A file that looks like a pointer (it starts with the spec's `version` line) but fails the strict parse is refused with exit 2 `invalid_input`. Reading media never runs `git lfs`, never fetches, and never returns pointer text as media.
+
+**Setup (`init`).** `init` needs a Git work tree (else exit 2 `git_required`, nothing written) and runs `git lfs version`; a missing Git LFS is a `needs-person` step naming the install, and missing LFS hooks give a `git lfs install` step for the person to run. It writes one marked block (`# BEGIN assetgrove` … `# END assetgrove`) in `<library.root>/.gitattributes`, never in the repository root; a second run changes nothing, and lines outside the block are kept:
+
+- `filter=lfs diff=lfs merge=lfs -text` for `*.png`, `*.jpg`, `*.jpeg`, `*.webp`, `*.gif`, `*.glb` and `*.ktx2`;
+- `text eol=lf` for `*.md`, `*.review.json` and `*.provenance.json`, so cards, indexes, logs and records are byte-identical on every system;
+- `merge=union` for `index.md`, `log.md` and `*.review.json`, so two branches that each append a line merge and keep both.
+
+The `notice.lfs-metering` step says the Git host meters LFS storage and bandwidth, with the size of the LFS objects committed under the library root. `init` never commits, migrates history or runs `git lfs install`.
+
+**Pick.** `pick` asks Git, not `.gitattributes`: a target outside a work tree exits 2 `git_required`, and media (and image sidecars) whose `git check-attr filter` is not `lfs` exits 2 `lfs_required`, both before any write. Assetgrove never runs `git add` or `git commit`.
 
 ## Cards
 

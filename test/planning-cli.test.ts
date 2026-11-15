@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { gitTarget } from "./fixtures/git.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 
 const temporaryRoots: string[] = [];
@@ -41,7 +42,7 @@ async function setup() {
   const init = await cli([
     "init",
     "--directory",
-    dir,
+    gitTarget(dir),
     "--world",
     "Synthetic Grove",
     "--profile-preset",
@@ -174,6 +175,7 @@ test("CLI apply has no --auto-approve, generates under its confirmation, stale t
     DIGITAL_SOURCE_TYPES.generated,
   );
   const { pick } = await import("../src/handoff.ts");
+  gitTarget(join(f.dir, "target"));
   approveProfile(syntheticProfile(), { targetDir: join(f.dir, "target") });
   const picked = await pick({
     runDir,

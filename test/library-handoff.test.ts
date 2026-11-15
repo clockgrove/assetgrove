@@ -7,7 +7,7 @@ import "./fixtures/env.ts";
 import { HEADLESS_OPERATOR, approve, approveProfile, useAttended } from "./fixtures/env.ts";
 import { stateDir } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -39,6 +39,7 @@ import type { AssetSpec, TargetProfile } from "../src/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { PALETTE, drawSubject, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
+import { bareGitTarget, gitTarget } from "./fixtures/git.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -87,7 +88,7 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
 
 /** The world's target as a Git repository. */
 function gitInit(dir: string): void {
-  execFileSync("git", ["init", "-q", dir]);
+  gitTarget(dir);
 }
 
 /** A world whose target is a Git repository. */
@@ -248,6 +249,25 @@ test("a sprite-strip pick into a Git repository writes the card, review record, 
   );
 });
 
+test("a pick whose PNG Git does not send to LFS exits 2 lfs_required, and one outside a work tree git_required, before writing", async () => {
+  const { world, runDir } = await stagedWorld((profile) => {
+    delete profile.validator;
+  });
+  const bare = bareGitTarget(join(world.dir, "bare"));
+  const refused = await pick(runDir, bare);
+  assert.equal(refused.code, 2, refused.stdout + refused.stderr);
+  assert.equal(doc(refused)["error"].code, "lfs_required");
+  assert.deepEqual(await tree(bare), []);
+  const plain = join(world.dir, "plain");
+  await mkdir(plain);
+  const outside = await pick(runDir, plain);
+  assert.equal(outside.code, 2, outside.stdout + outside.stderr);
+  assert.equal(doc(outside)["error"].code, "git_required");
+  assert.deepEqual(await readdir(plain), []);
+  // With the rules in place the same run picks.
+  await picked(runDir, world.targetDir);
+});
+
 test("a still pick (no animation family) writes the library beside the media under the media's own folder", async () => {
   const { world, runDir } = await stagedStill("lantern", "props/lights");
   await picked(runDir, world.targetDir);
@@ -284,7 +304,6 @@ test("with library.log false a pick writes no log.md anywhere", async () => {
 test("write-families of a sprite-strip family writes the library per family, and carries the family's candidate comment", async () => {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-library-"));
   const targetDir = join(dir, "target");
-  await mkdir(targetDir);
   gitInit(targetDir);
   const world = await syntheticWorld();
   const profile = world.profile;
@@ -429,7 +448,6 @@ test("a 3D hand-off (stage character-3d, then pick) writes the library beside th
   );
   await writeFile(files.profile, JSON.stringify(profile3d()));
   const target = join(dir, "target");
-  await mkdir(target);
   gitInit(target);
   approveProfile(profile3d() as { validator: { command: string[] } }, { targetDir: target });
   const runs = join(dir, "runs");
@@ -645,7 +663,7 @@ test("a pick whose confirmed replaced version is no longer current exits 2 versi
     }),
     (error: Error & { code?: string }) => error.code === "version_changed",
   );
-  assert.deepEqual(await tree(world.targetDir), []);
+  assert.deepEqual(await tree(world.targetDir), [".gitattributes"]);
   const done = await handoffPick({
     runDir,
     candidateId: "c1",
@@ -737,7 +755,7 @@ test("a second writer is refused while another process holds the library lock: e
     const r = await pick(runDir, world.targetDir);
     assert.equal(r.code, 2, r.stdout + r.stderr);
     assert.equal(doc(r)["error"].code, "run_in_progress");
-    assert.deepEqual(await tree(world.targetDir), []);
+    assert.deepEqual(await tree(world.targetDir), [".gitattributes"]);
   } finally {
     lock.release();
   }
@@ -751,7 +769,7 @@ test("a reserved asset id exits 2 asset_id_reserved with nothing written; stage 
     const r = await pick(runDir, world.targetDir);
     assert.equal(r.code, 2, `${assetId}: ${r.stdout}${r.stderr}`);
     assert.equal(doc(r)["error"].code, "asset_id_reserved");
-    assert.deepEqual(await tree(world.targetDir), [], assetId);
+    assert.deepEqual(await tree(world.targetDir), [".gitattributes"], assetId);
   }
 });
 

@@ -21,6 +21,7 @@ import type { TargetProfile } from "../src/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
+import { gitTarget } from "./fixtures/git.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -52,7 +53,9 @@ function doc(result: Result): Record<string, any> {
 
 /** Every file and directory under `dir`, relative to it. */
 async function tree(dir: string): Promise<string[]> {
-  return (await readdir(dir, { recursive: true })).map((entry) => entry.toString());
+  return (await readdir(dir, { recursive: true }))
+    .map((entry) => entry.toString())
+    .filter((entry) => entry !== ".git" && !entry.startsWith(".git/"));
 }
 
 /** Writes the world's inputs and stages one candidate through the CLI. */
@@ -74,6 +77,7 @@ async function stage(world: World, spec = shelterSpec): Promise<Result> {
 /** A world whose profile `change` edits (its validator approved), with one candidate staged. */
 async function stagedWorld(change: (profile: TargetProfile) => void = () => {}) {
   const world = await syntheticWorld();
+  gitTarget(world.targetDir);
   change(world.profile);
   approveProfile(world.profile, { targetDir: world.targetDir });
   const staged = await stage(world);
@@ -150,7 +154,7 @@ test("a hand-off never writes over the file the approved validator runs, nor int
     const r = await pick(runDir, world.targetDir);
     assert.equal(r.code, 2, `${manifest}: ${r.stderr}`);
     assert.equal(doc(r)["error"].code, "invalid_input");
-    assert.deepEqual(await tree(world.targetDir), ["check.mjs"]);
+    assert.deepEqual(await tree(world.targetDir), [".gitattributes", "check.mjs"]);
     assert.equal(await readFile(join(world.targetDir, "check.mjs"), "utf8"), check);
   }
   // stage refuses a .git layout before it spends.
@@ -200,7 +204,7 @@ test("a layout that sends the provenance onto the media exits 2 with nothing wri
   assert.equal(r.code, 2, r.stderr);
   assert.equal(doc(r)["error"].code, "invalid_input");
   assert.match(doc(r)["error"].message, /same path/);
-  assert.deepEqual(await tree(world.targetDir), []);
+  assert.deepEqual(await tree(world.targetDir), [".gitattributes"]);
 
   // Two layout paths that reach one file through a link are refused the same way.
   await mkdir(join(world.targetDir, "assets"));
@@ -224,6 +228,7 @@ test("a layout that sends the provenance onto the media exits 2 with nothing wri
 test("stage refuses a layout path it could never write before any paid call", async () => {
   for (const assetId of ["fern:x", "con", "hero.", "a?b"]) {
     const world = await syntheticWorld();
+    gitTarget(world.targetDir);
     approveProfile(world.profile, { targetDir: world.targetDir });
     const r = await stage(world, { ...shelterSpec, assetId });
     assert.equal(r.code, 2, `${assetId}: ${r.stderr}`);
@@ -247,7 +252,7 @@ test("stage refuses a layout path it could never write before any paid call", as
 test("write-families refuses a layout that maps two families to one path, before writing any", async () => {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-paths-"));
   const targetDir = join(dir, "target");
-  await mkdir(targetDir);
+  gitTarget(targetDir);
   const profile = syntheticProfile({
     layout: { media: "assets/{{spec.assetId}}.png", manifest: "assets/{{spec.assetId}}.json" },
   });
@@ -292,11 +297,12 @@ test("write-families refuses a layout that maps two families to one path, before
   assert.equal(outcome.exitCode, 2);
   assert.equal(outcome.error?.code, "invalid_input");
   assert.match(outcome.error?.message ?? "", /same path/);
-  assert.deepEqual(await tree(targetDir), []);
+  assert.deepEqual(await tree(targetDir), [".gitattributes"]);
 });
 
 test("plan refuses a layout path it could never write before any paid call", async () => {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-paths-plan-"));
+  gitTarget(dir);
   const init = await cli([
     ...["init", "--directory", dir, "--world", "Synthetic Grove"],
     ...["--profile-preset", "sprite-32", "--style-preset", "flat-cartoon-kids", "--json"],

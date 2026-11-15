@@ -2,8 +2,8 @@ import "./fixtures/env.ts";
 import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, readdir, writeFile } from "node:fs/promises";
+import { join, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { InputError } from "../src/errors.ts";
@@ -13,11 +13,13 @@ import { imageGenerators } from "../src/generators/image.ts";
 import { stage } from "../src/loop.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { checkWrites, readRecordPath, recordPath } from "../src/paths.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { shelterSpec, syntheticWorld as plainWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
 async function syntheticWorld(): Promise<World> {
   const world = await plainWorld();
+  gitTarget(world.targetDir);
   approveProfile(world.profile, { targetDir: world.targetDir });
   return world;
 }
@@ -50,9 +52,11 @@ function doc(result: Result): Record<string, any> {
   return JSON.parse(result.stdout);
 }
 
-/** Every file and directory under `dir`, relative to it. */
+/** Every file and directory under `dir`, relative to it, leaving out Git's own `.git`. */
 async function tree(dir: string): Promise<string[]> {
-  return (await readdir(dir, { recursive: true })).map((entry) => entry.toString());
+  return (await readdir(dir, { recursive: true }))
+    .map((entry) => entry.toString())
+    .filter((entry) => entry !== ".git" && !entry.startsWith(`.git${sep}`));
 }
 
 /** Writes the world's inputs and stages one candidate through the CLI into `runsDir`. */
@@ -113,7 +117,7 @@ test("two writes differing only by case exit 2 invalid_input with nothing writte
   assert.equal(r.code, 2, r.stderr);
   assert.equal(doc(r)["error"].code, "invalid_input");
   assert.match(doc(r)["error"].message, /differ only by case/);
-  assert.deepEqual(await tree(world.targetDir), []);
+  assert.deepEqual(await tree(world.targetDir), [".gitattributes"]);
 });
 
 test("a hand-off path segment with ':' exits 2 invalid_input with nothing written", async () => {
@@ -126,7 +130,7 @@ test("a hand-off path segment with ':' exits 2 invalid_input with nothing writte
   const r = await pick(runDir, world.targetDir);
   assert.equal(r.code, 2, r.stderr);
   assert.equal(doc(r)["error"].code, "invalid_input");
-  assert.deepEqual(await tree(world.targetDir), []);
+  assert.deepEqual(await tree(world.targetDir), [".gitattributes"]);
 });
 
 test("stage and pick into a target whose path exceeds 260 characters succeed, and the records hold /", async () => {
@@ -137,7 +141,7 @@ test("stage and pick into a target whose path exceeds 260 characters succeed, an
   const runsDir = join(deep, "runs");
   const targetDir = join(deep, "target");
   assert.ok(runsDir.length > 260 && targetDir.length > 260);
-  await mkdir(targetDir, { recursive: true });
+  gitTarget(targetDir);
 
   const runDir = await stageOne(world, runsDir);
   assert.ok(runDir.length > 260);

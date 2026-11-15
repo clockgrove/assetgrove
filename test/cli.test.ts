@@ -1,9 +1,10 @@
 import "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { approve, approveProfile, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -224,6 +225,7 @@ test("pick reports a validator rejection as validator_rejected with the result",
     command: [process.execPath, "-e", "console.error('nope'); process.exit(1)"],
   };
   await writeFile(join(world.dir, "profile.json"), JSON.stringify(world.profile));
+  gitTarget(world.targetDir);
   approveProfile(world.profile, { targetDir: world.targetDir });
   const staged = doc(
     await cli([
@@ -236,7 +238,6 @@ test("pick reports a validator rejection as validator_rejected with the result",
       "--json",
     ]),
   );
-  await mkdir(world.targetDir, { recursive: true });
   const r = await cli([
     "pick",
     "--run",

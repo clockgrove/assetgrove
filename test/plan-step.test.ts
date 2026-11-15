@@ -14,6 +14,7 @@ import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { canonicalJson, requestDigest } from "../src/runs/plan.ts";
 import type { DigestInput, PlanJob } from "../src/runs/plan.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { quadrupedTemplate, walkGait } from "./fixtures/quadruped.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { syntheticStrip } from "./fixtures/strip.ts";
@@ -265,7 +266,7 @@ async function materialFiles(dir: string) {
 /** A plan request over the synthetic world's bible with a still spec; saves its plan at `out`. */
 async function planFiles(dir: string, candidates: number) {
   const init = await cli([
-    ...["init", "--directory", join(dir, "bible"), "--world", "Synthetic Grove"],
+    ...["init", "--directory", gitTarget(join(dir, "bible")), "--world", "Synthetic Grove"],
     ...["--profile-preset", "sprite-32", "--style-preset", "flat-cartoon-kids", "--json"],
   ]);
   assert.equal(init.code, 0, init.stderr);

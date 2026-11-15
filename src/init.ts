@@ -11,6 +11,8 @@ import { routeDataFlows, type RouteDataFlow } from "./dataflows.ts";
 import type { Env } from "./env.ts";
 import { InputError } from "./errors.ts";
 import { formatLine } from "./formats.ts";
+import { libraryConfig } from "./library/write.ts";
+import { lfsHooksInstalled, lfsSize, lfsVersion, requireWorkTree, withBlock } from "./gitlfs.ts";
 import { checkTrackedKeys, KeyTrackedError } from "./guard.ts";
 import { HARNESSES, keyRecipe, type Harness } from "./keys.ts";
 import { resolvePackage, SEARCH_PACKAGE } from "./extensions/registry.ts";
@@ -86,7 +88,8 @@ export interface InitOptions {
   overwrite?: boolean;
 }
 
-export type FileRole = "profile" | "bible" | "style-preset" | "template" | "skill" | "gitignore";
+export type FileRole =
+  "profile" | "bible" | "style-preset" | "template" | "skill" | "gitignore" | "gitattributes";
 export type FileStatus = "written" | "unchanged" | "overwritten";
 
 export interface InitFile {
@@ -268,6 +271,51 @@ export async function writeProjectFiles(options: InitOptions): Promise<InitFile[
   return files;
 }
 
+/** Puts the marked block in `<root>/.gitattributes`, keeping every other line; never commits. */
+async function writeGitattributes(root: string): Promise<InitFile> {
+  const path = join(root, ".gitattributes");
+  const before = await existing(path);
+  const after = withBlock(before ?? "");
+  if (before === after) return { path, role: "gitattributes", status: "unchanged" };
+  await mkdir(root, { recursive: true });
+  await writeFile(path, after);
+  return { path, role: "gitattributes", status: before === undefined ? "written" : "overwritten" };
+}
+
+const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+
+/** The Git LFS steps: the install, the hooks, and the metering notice with the library's size. */
+function gitSteps(root: string): InitStep[] {
+  const version = lfsVersion(root);
+  if (version === undefined) {
+    return [
+      {
+        id: "git-lfs",
+        status: "needs-person",
+        command: "git lfs version",
+        detail:
+          "Git LFS is not installed. Install it (https://git-lfs.com), then run init again; library media goes through LFS and pick refuses media Git would not send there.",
+      },
+    ];
+  }
+  const steps: InitStep[] = [{ id: "git-lfs", status: "done", detail: `${version} is installed.` }];
+  if (!lfsHooksInstalled(root)) {
+    steps.push({
+      id: "git-lfs-install",
+      status: "needs-person",
+      command: "git lfs install",
+      detail:
+        "Git LFS hooks are not installed in this repository. Run git lfs install yourself; init never does.",
+    });
+  }
+  steps.push({
+    id: "notice.lfs-metering",
+    status: "notice",
+    detail: `Your Git host meters LFS storage and bandwidth. This library currently holds ${mib(lfsSize(root))} in LFS (committed objects under ${root}).`,
+  });
+  return steps;
+}
+
 /** Project files that differ from what init writes, refused without `overwrite` (exit 2). */
 export class InitConflictError extends InputError {
   /** Each differing file, absolute. */
@@ -341,6 +389,7 @@ export async function initProject(
 ): Promise<InitResult> {
   const harness = checkOptions(options);
   const directory = resolve(options.directory);
+  requireWorkTree(directory);
   try {
     checkTrackedKeys(directory, {
       settings: context.settings,
@@ -351,6 +400,8 @@ export async function initProject(
     throw error;
   }
   const files = await writeProjectFiles({ ...options, directory });
+  const root = libraryConfig(PROFILE_PRESETS[options.profilePreset]!(), directory).root;
+  files.push(await writeGitattributes(root));
   const written = files.filter((f) => f.status !== "unchanged").length;
   const recipe = keyRecipe(harness, {
     configDir: context.settings.configDir,
@@ -385,6 +436,7 @@ export async function initProject(
       detail: `The agent calls settings_change so the person declares the caps and the provider's limit; only their confirmation writes ${context.settings.path}. Provider endpoints and roles are hand edits per docs/settings.md${providers.length > 0 ? `; suggestedRoles lists the roles for ${providers.join(", ")}` : ""}.`,
       ...(providers.length > 0 && { suggestedRoles: suggestRoles(providers) }),
     },
+    ...gitSteps(root),
     {
       id: "spend-check",
       status: "to-run",

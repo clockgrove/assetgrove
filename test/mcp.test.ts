@@ -18,6 +18,7 @@ import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, decodeImage, encodePng, setPixel } from "../src/image/raster.ts";
 import type { TargetProfile } from "../src/types.ts";
 import { GAME, fixtureLibrary } from "./fixtures/library.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { lodModel } from "./fixtures/lod.ts";
 import { quadrupedTemplate, syntheticQuadruped, walkGait } from "./fixtures/quadruped.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
@@ -482,7 +483,7 @@ const rows: Row[] = [
   {
     tool: "init",
     prepare: async () => ({
-      directory: paths.repo(),
+      directory: gitTarget(paths.repo()),
       profilePreset: "sprite-32",
       stylePreset: "flat-cartoon-kids",
       world: "Synthetic Grove",
@@ -562,8 +563,7 @@ const rows: Row[] = [
     prepare: async () => {
       const runs = join(paths.world(), "runs");
       const [run] = await readdir(runs);
-      const target = join(work, "target");
-      await mkdir(target, { recursive: true });
+      const target = gitTarget(join(work, "target"));
       approveProfile(syntheticProfile(), { targetDir: target });
       return { run: join(runs, run!), candidate: "c1", target };
     },
