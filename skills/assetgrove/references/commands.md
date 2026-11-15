@@ -40,14 +40,14 @@ MCP tool: `plan`, arguments `spec`, `bible`, `profile`, `out`, `brief`, `runOpti
 ### `apply`
 
 ```text
-apply <plan.json> [--out <runs directory>] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
+apply <plan.json> [--out <runs directory>] [--note <text>] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
 ```
 
 Generates exactly a saved plan. It re-reads every input the plan names and refuses a changed one (exit 2), re-resolves the routes, estimates, output grants and run cap from the developer settings and exits 2 `plan_changed` when they differ from planning time or the plan carries any field outside its format, runs the prompt policy on the plan's prompts (exit 9 `prompt_refused`). A person confirms the spend: headless settings, a record at `<configDir>/confirmations/<hex>.json`, an MCP client's form (method `elicitation`), the inline prompt on a TTY, or exit 8 `confirmation_required` with `error.confirmation` and `assetgrove confirm <hex>`. The plan's own spend confirmation covers one `apply` run of the plan file it saved, the default round, while every input hash it confirmed still matches the plan's and `apply`'s forecast is at or under the confirmed one; `--round n` (n > 1), another `--out` once that run started, or any other `apply` asks under its own digest. The confirmation authorizes the generation spend only; the outputs stay pending review. Paid gateway calls; needs `AI_GATEWAY_API_KEY` or `--provider-script` (exit 4 without either). Stages the run under `--out` (default `.assetgrove/runs`), never in the target.
 
 Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--out`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
-MCP tool: `apply`, arguments `plan`, `out`, `workItem`, `round`.
+MCP tool: `apply`, arguments `plan`, `out`, `note`, `workItem`, `round`.
 
 ### `mcp`
 
@@ -72,14 +72,14 @@ MCP tool: `materials`, arguments `albedo`, `spec`, `profile`, `derivation`, `out
 ### `stage`
 
 ```text
-stage --spec <spec.json> --bible <bible.json> --profile <profile.json> [--candidates 4] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
+stage --spec <spec.json> --bible <bible.json> --profile <profile.json> [--candidates 4] [--note <text>] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
 ```
 
 Generates candidates within the cap and stages only those that pass QA, with reasons and provenance, in a run directory under `--runs`. `--dry-run` prints the planned calls, the cost forecast and the spend left under the ledger's limits, writes nothing and needs no key. Image kinds make paid gateway calls. A `character-3d` spec makes rigged, animated `.glb` candidates from the subject's approved turnaround: its 3D calls go to Tripo (`TRIPO_API_KEY`) and its identity call to the gateway. A sprite-strip spec needs an approved `keyPose`. Never writes into the target.
 
 Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
-MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `cap`, `runs`, `workItem`, `round`.
+MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `note`, `cap`, `runs`, `workItem`, `round`.
 
 ### `pick`
 
@@ -139,14 +139,14 @@ MCP tool: `import`, arguments `sheet`, `profile`, `asset`, `tool`, `digitalSourc
 ### `generate-sheet`
 
 ```text
-generate-sheet --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--imports .assetgrove/imports] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--brief <brief.json>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+generate-sheet --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--imports .assetgrove/imports] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--brief <brief.json>] [--note <text>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Has the model draw a whole animation cycle as one sheet within the cap, then imports it as `import` does, with a proposed grouping for a person to confirm. A sheet that does not slice into the spec's `frames.count` figures exits 5; the sheet and its record are kept in the import directory. `--brief` adds the author's brief to the prompt; `--lock-bible` and `--identity-mode` score the sheet as `import` does, inside the forecast and the cap. Paid gateway calls. Never writes into the target.
 
 Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
-MCP tool: `generate_sheet`, arguments `spec`, `bible`, `profile`, `brief`, `cap`, `imports`, `lockBible`, `identityMode`, `workItem`, `runs`, `round`.
+MCP tool: `generate_sheet`, arguments `spec`, `bible`, `profile`, `brief`, `note`, `cap`, `imports`, `lockBible`, `identityMode`, `workItem`, `runs`, `round`.
 
 ### `write-families`
 
@@ -205,6 +205,26 @@ Regenerates one frame (1-based) of a strip with one paid reference-guided edit c
 Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
 MCP tool: `fix_frame`, arguments `strip`, `family`, `profile`, `frame`, `from`, `keyPose`, `out`, `subject`, `spec`, `note`, `provenance`, `bible`, `anchor`, `cap`, `workItem`, `runs`, `round`.
+
+### `compare`
+
+```text
+compare <before> <candidate> [--region "<region>"]... [--frame <n>] [--view <n>] [--frame-width <px>] [--out .assetgrove/compare] [--json]
+```
+
+Free. Writes `<out>/compare.png`: a row with the version before, the candidate and a difference map (black where pixels are equal), region outlines drawn on all three, numbers only, so the sheet is pixel-identical when only card or bible text changes. Reports `identical`, `changed` and `outsideChange`, the share of pixels changed outside every region (a pixel changed when a channel moves by more than 8 of 255); above 0.05 it adds the advisory reason `changed_outside_region`. `--frame` names a strip's frame (frames are as wide as the strip is high unless `--frame-width`), `--view` a 3D asset's turntable view (give its `.glb`, or the directory of its renders). A region is `<x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]... : <note>`; a box is pixels, or percent when every value ends in `%`; the note is optional here. A malformed region, or a path outside the project root, exits 2 `invalid_input`.
+
+MCP tool: `compare`, arguments `before`, `candidate`, `region`, `frame`, `view`, `frameWidth`, `out`.
+
+### `vary`
+
+```text
+vary --run <run> --candidate <id> [--count 4] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
+```
+
+Makes variations of one still candidate of a staged run: one reference-guided edit call each, with fresh seeds, after one spend confirmation. Writes `v<n>.<ext>` with provenance, `contact.png` and `compare.png` (each variation against the candidate) into its own run directory, and reports each variation's `outsideChange`. Variations are not QA-filtered and stay pending review. A repeat returns the finished run (`reused: true`) with no provider call; the plan step, run directory and `--round` work as for `stage`.
+
+MCP tool: `vary`, arguments `run`, `candidate`, `count`, `cap`, `workItem`, `runs`, `round`.
 
 ### `op`
 

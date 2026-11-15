@@ -539,6 +539,34 @@ const rows: Row[] = [
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
+  {
+    tool: "compare",
+    prepare: async () => {
+      const dir = join(work, "compare");
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "before.png"), encodePng(drawSubject(48)));
+      await writeFile(join(dir, "after.png"), encodePng(drawSubject(48, 2)));
+      return {
+        before: join(dir, "before.png"),
+        candidate: join(dir, "after.png"),
+        region: ["0,0,24,24 : check"],
+        out: join(dir, "out"),
+      };
+    },
+  },
+  {
+    tool: "vary",
+    prepare: async () => {
+      const runs = join(paths.world(), "runs");
+      const [run] = await readdir(runs);
+      return {
+        run: join(runs, run!),
+        candidate: "c1",
+        count: 2,
+        runs: join(paths.world(), "vary-runs"),
+      };
+    },
+  },
   { tool: "runs_list", prepare: async () => ({ runs: join(paths.world(), "runs") }) },
   {
     tool: "runs_show",

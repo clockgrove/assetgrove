@@ -21,6 +21,13 @@ export function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/** The prompt with the author's note appended; the prompt itself when there is no note. */
+export function withNote(prompt: string, note: string | undefined): string {
+  return note !== undefined && note.trim() !== ""
+    ? `${prompt}\nAuthor's note: ${note.trim()}`
+    : prompt;
+}
+
 /** Media type from the file's own signature, so no list of formats or extensions is kept. */
 export function sniffMediaType(bytes: Uint8Array): string {
   const head = Buffer.from(bytes.subarray(0, 12));

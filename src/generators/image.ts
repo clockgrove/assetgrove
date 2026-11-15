@@ -8,6 +8,7 @@ import {
   buildStillPrompt,
   frameGrid,
   loadBibleInputs,
+  withNote,
   loadReference,
   sha256,
   subjectOf,
@@ -119,7 +120,7 @@ export const stillGenerator: Generator = {
     );
     const inputs = await loadBibleInputs(ctx.spec, ctx.bible, ctx.bibleDir);
     const refs = [...inputs.subject, inputs.perspective, inputs.palette];
-    const prompt = buildStillPrompt(ctx.spec, ctx.bible, grid, inputs);
+    const prompt = withNote(buildStillPrompt(ctx.spec, ctx.bible, grid, inputs), ctx.note);
     const image = await ctx.call.image("still", prompt, refs, ctx.seed);
     const qaRefs = [...inputs.subject, inputs.perspective];
     return finish(ctx, grid, [asRaster(image, "still")], qaRefs, prompt, {});
@@ -160,13 +161,13 @@ export const spriteStripGenerator: Generator = {
     requireAnimationFamily(spec);
     const grid = frameGrid(spec, ctx.profile, 1);
     const inputs = await loadBibleInputs(spec, bible, ctx.bibleDir);
-    const prompt = buildStillPrompt(spec, bible, grid, inputs);
+    const prompt = withNote(buildStillPrompt(spec, bible, grid, inputs), ctx.note);
     // A request input, like a shared bible, may not send an image from outside its project.
     requireInsideProject([requireKeyPose(spec)], ctx.specDir, "the spec's keyPose");
     const keyPose = await loadReference(requireKeyPose(spec), "key pose (approved)", ctx.specDir);
     const frames: Raster[] = [];
     for (let i = 0; i < grid.count; i++) {
-      const framePrompt = buildFramePrompt(spec, bible, grid, i);
+      const framePrompt = withNote(buildFramePrompt(spec, bible, grid, i), ctx.note);
       const image = await ctx.call.image("edit", framePrompt, [keyPose], ctx.seed + i);
       frames.push(asRaster(image, `frame ${i + 1}`));
     }

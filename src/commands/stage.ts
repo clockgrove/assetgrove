@@ -1,4 +1,5 @@
 import { basename, dirname } from "node:path";
+import { InputError } from "../errors.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
 import { DEFAULT_CANDIDATES, planStage, stage } from "../loop.ts";
@@ -12,6 +13,7 @@ import { defineCommand } from "./types.ts";
 import type { RunContext, WorkPlan } from "./types.ts";
 import {
   DRY_RUN_PROPERTY,
+  NOTE_PROPERTY,
   ROUND_PROPERTY,
   buildWorkPlan,
   jobsOf,
@@ -31,6 +33,7 @@ interface StageArgs {
   providerScript?: string;
   dryRun?: boolean;
   round?: number;
+  note?: string;
 }
 
 /** Everything stage's plan step reads: the inputs, providers, the stage plan and the WorkPlan. */
@@ -44,6 +47,8 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   // extensions'.
   const registry = ctx.extensions ?? CORE_REGISTRY;
   registry.requireKind(spec.value.kind);
+  if (args.note !== undefined && spec.value.kind === "character-3d")
+    throw new InputError("--note applies to image kinds; a character-3d spec takes no note");
   const stageGenerators = [...registry.kinds];
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
@@ -59,6 +64,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile"],
+    promptText: args.note !== undefined ? [args.note] : [],
     reads: {
       ...styleBibleReads("bible", bible),
       ...specReads("spec", spec),
@@ -90,6 +96,8 @@ export const stageCommand = defineCommand<StageArgs>({
   summary: "generate candidates within a cost cap and stage those that pass QA",
   details: `Generates candidates through the Vercel AI Gateway (AI_GATEWAY_API_KEY from the environment)
 within the cost cap in USD, and stages only the ones that pass QA.
+--note adds the author's note to each candidate's prompt (policy-checked, part of the request's digest);
+with --round it asks for another round. 3D kinds do not take it.
 --dry-run prints the planned calls, the cost forecast and the spend left under the daily and
 work-item limits, writes nothing and needs no key.
 --provider-script answers every model call from a module whose default export is
@@ -131,6 +139,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
+      note: NOTE_PROPERTY,
       round: ROUND_PROPERTY,
       dryRun: DRY_RUN_PROPERTY,
     },
@@ -181,6 +190,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       candidates,
       capUsd,
       ledger,
+      ...(args.note !== undefined && { note: args.note }),
       log: ctx.log,
       ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
     });

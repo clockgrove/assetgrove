@@ -23,6 +23,7 @@ import {
   sha256,
   styleNotes,
   subjectOf,
+  withNote,
 } from "../request.ts";
 import type { BibleInputs, FrameGrid } from "../request.ts";
 import { requireInsideProject } from "../bible.ts";
@@ -47,6 +48,8 @@ export interface GenerateSheetOptions {
   profile: TargetProfile;
   /** The author's brief: what the strip is for and how it moves. Its words go into the sheet prompt. */
   brief?: GenerationBrief;
+  /** The author's note of this round, appended to the sheet prompt. */
+  note?: string;
   routes: Routes;
   provider: GenerationProvider;
   /** Recorded in each call's route, for example `vercel-ai-gateway`. */
@@ -230,13 +233,16 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
     ? [await loadReference(spec.keyPose, "key pose (approved)", options.specDir)]
     : [];
   const template = templateFor(spec.animationFamily as string, templatesFor(profile));
-  const prompt = buildSheetPrompt(
-    spec,
-    bible,
-    grid,
-    inputs,
-    keyPose.length > 0,
-    motionLines(template, options.brief),
+  const prompt = withNote(
+    buildSheetPrompt(
+      spec,
+      bible,
+      grid,
+      inputs,
+      keyPose.length > 0,
+      motionLines(template, options.brief),
+    ),
+    options.note,
   );
   const seed = Number.parseInt(sha256(new TextEncoder().encode(prompt)).slice(0, 8), 16);
   const refs = [...keyPose, ...inputs.subject, inputs.perspective, inputs.palette];
