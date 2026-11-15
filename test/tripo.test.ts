@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { ProviderError } from "../src/errors.ts";
 import type { ProviderSettings } from "../src/settings.ts";
 import { TripoProvider } from "../src/gateway/tripo.ts";
+import { createProvider } from "../src/providers/adapter.ts";
 
 const KEY = "tsk_secret_key_123";
 const GLB = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
@@ -220,7 +221,21 @@ test("without a key a call fails with a provider error naming the key variable",
 
 test("the tripo adapter prices credits with the settings' usdPerCredit in its balance reading", async () => {
   const f = fake({});
-  const tripo = new TripoProvider({ apiKey: KEY, fetch: f.fetch, usdPerCredit: 0.01 });
+  // The adapter's provider fetches through the global fetch it captures when it is made.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = f.fetch;
+  let tripo: TripoProvider;
+  try {
+    const configured = createProvider(
+      "tripo",
+      { keyEnv: "ASSETGROVE_TEST_TRIPO_KEY", usdPerCredit: 0.01 },
+      { env: { ASSETGROVE_TEST_TRIPO_KEY: KEY } },
+    );
+    assert.ok(configured.provider instanceof TripoProvider);
+    tripo = configured.provider;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
   assert.deepEqual(await tripo.limitReading(), {
     balance: 12.5,
     unit: "credits",
