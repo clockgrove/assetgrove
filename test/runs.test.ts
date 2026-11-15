@@ -300,17 +300,54 @@ test("a run stopped after k of n calls resumes making only n-k calls, and the le
   assert.equal((await journal(plan.runDir)).length, n);
   assert.equal(existsSync(join(plan.runDir, "lock")), false, "the lock is released");
 
-  // The ledger counts each call once: one reservation per callKey, every one settled, each naming
-  // its provider, run and call.
+  // The ledger counts each call once: every answered call has one settled reservation naming its
+  // provider, run and call. The call the kill interrupted may have been billed, so its reservation
+  // stays at its estimate and the retry of that call reserved again rather than reusing it.
   const runId = doc(resumed).runId as string;
   const { reserves, settled } = await ledgerOf(runId);
-  assert.equal(reserves.length, n);
+  assert.equal(reserves.length, n + 1);
   assert.equal(new Set(reserves.map((r) => r.callKey)).size, n);
   for (const r of reserves) {
     assert.equal(r.provider, "scripted");
     assert.match(r.callKey ?? "", /^[0-9a-f]{64}$/);
-    assert.ok(settled.has(r.id), "settled");
   }
+  const open = reserves.filter((r) => !settled.has(r.id));
+  assert.equal(open.length, 1, "only the interrupted attempt is unsettled");
+  assert.equal(reserves.filter((r) => r.callKey === open[0]?.callKey).length, 2);
+});
+
+test("a resumed run is checked against the spend limit for its missing calls only", async () => {
+  const { world, spec, bible, runs } = await stageRequest();
+  const provider = await countingScript(world.dir);
+  const base = ["stage", "--spec", spec, "--bible", bible, "--runs", runs];
+  const args = [...base, "--candidates", "2", "--provider-script", provider.script];
+  const probe = doc(
+    await cli([...args, "--profile", join(world.dir, "profile.json"), "--dry-run", "--json"]),
+  );
+  const jobs = probe.jobs as { count: number; estimatedCostUsd: number }[];
+  const n = jobs.reduce((sum, j) => sum + j.count, 0);
+  const forecast = probe.forecastUsd as number;
+  const largest = Math.max(...jobs.map((j) => j.estimatedCostUsd));
+  assert.ok(forecast > 0 && largest > 0);
+  // The work item's limit fits the whole forecast and one interrupted call, no more.
+  const profile = { ...world.profile, spend: { workItemLimitUsd: forecast + largest } };
+  const profilePath = join(world.dir, "limited-profile.json");
+  await writeFile(profilePath, JSON.stringify(profile));
+  approveProfile(profile, { targetDir: world.targetDir });
+  const workItem = `resume-${process.pid}-${Date.now()}`;
+  const limited = [...args, "--profile", profilePath, "--work-item", workItem, "--json"];
+
+  const k = 5;
+  assert.ok(n > k);
+  await writeFile(provider.stop, String(k));
+  const stopped = await cli(limited);
+  assert.equal(stopped.signal, "SIGKILL", stopped.stderr);
+  await rm(provider.stop);
+  // The whole forecast again would cross the limit; the missing calls and the interrupted one fit.
+  const resumed = await cli(limited);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  assert.equal(doc(resumed).reused, false);
+  assert.equal(await provider.count(), n, "only the missing calls were made");
 });
 
 test("round 2 creates a new run directory; a live lock exits 2 run_in_progress; a dead pid's lock is taken over", async () => {
@@ -389,6 +426,98 @@ test("a dead lock is taken over by exactly one process, and a lock left by this 
   const namesake = acquireRunLock(runDir);
   assert.equal(namesake.tookOver, true);
   namesake.release();
+  assert.equal(existsSync(join(runDir, "lock")), false);
+});
+
+test("a materials request's digest covers the preview's script outside the profile folder and the derivation's source images", async () => {
+  const dir = await tempDir("assetgrove-materials-digest-");
+  const profileDir = join(dir, "profile");
+  const tools = join(dir, "tools");
+  await mkdir(profileDir, { recursive: true });
+  await mkdir(tools, { recursive: true });
+  const args = await materialsRequest(profileDir);
+  const renderer = join(tools, "render.mjs");
+  await writeFile(
+    renderer,
+    `import {copyFileSync} from 'node:fs'; copyFileSync(process.argv[2],process.argv[3]);`,
+  );
+  const profilePath = join(profileDir, "profile.json");
+  const profile = JSON.parse(await readFile(profilePath, "utf8"));
+  profile.style.materials.preview.command = [
+    process.execPath,
+    "../tools/render.mjs",
+    join(profileDir, "albedo.png"),
+    "{{output}}",
+  ];
+  await writeFile(profilePath, JSON.stringify(profile));
+  approveProfile(profile, { profileDir });
+  const source = join(dir, "height-source.png");
+  const mask = join(dir, "lamp-mask.png");
+  const raster = createRaster(8, 8);
+  await writeFile(source, encodePng(raster));
+  await writeFile(mask, encodePng(raster));
+  await writeFile(
+    join(profileDir, "derivation.json"),
+    JSON.stringify({
+      maps: {
+        height: { method: "mask-extraction", version: "1", path: "../height-source.png" },
+        normal: { method: "height-derived-normal", version: "1" },
+      },
+      lightSources: [{ name: "lamp", mask: "../lamp-mask.png" }],
+    }),
+  );
+  const digest = async () => {
+    const plan = await cli(["materials", ...args, "--dry-run", "--json"]);
+    assert.equal(plan.code, 0, plan.stderr);
+    return doc(plan).digest as string;
+  };
+  const seen = new Set([await digest()]);
+  assert.equal(seen.has(await digest()), true, "the same request has the same digest");
+  const changed = async (what: string) => {
+    const now = await digest();
+    assert.ok(!seen.has(now), `${what} changes the digest`);
+    seen.add(now);
+  };
+  await writeFile(renderer, `${await readFile(renderer, "utf8")}\n// changed\n`);
+  await changed("the renderer outside the profile folder");
+  setPixel(raster, 2, 2, [255, 255, 255, 255]);
+  await writeFile(source, encodePng(raster));
+  await changed("the map's source image");
+  setPixel(raster, 3, 3, [255, 255, 255, 255]);
+  await writeFile(mask, encodePng(raster));
+  await changed("the light source's mask");
+});
+
+test("processes racing to take over one dead lock: exactly one acquires it", async () => {
+  const runDir = await tempDir("assetgrove-lock-race-");
+  const dead = spawn(process.execPath, ["-e", ""]);
+  const deadPid = dead.pid as number;
+  await new Promise((done) => dead.once("exit", done));
+  await writeFile(join(runDir, "lock"), `${deadPid}\n`);
+  const lockModule = pathToFileURL(join(root, "src/runs/lock.ts")).href;
+  const go = join(runDir, "go");
+  const claimant = `import { existsSync } from "node:fs";
+import { acquireRunLock } from ${JSON.stringify(lockModule)};
+while (!existsSync(${JSON.stringify(go)})) await new Promise((r) => setTimeout(r, 5));
+try {
+  const lock = acquireRunLock(${JSON.stringify(runDir)});
+  process.stdout.write("acquired");
+  await new Promise((r) => setTimeout(r, 1500));
+  lock.release();
+} catch (error) {
+  process.stdout.write(error.code ?? String(error));
+}`;
+  const children = Array.from({ length: 6 }, () => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", claimant], { cwd: root });
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+    return new Promise<string>((done) => child.once("exit", () => done(out)));
+  });
+  await new Promise((r) => setTimeout(r, 1000));
+  await writeFile(go, "");
+  const results = await Promise.all(children);
+  assert.equal(results.filter((r) => r === "acquired").length, 1, results.join(", "));
+  assert.equal(results.filter((r) => r === "run_in_progress").length, 5, results.join(", "));
   assert.equal(existsSync(join(runDir, "lock")), false);
 });
 

@@ -130,6 +130,30 @@ export class Journal {
     );
   }
 
+  /**
+   * What the journaled calls cost, as their records settled it: spend a resume answers from the
+   * journal and never pays again.
+   */
+  spentUsd(): number {
+    let total = 0;
+    let names: string[];
+    try {
+      names = readdirSync(this.dir).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
+    } catch {
+      return 0;
+    }
+    for (const name of names) {
+      try {
+        const entry = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as JournalEntry;
+        const cost = entry.record?.costUsd;
+        if (typeof cost === "number" && Number.isFinite(cost) && cost > 0) total += cost;
+      } catch {
+        // An unreadable record is a missing call: it is made, and paid for, again.
+      }
+    }
+    return total;
+  }
+
   /** How many calls the journal holds. */
   count(): number {
     return journalCount(this.dir);

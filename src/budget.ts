@@ -1,4 +1,5 @@
 import { InputError } from "./errors.ts";
+import { currentRunScope } from "./runs/journal.ts";
 import type { ReserveMeta, SpendLedger } from "./spend.ts";
 
 /**
@@ -50,10 +51,13 @@ export class Budget {
   /**
    * The run-level check before any call: throws `BudgetExceededError` when the whole forecast does
    * not fit the cap beside what is spent and reserved, or would cross a ledger limit. Records nothing.
+   * Inside a resumed run, the calls its journal already holds are answered without a reservation
+   * and are already in the ledger, so the ledger is asked only for the rest of the forecast.
    */
   check(amountUsd: number, what: string): void {
     this.fitCap(amountUsd, what);
-    this.ledger?.check(amountUsd, what);
+    const journaled = currentRunScope()?.journal.spentUsd() ?? 0;
+    this.ledger?.check(Math.max(0, amountUsd - journaled), what);
   }
 
   /**

@@ -20,9 +20,10 @@ import type { TargetProfile } from "./types.ts";
  * reservation is checked against the entries before it in the file, so concurrent runs are
  * ordered by their appends and can never both fit into the same remaining spend; a reservation
  * that does not fit is cancelled (settled at 0) and the call is refused. A reservation never
- * settled (a crashed run) keeps its estimate, as a failed call does in `Budget`, until the same
- * run retries that call (same `runId` and `callKey`), which settles it rather than reserving
- * again: the ledger counts each call once. Whether a call is
+ * settled (a killed run) keeps its estimate for good, as a failed call does in `Budget`: the
+ * provider may have billed it. A retry of that call is another provider call, so it makes its
+ * own reservation, dated now and checked against the limits as they are now; no reservation is
+ * ever reused, so every call that reached a provider is counted once. Whether a call is
  * paid is its provider's billing (src/providers/adapter.ts); free calls are never recorded.
  */
 
@@ -209,10 +210,6 @@ export class SpendLedger {
    * Returns the reservation's ledger id, for `settle`.
    */
   reserve(amountUsd: number, what: string, route: string, meta: ReserveMeta = {}): string {
-    // A call a crashed run reserved and never settled keeps its estimate until the same run
-    // retries it: the retry settles that reservation, so the ledger counts each call once.
-    const orphan = this.unsettled(meta);
-    if (orphan !== undefined) return orphan;
     const id = randomUUID();
     this.append({
       op: "reserve",
@@ -235,20 +232,6 @@ export class SpendLedger {
       throw error;
     }
     return id;
-  }
-
-  /** The id of the run's unsettled reservation for the same call, when it has one. */
-  private unsettled(meta: ReserveMeta): string | undefined {
-    if (meta.runId === undefined || meta.callKey === undefined) return undefined;
-    const entries = this.read();
-    const settled = new Set(entries.flatMap((e) => (e.op === "settle" ? [e.id] : [])));
-    return entries.find(
-      (e) =>
-        e.op === "reserve" &&
-        e.runId === meta.runId &&
-        e.callKey === meta.callKey &&
-        !settled.has(e.id),
-    )?.id;
   }
 
   /** Records what a reserved call actually cost. */
