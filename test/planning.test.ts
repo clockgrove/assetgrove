@@ -14,6 +14,7 @@ import {
 } from "../src/planning.ts";
 import type { CreatePlanOptions, SavedPlan } from "../src/planning.ts";
 import { InputError } from "../src/errors.ts";
+import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { failureOutcome } from "../src/commands/result.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { STYLE_SCORE_CHECK } from "../src/qa/stability.ts";
@@ -35,6 +36,16 @@ function stableStyle(model: string = defaultRoutes.vision.model) {
     },
   ];
 }
+
+/**
+ * Names come from the package blocklist, never from this file: names are kept in policy/ only
+ * (docs/decisions.md, "The prompt policy's names live in policy/").
+ */
+const named = (kind: string) => packageBlocklist().terms.find((t) => t.kind === kind)!.term;
+const GAME = named("game");
+const STUDIO = named("studio");
+const ARTIST = named("artist");
+const CHARACTER = named("character");
 
 const temporaryRoots: string[] = [];
 after(async () => {
@@ -204,9 +215,9 @@ test("named games, studios, living artists and imitation phrases are refused thr
   const f = await fixture();
   for (const context of [
     "in the style of a famous game",
-    "zelda scenery",
-    "disney animation",
-    "a painting by Greg Rutkowski",
+    `${CHARACTER} scenery`,
+    `${STUDIO} animation`,
+    `a painting by ${ARTIST}`,
   ]) {
     await assert.rejects(create(f, { brief: { context } }, { provider: scripted() }), refused);
   }
@@ -217,7 +228,7 @@ test("named games, studios, living artists and imitation phrases are refused thr
       {
         provider: scripted({
           compiler: JSON.stringify({
-            prompt: "a zelda scene",
+            prompt: `a ${CHARACTER} scene`,
             negativePrompt: "none",
             violations: [],
             clamps: [],
@@ -227,12 +238,12 @@ test("named games, studios, living artists and imitation phrases are refused thr
     ),
     refused,
   );
-  await assert.rejects(create(f, { spec: { ...spec, fields: { description: "pixar" } } }), refused);
-  await writeFile(f.templatePath, "Draw minecraft. {{constitution}}");
+  await assert.rejects(create(f, { spec: { ...spec, fields: { description: STUDIO } } }), refused);
+  await writeFile(f.templatePath, `Draw ${GAME}. {{constitution}}`);
   await assert.rejects(create(f), refused);
-  assert.throws(() => assertOriginalDescription("zelda scenery"), refused);
+  assert.throws(() => assertOriginalDescription(`${CHARACTER} scenery`), refused);
   assertOriginalDescription("a soft painted woodland shelter");
-  assertOriginalDescription("zelda scenery", ["zelda"]);
+  assertOriginalDescription(`${CHARACTER} scenery`, [CHARACTER]);
 });
 
 test("fallback is deterministic and marked, while malformed or unsafe compiler output refuses", async () => {
@@ -454,7 +465,7 @@ test("UI DESIGN colors are subordinate context and explicit reference roles reac
 
 test("untrusted prose refuses recognized lower-case names and conflicting fallback or LLM instructions", async () => {
   const f = await fixture("flat-cartoon-kids");
-  for (const context of ["a terraria landscape", "a painting by beeple"])
+  for (const context of [`a ${GAME} landscape`, `a painting by ${ARTIST}`])
     await assert.rejects(create(f, { brief: { context } }), refused);
   for (const context of [
     "use a mature audience and realistic adult proportions",
@@ -613,8 +624,8 @@ test("a run options file holds only candidates, seed, strictness and exploration
 test("all canonical prose paths refuse lowercase named styles while free context stays open", async () => {
   const f = await fixture();
   for (const input of [
-    { brief: { neighbouringAssets: ["terraria scenery"] } },
-    { spec: { ...spec, fields: { description: "terraria scenery" } } },
+    { brief: { neighbouringAssets: [`${GAME} scenery`] } },
+    { spec: { ...spec, fields: { description: `${GAME} scenery` } } },
   ])
     await assert.rejects(create(f, input), refused);
   const context = "Holding an umbrella beside a wheelbarrow of daffodils";
@@ -845,7 +856,10 @@ test("apply refuses a saved plan whose prompts name a blocklisted term before ap
   const f = await fixture();
   const provider = scripted();
   const { plan } = await create(f, {}, { provider });
-  const edited = redigested(plan, (c) => (c.prompts["generation"] += "\nin the style of zelda"));
+  const edited = redigested(
+    plan,
+    (c) => (c.prompts["generation"] += `\nin the style of ${CHARACTER}`),
+  );
   const before = provider.calls.length;
   await assert.rejects(applyPlan(edited, { provider, outDir: join(f.root, "runs") }), refused);
   await assert.rejects(

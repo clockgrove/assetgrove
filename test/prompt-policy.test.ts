@@ -13,6 +13,7 @@ import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { failureOutcome } from "../src/commands/result.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
+import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { checkPromptText, enforcePromptPolicy, PromptRefusedError } from "../src/policy/text.ts";
 import { ProviderSet } from "../src/providers/set.ts";
 import { planDigest } from "../src/planning.ts";
@@ -29,7 +30,15 @@ import {
 } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const TERM = "greg rutkowski";
+/** A two-word artist term from the package blocklist: names live in policy/ only. */
+const TERM = packageBlocklist().terms.find(
+  (t) => t.kind === "artist" && t.term.includes(" "),
+)!.term;
+const [FIRST, LAST] = TERM.split(" ") as [string, string];
+const title = (word: string) => word[0]!.toUpperCase() + word.slice(1);
+/** Each ASCII letter as its fullwidth form, which NFKC folds back. */
+const fullwidth = (text: string) =>
+  text.replace(/[a-z]/g, (c) => String.fromCodePoint(c.codePointAt(0)! + 0xfee0));
 const STYLE = `painted by ${TERM}`;
 
 const temporary: string[] = [];
@@ -460,9 +469,9 @@ test("a ProviderSet image call with a blocklisted final prompt is refused with e
 
 test("an allow term clears a hit and is recorded as allowedBy", async () => {
   assert.equal(checkPromptText(STYLE).verdict, "refused");
-  const cleared = checkPromptText(STYLE, ["Greg  Rutkowski"]);
+  const cleared = checkPromptText(STYLE, [`${title(FIRST)}  ${title(LAST)}`]);
   assert.equal(cleared.verdict, "allowed");
-  assert.deepEqual(cleared.allowedBy, ["Greg  Rutkowski"]);
+  assert.deepEqual(cleared.allowedBy, [`${title(FIRST)}  ${title(LAST)}`]);
   assert.equal(cleared.match, undefined);
   assert.throws(() => enforcePromptPolicy(STYLE), PromptRefusedError);
 
@@ -483,21 +492,21 @@ test("an allow term clears a hit and is recorded as allowedBy", async () => {
 
 test("case, diacritic, fullwidth, spacing and run-together variants all match", () => {
   const variants = [
-    "GREG RUTKOWSKI",
-    "Grég Rutkowski",
-    "ｇｒｅｇ ｒｕｔｋｏｗｓｋｉ",
-    "greg    rutkowski",
-    "greg-rutkowski",
-    "greg\nrutkowski",
-    "gregrutkowski",
-    "paint like Greg_Rutkowski, please",
+    TERM.toUpperCase(),
+    `${title(FIRST)} ${title(LAST).replace(/[aeiou]/, (v) => `${v}\u0301`)}`,
+    fullwidth(TERM),
+    `${FIRST}    ${LAST}`,
+    `${FIRST}-${LAST}`,
+    `${FIRST}\n${LAST}`,
+    `${FIRST}${LAST}`,
+    `paint like ${title(FIRST)}_${title(LAST)}, please`,
   ];
   for (const text of variants) {
     const record = checkPromptText(text);
     assert.equal(record.verdict, "refused", text);
     assert.equal(record.match?.term, TERM, text);
   }
-  assert.equal(checkPromptText("a gregarious rutkowskian fox").verdict, "allowed");
+  assert.equal(checkPromptText(`a ${FIRST}arious ${LAST}ian fox`).verdict, "allowed");
 });
 
 test("policyTextSha256 is in the WorkPlan and changes the digest with the spec text", async () => {
