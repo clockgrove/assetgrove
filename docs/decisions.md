@@ -305,6 +305,31 @@ A blocklist misses paraphrases, so every request also gets one model decision, a
 { "promptPolicy": { "minRefusalRate": 0.9, "maxFalseRefusalRate": 0.1 } }
 ```
 
+## The data-dependent 1.0 bars
+
+Three of the 1.0 measures need a number that only real use can test. The numbers are fixed here, before Phases 2 and 3 produce the records they judge, so a result cannot shape its own bar. They are read once against real records at the Phase 2 gate and corrected there if the records show a bar is wrong; after that they hold to 1.0.
+
+```json
+{
+  "dataBars": {
+    "qa": {
+      "minPrecision": 0.6,
+      "minRecall": 0.9,
+      "minShownJudged": 100,
+      "minFilteredSampled": 50
+    },
+    "setConsistency": { "maxStdDev": 0.1, "maxBelowMedian": 0.2, "minSetSize": 5 },
+    "changeRequests": { "minApprovedWithinTwoVersions": 0.7, "minRequests": 30 }
+  }
+}
+```
+
+**QA precision and recall.** Precision is the share of shown candidates a person finds acceptable: usable for the request as asked, whether or not it was the one picked. Recall is the share of all acceptable candidates that were shown. It is worked out from a sample of the filtered candidates: the acceptable share of the sample, times the number filtered, estimates the acceptable candidates QA hid. The two bars differ on purpose. A poor candidate that is shown costs a glance; a good candidate that is filtered was paid for and never seen. So QA may let 4 in 10 weak candidates through, and may hide no more than 1 in 10 good ones, the same limit the [identity lock bar](#identity-lock-bar) puts on false rejects. The measure counts only once 100 shown candidates are judged and 50 filtered ones sampled (all of them when fewer were filtered), across at least three asset kinds and two subjects, so that no bar rests on one character.
+
+**Consistency of a set.** The set-level audit scores each asset of a set for style and, where the subject has a lock, for identity, both from 0 to 1. A set of five or more assets is consistent when each score's standard deviation is at most 0.10 and no asset scores more than 0.20 below the set's median. The few identity scores on record for one approved character sit within 0.16 of each other, with a standard deviation of 0.06, so 0.10 leaves room for honest variation. One off-model asset in a set of nine (0.40 among 0.75s) gives 0.12 and fails both rules. The audit stays advisory: beyond the bar it names the assets, and a person decides.
+
+**Change requests land.** At least 70% of change requests are approved within two new versions, counted once 30 requests are on record. A change request gets two attempts at a marked region, so it should do at least as well as one fresh request, whose bar is a pick 70% of the time.
+
 ## One confirmation per request, checked where money is spent
 
 Spend, pick and write each need one confirmation of the request's digest (design section 7). The sources, in order: headless settings (`headless.operator`, method `headless`; a headless pick must name `--candidate`, else exit 2 `invalid_input`); a record at `<configDir>/confirmations/<hex>.json` named by the digest; for `apply`, its plan's record; over MCP, a form when the client declares form elicitation (method `elicitation`, below); the inline prompt when stdin and stderr are a TTY (method `tty`, via `node:readline/promises`); otherwise exit 8 `confirmation_required` with `error.confirmation = {kind, id, summary, confirmCommand}` and the request saved to `<stateDir>/pending/<id>.json`. A decline exits 8 `confirmation_declined`. Every method writes the record, which is a plain JSON file (no library needed) and is copied into `run.json` and the pick's provenance. `assetgrove confirm <id>` (CLI only, exit 2 without a TTY) completes a pending request (method `terminal`).
