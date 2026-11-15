@@ -81,54 +81,100 @@ export function metadataStep(value: DigitalSourceType, pixelHashes: string[]): T
   };
 }
 
-function xmp(value: DigitalSourceType, previous?: string): string {
-  const description = `<rdf:Description rdf:about="" xmlns:Iptc4xmpExt="${namespace}"><Iptc4xmpExt:DigitalSourceType>${value}</Iptc4xmpExt:DigitalSourceType></rdf:Description>`;
-  if (previous) {
-    if (readXmp(previous) === value) return previous;
-    // Keep other XMP properties, including those in the same RDF description.
-    const clean = previous;
-    const prefixes = [
-      ...previous.matchAll(
-        /xmlns:([\w.-]+)\s*=\s*["']http:\/\/iptc.org\/std\/Iptc4xmpExt\/2008-02-29\/["']/g,
-      ),
-    ].map((m) => m[1]!);
-    for (const prefix of prefixes) {
-      const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const element = new RegExp(
-        `<${escaped}:DigitalSourceType\\b[^>]*(?:/>|>[\\s\\S]*?<\\/${escaped}:DigitalSourceType\\s*>)`,
-      );
-      if (element.test(clean))
-        return clean.replace(
-          element,
-          `<${prefix}:DigitalSourceType>${value}</${prefix}:DigitalSourceType>`,
-        );
-      const attribute = new RegExp(`(${escaped}:DigitalSourceType\\s*=\\s*)(["'])[\\s\\S]*?\\2`);
-      if (attribute.test(clean)) return clean.replace(attribute, `$1"${value}"`);
-    }
-    const emptyRdf = /<([\w.-]+):RDF\b([^>]*?)\/>/.exec(clean);
-    if (emptyRdf)
-      return clean.replace(
-        emptyRdf[0],
-        `<${emptyRdf[1]}:RDF${emptyRdf[2]}>${description.replaceAll("rdf:", `${emptyRdf[1]}:`)}</${emptyRdf[1]}:RDF>`,
-      );
-    const rdf = /<\/([\w.-]+):RDF\s*>/.exec(clean);
-    if (rdf) {
-      const prefix = rdf[1]!;
-      return clean.replace(rdf[0], description.replaceAll("rdf:", `${prefix}:`) + rdf[0]);
-    }
-    throw new Error("cannot preserve XMP without an RDF container");
-  }
-  return `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">${description}</rdf:RDF></x:xmpmeta>`;
-}
-
-function readXmp(xml: string): DigitalSourceType | undefined {
-  const prefixes = [
+const escapeXml = (text: string): string =>
+  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const unescapeXml = (text: string): string =>
+  text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const iptcPrefixes = (xml: string): string[] =>
+  [
     ...xml.matchAll(
       /xmlns:([\w.-]+)\s*=\s*["']http:\/\/iptc.org\/std\/Iptc4xmpExt\/2008-02-29\/["']/g,
     ),
   ].map((m) => m[1]!);
-  for (const prefix of prefixes) {
-    const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The IPTC AI-system property carries the model names; the prompt never goes in the mark. */
+const modelProperty = "AISystemUsed";
+export interface MarkOptions {
+  /** Model names for IPTC's AISystemUsed. Never a prompt. */
+  models?: readonly string[];
+}
+export function modelText(models: readonly string[] | undefined): string | undefined {
+  const names = [...new Set((models ?? []).map((m) => m.trim()).filter(Boolean))];
+  return names.length ? names.join("; ") : undefined;
+}
+
+/** Replaces an existing IPTC property in place; undefined when the packet has none. */
+function replaceProperty(xml: string, name: string, text: string): string | undefined {
+  for (const prefix of iptcPrefixes(xml)) {
+    const escaped = escapeRegExp(prefix);
+    const element = new RegExp(
+      `<${escaped}:${name}\\b[^>]*(?:/>|>[\\s\\S]*?<\\/${escaped}:${name}\\s*>)`,
+    );
+    if (element.test(xml))
+      return xml.replace(
+        element,
+        () => `<${prefix}:${name}>${escapeXml(text)}</${prefix}:${name}>`,
+      );
+    const attribute = new RegExp(`(${escaped}:${name}\\s*=\\s*)(["'])[\\s\\S]*?\\2`);
+    if (attribute.test(xml))
+      return xml.replace(attribute, (_m, head) => `${head}"${escapeXml(text)}"`);
+  }
+  return undefined;
+}
+
+function xmp(value: DigitalSourceType, previous?: string, models?: readonly string[]): string {
+  const modelsText = modelText(models);
+  const properties: [string, string][] = [["DigitalSourceType", value]];
+  if (modelsText !== undefined) properties.push([modelProperty, modelsText]);
+  const body = (prefix: string): string =>
+    `<${prefix}:Description ${prefix}:about="" xmlns:Iptc4xmpExt="${namespace}">` +
+    properties.map(([n, t]) => `<Iptc4xmpExt:${n}>${escapeXml(t)}</Iptc4xmpExt:${n}>`).join("") +
+    `</${prefix}:Description>`;
+  if (previous) {
+    if (
+      readXmp(previous) === value &&
+      (modelsText === undefined || readXmpModels(previous) === modelsText)
+    )
+      return previous;
+    // Keep other XMP properties, including those in the same RDF description.
+    let clean = previous;
+    const missing: [string, string][] = [];
+    for (const [n, t] of properties) {
+      const replaced = replaceProperty(clean, n, t);
+      if (replaced === undefined) missing.push([n, t]);
+      else clean = replaced;
+    }
+    if (!missing.length) return clean;
+    properties.splice(0, properties.length, ...missing);
+    const emptyRdf = /<([\w.-]+):RDF\b([^>]*?)\/>/.exec(clean);
+    if (emptyRdf)
+      return clean.replace(
+        emptyRdf[0],
+        () => `<${emptyRdf[1]}:RDF${emptyRdf[2]}>${body(emptyRdf[1]!)}</${emptyRdf[1]}:RDF>`,
+      );
+    const rdf = /<\/([\w.-]+):RDF\s*>/.exec(clean);
+    if (rdf) return clean.replace(rdf[0], () => body(rdf[1]!) + rdf[0]);
+    throw new Error("cannot preserve XMP without an RDF container");
+  }
+  return `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">${body("rdf")}</rdf:RDF></x:xmpmeta>`;
+}
+
+function readXmpModels(xml: string): string | undefined {
+  for (const prefix of iptcPrefixes(xml)) {
+    const escaped = escapeRegExp(prefix);
+    const element = new RegExp(
+      `<${escaped}:${modelProperty}\\b[^>]*>([\\s\\S]*?)<\\/${escaped}:${modelProperty}\\s*>`,
+    ).exec(xml);
+    const attribute = new RegExp(`${escaped}:${modelProperty}\\s*=\\s*["']([^"']+)["']`).exec(xml);
+    const text = element?.[1]?.trim() ?? attribute?.[1];
+    if (text) return unescapeXml(text);
+  }
+  return undefined;
+}
+
+function readXmp(xml: string): DigitalSourceType | undefined {
+  for (const prefix of iptcPrefixes(xml)) {
+    const escaped = escapeRegExp(prefix);
     const element = new RegExp(
       `<${escaped}:DigitalSourceType\\b[^>]*>([\\s\\S]*?)<\\/${escaped}:DigitalSourceType\\s*>`,
     ).exec(xml);
@@ -174,30 +220,63 @@ function pngXmp(chunk: Chunk): string | undefined {
   const data = chunk.data.subarray(translatedEnd + 1);
   return (compressed === 1 ? inflateSync(data) : data).toString("utf8");
 }
-function readJpegSourceType(bytes: Uint8Array): DigitalSourceType | undefined {
-  const b = Buffer.from(bytes);
+const jpegXmpId = Buffer.from("http://ns.adobe.com/xap/1.0/\0");
+interface JpegScan {
+  /** Where a new APP1 goes: after SOI and any leading JFIF/APP0 segments. */
+  insertAt: number;
+  xmp?: { start: number; end: number; xml: string };
+}
+function scanJpeg(b: Buffer): JpegScan {
   if (b[0] !== 0xff || b[1] !== 0xd8) throw new Error("invalid JPEG signature");
-  const identifier = Buffer.from("http://ns.adobe.com/xap/1.0/\0");
   let offset = 2;
+  let insertAt = 2;
+  let leading = true;
+  let xmp: JpegScan["xmp"];
   while (offset < b.length) {
+    const start = offset;
     if (b[offset++] !== 0xff) throw new Error("invalid JPEG marker");
     while (b[offset] === 0xff) offset++;
     const marker = b[offset++];
     if (marker === undefined) throw new Error("truncated JPEG marker");
     // XMP belongs to the header; entropy-coded scan data is not a segment stream.
-    if (marker === 0xda || marker === 0xd9) return undefined;
+    if (marker === 0xda || marker === 0xd9) break;
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
     if (offset + 2 > b.length) throw new Error("truncated JPEG segment");
     const length = b.readUInt16BE(offset);
     if (length < 2 || offset + length > b.length) throw new Error("invalid JPEG segment length");
     const data = b.subarray(offset + 2, offset + length);
-    if (marker === 0xe1 && data.subarray(0, identifier.length).equals(identifier)) {
-      const value = readXmp(data.subarray(identifier.length).toString("utf8"));
-      if (value) return value;
+    if (marker === 0xe1 && data.subarray(0, jpegXmpId.length).equals(jpegXmpId)) {
+      xmp ??= {
+        start,
+        end: offset + length,
+        xml: data.subarray(jpegXmpId.length).toString("utf8"),
+      };
     }
+    if (leading && marker === 0xe0) insertAt = offset + length;
+    else leading = false;
     offset += length;
   }
-  return undefined;
+  return { insertAt, ...(xmp ? { xmp } : {}) };
+}
+function readJpegXmp(bytes: Uint8Array): string | undefined {
+  return scanJpeg(Buffer.from(bytes)).xmp?.xml;
+}
+function embedJpeg(
+  bytes: Uint8Array,
+  value: DigitalSourceType,
+  models?: readonly string[],
+): Buffer {
+  const b = Buffer.from(bytes);
+  const scan = scanJpeg(b);
+  const xml = Buffer.concat([jpegXmpId, Buffer.from(xmp(value, scan.xmp?.xml, models))]);
+  if (xml.length + 2 > 0xffff) throw new Error("XMP packet too large for one JPEG segment");
+  const segment = Buffer.alloc(4 + xml.length);
+  segment.set([0xff, 0xe1]);
+  segment.writeUInt16BE(xml.length + 2, 2);
+  xml.copy(segment, 4);
+  if (scan.xmp)
+    return Buffer.concat([b.subarray(0, scan.xmp.start), segment, b.subarray(scan.xmp.end)]);
+  return Buffer.concat([b.subarray(0, scan.insertAt), segment, b.subarray(scan.insertAt)]);
 }
 function crc32(bytes: Buffer): number {
   let crc = 0xffffffff;
@@ -321,8 +400,10 @@ export function embedDigitalSourceType(
   bytes: Uint8Array,
   mediaType: string,
   value: DigitalSourceType,
+  options: MarkOptions = {},
 ): Uint8Array {
   if (value === "undeclared") return bytes;
+  const models = options.models;
   if (mediaType === "image/png") {
     const chunks = pngChunks(bytes);
     const previous = chunks.map(pngXmp).find((s) => s !== undefined);
@@ -330,7 +411,7 @@ export function embedDigitalSourceType(
       type: "iTXt",
       data: Buffer.concat([
         Buffer.from("XML:com.adobe.xmp\0\0\0\0\0"),
-        Buffer.from(xmp(value, previous)),
+        Buffer.from(xmp(value, previous, models)),
       ]),
     };
     const filtered = chunks.filter((c) => pngXmp(c) === undefined);
@@ -340,6 +421,7 @@ export function embedDigitalSourceType(
     filtered.splice(imageData < 0 ? end : imageData, 0, metadata);
     return Buffer.concat([pngSignature, ...filtered.map(encodePngChunk)]);
   }
+  if (mediaType === "image/jpeg") return embedJpeg(bytes, value, models);
   if (mediaType === "image/webp") {
     const chunks = webpChunks(bytes);
     const previous = chunks.find((c) => c.type === "XMP ")?.data.toString("utf8");
@@ -348,7 +430,7 @@ export function embedDigitalSourceType(
       ...[
         webpHeader(chunks),
         ...chunks.filter((c) => !["XMP ", "VP8X"].includes(c.type)),
-        { type: "XMP ", data: Buffer.from(xmp(value, previous)) },
+        { type: "XMP ", data: Buffer.from(xmp(value, previous, models)) },
       ].map(encodeWebpChunk),
     ]);
     const header = Buffer.alloc(8);
@@ -378,7 +460,8 @@ export function readDigitalSourceType(
       if (value) return value;
     }
   } else if (mediaType === "image/jpeg") {
-    return readJpegSourceType(bytes);
+    const xml = readJpegXmp(bytes);
+    return xml === undefined ? undefined : readXmp(xml);
   } else if (mediaType === "image/webp") {
     const xml = webpChunks(bytes)
       .find((c) => c.type === "XMP ")
@@ -396,4 +479,19 @@ export function readDigitalSourceType(
     return sourceType(ext?.packets?.[reference.packet]?.["Iptc4xmpExt:DigitalSourceType"]);
   }
   return undefined;
+}
+
+/** The model names a mark carries in IPTC's AI-system property, or undefined. */
+export function readMarkedModels(bytes: Uint8Array, mediaType: string): string | undefined {
+  let xml: string | undefined;
+  if (mediaType === "image/png")
+    xml = pngChunks(bytes)
+      .map(pngXmp)
+      .find((x) => x !== undefined);
+  else if (mediaType === "image/jpeg") xml = readJpegXmp(bytes);
+  else if (mediaType === "image/webp")
+    xml = webpChunks(bytes)
+      .find((c) => c.type === "XMP ")
+      ?.data.toString("utf8");
+  return xml === undefined ? undefined : readXmpModels(xml);
 }
