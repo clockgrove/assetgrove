@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -338,6 +339,7 @@ export default {
   vision: (r, i) => (count("vision"), base.vision(r, i)),
 };`,
   );
+  approve(script);
   // One shelter candidate: six edits at $0.05 and one QA call at $0.02, $0.32 forecast.
   const args = [
     "stage",

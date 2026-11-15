@@ -1,3 +1,5 @@
+import "./fixtures/env.ts";
+import { approveProfile } from "./fixtures/env.ts";
 import jpeg from "jpeg-js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -127,6 +129,7 @@ test("generated Fern strip and model-edited human prop disclose origin through s
       "{{media}}",
     ],
   };
+  approveProfile(world.profile, { targetDir: world.targetDir });
   const base = {
     specDir: world.dir,
     bible: world.bible,
@@ -182,6 +185,7 @@ test("sheet import carries declared model origin into cleaned frames, contact sh
     ...(profile.manifest as Record<string, unknown>),
     style: "{{profile.style}}",
   };
+  approveProfile(profile, { targetDir: join(root, "target") });
   const { record, importDir } = await importSheet({
     sheet: sheet.png,
     sheetPath: "synthetic.png",
@@ -268,6 +272,7 @@ test("undeclared imports stage previews but refuse target export until an identi
   const root = await mkdtemp(join(tmpdir(), "iptc-undeclared-"));
   const sheet = syntheticSheet();
   const profile = syntheticProfile({ style: { alpha: { mode: "soft" }, color: { rule: "full" } } });
+  approveProfile(profile, { targetDir: join(root, "target") });
   const base = {
     sheet: sheet.png,
     sheetPath: "synthetic.png",

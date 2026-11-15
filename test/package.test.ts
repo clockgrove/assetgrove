@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -129,6 +130,7 @@ test(
         script,
         `export default { image() { throw new Error("no"); }, vision() { throw new Error("no"); } };`,
       );
+      approve(script);
       const dry = await run([
         "stage",
         "--spec",

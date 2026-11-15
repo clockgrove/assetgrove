@@ -1,5 +1,5 @@
 import "./fixtures/env.ts";
-import { declareLimit } from "./fixtures/env.ts";
+import { approveProfile, declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -22,9 +22,15 @@ import {
   scriptedProvider,
   shelterSpec,
   syntheticProfile,
-  syntheticWorld,
+  syntheticWorld as plainWorld,
 } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
+
+async function syntheticWorld(): Promise<World> {
+  const world = await plainWorld();
+  approveProfile(world.profile, { targetDir: world.targetDir });
+  return world;
+}
 
 const exec = promisify(execFile);
 
@@ -339,6 +345,7 @@ test("a validator rejection is reported, not hidden", async () => {
   world.profile.validator = {
     command: [process.execPath, "-e", "console.error('nope'); process.exit(1)"],
   };
+  approveProfile(world.profile, { targetDir: world.targetDir });
   const { runDir } = await stage({ ...options(world, scriptedProvider()), candidates: 1 });
   const result = await pick({ runDir, candidateId: "c1", targetDir: world.targetDir });
   assert.equal(result.validator?.accepted, false);

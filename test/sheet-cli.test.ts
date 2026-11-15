@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -19,6 +20,7 @@ test("the CLI imports a sheet, refuses an unconfirmed grouping and writes the co
   const root = await mkdtemp(join(tmpdir(), "assetgrove-cli-"));
   const target = join(root, "target");
   await mkdir(target);
+  approveProfile(syntheticProfile(), { targetDir: target });
   await writeFile(join(root, "sheet.png"), syntheticSheet().png);
   const base = syntheticProfile();
   const profile = {

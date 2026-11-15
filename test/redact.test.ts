@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
@@ -61,6 +62,7 @@ async function leakingStage() {
       `};`,
     ].join("\n"),
   );
+  approve(script);
   return { world, spec, bible, profile, script };
 }
 

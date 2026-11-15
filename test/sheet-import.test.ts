@@ -1,3 +1,5 @@
+import "./fixtures/env.ts";
+import { approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { access, mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -82,6 +84,7 @@ async function dirs() {
   const root = await mkdtemp(join(tmpdir(), "assetgrove-sheet-"));
   const targetDir = join(root, "target");
   await mkdir(targetDir);
+  approveProfile(syntheticProfile(), { targetDir });
   return { root, importsDir: join(root, "imports"), targetDir };
 }
 
@@ -236,10 +239,12 @@ test("an imported sheet is sliced, cleaned to soft alpha, grouped by proposal, a
   const first = await scaleOf(written.families[0]!.result.manifestPath);
   const stored = JSON.parse(await readFile(join(importDir, "import.json"), "utf8")).scale;
   assert.equal(stored, first);
+  const againTarget = await mkdtemp(join(tmpdir(), "af-target-"));
+  approveProfile(syntheticProfile(), { targetDir: againTarget });
   const again = await writeFamilies({
     importDir,
     grouping: { ...confirmed, families: [{ ...saved.families[0]!, name: "idle-only" }] },
-    targetDir: await mkdtemp(join(tmpdir(), "af-target-")),
+    targetDir: againTarget,
   });
   assert.equal(await scaleOf(again.families[0]!.result.manifestPath), first);
 });

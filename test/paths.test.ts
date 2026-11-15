@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -12,11 +13,18 @@ import { imageGenerators } from "../src/generators/image.ts";
 import { stage } from "../src/loop.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { checkWrites, readRecordPath, recordPath } from "../src/paths.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld as plainWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
+
+async function syntheticWorld(): Promise<World> {
+  const world = await plainWorld();
+  approveProfile(world.profile, { targetDir: world.targetDir });
+  return world;
+}
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approve(passingScript);
 
 interface Result {
   code: number;

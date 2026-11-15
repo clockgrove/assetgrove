@@ -16,7 +16,7 @@ import { failureOutcome } from "../src/commands/result.ts";
 import { providerFailure } from "../src/gateway/failure.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { defaultRoutes } from "../src/routes.ts";
-import { SCRIPTED_LIMIT, writeSettings } from "./fixtures/env.ts";
+import { SCRIPTED_LIMIT, approve, approveProfile, writeSettings } from "./fixtures/env.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -64,6 +64,7 @@ export default {
   vision: (r, i) => (count("vision"), base.vision(r, i)),
 };`,
   );
+  approve(path);
   return { path, calls };
 }
 
@@ -75,6 +76,7 @@ async function stageArgs(): Promise<{ args: string[]; dir: string }> {
   await writeFile(spec, JSON.stringify(shelterSpec));
   await writeFile(bible, JSON.stringify(world.bible));
   await writeFile(profile, JSON.stringify(world.profile));
+  approveProfile(world.profile, { targetDir: world.targetDir });
   const args = [
     "stage",
     ...["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir],

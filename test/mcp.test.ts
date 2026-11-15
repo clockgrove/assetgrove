@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -36,6 +37,7 @@ const synthetic = fileURLToPath(new URL("./fixtures/synthetic.ts", import.meta.u
 const raster = fileURLToPath(new URL("../src/image/raster.ts", import.meta.url));
 const LOOKDEV_SCRIPT = fileURLToPath(new URL("./fixtures/lookdev-script.ts", import.meta.url));
 const ANIMATION_SCRIPT = fileURLToPath(new URL("./fixtures/animation-script.ts", import.meta.url));
+approve(LOOKDEV_SCRIPT, ANIMATION_SCRIPT);
 const temporary: string[] = [];
 const clients: Client[] = [];
 
@@ -150,6 +152,7 @@ export default {
   },
 };`,
   );
+  approve(path);
   return path;
 }
 
@@ -222,6 +225,7 @@ async function world() {
 async function moduleScript(name: string, body: string): Promise<string> {
   const path = join(work, name);
   await writeFile(path, body);
+  approve(path);
   return path;
 }
 
@@ -513,6 +517,7 @@ const rows: Row[] = [
       const [run] = await readdir(runs);
       const target = join(work, "target");
       await mkdir(target, { recursive: true });
+      approveProfile(syntheticProfile(), { targetDir: target });
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
@@ -569,6 +574,7 @@ const rows: Row[] = [
       );
       const target = join(dir, "target");
       await mkdir(target, { recursive: true });
+      approveProfile(syntheticProfile(), { targetDir: target });
       return { import: imported, target, grouping };
     },
   },
@@ -684,6 +690,9 @@ export default {
           },
         }),
       );
+      approveProfile(JSON.parse(await readFile(join(dir, "profile.json"), "utf8")), {
+        profileDir: dir,
+      });
       await writeFile(
         join(dir, "derivation.json"),
         JSON.stringify({
