@@ -16,7 +16,7 @@ import { loadScript } from "./script.ts";
 export { loadScript } from "./script.ts";
 
 /** What provider setup reads from the run context: the settings and the environment. */
-export type ProviderContext = Pick<RunContext, "settings" | "env">;
+export type ProviderContext = Pick<RunContext, "settings" | "env" | "prompt">;
 
 /** A provider and the name its calls are recorded under: its settings id. */
 export interface NamedProvider {
@@ -45,7 +45,7 @@ export async function scriptedFrom(
   providerScript: string | undefined,
   ctx: ProviderContext,
 ): Promise<NamedProvider | undefined> {
-  return providerScript ? scriptedProvider(await loadScript(providerScript), ctx) : undefined;
+  return providerScript ? scriptedProvider(await loadScript(providerScript, ctx), ctx) : undefined;
 }
 
 /** The provider of a run: the --provider-script module when given, else the gateway. */

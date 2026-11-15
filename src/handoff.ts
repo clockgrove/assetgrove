@@ -12,6 +12,8 @@ import {
 import { decodeImage } from "./image/raster.ts";
 import { pixelHash } from "./transform/run.ts";
 import { InputError } from "./errors.ts";
+import { commandIdentity, defaultGate, requireApproval, resolveProgram } from "./approvals.ts";
+import type { ApprovalGate, CommandStep } from "./approvals.ts";
 import { requireLicensable } from "./license.ts";
 import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
@@ -30,6 +32,8 @@ export interface PickOptions {
   /** The target repository (or directory) the pick is written into. */
   targetDir: string;
   now?: () => Date;
+  /** How the profile's validator is approved; the developer settings with no prompt when absent. */
+  gate?: ApprovalGate;
 }
 
 export interface PickResult {
@@ -37,7 +41,16 @@ export interface PickResult {
   mediaPath: string;
   manifestPath: string;
   provenancePath?: string;
-  validator?: { accepted: boolean; command: string[]; output: string };
+  validator?: ValidatorResult;
+}
+
+/** What the target's validator said, and the approved command step that ran it. */
+export interface ValidatorResult {
+  accepted: boolean;
+  command: string[];
+  output: string;
+  /** The command's hash and approval method (design section 8). */
+  approval: CommandStep;
 }
 
 function inside(root: string, path: string): string {
@@ -82,6 +95,8 @@ export interface TargetWrite {
   /** Values the templates read as `{{run.*}}`. */
   run: Record<string, unknown>;
   targetDir: string;
+  /** How the profile's validator is approved; the developer settings with no prompt when absent. */
+  gate?: ApprovalGate;
 }
 
 export interface TargetWriteResult {
@@ -90,13 +105,15 @@ export interface TargetWriteResult {
   provenancePath?: string;
   /** Every written file, relative to the target directory. */
   files: string[];
-  validator?: { accepted: boolean; command: string[]; output: string };
+  validator?: ValidatorResult;
 }
 
 /**
  * Writes one output into the target in the profile's format: the media, the manifest rendered from
  * the profile's template with the review field set to the profile's pending value, and the
- * provenance. Then runs the target's validator, when the profile declares one. Assetgrove never
+ * provenance. Then runs the target's validator, when the profile declares one; the validator must
+ * be approved (src/approvals.ts) before anything is written, and the provenance records its hash
+ * and approval method. Assetgrove never
  * writes any review value other than pending. Refuses with a LicenseError, before writing, an
  * output whose provider grant the target cannot declare (src/license.ts); `{{profile.license}}`
  * renders the licence the output is declared under.
@@ -128,6 +145,16 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     provenance.steps = [...(provenance.steps ?? []), metadataStep(digitalSourceType, hashes)];
   }
   const targetDir = resolve(write.targetDir);
+  // Before anything is written: the validator a profile names runs only with an approval.
+  let validatorStep: CommandStep | undefined;
+  if (profile.validator) {
+    const template = profile.validator.command;
+    if (!template[0]) throw new InputError("the profile's validator command is empty");
+    resolveProgram(template[0], targetDir);
+    const identity = commandIdentity("validator", template, targetDir);
+    validatorStep = await requireApproval(identity, write.gate ?? defaultGate());
+    provenance.commands = [...(provenance.commands ?? []), validatorStep];
+  }
   const context: Record<string, unknown> = {
     spec: { ...spec.fields, ...spec },
     profile: {
@@ -207,18 +234,20 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     ...(provenancePath !== undefined && { provenancePath }),
     files: writes.map(([path]) => relativeRecordPath(targetDir, path)),
   };
-  if (profile.validator) {
+  if (profile.validator && validatorStep) {
     const vars = { manifest: manifestRel, media: mediaRel };
     const command = profile.validator.command.map((part) => renderString(part, vars));
     const [file, ...args] = command;
     if (!file) throw new InputError("the profile's validator command is empty");
+    const program = resolveProgram(file, targetDir);
+    const approval = validatorStep;
     try {
-      const { stdout, stderr } = await run(file, args, { cwd: targetDir });
-      result.validator = { accepted: true, command, output: `${stdout}${stderr}`.trim() };
+      const { stdout, stderr } = await run(program, args, { cwd: targetDir });
+      result.validator = { accepted: true, command, output: `${stdout}${stderr}`.trim(), approval };
     } catch (error) {
       const e = error as { stdout?: string; stderr?: string; message: string };
       const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim() || e.message;
-      result.validator = { accepted: false, command, output: out };
+      result.validator = { accepted: false, command, output: out, approval };
     }
   }
   return result;
@@ -279,6 +308,7 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     provenance: candidate.provenance,
     run: { runId: record.runId, candidateId: candidate.id, pickedAt: now().toISOString() },
     targetDir,
+    ...(options.gate && { gate: options.gate }),
   });
   const { files, ...rest } = written;
   record.picked = {

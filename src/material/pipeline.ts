@@ -7,16 +7,20 @@ import {
   embedDigitalSourceType,
   readDigitalSourceType,
   metadataStep,
+  requireDeclared,
   sourceDeclaration,
 } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
 import { InputError } from "../errors.ts";
+import { commandIdentity, defaultGate, requireApproval, resolveProgram } from "../approvals.ts";
+import type { ApprovalGate, CommandKind, CommandStep } from "../approvals.ts";
 import { licenseFields } from "../license.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256, sniffMediaType } from "../request.ts";
 import type { AssetSpec, LoadedReference, QaResult, Reason, TargetProfile } from "../types.ts";
 import { CORE_METHODS, temporalChecks, validateMaterialMap } from "./core.ts";
+import { checkCompressed } from "./rendition.ts";
 import type { MaterialChannel } from "./core.ts";
 
 export type { MaterialProfile } from "./profile.ts";
@@ -95,6 +99,8 @@ export async function runMaterials(options: {
   profileDir?: string;
   outDir: string;
   call: Caller;
+  /** How the profile style's commands are approved; the developer settings with no prompt when absent. */
+  gate?: ApprovalGate;
 }): Promise<{ passed: boolean; reportPath: string; outputs: MaterialOutput[]; qa: QaResult }> {
   const startedAt = new Date().toISOString();
   const outDir = resolve(options.outDir);
@@ -103,6 +109,20 @@ export async function runMaterials(options: {
   await rm(reportPath, { force: true });
   const { spec, profile, derivation, call } = options;
   const config = resolveMaterialProfile(profile.style?.materials);
+  // Before any paid call: every command the profile style names runs only with an approval.
+  const commandDir = options.profileDir ?? options.baseDir;
+  const gate = options.gate ?? defaultGate();
+  const approve = async (kind: CommandKind, argv: string[]): Promise<CommandStep> => {
+    if (argv[0]) resolveProgram(argv[0], commandDir);
+    return requireApproval(commandIdentity(kind, argv, commandDir), gate);
+  };
+  const compressionStep = config.compression
+    ? await approve("material-compression", config.compression.command)
+    : undefined;
+  const previewStep = config.preview
+    ? await approve("material-preview", config.preview.command)
+    : undefined;
+  const commands = [compressionStep, previewStep].filter((s) => s !== undefined);
   const steps: TransformStep[] = [];
   const commandResults: unknown[] = [];
   const origins = new WeakMap<Raster, DigitalSourceType>();
@@ -257,6 +277,7 @@ export async function runMaterials(options: {
     upscalerUsed: false,
     review: "pending",
     calls: call.records,
+    commands,
   };
   const writeReport = async () => {
     const qa = {
@@ -378,23 +399,26 @@ export async function runMaterials(options: {
                 ? CORE_METHODS.extraction
                 : { method: derived.method, version: derived.version },
         });
-        if (config.compression) {
+        if (config.compression && compressionStep) {
           if (!config.compression.version?.trim())
             throw new InputError("compression version required");
+          requireDeclared(digitalSourceType);
           const compressed = path.replace(/\.png$/, ".ktx2");
-          await recipe(
-            "material-encode",
-            {
-              command: config.compression.command,
-              version: config.compression.version,
-              input: path,
-              output: compressed,
-              cwd: options.profileDir ?? options.baseDir,
-            },
-            rendition,
+          const execution = await targetCommand(
+            config.compression.command,
+            { input: path, output: compressed },
+            commandDir,
           );
-          commandResults.push(steps.at(-1)!.report);
           const packed = new Uint8Array(await readFile(compressed));
+          checkCompressed(packed, rendition.width, rendition.height);
+          commandResults.push({
+            ...execution,
+            version: config.compression.version,
+            sha256: sha256(packed),
+            path: compressed,
+            mediaType: "image/ktx2",
+            approval: compressionStep,
+          });
           const compressedOutput = {
             ...output,
             path: compressed,
@@ -409,12 +433,14 @@ export async function runMaterials(options: {
             compression: {
               version: config.compression.version,
               command: config.compression.command,
+              hash: compressionStep.hash,
+              method: compressionStep.method,
             },
           });
         }
       }
     await writeReport();
-    if (!config.preview?.version?.trim())
+    if (!config.preview?.version?.trim() || !previewStep)
       throw new InputError("target preview command and version are required");
     const previews: LoadedReference[] = [ref];
     for (const scene of ["dusk-rain", "night"]) {
@@ -427,9 +453,9 @@ export async function runMaterials(options: {
           scene,
           lightRig: JSON.stringify(config.lightRig ?? {}),
         },
-        options.profileDir ?? options.baseDir,
+        commandDir,
       );
-      commandResults.push(execution);
+      commandResults.push({ ...execution, approval: previewStep });
       const sourceBytes = new Uint8Array(await readFile(path));
       const raster = decodeImage(sourceBytes);
       const digitalSourceType = combineDigitalSourceTypes(outputs.map((o) => o.digitalSourceType));
@@ -450,6 +476,8 @@ export async function runMaterials(options: {
           scene,
           version: config.preview.version,
           command: config.preview.command,
+          hash: previewStep.hash,
+          method: previewStep.method,
           lightRig: config.lightRig,
           execution,
         },

@@ -83,7 +83,7 @@ Spends nothing and writes nothing.`,
     }
 
     const providerScript = args.providerScript ?? ctx.providerScript;
-    const script = providerScript !== undefined ? await loadScript(providerScript) : undefined;
+    const script = providerScript !== undefined ? await loadScript(providerScript, ctx) : undefined;
     const options = { ...(ctx.env && { env: ctx.env }), ...(script && { script }) };
     const configured = createProviders(ctx.settings, options);
     if (script !== undefined && !configured.some((c) => c.adapter.id === "scripted"))

@@ -1,10 +1,17 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { requireApproval, scriptIdentity } from "../approvals.ts";
+import type { ApprovalGate } from "../approvals.ts";
 import { InputError } from "../errors.ts";
 import type { Script } from "../gateway/scripted.ts";
 
-/** Loads a --provider-script module, whose default export must be { image, vision } functions. */
-export async function loadScript(path: string): Promise<Script> {
+/**
+ * Loads a --provider-script module, whose default export must be { image, vision } functions. The
+ * module is code a developer wrote, so it loads only with an approval tied to its hash
+ * (src/approvals.ts, kind `provider-script`); otherwise this exits 8 before importing it.
+ */
+export async function loadScript(path: string, gate: ApprovalGate): Promise<Script> {
+  await requireApproval(scriptIdentity(path), gate);
   let mod: { default?: Partial<Script> };
   try {
     mod = (await import(pathToFileURL(resolve(path)).href)) as typeof mod;

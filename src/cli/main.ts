@@ -74,7 +74,7 @@ export async function main(argv: string[]): Promise<number> {
       const usage = commandUsage(spec);
       return emit(json, name, { exitCode: 0, fields: { usage }, human: usage });
     }
-    const ctx = createRunContext({ log: (m) => console.error(m) });
+    const ctx = createRunContext({ log: (m) => console.error(m), interactive: true });
     return emit(json, name, await runCommand(spec, args, ctx));
   } catch (error) {
     return emit(json, name, errorOutcome(error));

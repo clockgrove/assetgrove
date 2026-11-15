@@ -18,6 +18,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Caller } from "../calls.ts";
+import type { ApprovalGate } from "../approvals.ts";
 import { writeToTarget } from "../handoff.ts";
 import type { TargetWriteResult } from "../handoff.ts";
 import { drawDigits, textWidth } from "../image/digits.ts";
@@ -512,6 +513,8 @@ export interface WriteFamiliesOptions {
   targetDir: string;
   jitterBoundPx?: number;
   now?: () => Date;
+  /** How the profile's validator is approved; the developer settings with no prompt when absent. */
+  gate?: ApprovalGate;
 }
 
 export interface WrittenFamily {
@@ -806,6 +809,7 @@ export async function writeFamilies(
       provenance,
       run: { runId: record.importId, candidateId: s.family.name, pickedAt: at },
       targetDir: options.targetDir,
+      ...(options.gate && { gate: options.gate }),
     });
     const previewFile = `preview/${s.family.name}.png`;
     await writeFile(join(options.importDir, previewFile), bytes);

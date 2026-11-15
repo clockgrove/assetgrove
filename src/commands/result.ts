@@ -44,10 +44,12 @@ export function classify(error: unknown): Failure {
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === "string" && Object.hasOwn(EXIT, code)) {
     const reason = (error as { reason?: unknown }).reason;
+    const confirmation = (error as { confirmation?: Failure["confirmation"] }).confirmation;
     return {
       code: code as ErrorCode,
       message,
       ...(code === "format_unsupported" && typeof reason === "string" && { reason }),
+      ...(confirmation !== undefined && { confirmation }),
     };
   }
   if (error instanceof InputError) return { code: "invalid_input", message };
