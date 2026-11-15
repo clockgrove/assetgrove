@@ -40,6 +40,19 @@ test("a lock with a dead pid is taken over", () =>
     await lock.release();
   }));
 
+test("racing takeovers of a dead pid's lock leave exactly one holder", () =>
+  withDir(async (dir) => {
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+    for (let round = 0; round < 20; round++) {
+      await writeFile(join(dir, "write.lock"), `${dead}\n`);
+      const got = (
+        await Promise.all(Array.from({ length: 8 }, () => tryAcquireWriteLock(dir)))
+      ).filter((l) => l !== undefined);
+      assert.equal(got.length, 1, `round ${round}: ${got.length} holders`);
+      await got[0]!.release();
+    }
+  }));
+
 test("a fresh empty lock file counts as held", () =>
   withDir(async (dir) => {
     await writeFile(join(dir, "write.lock"), "");

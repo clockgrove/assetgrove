@@ -35,26 +35,68 @@ function alive(pid: number): boolean {
   }
 }
 
-/** True when the lock file exists and is not stale. */
-async function heldState(path: string): Promise<"free" | "held" | "stale"> {
+/** The lock's state and the exact text it was judged on. */
+async function heldState(
+  path: string,
+): Promise<{ state: "free" | "held" | "stale"; text?: string }> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return "free";
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { state: "free" };
     throw e;
   }
   const pid = Number.parseInt(text.trim(), 10);
   if (!Number.isInteger(pid) || pid <= 0) {
     try {
       const { mtimeMs } = await stat(path);
-      return Date.now() - mtimeMs > STALE_EMPTY_MS ? "stale" : "held";
+      return { state: Date.now() - mtimeMs > STALE_EMPTY_MS ? "stale" : "held", text };
     } catch {
-      return "free";
+      return { state: "free" };
     }
   }
-  if (pid === process.pid) return "held";
-  return alive(pid) ? "held" : "stale";
+  if (pid === process.pid) return { state: "held", text };
+  return { state: alive(pid) ? "held" : "stale", text };
+}
+
+/**
+ * Removes a stale lock so that only one process can: the remover first takes
+ * `write.lock.takeover` by exclusive create, then re-reads the lock and removes it only while it
+ * still holds the same dead text. A second process that judged the same lock stale finds either
+ * the guard held or, once it is free, the winner's live lock, and removes nothing. A guard left
+ * by a process that died inside this window (milliseconds) is cleared after STALE_EMPTY_MS.
+ */
+async function removeStale(path: string, staleText: string): Promise<void> {
+  const guard = `${path}.takeover`;
+  let handle;
+  try {
+    handle = await open(guard, "wx");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    try {
+      const { mtimeMs } = await stat(guard);
+      if (Date.now() - mtimeMs > STALE_EMPTY_MS) await unlink(guard);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    return;
+  }
+  try {
+    await handle.writeFile(`${process.pid}\n`);
+    await handle.close();
+    handle = undefined;
+    const now = await heldState(path);
+    if (now.state === "stale" && now.text === staleText) {
+      try {
+        await unlink(path);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+    }
+  } finally {
+    await handle?.close();
+    await unlink(guard).catch(() => undefined);
+  }
 }
 
 export async function tryAcquireWriteLock(storeDir: string): Promise<WriteLock | undefined> {
@@ -72,15 +114,9 @@ export async function tryAcquireWriteLock(storeDir: string): Promise<WriteLock |
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     }
-    const state = await heldState(path);
+    const { state, text } = await heldState(path);
     if (state === "held") return undefined;
-    if (state === "stale") {
-      try {
-        await unlink(path);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-      }
-    }
+    if (state === "stale") await removeStale(path, text as string);
   }
   return undefined;
 }
@@ -107,5 +143,5 @@ export async function acquireWriteLock(
 }
 
 export async function lockHeldByOther(storeDir: string): Promise<boolean> {
-  return (await heldState(lockPath(storeDir))) === "held";
+  return (await heldState(lockPath(storeDir))).state === "held";
 }

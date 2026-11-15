@@ -18,7 +18,7 @@ import {
   tempDir,
   writeFixture,
 } from "./helpers/fixture.ts";
-import { folderLibrary } from "./helpers/library.ts";
+import { CountingEmbedder, folderLibrary } from "./helpers/library.ts";
 
 const run = promisify(execFile);
 const N = Object.keys(LIBRARY).length;
@@ -176,6 +176,42 @@ describe("freshness", () => {
       a.index.close();
       b.index.close();
       await cleanup(repo, store, join(second, ".."));
+    }
+  });
+
+  it("judges each embedder revision's freshness by its own sources", async () => {
+    const repo = await fixtureRepo();
+    const store = await tempDir("store");
+    const first = await openIndex(store, repo);
+    await first.index.find({});
+    first.index.close();
+    const other = new CountingEmbedder();
+    Object.defineProperty(other, "revision", { value: "2" });
+    const second = await openIndex(store, repo, other);
+    try {
+      await second.index.find({});
+      await writeFile(join(repo, "tiles/stone-bridge.png"), "wooden bridge over a canyon at dusk");
+      await second.index.find({});
+    } finally {
+      second.index.close();
+    }
+    const again = await openIndex(store, repo);
+    try {
+      const r = await again.index.find({});
+      assert.equal(r.fresh, true);
+      assert.equal(again.embedder.images, 1, "the first revision re-embeds the changed file");
+      const [canyon] = await again.embedder.inner.embedImages([
+        Buffer.from("wooden bridge over a canyon at dusk"),
+      ]);
+      const byLook = await again.index.store.query({
+        vector: { column: "imageVec", value: canyon! },
+        limit: 1,
+      });
+      assert.equal(byLook[0]?.row.address, "asset://g/tiles/stone-bridge");
+      assert.ok((byLook[0]?.score ?? 0) > 0.99);
+    } finally {
+      again.index.close();
+      await cleanup(repo, store);
     }
   });
 });

@@ -1,7 +1,8 @@
 /**
- * The LanceDB store (design section 7.3): one rows table per embedder and revision, `sources`
- * for freshness, `vectors` caching vectors by content, and `built` recording what each tree's
- * rows were built from. LanceDB is pinned exactly and imported only after the platform check.
+ * The LanceDB store (design section 7.3): one rows table per embedder and revision, with its own
+ * `sources` table for freshness and `built` table recording what each tree's rows were built
+ * from, and one `vectors` table caching vectors by content and embedder. LanceDB is pinned
+ * exactly and imported only after the platform check.
  *
  * The store takes no lock itself: a writer holds the package's write lock (`lock.ts`) around
  * every write and `optimize()`. Reads never create, repair or write anything.
@@ -66,10 +67,26 @@ const sqlList = (xs: string[]): string => xs.map(sqlString).join(", ");
 const byKey = (a: { key: string }, b: { key: string }): number =>
   a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 
-/** `<id>_<revision>` made safe for a table name. */
-export function rowsTableName(embedder: { id: string; revision: string }): string {
+const tableSuffix = (embedder: { id: string; revision: string }): string => {
   const safe = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_");
-  return `rows_${safe(embedder.id)}_${safe(embedder.revision)}`;
+  return `${safe(embedder.id)}_${safe(embedder.revision)}`;
+};
+
+/** `rows_<id>_<revision>` made safe for a table name. */
+export function rowsTableName(embedder: { id: string; revision: string }): string {
+  return `rows_${tableSuffix(embedder)}`;
+}
+
+/**
+ * `sources_<id>_<revision>` and `built_<id>_<revision>`: freshness and built-from belong to one
+ * rows table, so one embedder's index is never judged by what another indexed.
+ */
+export function sourcesTableName(embedder: { id: string; revision: string }): string {
+  return `sources_${tableSuffix(embedder)}`;
+}
+
+export function builtTableName(embedder: { id: string; revision: string }): string {
+  return `built_${tableSuffix(embedder)}`;
 }
 
 type Mode = "read" | "write";
@@ -79,6 +96,8 @@ export class LanceStore implements Store {
   private readonly m: LanceModules;
   private readonly dimension: number;
   private readonly rowsName: string;
+  private readonly sourcesName: string;
+  private readonly builtName: string;
   private db: Lance.Connection | undefined;
   private readonly tables = new Map<string, Lance.Table>();
 
@@ -87,6 +106,8 @@ export class LanceStore implements Store {
     this.m = m;
     this.dimension = options.embedder.dimension;
     this.rowsName = rowsTableName(options.embedder);
+    this.sourcesName = sourcesTableName(options.embedder);
+    this.builtName = builtTableName(options.embedder);
   }
 
   /**
@@ -113,7 +134,7 @@ export class LanceStore implements Store {
         vec("textVec"),
       ]);
     }
-    if (name === "sources") {
+    if (name === this.sourcesName) {
       return new Schema([
         str("tree", false),
         str("path", false),
@@ -163,8 +184,8 @@ export class LanceStore implements Store {
     if (mode === "read") return undefined;
     await rm(folder, { recursive: true, force: true });
     if (name === this.rowsName) {
-      this.tables.delete("sources");
-      await rm(join(this.dir, "sources.lance"), { recursive: true, force: true });
+      this.tables.delete(this.sourcesName);
+      await rm(join(this.dir, `${this.sourcesName}.lance`), { recursive: true, force: true });
     }
     // A deleted store folder leaves the connection pointing at nothing; connect afresh.
     this.db = undefined;
@@ -274,18 +295,18 @@ export class LanceStore implements Store {
   }
 
   async recordBuiltFrom(tree: string, built: BuiltFrom): Promise<void> {
-    await this.mergeInto("built", "tree", [{ tree, head: built.head, at: built.at }]);
+    await this.mergeInto(this.builtName, "tree", [{ tree, head: built.head, at: built.at }]);
   }
 
   async builtFrom(tree: string): Promise<BuiltFrom | undefined> {
-    const [o] = await this.select("built", `tree = ${sqlString(tree)}`);
+    const [o] = await this.select(this.builtName, `tree = ${sqlString(tree)}`);
     return o ? { head: o.head as string, at: o.at as string } : undefined;
   }
 
   async sources(tree: string): Promise<SourceRow[]> {
     // Without a rows table its sources describe nothing that exists.
     if (!(await this.table(this.rowsName, "read"))) return [];
-    return (await this.select("sources", `tree = ${sqlString(tree)}`)).map((o) => ({
+    return (await this.select(this.sourcesName, `tree = ${sqlString(tree)}`)).map((o) => ({
       tree: o.tree as string,
       path: o.path as string,
       size: o.size as number,
@@ -296,12 +317,19 @@ export class LanceStore implements Store {
   }
 
   async putSources(rows: SourceRow[]): Promise<void> {
-    await this.mergeInto("sources", ["tree", "path"], rows as unknown as Record<string, unknown>[]);
+    await this.mergeInto(
+      this.sourcesName,
+      ["tree", "path"],
+      rows as unknown as Record<string, unknown>[],
+    );
   }
 
   async removeSources(tree: string, paths: string[]): Promise<void> {
     if (paths.length === 0) return;
-    await this.deleteFrom("sources", `tree = ${sqlString(tree)} AND path IN (${sqlList(paths)})`);
+    await this.deleteFrom(
+      this.sourcesName,
+      `tree = ${sqlString(tree)} AND path IN (${sqlList(paths)})`,
+    );
   }
 
   async cachedVectors(
@@ -352,7 +380,7 @@ export class LanceStore implements Store {
       }
       if (!have.has("text")) await rows.createIndex("text", { config: Index.fts() });
     }
-    for (const name of [this.rowsName, "sources", "vectors", "built"]) {
+    for (const name of [this.rowsName, this.sourcesName, "vectors", this.builtName]) {
       const t = await this.table(name, "read");
       if (t) await t.optimize();
     }
