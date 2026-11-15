@@ -37,7 +37,7 @@ env:
   FACTORY_NOTIFY: kirkmarple-clockgrove#318831919 # login#id: the id pins the account (setup writes it)
   FACTORY_SETUP: corepack enable
   FACTORY_INSTALL: auto # auto (from the lockfile), none, or your own command
-  FACTORY_VALIDATION: pnpm check, pnpm test
+  FACTORY_VALIDATION: pnpm check # format, lint, types; CI runs the test suite
   FACTORY_BUDGET_COMMAND: ""
   FACTORY_PROTECTED_PATHS: ""
   FACTORY_CI_CHECKS: ci
