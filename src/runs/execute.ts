@@ -353,8 +353,9 @@ async function promptPolicyCheck(
     log: ctx.log,
   });
   const checked = await checkPromptModel(caller, text, record);
-  // The command's budgets count this spend against the same cap (src/budget.ts).
-  return { record: checked, spentUsd: budget.spentUsd };
+  // The command's budgets count this spend against the same cap (src/budget.ts), and each counts
+  // the run's unanswered ledger spend itself.
+  return { record: checked, spentUsd: budget.spentUsd - budget.unansweredUsd };
 }
 
 /** The settings and the providers they make, for reconciling; makes no call. */

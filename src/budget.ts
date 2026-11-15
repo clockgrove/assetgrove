@@ -1,5 +1,5 @@
 import { InputError } from "./errors.ts";
-import { currentRunScope } from "./runs/journal.ts";
+import { currentRunScope, type Journal } from "./runs/journal.ts";
 import type { ReserveMeta, SpendLedger } from "./spend.ts";
 
 /**
@@ -34,13 +34,23 @@ export class Budget {
   private spent = 0;
   private reserved = 0;
 
+  /**
+   * What the run's paid calls the journal does not answer cost in the ledger when this budget was
+   * made: failed calls (settled at their estimate) and calls an interrupted attempt never settled.
+   */
+  readonly unansweredUsd: number;
+
   constructor(capUsd: number, ledger?: SpendLedger) {
     if (!(capUsd >= 0)) throw new InputError(`invalid cost cap: ${capUsd}`);
     this.capUsd = capUsd;
     this.ledger = ledger;
+    const run = currentRunScope();
     // One run, one cap: what the executor's own calls spent before the command (the prompt
-    // policy's model check) counts against every budget the command makes in the run.
-    this.spent = currentRunScope()?.priorSpentUsd ?? 0;
+    // policy's model check) counts against every budget the command makes in the run, and so
+    // does what earlier attempts' calls that never reached the journal were charged.
+    this.unansweredUsd =
+      ledger !== undefined && run?.journal !== undefined ? unansweredSpend(ledger, run.journal) : 0;
+    this.spent = (run?.priorSpentUsd ?? 0) + this.unansweredUsd;
   }
 
   get spentUsd(): number {
@@ -101,6 +111,22 @@ export class Budget {
       throw new BudgetExceededError(this.capUsd, committed, amountUsd, what);
     }
   }
+}
+
+/**
+ * The ledger's spend for the journal's run beyond what the journal answers: per call key, every
+ * reservation's cost less the journaled call's recorded cost. A journal hit counts its own cost
+ * when it is answered (`Budget.addPrior`), so only failed and interrupted attempts remain.
+ */
+function unansweredSpend(ledger: SpendLedger, journal: Journal): number {
+  const byKey = new Map<string, number>();
+  let total = 0;
+  for (const call of ledger.runCalls(journal.runId)) {
+    if (call.callKey === undefined) total += call.costUsd;
+    else byKey.set(call.callKey, (byKey.get(call.callKey) ?? 0) + call.costUsd);
+  }
+  for (const [key, cost] of byKey) total += Math.max(0, cost - (journal.recordedCostUsd(key) ?? 0));
+  return total;
 }
 
 /** A `--cap` above the settings' run cap: refused before any spend. Exit 3 `cap_refused`. */

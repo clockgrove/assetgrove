@@ -1,6 +1,6 @@
 import { createGateway, experimental_decide, generateImage, generateText } from "ai";
 import { ProviderError } from "../errors.ts";
-import { providerFailure } from "./failure.ts";
+import { failureFacts, isQuotaRefusal, providerFailure } from "./failure.ts";
 import type {
   Billing,
   LimitReading,
@@ -40,6 +40,27 @@ function requestId(...candidates: unknown[]): {
     requestId: `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     requestIdSource: "local",
   };
+}
+
+/** The back-off before each resend of a rate-limited decision call. */
+const RATE_LIMIT_BACKOFF_MS = [2000, 4000, 8000, 16000];
+
+/**
+ * Decision providers rate-limit tightly (#27): a call refused with HTTP 429 did no work, so it is
+ * sent again after a back-off. Any other failure may have been billed and is never resent here:
+ * the run's resume is its retry, under a reservation of its own. A quota 429 is not resent.
+ */
+async function retryRateLimited<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      const facts = failureFacts(error);
+      const delay = RATE_LIMIT_BACKOFF_MS[attempt];
+      if (delay === undefined || facts.status !== 429 || isQuotaRefusal(facts)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 /**
@@ -137,6 +158,8 @@ export class VercelGateway implements GenerationProvider {
     const result = await this.#guard("image", (gateway) =>
       generateImage({
         model: gateway.imageModel(req.model),
+        // One request per reservation: an SDK retry would resend a paid call.
+        maxRetries: 0,
         prompt:
           req.references.length === 0
             ? req.prompt
@@ -168,6 +191,7 @@ export class VercelGateway implements GenerationProvider {
     const result = await this.#guard("vision", (gateway) =>
       generateText({
         model: gateway.languageModel(req.model),
+        maxRetries: 0,
         messages: [
           {
             role: "user",
@@ -214,20 +238,21 @@ export class VercelGateway implements GenerationProvider {
             },
           };
     const result = await this.#guard("decide", (gateway) =>
-      experimental_decide({
-        model: gateway.decisionModel(req.model),
-        state: [
-          { type: "text", text: req.prompt },
-          ...req.images.map((i) => ({
-            type: "file" as const,
-            mediaType: i.mediaType,
-            data: i.bytes,
-          })),
-        ],
-        questions: { answer: question },
-        // Decision providers rate-limit tightly (#27); back off and retry rather than fail.
-        maxRetries: 4,
-      }),
+      retryRateLimited(() =>
+        experimental_decide({
+          model: gateway.decisionModel(req.model),
+          state: [
+            { type: "text", text: req.prompt },
+            ...req.images.map((i) => ({
+              type: "file" as const,
+              mediaType: i.mediaType,
+              data: i.bytes,
+            })),
+          ],
+          questions: { answer: question },
+          maxRetries: 0,
+        }),
+      ),
     );
     const raw = result.answers.answer as
       | { type: "score"; score: number; probabilities?: Record<string, number> }

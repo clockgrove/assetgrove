@@ -69,6 +69,8 @@ export class AnthropicProvider implements GenerationProvider {
       generateText({
         model,
         messages: userMessage(req.prompt, req.images),
+        // One request per reservation: an SDK retry would resend a paid call.
+        maxRetries: 0,
         ...(req.providerOptions !== undefined && {
           providerOptions: req.providerOptions as Record<string, never>,
         }),
