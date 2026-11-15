@@ -557,10 +557,21 @@ const rows: Row[] = [
   {
     tool: "vary",
     prepare: async () => {
-      const runs = join(paths.world(), "runs");
-      const [run] = await readdir(runs);
+      // Variations edit a still, so this row stages one beside the world's sprite-strip run.
+      const dir = paths.world();
+      const stills = join(dir, "still-runs");
+      await writeFile(
+        join(dir, "still.json"),
+        JSON.stringify({ kind: "still", assetId: "fern", fields: { description: "a fern" } }),
+      );
+      const staged = await cli([
+        ...["stage", "--spec", join(dir, "still.json")],
+        ...["--bible", join(dir, "bible", "bible.json"), "--profile", join(dir, "profile.json")],
+        ...["--runs", stills, "--candidates", "1", "--provider-script", script, "--json"],
+      ]);
+      assert.equal(staged.code, 0, staged.stderr + staged.stdout);
       return {
-        run: join(runs, run!),
+        run: (JSON.parse(staged.stdout) as Doc)["runDir"] as string,
         candidate: "c1",
         count: 2,
         runs: join(paths.world(), "vary-runs"),
