@@ -1,5 +1,5 @@
 import { McpServer, fromJsonSchema } from "@modelcontextprotocol/server";
-import type { ToolAnnotations } from "@modelcontextprotocol/server";
+import type { ServerContext, ToolAnnotations } from "@modelcontextprotocol/server";
 import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -158,6 +158,28 @@ function commandArgs(spec: CommandSpec, args: Arguments, ctx: RunContext): Argum
   };
 }
 
+/**
+ * The context of one tool call: a request that carries a progressToken gets the run's progress
+ * as `notifications/progress` while its client is connected. A notification the client can no
+ * longer receive is dropped; the run goes on (design section 9).
+ */
+function withProgress(ctx: RunContext, request: ServerContext): RunContext {
+  const progressToken = request.mcpReq._meta?.progressToken;
+  if (progressToken === undefined) return ctx;
+  return {
+    ...ctx,
+    progress: (update) => {
+      try {
+        request.mcpReq
+          .notify({ method: "notifications/progress", params: { progressToken, ...update } })
+          .catch(() => {});
+      } catch {
+        // The client is gone; the run goes on without it.
+      }
+    },
+  };
+}
+
 function packageInfo(): { name: string; version: string } {
   return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
     name: string;
@@ -209,7 +231,7 @@ function createServer(ctx: RunContext): McpServer {
           _meta: { "anthropic/requiresUserInteraction": true },
         }),
       },
-      async (args) => {
+      async (args, request) => {
         const checked = await input["~standard"].validate(args ?? {});
         const outcome = checked.issues
           ? errorOutcome(
@@ -217,7 +239,7 @@ function createServer(ctx: RunContext): McpServer {
                 `invalid ${spec.tool} input: ${checked.issues.map((i) => i.message).join("; ")}`,
               ),
             )
-          : await runCommand(spec, commandArgs(spec, args, ctx), ctx);
+          : await runCommand(spec, commandArgs(spec, args, ctx), withProgress(ctx, request));
         const document = resultDocument(spec.name, outcome);
         // The run's contact sheet goes with the result as image content (design section 10).
         const sheet = await contactImage(document);

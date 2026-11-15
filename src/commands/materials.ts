@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { statSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { Budget, runCap } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
@@ -36,6 +37,64 @@ interface MaterialsArgs {
   runs?: string;
 }
 
+/** Whether `path` names a regular file. */
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** A read's name: its path from the profile's directory, `/`-separated, under `profile/`. */
+function readName(profileDir: string, path: string): string {
+  const rel = relative(profileDir, path);
+  return `profile/${(isAbsolute(rel) ? path : rel).split(sep).join("/")}`;
+}
+
+/**
+ * The files the profile's compression and preview commands name, wherever they are: a changed
+ * compressor, renderer or script (`node ../tools/render.mjs`) changes the request digest, so it
+ * is a new run, not a reused one. Each command's program is hashed only when it is named as a
+ * relative path (`./compress.sh`, `../tools/render`); a program found on the PATH or named by an
+ * absolute path is the interpreter or a system tool (node itself), and is not hashed. Arguments
+ * that name no regular file (flags, words) are not inputs.
+ */
+function commandReads(
+  config: ReturnType<typeof resolveMaterialProfile>,
+  profileDir: string,
+): Record<string, string> {
+  const reads: Record<string, string> = {};
+  for (const command of [config.compression?.command ?? [], config.preview?.command ?? []]) {
+    command.forEach((arg, position) => {
+      if (arg === "" || arg.includes("{{")) return;
+      if (position === 0 && (isAbsolute(arg) || !/[\\/]/.test(arg))) return;
+      const path = resolve(profileDir, arg);
+      if (isFile(path)) reads[readName(profileDir, path)] = path;
+    });
+  }
+  return reads;
+}
+
+/**
+ * The source images the derivation names (`maps[channel].path`, `lightSources[].mask`), resolved
+ * from its directory as the pipeline reads them: an edited source changes the request digest.
+ */
+function derivationReads(derivation: MaterialDerivation, baseDir: string): Record<string, string> {
+  const reads: Record<string, string> = {};
+  for (const [channel, input] of Object.entries(derivation.maps ?? {})) {
+    if (typeof input?.path !== "string" || input.path === "") continue;
+    const path = resolve(baseDir, input.path);
+    if (isFile(path)) reads[`derivation/maps/${channel}`] = path;
+  }
+  (derivation.lightSources ?? []).forEach((source, index) => {
+    if (typeof source?.mask !== "string" || source.mask === "") return;
+    const path = resolve(baseDir, source.mask);
+    if (isFile(path)) reads[`derivation/lightSources/${index}`] = path;
+  });
+  return reads;
+}
+
 /** The plan step: the inputs, the channels' model calls and the QA call, with no call made. */
 async function prepare(args: MaterialsArgs, ctx: RunContext) {
   const spec = await readJson<AssetSpec>(args.spec);
@@ -66,6 +125,10 @@ async function prepare(args: MaterialsArgs, ctx: RunContext) {
   const work = await buildWorkPlan(materialsCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["albedo", "spec", "profile", "derivation"],
+    reads: {
+      ...commandReads(config, profile.dir),
+      ...derivationReads(derivation.value, derivation.dir),
+    },
     jobs,
     capUsd,
     paid: paidBy(provider, jobs),

@@ -20,7 +20,10 @@ import type { TargetProfile } from "./types.ts";
  * reservation is checked against the entries before it in the file, so concurrent runs are
  * ordered by their appends and can never both fit into the same remaining spend; a reservation
  * that does not fit is cancelled (settled at 0) and the call is refused. A reservation never
- * settled (a crashed run) keeps its estimate, as a failed call does in `Budget`. Whether a call is
+ * settled (a killed run) keeps its estimate for good, as a failed call does in `Budget`: the
+ * provider may have billed it. A retry of that call is another provider call, so it makes its
+ * own reservation, dated now and checked against the limits as they are now; no reservation is
+ * ever reused, so every call that reached a provider is counted once. Whether a call is
  * paid is its provider's billing (src/providers/adapter.ts); free calls are never recorded.
  */
 
@@ -101,8 +104,25 @@ export function limitLabel(status: SpendLimitStatus): string {
 }
 
 type Entry =
-  | { op: "reserve"; id: string; at: string; route: string; workItem?: string; amountUsd: number }
+  | ({
+      op: "reserve";
+      id: string;
+      at: string;
+      route: string;
+      workItem?: string;
+      amountUsd: number;
+    } & ReserveMeta)
   | { op: "settle"; id: string; at: string; costUsd: number };
+
+/** What a reservation names beside its route: the provider, the run and the call (design section 3). */
+export interface ReserveMeta {
+  /** The settings id of the provider that serves the call. */
+  provider?: string;
+  /** The run (`r-<16 hex>`) the call belongs to. */
+  runId?: string;
+  /** The call's journal key (src/runs/journal.ts). */
+  callKey?: string;
+}
 
 /** A cap as the settings set it, and the profile's lower value when it has one. */
 interface LimitSetting {
@@ -189,13 +209,16 @@ export class SpendLedger {
    * the reservation cancelled) when it does not fit beside the reservations recorded before it.
    * Returns the reservation's ledger id, for `settle`.
    */
-  reserve(amountUsd: number, what: string, route: string): string {
+  reserve(amountUsd: number, what: string, route: string, meta: ReserveMeta = {}): string {
     const id = randomUUID();
     this.append({
       op: "reserve",
       id,
       at: this.now().toISOString(),
       route,
+      ...(meta.provider !== undefined && { provider: meta.provider }),
+      ...(meta.runId !== undefined && { runId: meta.runId }),
+      ...(meta.callKey !== undefined && { callKey: meta.callKey }),
       ...(this.workItem !== undefined && { workItem: this.workItem }),
       amountUsd,
     });
@@ -307,7 +330,8 @@ function isEntry(value: unknown): value is Entry {
       typeof e["route"] === "string" &&
       typeof e["amountUsd"] === "number" &&
       Number.isFinite(e["amountUsd"]) &&
-      (e["workItem"] === undefined || typeof e["workItem"] === "string")
+      (e["workItem"] === undefined || typeof e["workItem"] === "string") &&
+      ["provider", "runId", "callKey"].every((k) => e[k] === undefined || typeof e[k] === "string")
     );
   return e["op"] === "settle" && typeof e["costUsd"] === "number" && Number.isFinite(e["costUsd"]);
 }

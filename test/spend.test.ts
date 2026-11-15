@@ -186,6 +186,47 @@ test("the daily limit counts the last 24 hours; the work-item limit counts all t
   assert.equal(limit(later, "work-item")?.spentUsd, 4);
 });
 
+test("a reservation a killed call left unsettled is never reused: the retry reserves again, dated now, against today's limits", async () => {
+  const path = await ledgerPath();
+  const t0 = Date.parse("2026-11-10T08:00:00Z");
+  const meta = { provider: "scripted", runId: "r-0123456789abcdef", callKey: "a".repeat(64) };
+  const then = ledger(path, { dailyUsd: 1 }, () => new Date(t0));
+  // The first attempt reserved and was killed before it settled: possibly billed, so it keeps
+  // its estimate, and a retry in the same process or another runs directory pays for its own.
+  const first = then.reserve(0.6, "the still call", "scripted:still:m", meta);
+  assert.equal(limit(then, "daily")?.spentUsd, 0.6);
+  assert.throws(
+    () => then.reserve(0.6, "the still call", "scripted:still:m", meta),
+    SpendLimitError,
+  );
+  const elsewhere = ledger(path, { dailyUsd: 2 }, () => new Date(t0));
+  const second = elsewhere.reserve(0.6, "the still call", "scripted:still:m", meta);
+  assert.notEqual(second, first, "an identical request in another runs directory reserves its own");
+  assert.equal(limit(elsewhere, "daily")?.spentUsd, 1.2);
+
+  // A day later the old reservations are outside the window; the retry's is in it, at today's date,
+  // and is refused when today's limit has no room for it.
+  const now = t0 + 25 * 60 * 60 * 1000;
+  const today = ledger(path, { dailyUsd: 1 }, () => new Date(now));
+  const retry = today.reserve(0.6, "the still call", "scripted:still:m", meta);
+  assert.ok(retry !== first && retry !== second);
+  assert.equal(limit(today, "daily")?.spentUsd, 0.6);
+  assert.throws(
+    () => today.reserve(0.6, "the still call", "scripted:still:m", meta),
+    SpendLimitError,
+  );
+  today.settle(retry, 0.5);
+  assert.equal(limit(today, "daily")?.spentUsd, 0.5);
+  const entries = (await readFile(path, "utf8"))
+    .trim()
+    .split("\n")
+    .map((x) => JSON.parse(x));
+  const retried = entries.find((e) => e.op === "reserve" && e.id === retry);
+  assert.equal(retried.at, new Date(now).toISOString());
+  // The killed attempts stay at their estimates: every reservation is counted.
+  assert.equal(entries.filter((e) => e.op === "reserve" && e.callKey === meta.callKey).length, 5);
+});
+
 test("concurrent runs never reserve past a limit: exactly as many as fit succeed", async () => {
   const path = await ledgerPath();
   const settings = { stateDir: dirname(path), caps: { ...DEFAULT_CAPS, workItemUsd: 3 } };
@@ -377,7 +418,15 @@ test("two paid runs whose combined forecast crosses the work-item limit: the sec
   assert.ok(Math.abs(item.spentUsd - 0.32) < 1e-9);
   assert.ok(Math.abs(item.remainingUsd - 0.18) < 1e-9);
 
-  const second = await cli(args, env);
+  // Repeating the same request returns its finished run: no call, no ledger entry.
+  const repeat = await cli(args, env);
+  assert.equal(repeat.code, 0, repeat.stderr);
+  assert.equal(JSON.parse(repeat.stdout).reused, true);
+  assert.equal(await callCount(), 7);
+  assert.equal(await readFile(path, "utf8"), ledgerAfterFirst);
+
+  // A new round is a new run, and it does not fit.
+  const second = await cli([...args, "--round", "2"], env);
   assert.equal(second.code, 3);
   const refused = JSON.parse(second.stdout);
   assert.equal(refused.error.code, "cap_refused");
@@ -386,11 +435,15 @@ test("two paid runs whose combined forecast crosses the work-item limit: the sec
   assert.equal(refused.error.limit.limitUsd, 0.5);
   assert.ok(Math.abs(refused.error.limit.spentUsd - 0.32) < 1e-9);
   assert.ok(Math.abs(refused.error.limit.requestedUsd - 0.32) < 1e-9);
-  // Refused before any call: the script answered nothing more, the ledger is unchanged and no
-  // second run directory was made.
+  // Refused before any call: the script answered nothing more, the ledger is unchanged and the
+  // second run's directory journaled no call.
   assert.equal(await callCount(), 7);
   assert.equal(await readFile(path, "utf8"), ledgerAfterFirst);
-  assert.equal((await readdir(world.runsDir)).length, 1);
+  const runDirs = await readdir(world.runsDir);
+  assert.equal(runDirs.length, 2);
+  for (const dir of runDirs)
+    if (dir !== JSON.parse(repeat.stdout).runId)
+      assert.equal((await readdir(join(world.runsDir, dir))).includes("calls"), false);
 
   // Another work item still has room under the daily limit.
   const other = await cli(

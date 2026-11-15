@@ -220,11 +220,11 @@ async function worldFiles(world: World, spec: AssetSpec = shelterSpec): Promise<
   return ["--spec", specPath, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
 }
 
-async function stageAndPick(world: World, files: string[]) {
+async function stageAndPick(world: World, files: string[], extra: string[] = []) {
   const s = await cli([
     "stage",
     ...files,
-    ...["--candidates", "1", "--provider-script", passingScript, "--json"],
+    ...["--candidates", "1", "--provider-script", passingScript, "--json", ...extra],
   ]);
   assert.equal(s.code, 0, s.stderr);
   const runDir = JSON.parse(s.stdout)["runDir"] as string;
@@ -306,7 +306,8 @@ test("a grantless openai-compatible route is refused at pick; declaring roles.im
         },
       },
     });
-    const handed = await stageAndPick(world, files);
+    // The settings changed but the request did not: a new round makes a new run.
+    const handed = await stageAndPick(world, files, ["--round", "2"]);
     assert.equal(handed.r.code, 0, handed.r.stderr);
     const manifest = JSON.parse(
       await readFile(join(world.targetDir, "assets/manifests/den/idle.json"), "utf8"),

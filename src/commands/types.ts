@@ -60,6 +60,11 @@ export interface RunContext {
    * written `request.json`, and the WorkPlan its plan step returned.
    */
   run?: { dir: string; plan: WorkPlan };
+  /**
+   * Where a paid run reports its progress while a client is connected (the MCP server's
+   * `notifications/progress` for a request that carries a progressToken).
+   */
+  progress?: (update: { progress: number; total: number; message: string }) => void;
 }
 
 /** A refusal's code and message; a spend-limit refusal also names the limit and its numbers. */

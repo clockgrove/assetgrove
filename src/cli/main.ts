@@ -51,7 +51,13 @@ function emit(json: boolean, command: string | null, outcome: Outcome): number {
 /** Runs one command line and returns its exit code. */
 export async function main(argv: string[]): Promise<number> {
   const json = argv.includes("--json");
-  const [first, ...rest] = argv;
+  // A two-word command (`runs list`) is named by its first two words.
+  const [first, ...rest] =
+    argv[0] !== undefined &&
+    argv[1] !== undefined &&
+    commands.some((c) => c.name === `${argv[0]} ${argv[1]}`)
+      ? [`${argv[0]} ${argv[1]}`, ...argv.slice(2)]
+      : argv;
   if (first === undefined) {
     console.error(mainUsage());
     return EXIT.invalid_input;

@@ -81,7 +81,7 @@ function referenceProblems(texts: Iterable<string>): string[] {
     let current: string | undefined;
     for (const line of text.split("\n")) {
       if (/^#{1,6} /.test(line)) {
-        current = /^### `?([a-z0-9-]+)`?$/.exec(line)?.[1];
+        current = /^### `?([a-z0-9-]+(?: [a-z0-9-]+)?)`?$/.exec(line)?.[1];
         if (current !== undefined) {
           if (sections.has(current)) problems.push(`the skill describes ${current} twice`);
           sections.set(current, "");

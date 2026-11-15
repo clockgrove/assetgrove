@@ -305,6 +305,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       budget,
       routes,
       now,
+      index,
     });
     const seed = Number.parseInt(
       sha256(new TextEncoder().encode(`${runId}:${index}`)).slice(0, 8),

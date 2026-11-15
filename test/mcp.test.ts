@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
@@ -539,6 +539,15 @@ const rows: Row[] = [
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
+  { tool: "runs_list", prepare: async () => ({ runs: join(paths.world(), "runs") }) },
+  {
+    tool: "runs_show",
+    prepare: async () => {
+      const runs = join(paths.world(), "runs");
+      const [run] = await readdir(runs);
+      return { run: run!, runs };
+    },
+  },
   {
     tool: "op",
     prepare: async () => {
@@ -825,6 +834,11 @@ test("every tool's structuredContent deep-equals the CLI --json document", async
     if (!servers.has(provider))
       servers.set(provider, await connect(["--provider-script", provider]));
     const args = await row.prepare(previous);
+    // A paid row runs under the work directory, which is restored between the command and the
+    // tool, so neither returns a finished run another test left in the default runs directory.
+    const command = spec(row.tool);
+    if (command.plan !== undefined && "runs" in command.input.properties && !("runs" in args))
+      args["runs"] = join(work, ".runs");
     const label = `${row.tool} ${JSON.stringify(args)}`;
     // The command and the tool start from the same files: the work directory is restored between.
     const snapshot = `${work}.snapshot`;
@@ -832,10 +846,23 @@ test("every tool's structuredContent deep-equals the CLI --json document", async
     await cp(work, snapshot, { recursive: true });
     const ran = await cli(commandLine(spec(row.tool), args, provider));
     const document = JSON.parse(ran.stdout) as Doc;
+    // A paid run's directory may sit outside the work directory (the default runs directory):
+    // it goes too, or the tool would return the command's finished run (reused) instead.
+    const removeRun = async (doc: Doc) => {
+      const runDir = doc["runDir"];
+      if (
+        typeof runDir === "string" &&
+        !runDir.startsWith(`${work}${sep}`) &&
+        /[\\/]r-[0-9a-f]{16}$/.test(runDir)
+      )
+        await rm(runDir, { recursive: true, force: true });
+    };
+    await removeRun(document);
     await rm(work, { recursive: true, force: true });
     await cp(snapshot, work, { recursive: true });
     await rm(snapshot, { recursive: true, force: true });
     const result = await servers.get(provider)!.callTool({ name: row.tool, arguments: args });
+    await removeRun(result.structuredContent as Doc);
     assert.equal(ran.code, row.exitCode ?? 0, `${label}: ${ran.stderr}`);
     // The document carries the command's own result fields, not only a refusal.
     const fields = Object.keys(document).filter(
