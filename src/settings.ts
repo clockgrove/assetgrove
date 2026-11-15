@@ -4,9 +4,10 @@
  * and fills the defaults. Nothing here reads a key.
  */
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
-import { configHome, configOverride, homeDir, SettingsError, stateHome, type Env } from "./env.ts";
+import { configHome, configOverride, SettingsError, stateHome, type Env } from "./env.ts";
 import { FormatError, readFormat } from "./formats.ts";
 import { grantProblems } from "./license.ts";
 
@@ -150,6 +151,11 @@ export interface LoadOptions {
   inputs?: readonly string[];
   /** Decides case-insensitive containment (win32, darwin) and the config home. */
   platform?: string;
+  /**
+   * The home directory a repository at which is not a project; the operating system's account
+   * home when absent, never `$HOME`, which a project's command line can set.
+   */
+  home?: string;
 }
 
 /** Where the settings file is: `$ASSETGROVE_CONFIG`, else `<configHome>/assetgrove/settings.json`. */
@@ -364,6 +370,16 @@ function secretField(value: unknown, at: string[]): string[] | undefined {
   return undefined;
 }
 
+/** The account's home directory as the operating system records it; undefined when it has none. */
+function accountHome(): string | undefined {
+  try {
+    const { homedir } = userInfo();
+    return homedir && isAbsolute(homedir) ? homedir : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The projects in play, by real path: every directory below the home directory holding `.git` at or above the cwd,
  * `--target` and the directory of each input file's real path; and, for a `.git` file (a linked
@@ -378,7 +394,8 @@ function projectRoots(options: LoadOptions): string[] {
   const roots = new Set<string>();
   // A repository whose top level is the home directory (a dotfiles repository) is not a project:
   // it would hold every default config and state directory.
-  const walked = new Set<string>([realIfExists(homeDir(options.env))]);
+  const home = options.home ?? accountHome();
+  const walked = new Set<string>(home === undefined ? [] : [realIfExists(home)]);
   for (let start = pending.pop(); start !== undefined; start = pending.pop()) {
     // A walked directory's ancestors are walked too, so the walk stops at the first one.
     for (let dir = start; !walked.has(dir); dir = dirname(dir)) {

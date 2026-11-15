@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { commandIdentity } from "../src/approvals.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
+import { targetCommand } from "../src/material/engine.ts";
 
 const exec = promisify(execFile);
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -191,4 +192,28 @@ test("ops --json does not list material-encode, and a recipe naming it exits 2",
   assert.equal(r.code, 2, r.stdout);
   assert.equal(JSON.parse(r.stdout).error.code, "invalid_input");
   assert.match(JSON.parse(r.stdout).error.message, /material-encode/);
+});
+
+test("a material command runs without any key variable, and its output and failure are redacted", async () => {
+  const gateway = ["AI", "GATEWAY", "API", "KEY"].join("_");
+  const value = `vck-${"0123456789abcdef".split("").reverse().join("")}-synthetic`;
+  const dir = await mkdtemp(join(tmpdir(), "assetgrove-material-env-"));
+  await writeFile(join(dir, "leak.txt"), value);
+  const print = `process.stdout.write("gateway=" + process.env.${gateway} + " file=" + require("fs").readFileSync("leak.txt", "utf8"))`;
+  const saved = process.env[gateway];
+  process.env[gateway] = value;
+  try {
+    const ran = await targetCommand([process.execPath, "-e", print], {}, dir);
+    assert.equal(ran.stdout, `gateway=undefined file=[redacted:${gateway}]`);
+    const fail = `process.stderr.write(require("fs").readFileSync("leak.txt", "utf8")); process.exit(3)`;
+    const error = await targetCommand([process.execPath, "-e", fail], {}, dir).then(
+      () => assert.fail("the command should fail"),
+      (e: Error & { commandRecord: { stderr: string } }) => e,
+    );
+    assert.equal(error.commandRecord.stderr, `[redacted:${gateway}]`);
+    assert.ok(!error.message.includes(value), "the failure message holds the key value");
+  } finally {
+    if (saved === undefined) delete process.env[gateway];
+    else process.env[gateway] = saved;
+  }
 });

@@ -252,7 +252,7 @@ MCP tool: `migrate`, arguments `file`, `kind`.
 settings <path|show|check> [--json]
 ```
 
-Reads the developer settings and changes nothing. `path` gives the settings file, whether it exists, and the config and state directories. `show` gives the settings with every default filled; per provider, the key variable's name and whether it is set, never a key. `check` reports per provider whether a key is present and a limit is declared and verified against the provider's reading, how spend is reconciled, and any refused environment variable. Local: no model call, no spend.
+Reads the developer settings and changes nothing. `path` gives the settings file, whether it exists, and the config and state directories. `show` gives the settings with every default filled; per provider, the key variable's name and whether it is set, never a key. `check` reports per provider whether a key is present and a limit is declared and verified against the provider's reading, how spend is reconciled, and any refused environment variable; with one refused, it reads no provider. Local: no model call, no spend.
 
 MCP tool: `settings`, argument `action`.
 
@@ -272,7 +272,7 @@ MCP tool: `settings_change` (marked as requiring the person), arguments `runUsd`
 extensions [--json]
 ```
 
-Lists what loaded: core first, then each extension the developer settings' `extensions` list names, as `{name, package, version, entry, kinds, presets, adapters}` under `extensions`. An extension loads only when the settings list its package, it resolves from the project, its declared `api` matches (checked before import) and the project's Git does not track its entry file; otherwise every command exits 2 with `extension_unavailable`, `extension_refused` or `extension_conflict` (see docs/extensions.md). A shared file naming an `<ext>:<name>` kind or preset of an extension that did not load exits 2 `extension_unavailable`. Local: no model call, no spend.
+Lists what loaded: core first, then each extension the developer settings' `extensions` list names, as `{name, package, version, entry, kinds, presets, adapters}` under `extensions`. An extension loads only when the settings list its package, it resolves from the project, its declared `api` matches (checked before import) and no Git work tree at or above its entry file tracks it; otherwise every command exits 2 with `extension_unavailable`, `extension_refused` or `extension_conflict` (see docs/extensions.md). A shared file naming an `<ext>:<name>` kind or preset of an extension that did not load exits 2 `extension_unavailable`. Local: no model call, no spend.
 
 MCP tool: `extensions`, no arguments.
 

@@ -14,7 +14,7 @@ import { copyFile, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   commandIdentity,
   requireApproval,
@@ -174,6 +174,7 @@ test("pick with an unapproved validator exits 8 carrying the command; approved i
     argv: validator,
     cwd: expected.cwd,
     files: {},
+    root: expected.root,
   });
   // Nothing was written into the target, and the request waits for `assetgrove confirm`.
   assert.deepEqual(await readdir(world.targetDir), []);
@@ -363,3 +364,112 @@ test(
     assert.deepEqual(await readdir(world.targetDir), []);
   },
 );
+
+test("an approved validator runs without any key variable, and its output is redacted", async () => {
+  const gateway = ["AI", "GATEWAY", "API", "KEY"].join("_");
+  const own = "ASSETGROVE_TEST_RELAY_KEY";
+  const gatewayValue = `vck-${"0123456789abcdef".split("").reverse().join("")}-synthetic`;
+  const ownValue = `rk-${"fedcba9876543210".split("").reverse().join("")}-synthetic`;
+  const validator = [
+    process.execPath,
+    "-e",
+    `const fs = require("fs");
+     process.stdout.write("gateway=" + process.env.${gateway} + " own=" + process.env.${own});
+     process.stdout.write(" file=" + fs.readFileSync("leak.txt", "utf8"));`,
+  ];
+  const { world, pick } = await stagedWorld(validator);
+  approve({ kind: "validator", argv: validator, cwd: world.targetDir });
+  writeSettings({
+    providers: {
+      scripted: { limit: { kind: "prepaid", usd: 100 } },
+      relay: { adapter: "vercel-ai-gateway", keyEnv: own },
+    },
+  });
+  useAttended();
+  // A file in the target that the validator prints, holding a key value.
+  await writeFile(join(world.targetDir, "leak.txt"), gatewayValue);
+  const saved = { [gateway]: process.env[gateway], [own]: process.env[own] };
+  process.env[gateway] = gatewayValue;
+  process.env[own] = ownValue;
+  let picked: Result;
+  try {
+    picked = await pick();
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+  assert.equal(picked.code, 0, picked.stderr);
+  const output = doc(picked)["validator"].output as string;
+  assert.match(output, /gateway=undefined own=undefined/);
+  assert.match(output, new RegExp(`file=\\[redacted:${gateway}\\]`));
+  for (const value of [gatewayValue, ownValue]) {
+    assert.ok(!picked.stdout.includes(value), "the pick's output holds a key value");
+    assert.ok(!picked.stderr.includes(value), "the pick's log holds a key value");
+  }
+});
+
+test("an approval record holds only in the project it was given in: the same argv in another repository asks again", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "assetgrove-approval-root-"));
+  // Two unrelated repositories whose validator names no file: the hashes are equal.
+  const game = await checkout(join(dir, "game"), "process.exit(0);\n");
+  const other = await checkout(join(dir, "other"), "process.exit(1);\n");
+  const argv = ["npm", "run", "validate"];
+  const here = commandIdentity("validator", argv, game);
+  const there = commandIdentity("validator", argv, other);
+  assert.equal(here.hash, there.hash);
+  assert.notEqual(here.root, there.root);
+
+  const settings = loadSettings();
+  const asked: ConfirmRequest[] = [];
+  await requireApproval(here, { settings, prompt: port(true, asked) });
+  assert.equal(asked.length, 1);
+  // The record answers in its own project, and not in the other one.
+  assert.equal((await requireApproval(here, { settings })).method, "tty");
+  await assert.rejects(requireApproval(there, { settings }), { code: "confirmation_required" });
+
+  // Approved in the other project too, the record holds in both.
+  await requireApproval(there, { settings, prompt: port(true, asked) });
+  assert.equal(asked.length, 2);
+  assert.equal((await requireApproval(here, { settings })).method, "tty");
+  assert.equal((await requireApproval(there, { settings })).method, "tty");
+  // An entry in settings.commands.approved still holds in every project.
+  approveCommand({ hash: here.hash, kind: "validator", argv });
+  const elsewhere = commandIdentity("validator", argv, await checkout(join(dir, "third"), ""));
+  assert.equal((await requireApproval(elsewhere, { settings: loadSettings() })).method, "settings");
+});
+
+test("on Windows a bare program name resolves through PATH only, and one found only in the cwd is refused", async () => {
+  // The win32 rules run in a scratch directory, where win32 paths are plain relative names.
+  const dir = await mkdtemp(join(tmpdir(), "assetgrove-win32-resolve-"));
+  const approvals = pathToFileURL(join(root, "src", "approvals.ts")).href;
+  const code = `
+    import { mkdirSync, writeFileSync } from "node:fs";
+    import { win32 } from "node:path";
+    const { resolveProgram } = await import(${JSON.stringify(approvals)});
+    for (const d of ["game", "bin"]) mkdirSync(d, { recursive: true });
+    for (const f of [win32.join("game", "node.exe"), win32.join("bin", "node.exe")]) writeFileSync(f, "");
+    const options = (path) => ({ platform: "win32", env: { PATH: path, PATHEXT: ".EXE" } });
+    const out = { onPath: resolveProgram("node", "game", options("bin")) };
+    try {
+      out.onlyCwd = resolveProgram("node", "game", options(""));
+    } catch (error) {
+      out.onlyCwd = error.code;
+    }
+    console.log(JSON.stringify(out));
+  `;
+  const result = await new Promise<Result>((done) => {
+    execFile(
+      process.execPath,
+      ["--input-type=module", "--eval", code],
+      { cwd: dir },
+      (error, stdout, stderr) =>
+        done({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
+    );
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const out = JSON.parse(result.stdout) as Record<string, string>;
+  assert.equal(out["onPath"], "bin\\node.exe");
+  assert.equal(out["onlyCwd"], "command_refused");
+});

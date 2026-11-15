@@ -127,19 +127,34 @@ export async function validateArgs(spec: CommandSpec, args: Args): Promise<void>
 const GUARDED_TARGETS: ReadonlySet<string> = new Set(["pick", "write_families"]);
 
 /**
- * Validates a command's input and runs it; a thrown error becomes its refusal outcome. A paid
- * command first refuses an environment its settings do not allow (exit 2 `settings_invalid`) and a
- * key in a tracked file of the working directory's repository (exit 2 `key_tracked`); pick and
- * write-families refuse a key in a tracked file of their target's repository. The command's log
- * is redacted.
+ * The free commands that still send a key, by name, with the actions that do (every action when
+ * null): the provider readings of `spend check` and `spend reconcile`.
+ */
+const KEY_READINGS: ReadonlyMap<string, readonly string[] | null> = new Map([
+  ["spend", ["check"]],
+  ["spend reconcile", null],
+]);
+
+/** Whether a command can send a key: a paid command, or a free one that reads the provider. */
+function sendsKey(spec: CommandSpec, args: Args): boolean {
+  if (isPaid(spec)) return true;
+  if (!KEY_READINGS.has(spec.name)) return false;
+  const actions = KEY_READINGS.get(spec.name);
+  return actions === null || actions === undefined || actions.includes(String(args["action"]));
+}
+
+/**
+ * Validates a command's input and runs it; a thrown error becomes its refusal outcome. A command
+ * that can send a key first refuses an environment its settings do not allow (exit 2
+ * `settings_invalid`); a paid command then refuses a key in a tracked file of the working
+ * directory's repository (exit 2 `key_tracked`); pick and write-families refuse a key in a tracked
+ * file of their target's repository. The command's log is redacted.
  */
 export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
   try {
     const guard = { settings: ctx.settings, ...(ctx.env && { env: ctx.env }) };
-    if (isPaid(spec)) {
-      checkContextEnvironment(ctx);
-      checkTrackedKeys(process.cwd(), guard);
-    }
+    if (sendsKey(spec, args)) checkContextEnvironment(ctx);
+    if (isPaid(spec)) checkTrackedKeys(process.cwd(), guard);
     await validateArgs(spec, args);
     if (spec.tool !== null && GUARDED_TARGETS.has(spec.tool) && typeof args["target"] === "string")
       checkTrackedKeys(args["target"], guard);

@@ -141,42 +141,32 @@ function resolvePackage(name: string, cwd: string): string | undefined {
   }
 }
 
-/** Whether `dir` is inside a Git work tree: a `.git` at or above it. */
-function gitTop(cwd: string): string | undefined {
-  let dir = resolve(cwd);
-  for (;;) {
-    if (existsSync(join(dir, ".git"))) break;
-    const parent = dirname(dir);
-    if (parent === dir) return undefined;
-    dir = parent;
+/**
+ * Whether any Git work tree at or above the file at each of `paths` tracks it: the repository
+ * holding the entry is asked, and every one around it (an outer project of a nested repository or
+ * a linked worktree), not only the cwd's.
+ */
+function trackedByAnyProject(paths: readonly string[]): boolean {
+  for (const path of new Set(paths)) {
+    for (let dir = dirname(path); ; dir = dirname(dir)) {
+      if (existsSync(join(dir, ".git"))) {
+        const rel = relative(dir, path);
+        const result = spawnSync("git", ["ls-files", "-z", "--", rel], {
+          cwd: dir,
+          encoding: "utf8",
+        });
+        if (result.status !== 0 || result.error) {
+          throw new ExtensionError(
+            "extension_refused",
+            `cannot ask Git whether ${dir} tracks ${rel}`,
+          );
+        }
+        if (result.stdout.length > 0) return true;
+      }
+      if (dirname(dir) === dir) break;
+    }
   }
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" });
-  if (result.status !== 0 || result.error) {
-    throw new ExtensionError(
-      "extension_refused",
-      `cannot ask Git whether the project tracks extension entries (git rev-parse failed in ${cwd})`,
-    );
-  }
-  return realpathSync.native(result.stdout.trim());
-}
-
-/** Whether the Git of the project at `cwd` tracks the file at any of `paths`. */
-function trackedByProject(cwd: string, paths: readonly string[]): boolean {
-  const top = gitTop(cwd);
-  if (top === undefined) return false;
-  const inside = [...new Set(paths.filter((p) => isInside(p, top)).map((p) => relative(top, p)))];
-  if (inside.length === 0) return false;
-  const result = spawnSync("git", ["ls-files", "-z", "--", ...inside], {
-    cwd: top,
-    encoding: "utf8",
-  });
-  if (result.status !== 0 || result.error) {
-    throw new ExtensionError(
-      "extension_refused",
-      `cannot ask Git whether ${top} tracks ${inside.join(", ")}`,
-    );
-  }
-  return result.stdout.length > 0;
+  return false;
 }
 
 interface Manifest {
@@ -253,7 +243,7 @@ async function loadOne(
       `${line}: its entry ${declared.entry} must be a file inside the package`,
     );
   }
-  if (trackedByProject(cwd, [entry, realEntry])) {
+  if (trackedByAnyProject([entry, realEntry])) {
     throw new ExtensionError(
       "extension_refused",
       `${line}: the project's Git tracks its entry ${entry}, so the project could supply its code; install it as a dependency instead of committing it`,

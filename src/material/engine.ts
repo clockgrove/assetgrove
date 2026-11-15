@@ -9,6 +9,7 @@ import {
 } from "../metadata.ts";
 import { InputError } from "../errors.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
+import { keyFreeEnv, redact } from "../redact.ts";
 import { sha256, sniffMediaType } from "../request.ts";
 import type {
   ImageEngine,
@@ -29,7 +30,8 @@ export interface CommandRecord {
 }
 /**
  * Runs a material command of the profile style (compression or preview) with its placeholders
- * filled, never through a shell. The caller has approved its hash (src/approvals.ts) first.
+ * filled, never through a shell, without any key variable in its environment; its output and
+ * failure message are redacted. The caller has approved its hash (src/approvals.ts) first.
  */
 export async function targetCommand(
   argv: string[],
@@ -49,19 +51,27 @@ export async function targetCommand(
   try {
     const result = await execute(resolveProgram(expanded[0]!, cwd), expanded.slice(1), {
       cwd,
+      env: keyFreeEnv(),
       timeout: 120_000,
       maxBuffer: 1024 * 1024,
     });
-    return { argv: expanded, cwd, exitCode: 0, stdout: result.stdout, stderr: result.stderr };
+    return {
+      argv: expanded,
+      cwd,
+      exitCode: 0,
+      stdout: redact(result.stdout),
+      stderr: redact(result.stderr),
+    };
   } catch (error) {
     const e = error as Error & { code?: string | number; stdout?: string; stderr?: string };
+    e.message = redact(e.message);
     Object.assign(e, {
       commandRecord: {
         argv: expanded,
         cwd,
         exitCode: e.code ?? null,
-        stdout: e.stdout ?? "",
-        stderr: e.stderr ?? "",
+        stdout: redact(e.stdout ?? ""),
+        stderr: redact(e.stderr ?? ""),
       },
     });
     throw e;

@@ -2,7 +2,7 @@
  * Redaction (design section 4): key values and credential header values never reach a message
  * Assetgrove writes. `redact` runs in ProviderError, the one result builder and the log.
  */
-import { DEFAULT_KEY_ENV, keyValue, type Env } from "./env.ts";
+import { DEFAULT_KEY_ENV, keyValue, withoutVariables, type Env } from "./env.ts";
 
 export { DEFAULT_KEY_ENV };
 
@@ -11,7 +11,10 @@ const MIN_REDACTED_LENGTH = 8;
 
 const registered = new Set<string>();
 
-/** Adds key variable names from the settings (`providers.<id>.keyEnv`) to those redacted. */
+/**
+ * Adds key variable names to those redacted: each provider's `keyEnv` and each adapter's default,
+ * registered when the run context is made (src/commands/context.ts).
+ */
 export function registerKeyEnv(names: Iterable<string>): void {
   for (const name of names) registered.add(name);
 }
@@ -19,6 +22,14 @@ export function registerKeyEnv(names: Iterable<string>): void {
 /** Every key variable name redaction knows: the defaults and those registered from settings. */
 export function keyEnvNames(): string[] {
   return [...new Set<string>([...DEFAULT_KEY_ENV, ...registered])];
+}
+
+/**
+ * The environment a command a developer wrote runs in (a validator, a material command): this
+ * process's, without any key variable redaction knows.
+ */
+export function keyFreeEnv(env?: Env): Env {
+  return withoutVariables(keyEnvNames(), env);
 }
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

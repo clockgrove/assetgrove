@@ -51,14 +51,21 @@ export function windowsSearchPath(env: Env = process.env): {
   return { path: lookup("PATH"), pathext: lookup("PATHEXT") };
 }
 
-/** Variables that redirect or unwrap TLS; each is refused in either case unless allowed. */
+/**
+ * Variables that redirect or unwrap the TLS carrying a key (a CA, the system CA store, TLS checks
+ * off, a proxy) or the provider SDKs' endpoint variables; each is refused in either case unless
+ * allowed.
+ */
 export const REFUSED_VARIABLES = [
   "NODE_EXTRA_CA_CERTS",
+  "NODE_USE_SYSTEM_CA",
   "NODE_TLS_REJECT_UNAUTHORIZED",
   "NODE_USE_ENV_PROXY",
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "ALL_PROXY",
+  "ANTHROPIC_BASE_URL",
+  "OPENAI_BASE_URL",
 ] as const;
 
 /** The set variables `checkEnvironment` would refuse, by the name they are set under. */
@@ -77,13 +84,25 @@ export function refusedVariables(allow: readonly string[] = [], env: Env = proce
 
 /**
  * Throws `settings_invalid` when a refused variable is set and `environment.allow` does not list
- * it. Run at server start and before every paid command.
+ * it. Run at server start and before every command that sends a key.
  */
 export function checkEnvironment(allow: readonly string[] = [], env: Env = process.env): void {
   const refused = refusedVariables(allow, env);
   if (refused.length === 0) return;
   throw new SettingsError(
-    `${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} set; each can redirect or unwrap the TLS that carries a key. Unset ${refused.length === 1 ? "it" : "them"}, or list ${refused.length === 1 ? "it" : "them"} in the settings file's environment.allow.`,
+    `${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} set; each can redirect a key or unwrap the TLS that carries it. Unset ${refused.length === 1 ? "it" : "them"}, or list ${refused.length === 1 ? "it" : "them"} in the settings file's environment.allow.`,
+  );
+}
+
+/**
+ * The environment without the variables `names`, matched case-insensitively (the Windows
+ * environment is case-insensitive): what a command a developer wrote is started with, so it never
+ * holds a key.
+ */
+export function withoutVariables(names: Iterable<string>, env: Env = process.env): Env {
+  const removed = new Set([...names].map((name) => name.toUpperCase()));
+  return Object.fromEntries(
+    Object.entries(env).filter(([name]) => !removed.has(name.toUpperCase())),
   );
 }
 

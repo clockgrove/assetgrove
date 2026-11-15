@@ -23,6 +23,7 @@ import {
   loadBible,
   loadDesignColors,
   referenceLicenses,
+  requireInsideProject,
 } from "./bible.ts";
 import type { ArtBible, BibleDocument } from "./bible.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
@@ -1501,6 +1502,7 @@ async function referencesFor(
   specDir: string,
 ): Promise<{ references: LoadedReference[]; identity?: PlanIdentity }> {
   const subject = subjectOf(spec);
+  if (spec.keyPose) requireInsideProject([spec.keyPose], specDir, "the spec's keyPose");
   const lock = doc.data.identities[subject];
   const forLook = (r: { look?: string }) => r.look === undefined || r.look === spec.look;
   const refs = await Promise.all([

@@ -52,7 +52,8 @@ export const settingsCommand = defineCommand<SettingsArgs>({
   show   the settings with every default filled; per provider the key variable's name and
          whether it is set, never a key
   check  per provider: key present, limit declared and verified against the provider's reading,
-         how spend is reconciled (or unavailable); and the environment variables refused
+         how spend is reconciled (or unavailable); and the environment variables refused (when
+         any is, no reading is taken)
 Read-only: never writes the settings; settings change proposes a change for a person to confirm.`,
   input: {
     type: "object",
@@ -104,10 +105,20 @@ Read-only: never writes the settings; settings change proposes a change for a pe
       };
       return { exitCode: 0, fields: { settings }, human: JSON.stringify(settings, null, 2) };
     }
+    // A refused environment could redirect the key a reading sends, so nothing is read.
+    const refused = refusedVariables(s.environment.allow, ctx.env);
     const checks = [];
     for (const configured of providers(ctx)) {
       const billing = configured.provider.billing;
-      const limit = await checkLimit(billing);
+      const limit =
+        refused.length > 0
+          ? {
+              declared: billing.limit !== undefined,
+              verified: false,
+              reading: null,
+              note: "not read: the environment is refused",
+            }
+          : await checkLimit(billing);
       checks.push({
         provider: configured.id,
         adapter: configured.adapter.id,
@@ -123,7 +134,6 @@ Read-only: never writes the settings; settings change proposes a change for a pe
         reconcile: billing.reconcile,
       });
     }
-    const refused = refusedVariables(s.environment.allow, ctx.env);
     const fields = { path: s.path, providers: checks, environment: { refused } };
     const human = [
       `settings ${where}`,

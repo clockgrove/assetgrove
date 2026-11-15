@@ -1,6 +1,8 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +25,7 @@ const refused = (error: unknown) => {
 
 for (const name of [
   "NODE_EXTRA_CA_CERTS",
+  "NODE_USE_SYSTEM_CA",
   "NODE_TLS_REJECT_UNAUTHORIZED",
   "NODE_USE_ENV_PROXY",
   "HTTP_PROXY",
@@ -30,6 +33,8 @@ for (const name of [
   "https_proxy",
   "ALL_PROXY",
   "all_proxy",
+  "ANTHROPIC_BASE_URL",
+  "OPENAI_BASE_URL",
 ]) {
   test(`checkEnvironment refuses ${name} unless environment.allow lists it`, () => {
     const env = { [name]: "1", PATH: "/usr/bin" };
@@ -139,4 +144,68 @@ test("server start and a paid CLI command proceed when environment.allow lists H
   const paid = await cli(await stageArgs(), env);
   assert.equal(paid.code, 0, paid.stderr);
   assert.equal((JSON.parse(paid.stdout) as { ok: boolean }).ok, true);
+});
+
+test("spend check and spend reconcile refuse a refused environment before any provider call; settings check reports it and reads nothing", async () => {
+  const requests: string[] = [];
+  const server = createServer((req, res) => {
+    requests.push(`${req.method} ${req.url}`);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ balance: "4", total_used: "0" }));
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-environment-reading-")));
+    const path = join(dir, "settings.json");
+    const write = (allow: string[]) =>
+      writeFile(
+        path,
+        JSON.stringify({
+          format: "assetgrove-settings/1",
+          stateDir: join(dir, "state"),
+          providers: {
+            loop: {
+              adapter: "vercel-ai-gateway",
+              baseURL: `http://127.0.0.1:${port}/v1/ai`,
+              limit: { kind: "prepaid", usd: 5 },
+            },
+          },
+          environment: { allow },
+        }),
+      );
+    await write([]);
+    const env: NodeJS.ProcessEnv = {
+      ...cleanEnv(),
+      ASSETGROVE_CONFIG: path,
+      AI_GATEWAY_API_KEY: `agk-synthetic-${"0123456789abcdef"}`,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      HTTPS_PROXY: "http://127.0.0.1:9",
+    };
+    for (const args of [
+      ["spend", "check", "--json"],
+      ["spend", "reconcile", "--json"],
+    ]) {
+      const r = await cli(args, env);
+      assert.equal(r.code, 2, `${args.join(" ")}: ${r.stdout}`);
+      assert.equal(JSON.parse(r.stdout).error.code, "settings_invalid");
+    }
+    const checked = await cli(["settings", "check", "--json"], env);
+    const document = JSON.parse(checked.stdout) as {
+      environment: { refused: string[] };
+      providers: { limit: { verified: boolean; reading: unknown; note?: string } }[];
+    };
+    assert.deepEqual(document.environment.refused, ["NODE_TLS_REJECT_UNAUTHORIZED", "HTTPS_PROXY"]);
+    assert.equal(document.providers[0]!.limit.reading, null);
+    assert.match(document.providers[0]!.limit.note ?? "", /environment is refused/);
+    assert.deepEqual(requests, [], "a provider was called with the environment refused");
+
+    // Allowed, the same reading reaches the endpoint.
+    await write(["NODE_TLS_REJECT_UNAUTHORIZED", "HTTPS_PROXY"]);
+    const allowed = await cli(["spend", "check", "--json"], env);
+    assert.equal(allowed.code, 0, allowed.stdout);
+    assert.ok(requests.length > 0);
+  } finally {
+    server.close();
+  }
 });
