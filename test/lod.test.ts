@@ -197,10 +197,15 @@ test("a static model gets its chain embedded, a phone tier beside, renders, and 
   const target = await mkdtemp(join(tmpdir(), "assetgrove-lod-target-"));
   const picked = await pick({ runDir, candidateId: "c1", targetDir: target });
   const written = await readdir(join(target, "assets/kit"));
+  // The library's index, card, review record and log sit beside the media (docs/library.md).
   assert.deepEqual(written.sort(), [
+    "index.md",
     "kit.glb",
     "kit.glb.provenance.json",
+    "kit.md",
     "kit.phone.glb",
+    "kit.review.json",
+    "log.md",
     "manifest.json",
   ]);
   const manifest = JSON.parse(await readFile(picked.manifestPath, "utf8"));
@@ -316,10 +321,14 @@ test("files packaging: a file per level, tier files per level, each valid; the m
   assert.equal(manifest.output.tiers, undefined);
   const folder = join(target, "assets/source/kit");
   assert.deepEqual((await readdir(folder)).sort(), [
+    "index.md",
     "kit.lod1.glb",
     "kit.lod2.glb",
+    "kit.md",
     "kit.phone.lod1.glb",
     "kit.phone.lod2.glb",
+    "kit.review.json",
+    "log.md",
     "model.glb",
     "model.glb.provenance.json",
   ]);
