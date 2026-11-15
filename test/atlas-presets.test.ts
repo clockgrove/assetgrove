@@ -159,6 +159,15 @@ const CORRUPTIONS: Array<[string, (doc: Doc) => Doc, RegExp]> = [
   ],
   ["image path", (d) => ({ ...d, meta: { ...d.meta, image: "missing.png" } }), /meta\.image/],
   [
+    "missing meta",
+    (d) => {
+      delete d.meta;
+      return d;
+    },
+    /meta\.size/,
+  ],
+  ["null meta", (d) => ({ ...d, meta: null }), /meta\.size/],
+  [
     "tag coverage",
     (d) => {
       if (d.meta.frameTags) d.meta.frameTags[0].to = COUNT - 2;
@@ -276,4 +285,27 @@ test("a profile selecting atlas-json hands off a sprite-strip pick with the scri
   );
   assert.equal(doc.frames.length, shelterSpec.frames!.count);
   assert.deepEqual(doc.animations.shelter.length, shelterSpec.frames!.count);
+});
+
+test("a layout with ./ or .. inside a file name hands off", async () => {
+  for (const media of ["./assets/walk.png", "assets/walk..png"]) {
+    for (const preset of ["atlas-json", "aseprite-json"]) {
+      const target = await dir();
+      const write = stripWrite(target, [{ preset }]);
+      write.profile.layout.media = media;
+      const r = await writeToTarget(write);
+      assert.equal(r.handoff[0]!.files.length, 1, `${preset} ${media}`);
+    }
+  }
+});
+
+test("a still is refused by both presets before anything is written", async () => {
+  for (const preset of ["atlas-json", "aseprite-json"]) {
+    const target = await dir();
+    const write = stripWrite(target, [{ preset }]);
+    write.spec = { ...shelterSpec, kind: "still" } as typeof shelterSpec;
+    write.output.fields = { frames: { width: W, height: H, count: 1 } };
+    await assert.rejects(writeToTarget(write), (e) => failureOutcome(e).exitCode === 2);
+    await assert.rejects(readFile(join(target, "assets/source/fern/shelter.png")));
+  }
 });

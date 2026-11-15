@@ -37,6 +37,7 @@ export function stripGeometry(ctx: PresetContext, preset: string): StripGeometry
   const media = lookup(ctx.context, "output.path");
   const assetId = spec["assetId"];
   if (
+    spec["kind"] !== "sprite-strip" ||
     frames === undefined ||
     frames === null ||
     !posInt(frames["width"]) ||
@@ -162,7 +163,7 @@ export async function checkAtlas(
   }
   if (meta["scale"] !== "1") problems.push(`${file} meta.scale is not "1"`);
   const image = meta["image"];
-  if (typeof image !== "string" || image.includes("\\") || image.includes("..")) {
+  if (typeof image !== "string" || image.includes("\\") || image.split("/").includes("..")) {
     problems.push(`${file} meta.image is not a relative path with "/"`);
   } else {
     const imagePath = posix.join(posix.dirname(file), image);
@@ -181,7 +182,8 @@ export async function checkAtlas(
         problems.push(`${imagePath} is not a PNG`);
       }
     }
-    if (imagePath !== g.media) problems.push(`${file} meta.image does not name ${g.media}`);
+    if (posix.normalize(imagePath) !== posix.normalize(g.media))
+      problems.push(`${file} meta.image does not name ${g.media}`);
   }
   return [...problems, ...extra(doc)];
 }

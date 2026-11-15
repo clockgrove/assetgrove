@@ -41,7 +41,7 @@ Every command, with its options and the MCP tool that serves it, is in [the comm
 
 ## Hand-off presets
 
-The target profile's `handoff` lists presets: `manifest` (default), `atlas-json` and `aseprite-json` (sprite-atlas JSON beside a strip, with `options.shape` `hash` or `array`). See [docs/handoff.md](../../docs/handoff.md).
+The target profile's `handoff` lists presets: `manifest` (default), `atlas-json` and `aseprite-json` (sprite-atlas JSON beside a strip, with `options.shape` `hash` or `array`). See [docs/handoff.md](https://github.com/clockgrove/assetgrove/blob/main/docs/handoff.md).
 
 ## Exit codes
 

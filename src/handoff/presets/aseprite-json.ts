@@ -28,7 +28,11 @@ export const asepriteJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
     const g = stripGeometry(ctx, "aseprite-json");
     const file = files[0]?.path ?? sidecarPath(g.media, ".aseprite.json");
     return checkAtlas(g, shape, file, read, (doc) => {
-      const meta = doc["meta"] as Record<string, unknown>;
+      const rawMeta = doc["meta"];
+      const meta =
+        rawMeta !== null && typeof rawMeta === "object" && !Array.isArray(rawMeta)
+          ? (rawMeta as Record<string, unknown>)
+          : {};
       const tags = Array.isArray(meta["frameTags"]) ? (meta["frameTags"] as unknown[]) : [];
       const covered = new Set<number>();
       for (const t of tags) {
