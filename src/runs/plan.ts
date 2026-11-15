@@ -9,6 +9,8 @@ import { join, relative, resolve, sep } from "node:path";
 import { bibleReferences, loadBible } from "../bible.ts";
 import { InputError } from "../errors.ts";
 import type { JsonSchemaObject } from "../commands/types.ts";
+import { collectPromptText, enforcePromptPolicy } from "../policy/text.ts";
+import type { PromptPolicyRecord } from "../policy/text.ts";
 import type { Route } from "../routes.ts";
 import { runDirOf } from "./dir.ts";
 
@@ -37,7 +39,10 @@ export interface WorkPlan {
   inputs: Record<string, string>;
   /** Every other argument, with the input schema's defaults applied. */
   options: Record<string, unknown>;
-  policyTextSha256?: string;
+  /** sha256 hex of the normalised prompt text the request's inputs carry. */
+  policyTextSha256: string;
+  /** The prompt policy's check of that text. */
+  promptPolicy?: PromptPolicyRecord;
   /** sha256 hex of the canonical JSON of the request (`requestDigest`). */
   digest: string;
   /** `<runs>/r-<first 16 hex of the digest>/`, absolute. */
@@ -206,7 +211,8 @@ export interface WorkPlanParts {
   candidates: number;
   /** The argument that names the runs directory; `runs` when absent. */
   runsArg?: string;
-  policyTextSha256?: string;
+  /** Settings `promptPolicy.allow` terms that clear a blocklist hit in the prompt text. */
+  promptAllow?: readonly string[];
   /**
    * Files the request reads through its arguments (a bible's reference images, a spec's key pose,
    * a default template), name to path: hashed into `inputs` beside the arguments' own files, so a
@@ -290,6 +296,15 @@ export async function buildWorkPlan(
     const hash = await hashIfReadable(path);
     if (hash !== undefined) inputs[name] = hash;
   }
+  const promptFiles: Record<string, string> = {};
+  for (const [name, path] of Object.entries(paths))
+    if (path !== undefined) promptFiles[name] = path;
+  for (const [name, path] of Object.entries(parts.reads ?? {})) promptFiles[name] ??= path;
+  const promptPolicy = enforcePromptPolicy(
+    await collectPromptText(promptFiles),
+    parts.promptAllow ?? [],
+  );
+  const policyTextSha256 = promptPolicy.textSha256;
   const options: Record<string, unknown> = {};
   for (const [name, property] of Object.entries(spec.input.properties)) {
     if (inputNames.has(name) || NOT_OPTIONS.has(name) || name === runsArg) continue;
@@ -307,7 +322,7 @@ export async function buildWorkPlan(
     jobs,
     forecastUsd,
     capUsd: parts.capUsd,
-    ...(parts.policyTextSha256 !== undefined && { policyTextSha256: parts.policyTextSha256 }),
+    policyTextSha256,
   });
   const runs = typeof args[runsArg] === "string" ? (args[runsArg] as string) : DEFAULT_RUNS;
   return {
@@ -318,7 +333,8 @@ export async function buildWorkPlan(
     paid: parts.paid,
     inputs,
     options,
-    ...(parts.policyTextSha256 !== undefined && { policyTextSha256: parts.policyTextSha256 }),
+    policyTextSha256,
+    promptPolicy,
     digest,
     runDir: runDirOf(resolve(runs), digest),
   };

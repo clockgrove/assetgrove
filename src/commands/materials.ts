@@ -64,6 +64,7 @@ async function prepare(args: MaterialsArgs, ctx: RunContext) {
   });
   const jobs = jobsOf(perCall, routes);
   const work = await buildWorkPlan(materialsCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["albedo", "spec", "profile", "derivation"],
     jobs,
     capUsd,

@@ -47,7 +47,9 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   const bible = await loadStyleBible(args.bible);
   const profile = await loadProfile(args.profile);
   const brief =
-    args.brief === undefined ? undefined : sheetBrief((await readJson<unknown>(args.brief)).value);
+    args.brief === undefined
+      ? undefined
+      : sheetBrief((await readJson<unknown>(args.brief)).value, ctx.settings.promptPolicy.allow);
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
   const lock = await lockFor(
@@ -71,6 +73,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   ];
   const jobs = jobsOf(perCall, routes);
   const work = await buildWorkPlan(generateSheetCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile", "brief", "lockBible"],
     reads: {
       ...styleBibleReads("bible", bible),

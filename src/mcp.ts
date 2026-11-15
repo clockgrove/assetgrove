@@ -15,11 +15,8 @@ import { InputError, ProviderError } from "./errors.ts";
 import { checkTrackedKeys } from "./guard.ts";
 import { redact } from "./redact.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
-import { loadProfile, readJson } from "./inputs.ts";
 import { applyPlan, createPlan, savePlan } from "./planning.ts";
-import type { GenerationBrief, RunSettings } from "./planning.ts";
 import type { SpendLedger } from "./spend.ts";
-import type { AssetSpec } from "./types.ts";
 
 export interface ToolContext {
   provider?: GenerationProvider;
@@ -30,6 +27,10 @@ export interface ToolContext {
   log?: (message: string) => void;
   /** The developer settings' run cap (`caps.runUsd`), which bounds plan and apply. */
   runCapUsd?: number;
+  /** The developer settings' prompt-policy allow terms (`promptPolicy.allow`). */
+  promptAllow?: readonly string[];
+  /** The plan command's request digest, recorded in the saved plan. */
+  requestDigest?: string;
 }
 
 type Arguments = Record<string, unknown>;
@@ -73,26 +74,20 @@ export async function generationTool(
     });
   }
   if (name === "plan") {
-    const spec = await readJson<AssetSpec>(stringArg(args, "spec")!);
-    const profile = await loadProfile(stringArg(args, "profile")!);
-    const briefPath = stringArg(args, "brief", false);
-    const settingsPath = stringArg(args, "settings", false);
-    const plan = await createPlan({
+    const optional = (key: string) => stringArg(args, key, false);
+    const created = await createPlan({
       biblePath: stringArg(args, "bible")!,
-      spec: spec.value,
-      specDir: spec.dir,
-      profile: profile.value,
-      ...(briefPath && { brief: (await readJson<GenerationBrief>(briefPath)).value }),
-      ...(settingsPath && { settings: (await readJson<Partial<RunSettings>>(settingsPath)).value }),
-      ...(stringArg(args, "template", false) && { templatePath: args["template"] as string }),
-      ...(stringArg(args, "identityMode", false) && {
-        identityMode: args["identityMode"] as string,
-      }),
+      specPath: stringArg(args, "spec")!,
+      profilePath: stringArg(args, "profile")!,
+      ...(optional("brief") && { briefPath: optional("brief")! }),
+      ...(optional("runOptions") && { runOptionsPath: optional("runOptions")! }),
+      ...(optional("template") && { templatePath: optional("template")! }),
+      ...(optional("identityMode") && { identityMode: optional("identityMode")! }),
       ...context,
     });
     const planPath = resolve(stringArg(args, "out")!);
-    await savePlan(plan, planPath);
-    return { planPath, plan };
+    await savePlan(created.plan, planPath);
+    return { planPath, ...created };
   }
   if (name === "apply") {
     if (args["autoApprove"] !== undefined && typeof args["autoApprove"] !== "boolean")
@@ -104,6 +99,7 @@ export async function generationTool(
       ...(context.ledger && { ledger: context.ledger }),
       ...(context.log && { log: context.log }),
       ...(context.runCapUsd !== undefined && { runCapUsd: context.runCapUsd }),
+      ...(context.promptAllow && { promptAllow: context.promptAllow }),
       autoApprove: args["autoApprove"] === true,
       ...(stringArg(args, "out", false) && { outDir: args["out"] as string }),
     });

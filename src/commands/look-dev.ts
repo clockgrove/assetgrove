@@ -43,6 +43,7 @@ async function prepare(args: LookDevArgs, ctx: RunContext) {
   const plan = planLookdev(profile.value, routes, capUsd);
   const jobs = jobsOf(plan.calls, routes);
   const work = await buildWorkPlan(lookDevCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["model", "provenance", "spec", "bible", "profile"],
     reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
     jobs,
@@ -145,6 +146,7 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
       runId: basename(dir),
       capUsd,
       log: ctx.log,
+      ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
     });
     const fields = { runDir, ...run };
     const human = formatRun(run, runDir);

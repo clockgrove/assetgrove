@@ -20,6 +20,13 @@ after(async () => {
 
 const spec = { kind: "still", assetId: "den" };
 
+/** The identity mode a saved plan's operations imply; undefined when it plans no scoring. */
+function modeOf(operations: readonly string[]): string | undefined {
+  if (operations.includes(IDENTITY_CHECK_OPERATION)) return "enforce";
+  if (operations.includes("identity") || operations.includes("identity-cast")) return "shadow";
+  return undefined;
+}
+
 async function fixture(withLock = true) {
   const root = await mkdtemp(join(tmpdir(), "identity-plan-"));
   roots.push(root);
@@ -88,27 +95,34 @@ async function run(
 ) {
   const f = await fixture(options.withLock ?? true);
   const provider = scripted(answers);
+  const specPath = join(f.root, "spec.json");
+  const runOptionsPath = join(f.root, "run-options.json");
+  const profilePath = join(f.root, "profile.json");
+  await writeFile(specPath, JSON.stringify(spec));
+  await writeFile(runOptionsPath, JSON.stringify({ candidates: answers.length }));
+  await writeFile(profilePath, JSON.stringify(syntheticProfile(options.profile)));
   const plan = await createPlan({
     biblePath: f.biblePath,
-    spec,
-    settings: { candidates: answers.length, capUsd: 5 },
-    profile: syntheticProfile(options.profile),
+    specPath,
+    runOptionsPath,
+    profilePath,
     ...(options.identityMode && { identityMode: options.identityMode }),
     ...(options.routes && { routes: options.routes }),
   });
   const logs: string[] = [];
-  const result = await applyPlan(plan, {
+  const result = await applyPlan(plan.plan, {
     provider,
+    ...(options.routes && { routes: options.routes }),
     autoApprove: true,
     outDir: join(f.root, "runs"),
     log: (m) => logs.push(m),
   });
-  return { plan, provider, logs, ...result };
+  return { plan, mode: modeOf(plan.plan.operations), provider, logs, ...result };
 }
 
 test("shadow mode, the default, scores a below-threshold candidate without filtering it", async () => {
-  const { plan, run: record, provider, logs } = await run([0.5, 3.6]);
-  assert.equal(plan.identityCheck?.mode, "shadow");
+  const { mode, run: record, provider, logs } = await run([0.5, 3.6]);
+  assert.equal(mode, "shadow");
   assert.equal(record.candidates.length, 2);
   assert.equal(record.filtered, 0);
   const low = record.candidates[0]!;
@@ -127,10 +141,10 @@ test("shadow mode, the default, scores a below-threshold candidate without filte
 });
 
 test("enforce mode filters the below-threshold candidate and says why", async () => {
-  const { plan, run: record } = await run([0.5, 3.6], {
+  const { mode, run: record } = await run([0.5, 3.6], {
     profile: { identity: { mode: "enforce" } },
   });
-  assert.equal(plan.identityCheck?.mode, "enforce");
+  assert.equal(mode, "enforce");
   assert.deepEqual(
     record.candidates.map((c) => c.id),
     ["c2"],
@@ -161,12 +175,12 @@ test("the plan records the record check's route from the routes it plans with", 
     estimatedCostUsd: 0.05,
   };
   const shadow = await run([3.6]);
-  assert.equal(shadow.plan.identityCheck?.checkRoute, undefined);
+  assert.equal(shadow.plan.plan.operations.includes(IDENTITY_CHECK_OPERATION), false);
   const { plan, provider } = await run([3.6], {
     profile: { identity: { mode: "enforce" } },
     routes: { ...defaultRoutes, [IDENTITY_CHECK_OPERATION]: checkRoute },
   });
-  assert.equal(plan.identityCheck?.checkRoute?.model, "test/record-checker");
+  assert.ok(plan.plan.operations.includes(IDENTITY_CHECK_OPERATION));
   assert.ok(
     Math.abs(
       plan.forecast.generationUsd -
@@ -183,9 +197,9 @@ test("the plan records the record check's route from the routes it plans with", 
 
 test("the mode option overrides the profile, and off plans no scoring", async () => {
   const enforced = await run([3.6], { identityMode: "enforce" });
-  assert.equal(enforced.plan.identityCheck?.mode, "enforce");
+  assert.equal(enforced.mode, "enforce");
   const off = await run([3.6], { identityMode: "off" });
-  assert.equal(off.plan.identityCheck, undefined);
+  assert.equal(off.mode, undefined);
   assert.equal(off.run.identity, undefined);
 });
 
@@ -193,8 +207,7 @@ test("the cast question with no threshold set plans, scores and records at 0.5",
   const cast = await run([3.6], {
     profile: { identity: { mode: "enforce", question: "cast" } },
   });
-  assert.equal(cast.plan.identityCheck?.question, "cast");
-  assert.equal(cast.plan.identityCheck?.threshold, 0.5);
+  assert.ok(cast.plan.plan.operations.includes("identity-cast"));
   assert.equal(cast.run.identity?.threshold, 0.5);
   // On-model 0.6 passes at 0.5, where the score question's 0.68 would filter it.
   assert.equal(cast.run.filtered, 0);
@@ -206,17 +219,16 @@ test("the cast question with no threshold set plans, scores and records at 0.5",
   const strict = await run([3.6], {
     profile: { identity: { mode: "enforce", question: "cast", threshold: 0.68 } },
   });
-  assert.equal(strict.plan.identityCheck?.threshold, 0.68);
   assert.equal(strict.run.identity?.threshold, 0.68);
   assert.equal(strict.run.filtered, 1);
   // The score question keeps 0.68.
   const score = await run([3.6]);
-  assert.equal(score.plan.identityCheck?.threshold, 0.68);
+  assert.equal(score.run.identity?.threshold, 0.68);
 });
 
 test("a subject with no lock is not scored and its plan has no identity check", async () => {
   const { plan, provider, run: record } = await run([3.6], { withLock: false });
-  assert.equal("identityCheck" in plan, false);
+  assert.equal(modeOf(plan.plan.operations), undefined);
   assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 0);
   assert.equal(record.candidates.length, 1);
   assert.equal(record.identity, undefined);
@@ -230,7 +242,7 @@ test("the identity forecast is part of the plan's cost", async () => {
     Math.abs(
       locked.plan.forecast.generationUsd -
         free.plan.forecast.generationUsd -
-        locked.plan.identityCheck!.route.estimatedCostUsd,
+        defaultRoutes["identity"]!.estimatedCostUsd,
     ) < 1e-9,
   );
 });

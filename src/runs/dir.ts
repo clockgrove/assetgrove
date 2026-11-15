@@ -4,6 +4,7 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { PromptPolicyRecord } from "../policy/text.ts";
 import type { WorkPlan } from "./plan.ts";
 
 export const REQUEST_FILE = "request.json";
@@ -40,6 +41,8 @@ export interface CommandRunRecord {
   spentUsd?: number;
   /** The numbered contact sheet in the run directory, when the command wrote one. */
   contactSheet?: string;
+  /** The prompt policy's check of the request's prompt text. */
+  promptPolicy?: PromptPolicyRecord;
 }
 
 /** Writes a command's run record to `run.json` in its run directory. */

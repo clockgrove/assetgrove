@@ -276,6 +276,8 @@ export interface SheetSource {
 
 export interface Provenance {
   digitalSourceType?: DigitalSourceType;
+  /** The prompt policy's check of the prompts that made the file (design section 16). */
+  promptPolicy?: import("./policy/text.ts").PromptPolicyRecord;
   sourceDeclaration?: import("./metadata.ts").SourceDeclaration;
   generator: string;
   route: string;

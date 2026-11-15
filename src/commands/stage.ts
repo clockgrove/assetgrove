@@ -56,6 +56,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   });
   const jobs = jobsOf(plan.perCandidate, routes, candidates);
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile"],
     reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
     jobs,
@@ -175,6 +176,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       capUsd,
       ledger,
       log: ctx.log,
+      ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
     });
     const fields = withSharedText({ runDir, ...run }, sharedTexts(bible.value));
     const human = formatRun(run, runDir);

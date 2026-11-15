@@ -66,6 +66,7 @@ async function prepare(args: IdentityEvalArgs, ctx: RunContext) {
     ),
   ];
   const work = await buildWorkPlan(identityEvalCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["cases", "bible", "profile"],
     reads: set.reads,
     jobs,

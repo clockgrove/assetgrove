@@ -81,7 +81,7 @@ const BRIEF_FIELDS = new Set([
 ]);
 
 /** A brief file's value, checked as `plan` checks it: known fields, strings where strings belong, original wording. */
-export function sheetBrief(value: unknown): GenerationBrief {
+export function sheetBrief(value: unknown, allow: readonly string[] = []): GenerationBrief {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new InputError("brief must be an object");
   const brief = value as Record<string, unknown>;
@@ -101,7 +101,7 @@ export function sheetBrief(value: unknown): GenerationBrief {
     throw new InputError("neighbouringAssets must be a string array");
   for (const key of ["purpose", "appearsIn", "context"]) {
     const text = brief[key];
-    if (typeof text === "string") assertOriginalDescription(text);
+    if (typeof text === "string") assertOriginalDescription(text, allow);
   }
   return brief as GenerationBrief;
 }

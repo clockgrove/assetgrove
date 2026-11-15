@@ -76,6 +76,8 @@ export class Caller {
     run: (route: Route, provider: GenerationProvider) => Promise<T>,
   ): Promise<T> {
     const route = this.route(operation);
+    if ((kind === "image" || kind === "model") && this.provider instanceof ProviderSet)
+      this.provider.checkPrompt(prompt, operation);
     const served = this.serve(route, operation);
     const name = `${served.id}:${operation}:${route.model}`;
     // Paid-ness is the adapter's: only a paid call needs a declared limit and reaches the ledger.

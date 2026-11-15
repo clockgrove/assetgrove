@@ -1,5 +1,5 @@
 import "./fixtures/env.ts";
-import { approve, approveProfile } from "./fixtures/env.ts";
+import { approve, approveProfile, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -8,7 +8,6 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { writeSettings } from "./fixtures/env.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 
 const temporaryRoots: string[] = [];
@@ -58,7 +57,7 @@ async function setup() {
   };
   const spec = join(dir, "spec.json");
   const profile = join(dir, "profile.json");
-  const settings = join(dir, "settings.json");
+  const runOptions = join(dir, "run-options.json");
   const plan = join(dir, "plan.json");
   const script = join(dir, "provider.mjs");
   const events = join(dir, "events.jsonl");
@@ -67,7 +66,7 @@ async function setup() {
     JSON.stringify({ kind: "still", assetId: "icon", subject: "icon", animationFamily: "still" }),
   );
   await writeFile(profile, JSON.stringify(syntheticProfile()));
-  await writeFile(settings, JSON.stringify({ candidates: 1, capUsd: 2, strictness: 0.5 }));
+  await writeFile(runOptions, JSON.stringify({ candidates: 1, strictness: 0.5 }));
   await writeFile(
     script,
     `
@@ -94,15 +93,15 @@ export default {
     paths.biblePath,
     "--profile",
     profile,
-    "--settings",
-    settings,
+    "--run-options",
+    runOptions,
     "--out",
     plan,
     "--provider-script",
     script,
     "--json",
   ];
-  return { dir, ...paths, spec, profile, settings, plan, script, events, args };
+  return { dir, ...paths, spec, profile, runOptions, plan, script, events, args };
 }
 
 test("CLI initializes a skill, describes axes and compiles a plan without image generation", async () => {
@@ -135,18 +134,18 @@ test("CLI without an available LLM records a usable template fallback without ge
     f.profile,
     "--bible",
     f.biblePath,
-    "--settings",
-    f.settings,
+    "--run-options",
+    f.runOptions,
     "--out",
     f.plan,
     "--json",
   ]);
   assert.equal(result.code, 0, result.stderr);
-  const { plan } = JSON.parse(result.stdout);
-  assert.equal(plan.compiler.mode, "template-fallback");
-  assert.equal(plan.compiler.templateVersion, "1");
-  assert.match(plan.prompt, /lighting key/);
-  assert.doesNotMatch(plan.prompt, /Return (?:ONLY )?JSON/i);
+  const { plan, compiler } = JSON.parse(result.stdout);
+  assert.equal(compiler.mode, "template-fallback");
+  assert.equal(compiler.templateVersion, "1");
+  assert.match(plan.prompts.generation, /lighting key/);
+  assert.doesNotMatch(plan.prompts.generation, /Return (?:ONLY )?JSON/i);
   await assert.rejects(readFile(f.events), { code: "ENOENT" });
 });
 
@@ -193,26 +192,28 @@ test("CLI apply requires explicit approval, auto-approve generates, stale templa
   assert.equal(await readFile(f.events, "utf8"), before);
 });
 
-test("plan and apply are bounded by caps.runUsd: a run-settings capUsd above it exits 3 cap_refused", async () => {
+test("plan --settings is gone and run options hold no cap or route: each exits 2 invalid_input", async () => {
   const f = await setup();
-  // The run settings ask for capUsd 2; the developer settings allow $1 a run.
-  writeSettings({ caps: { runUsd: 1, dailyUsd: 10, workItemUsd: 5 } });
-  const refused = await cli(["plan", ...f.args]);
-  assert.equal(refused.code, 3, refused.stderr);
-  assert.equal(JSON.parse(refused.stdout).error.code, "cap_refused");
+  const withSettings = f.args.map((a) => (a === "--run-options" ? "--settings" : a));
+  const gone = await cli(["plan", ...withSettings]);
+  assert.equal(gone.code, 2, gone.stderr);
+  assert.equal(JSON.parse(gone.stdout).error.code, "invalid_input");
+  for (const extra of [{ capUsd: 2 }, { modelRoute: { model: "x", estimatedCostUsd: 0 } }]) {
+    await writeFile(f.runOptions, JSON.stringify({ candidates: 1, strictness: 0.5, ...extra }));
+    const refused = await cli(["plan", ...f.args]);
+    assert.equal(refused.code, 2, refused.stderr);
+    const error = JSON.parse(refused.stdout).error as { code: string; message: string };
+    assert.equal(error.code, "invalid_input");
+    assert.match(error.message, new RegExp(Object.keys(extra)[0]!));
+  }
   await assert.rejects(readFile(f.events), { code: "ENOENT" });
+});
 
-  // Without a capUsd the run cap is the settings' cap, not a fixed default.
-  await writeFile(f.settings, JSON.stringify({ candidates: 1, strictness: 0.5 }));
+test("apply re-resolves the cap from the settings: a cap changed since planning exits 2 plan_changed", async () => {
+  const f = await setup();
+  writeSettings({ caps: { runUsd: 2, dailyUsd: 10, workItemUsd: 5 } });
   const planned = await cli(["plan", ...f.args]);
   assert.equal(planned.code, 0, planned.stderr);
-  assert.equal(JSON.parse(planned.stdout).plan.settings.capUsd, 1);
-
-  // A plan made under a higher cap is refused at apply once the settings lower it.
-  writeSettings({});
-  await writeFile(f.settings, JSON.stringify({ candidates: 1, capUsd: 2, strictness: 0.5 }));
-  const higher = await cli(["plan", ...f.args]);
-  assert.equal(higher.code, 0, higher.stderr);
   writeSettings({ caps: { runUsd: 1, dailyUsd: 10, workItemUsd: 5 } });
   const before = await readFile(f.events, "utf8");
   const apply = await cli([
@@ -225,17 +226,61 @@ test("plan and apply are bounded by caps.runUsd: a run-settings capUsd above it 
     "--auto-approve",
     "--json",
   ]);
-  assert.equal(apply.code, 3, apply.stderr);
-  assert.equal(JSON.parse(apply.stdout).error.code, "cap_refused");
+  assert.equal(apply.code, 2, apply.stderr);
+  assert.equal(JSON.parse(apply.stdout).error.code, "plan_changed");
   assert.equal(await readFile(f.events, "utf8"), before);
+  writeSettings({});
+});
+
+test("plan keeps the compiler call's record in its run directory, which the saved plan's requestDigest names", async () => {
+  const f = await setup();
+  const runs = join(f.dir, "plan-runs");
+  const planned = await cli(["plan", ...f.args, "--runs", runs]);
+  assert.equal(planned.code, 0, planned.stderr);
+  const { compiler } = JSON.parse(planned.stdout);
+  const saved = JSON.parse(await readFile(f.plan, "utf8")) as { requestDigest: string };
+  const record = JSON.parse(
+    await readFile(join(runs, `r-${saved.requestDigest.slice(0, 16)}`, "compiler.json"), "utf8"),
+  );
+  assert.deepEqual(record, compiler);
+  assert.ok(Array.isArray(record.calls));
+  assert.equal(typeof record.model, "string");
+});
+
+test("apply re-resolves routes from the settings: a settings route changed since planning exits 2 plan_changed", async () => {
+  const f = await setup();
+  const planned = await cli(["plan", ...f.args]);
+  assert.equal(planned.code, 0, planned.stderr);
+  const saved = JSON.parse(await readFile(f.plan, "utf8")) as { operations: string[] };
+  const operation = saved.operations[0]!;
+  writeSettings({
+    routes: {
+      [operation]: { provider: "scripted", model: "another-model", estimatedCostUsd: 0.05 },
+    },
+  });
+  const before = await readFile(f.events, "utf8");
+  const apply = await cli([
+    "apply",
+    f.plan,
+    "--provider-script",
+    f.script,
+    "--out",
+    join(f.dir, "runs"),
+    "--auto-approve",
+    "--json",
+  ]);
+  assert.equal(apply.code, 2, apply.stderr);
+  assert.equal(JSON.parse(apply.stdout).error.code, "plan_changed");
+  assert.equal(await readFile(f.events, "utf8"), before);
+  writeSettings({});
 });
 
 test("CLI preset switching changes subsequent plans and makes the prior plan stale", async () => {
   const f = await setup();
   const first = await cli(["plan", ...f.args]);
   assert.equal(first.code, 0, first.stderr);
-  const before = JSON.parse(await readFile(f.plan, "utf8")) as { prompt: string };
-  assert.match(before.prompt, /flat-cartoon/);
+  const before = JSON.parse(await readFile(f.plan, "utf8")) as { prompts: { generation: string } };
+  assert.match(before.prompts.generation, /flat-cartoon/);
   const switched = await cli([
     "bible",
     "preset",
@@ -261,9 +306,9 @@ test("CLI preset switching changes subsequent plans and makes the prior plan sta
   assert.doesNotMatch(await readFile(f.events, "utf8"), /"kind":"image"/);
   const second = await cli(["plan", ...f.args]);
   assert.equal(second.code, 0, second.stderr);
-  const after = JSON.parse(await readFile(f.plan, "utf8")) as { prompt: string };
-  assert.match(after.prompt, /painterly/);
-  assert.notEqual(after.prompt, before.prompt);
+  const after = JSON.parse(await readFile(f.plan, "utf8")) as { prompts: { generation: string } };
+  assert.match(after.prompts.generation, /painterly/);
+  assert.notEqual(after.prompts.generation, before.prompts.generation);
 });
 
 test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
@@ -312,7 +357,7 @@ test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
         spec: f.spec,
         bible: f.biblePath,
         profile: f.profile,
-        settings: f.settings,
+        runOptions: f.runOptions,
         out: f.plan,
       },
     });
@@ -355,6 +400,5 @@ test("plan without the compiler's key falls back to the template, though the gat
   );
   const result = await cli(["plan", ...args]);
   assert.equal(result.code, 0, result.stderr);
-  const saved = JSON.parse(await readFile(f.plan, "utf8")) as { compiler: { mode: string } };
-  assert.equal(saved.compiler.mode, "template-fallback");
+  assert.equal(JSON.parse(result.stdout).compiler.mode, "template-fallback");
 });

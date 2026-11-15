@@ -16,6 +16,7 @@ import type {
   VisionResult,
 } from "../gateway/provider.ts";
 import type { Script } from "../gateway/scripted.ts";
+import { enforcePromptPolicy } from "../policy/text.ts";
 import { resolveRoutes, roleOf, OPERATION_ROLES } from "../routes.ts";
 import type { Route, Routes } from "../routes.ts";
 import type { Settings } from "../settings.ts";
@@ -49,8 +50,17 @@ export class ProviderSet implements GenerationProvider {
   /** Whether some route names a scripted provider, which the module would serve. */
   readonly #scriptServes: boolean;
 
-  constructor(configured: readonly ConfiguredProvider[], routes: Routes, scripted = false) {
+  /** The settings `promptPolicy.allow` terms that clear a blocklist hit in a final prompt. */
+  readonly #promptAllow: readonly string[];
+
+  constructor(
+    configured: readonly ConfiguredProvider[],
+    routes: Routes,
+    scripted = false,
+    promptAllow: readonly string[] = [],
+  ) {
     this.configured = configured;
+    this.#promptAllow = promptAllow;
     this.#scripted = scripted;
     this.routes = routes;
     this.#scriptServes = Object.values(routes).some(
@@ -71,14 +81,25 @@ export class ProviderSet implements GenerationProvider {
   /** The providers and routes of the settings; `script` is given to scripted providers. */
   static fromSettings(
     settings: Pick<Settings, "providers" | "roles" | "routes" | "path">,
-    options: { env?: Env; script?: Script; adapters?: readonly ProviderAdapter[] } = {},
+    options: {
+      env?: Env;
+      script?: Script;
+      adapters?: readonly ProviderAdapter[];
+      promptAllow?: readonly string[];
+    } = {},
   ): ProviderSet {
     const configured = createProviders(settings, options);
     return new ProviderSet(
       configured,
       resolveRoutes(settings, configured),
       options.script !== undefined,
+      options.promptAllow ?? [],
     );
+  }
+
+  /** Refuses (exit 9 `prompt_refused`) a final prompt the prompt policy blocks; makes no call. */
+  checkPrompt(prompt: string, operation: string): void {
+    enforcePromptPolicy([prompt], this.#promptAllow, `the final ${operation} prompt`);
   }
 
   /** The configured provider of a settings id. */

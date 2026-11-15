@@ -125,6 +125,7 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
       )
     : [];
   const work = await buildWorkPlan(importCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["sheet", "profile", "bible", "lockBible"],
     reads: {
       ...(bible ? styleBibleReads("bible", bible) : {}),

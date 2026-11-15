@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { loadBible } from "../bible.ts";
 import { applyJobs, applyPlan } from "../planning.ts";
+import type { SavedPlan } from "../planning.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, paidBy } from "../runs/plan.ts";
@@ -23,7 +24,11 @@ interface ApplyArgs {
 /** The plan step: the saved plan checked as apply checks it, and the calls apply would make. */
 async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
   const providers = await providerSet(args.providerScript, ctx);
-  const forecast = await applyJobs(plan, providers, ctx.settings.caps.runUsd);
+  const forecast = await applyJobs(plan, {
+    provider: providers,
+    runCapUsd: ctx.settings.caps.runUsd,
+    promptAllow: ctx.settings.promptPolicy.allow,
+  });
   const work: WorkPlan = await buildWorkPlan(applyCommand, args, {
     inputs: ["plan"],
     jobs: forecast.jobs,
@@ -31,6 +36,7 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
     paid: paidBy(providers, forecast.jobs),
     candidates: forecast.candidates,
     runsArg: "out",
+    promptAllow: ctx.settings.promptPolicy.allow,
   });
   return { providers, work };
 }
@@ -39,7 +45,9 @@ export const applyCommand = defineCommand<ApplyArgs>({
   name: "apply",
   tool: "apply",
   summary: "generate exactly a saved plan after explicit spend approval",
-  details: `Refuses stale bible, template and identity inputs before generation.
+  details: `Refuses stale inputs before generation, and exits 2 plan_changed when the routes, estimates,
+output grants or run cap resolved from the developer settings differ from planning time.
+The plan's prompts pass the prompt policy (exit 9 prompt_refused) before any spend.
 Set the plan's approved field to true after review, or use --auto-approve for unattended runs.
 Approval authorizes this generation spend; resulting assets remain pending review. Never prompts.`,
   input: {
@@ -85,12 +93,13 @@ Approval authorizes this generation spend; resulting assets remain pending revie
       ledger,
       log: ctx.log,
       runCapUsd: ctx.settings.caps.runUsd,
+      promptAllow: ctx.settings.promptPolicy.allow,
       autoApprove: args.autoApprove === true,
       outDir: dirname(dir),
       runId: basename(dir),
     });
     const bible = await loadBible(
-      (JSON.parse(await readFile(args.plan, "utf8")) as { bible: { path: string } }).bible.path,
+      (JSON.parse(await readFile(args.plan, "utf8")) as SavedPlan).inputs["bible"]!.path,
     );
     const fields = withSharedText(
       {

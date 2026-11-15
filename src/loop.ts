@@ -1,3 +1,4 @@
+import type { PromptPolicyRecord } from "./policy/text.ts";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, posix, resolve } from "node:path";
@@ -69,6 +70,8 @@ export interface StageOptions {
   now?: () => Date;
   /** Receives one line per candidate outcome and one when the run stops early. */
   log?: (message: string) => void;
+  /** The plan step's prompt-policy record, kept in the run record and each candidate's provenance. */
+  promptPolicy?: PromptPolicyRecord;
   /** The measured stability entries model-backed checks filter by; src/qa/stability.json by default. */
   stability?: readonly StabilityEntry[];
 }
@@ -159,6 +162,8 @@ export interface RunRecord {
   runId: string;
   /** The run directory this record is in (`<runs>/r-<16 hex>/` for a planned request). */
   runDir?: string;
+  /** The prompt policy's check of the request's prompt text (planned runs). */
+  promptPolicy?: PromptPolicyRecord;
   createdAt: string;
   spec: AssetSpec;
   /** Absolute directory the spec's relative paths resolved against. */
@@ -278,6 +283,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   const run: RunRecord = {
     runId,
     runDir,
+    ...(options.promptPolicy && { promptPolicy: options.promptPolicy }),
     createdAt: now().toISOString(),
     spec,
     specDir: resolve(options.specDir),
@@ -372,6 +378,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         call.records.some((r) => r.seed !== undefined) ? seed : undefined,
       );
       provenance.digitalSourceType = digitalSourceType;
+      if (options.promptPolicy) provenance.promptPolicy = options.promptPolicy;
       const pixelHashes = ["image/png", "image/jpeg"].includes(generated.output.mediaType)
         ? [pixelHash(decodeImage(generated.output.bytes))]
         : [];
