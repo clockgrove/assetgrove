@@ -37,7 +37,7 @@ env:
   FACTORY_NOTIFY: kirkmarple-clockgrove#318831919 # login#id: the id pins the account (setup writes it)
   FACTORY_SETUP: corepack enable
   FACTORY_INSTALL: auto # auto (from the lockfile), none, or your own command
-  FACTORY_VALIDATION: pnpm check # format, lint, types; CI runs the test suite
+  FACTORY_VALIDATION: pnpm check
   FACTORY_BUDGET_COMMAND: ""
   FACTORY_PROTECTED_PATHS: ""
   FACTORY_CI_CHECKS: ci
@@ -74,7 +74,7 @@ jobs:
       wake_at: "${{ steps.f.outputs.wake_at }}"
       wake_kind: "${{ steps.f.outputs.wake_kind }}"
     steps:
-      - uses: clockgrove/factory@v0.9.29
+      - uses: clockgrove/factory@v0.9.30
         id: f
         with: { mode: dispatch, issue: "${{ inputs.issue }}", app_id: "${{ secrets.FACTORY_APP_ID }}", app_private_key: "${{ secrets.FACTORY_APP_PRIVATE_KEY }}" }
   queue-watch:
@@ -94,7 +94,7 @@ jobs:
     permissions: { contents: read, actions: write } # actions: write only for the dispatcher tick
     concurrency: { group: factory-queue-watch, cancel-in-progress: false }
     steps:
-      - uses: clockgrove/factory@v0.9.29
+      - uses: clockgrove/factory@v0.9.30
         id: w
         with: { mode: watch, pr: "${{ needs.dispatch.outputs.queue_watch }}", app_id: "${{ secrets.FACTORY_APP_ID }}", app_private_key: "${{ secrets.FACTORY_APP_PRIVATE_KEY }}" }
       - name: Dispatch tick (a watched PR left the queue or stalled there, or the watch's time is up)
@@ -140,7 +140,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0, persist-credentials: false }
-      - uses: clockgrove/factory@v0.9.29
+      - uses: clockgrove/factory@v0.9.30
         id: f
         with:
           mode: work
@@ -175,7 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0, persist-credentials: false }
-      - uses: clockgrove/factory@v0.9.29
+      - uses: clockgrove/factory@v0.9.30
         id: f
         with:
           mode: review
