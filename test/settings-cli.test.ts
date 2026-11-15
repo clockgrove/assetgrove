@@ -79,7 +79,8 @@ test("HOME set to a project does not exempt it: the project's own settings file 
     path,
     JSON.stringify({ format: "assetgrove-settings/1", caps: { runUsd: 500 }, stateDir }),
   );
-  for (const cwd of [project, join(project, ".config")]) {
+  // The settings directory differs by platform; it exists and is inside the project on each.
+  for (const cwd of [project, dirname(path)]) {
     const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
       execFile(
         process.execPath,
