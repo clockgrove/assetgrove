@@ -243,11 +243,20 @@ export interface SharedText {
   text: string;
 }
 
+/** The bible fields that hold free text. */
+export interface SharedTextSource {
+  notes?: string[];
+  mood?: string[];
+  perspectiveDescription?: string;
+  subjects?: Record<string, { description: string }>;
+  looks?: Record<string, { notes?: string[] } | object>;
+}
+
 /** The bible's free text: shared notes, mood, subject descriptions and look notes. */
-export function sharedTexts(bible: StyleBible): SharedText[] {
+export function sharedTexts(bible: SharedTextSource): SharedText[] {
   const out: SharedText[] = [];
   const add = (source: string, text: string | undefined) => {
-    if (text !== undefined && text.trim().length >= 4) out.push({ source, text });
+    if (text !== undefined && text.trim().length > 0) out.push({ source, text });
   };
   (bible.notes ?? []).forEach((t, i) => add(`bible.notes[${i}]`, t));
   (bible.mood ?? []).forEach((t, i) => add(`bible.mood[${i}]`, t));
@@ -255,14 +264,20 @@ export function sharedTexts(bible: StyleBible): SharedText[] {
   for (const [name, subject] of Object.entries(bible.subjects ?? {}))
     add(`bible.subjects.${name}.description`, subject.description);
   for (const [name, look] of Object.entries(bible.looks ?? {}))
-    (look.notes ?? []).forEach((t, i) => add(`bible.looks.${name}.notes[${i}]`, t));
+    ((look as { notes?: string[] }).notes ?? []).forEach((t, i) =>
+      add(`bible.looks.${name}.notes[${i}]`, t),
+    );
   return out;
 }
 
+/** The result fields that carry free text, where bible prose can appear. */
+const PROSE_FIELDS: ReadonlySet<string> = new Set(["prompt", "reason", "message", "text"]);
+
 /**
  * A tool result's fields with shared-file text moved under `sharedText: [{source, text}]` (design
- * section 10): every occurrence in a string value is replaced by `[sharedText:<n>]`, n the entry's
- * index, and only the entries that occurred are listed. The records on disk are not changed.
+ * section 10): every occurrence in a prose field (`prompt`, `reason`, `message`, `text`) is replaced
+ * by `[sharedText:<n>]`, n the entry's index, and only the entries that occurred are listed. Paths,
+ * ids and enum values are structure and are never rewritten. The records on disk are not changed.
  */
 export function withSharedText<T extends Record<string, unknown>>(
   fields: T,
@@ -273,8 +288,9 @@ export function withSharedText<T extends Record<string, unknown>>(
   const order = shared
     .map((s, i) => i)
     .sort((a, b) => shared[b]!.text.length - shared[a]!.text.length);
-  const walk = (value: unknown): unknown => {
+  const walk = (value: unknown, prose: boolean): unknown => {
     if (typeof value === "string") {
+      if (!prose) return value;
       let out = value;
       for (const i of order) {
         const entry = shared[i]!;
@@ -284,12 +300,14 @@ export function withSharedText<T extends Record<string, unknown>>(
       }
       return out;
     }
-    if (Array.isArray(value)) return value.map(walk);
+    if (Array.isArray(value)) return value.map((v) => walk(v, prose));
     if (value !== null && typeof value === "object")
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v)]));
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [k, walk(v, PROSE_FIELDS.has(k))]),
+      );
     return value;
   };
-  const walked = walk(fields) as T;
+  const walked = walk(fields, false) as T;
   const sharedText = [...found.entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e);
   return { ...walked, sharedText };
 }

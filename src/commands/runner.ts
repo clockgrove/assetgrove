@@ -173,6 +173,7 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
   await openRunDir(plan);
   // A record left by an earlier run of the same request is replaced by this run's.
   await rm(join(plan.runDir, RUN_RECORD_FILE), { force: true });
+  await rm(join(plan.runDir, CONTACT_SHEET_FILE), { force: true });
   const startedAt = new Date().toISOString();
   let outcome: Outcome;
   try {

@@ -1,3 +1,4 @@
+import { withSharedText } from "../src/request.ts";
 import "./fixtures/env.ts";
 import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
@@ -127,7 +128,6 @@ test("a sprite-strip sheet has one key-frame row per candidate; a character-3d s
         .map((r) => readFile(join(w.bibleDir, r.path))),
     )
   ).map((b) => decodePng(new Uint8Array(b)));
-  const frame = drawSubject(96, 0);
   const rows = await Promise.all(
     run.candidates.map(async (c) => {
       const strip = decodePng(new Uint8Array(await readFile(join(runDir, c.file))));
@@ -162,11 +162,23 @@ test("a sprite-strip sheet has one key-frame row per candidate; a character-3d s
   const file = await writeContact(dir, { kind: "character-3d", assetId: "fern" }, candidates, []);
   assert.equal(file, "contact.png");
   const three = decodePng(new Uint8Array(await readFile(join(dir, "contact.png"))));
+  const views = ["front", "three-quarter", "side", "back"];
   const expected = renderContact(
-    [1, 2].map((number) => ({ number, images: Array.from({ length: 4 }, () => frame) })),
+    await Promise.all(
+      [1, 2].map(async (number) => ({
+        number,
+        images: await Promise.all(
+          views.map(async (v) =>
+            decodePng(
+              new Uint8Array(await readFile(join(dir, `c${number}-character-3d`, `${v}.png`))),
+            ),
+          ),
+        ),
+      })),
+    ),
     [],
   );
-  assert.deepEqual([three.width, three.height], [expected.raster.width, expected.raster.height]);
+  assert.deepEqual(Array.from(three.data), Array.from(expected.raster.data));
 });
 
 test("the sheet is pixel-identical when only bible text changes", async () => {
@@ -322,4 +334,24 @@ test("apply and generate-sheet also write contact.png", async () => {
   });
   assert.equal(generated.contactSheet, "contact.png");
   decodePng(new Uint8Array(await readFile(join(runDir, "contact.png"))));
+});
+
+test("shared text under 4 characters is listed under sharedText, and structural fields are left alone", () => {
+  const out = withSharedText(
+    {
+      kind: "still",
+      runDir: "/w/runs/r-0123",
+      file: "c1-still.png",
+      provenance: { prompt: "A still fox, runs" },
+    },
+    [
+      { source: "bible.mood[0]", text: "still" },
+      { source: "bible.mood[1]", text: "runs" },
+    ],
+  );
+  assert.equal(out.kind, "still");
+  assert.equal(out.runDir, "/w/runs/r-0123");
+  assert.equal(out.file, "c1-still.png");
+  assert.equal(out.provenance.prompt, "A [sharedText:0] fox, [sharedText:1]");
+  assert.equal(out.sharedText.length, 2);
 });

@@ -1,6 +1,9 @@
 import { InputError } from "../errors.ts";
+import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
+import { loadBible } from "../bible.ts";
 import { applyJobs, applyPlan } from "../planning.ts";
+import { sharedTexts, withSharedText } from "../request.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, paidBy } from "../runs/plan.ts";
 import { dryRunOutcome, formatRun, formatWork, refusal } from "./result.ts";
@@ -86,10 +89,16 @@ Approval authorizes this generation spend; resulting assets remain pending revie
       outDir: dirname(dir),
       runId: basename(dir),
     });
-    const fields = {
-      ...result,
-      ...(result.run.contactSheet && { contactSheet: result.run.contactSheet }),
-    };
+    const bible = await loadBible(
+      (JSON.parse(await readFile(args.plan, "utf8")) as { bible: { path: string } }).bible.path,
+    );
+    const fields = withSharedText(
+      {
+        ...result,
+        ...(result.run.contactSheet && { contactSheet: result.run.contactSheet }),
+      },
+      sharedTexts(bible.data),
+    );
     const human = formatRun(result.run, result.runDir);
     if (result.run.candidates.length === 0)
       return refusal("qa_found_nothing", "no candidate passed QA", fields, human);
