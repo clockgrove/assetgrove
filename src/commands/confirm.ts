@@ -12,6 +12,7 @@ import type { ConfirmRequest } from "../confirm/prompt.ts";
 import { spendShown } from "../runs/execute.ts";
 import type { WorkPlan } from "../runs/plan.ts";
 import { pickRequest } from "./pick.ts";
+import { applySettingsChange, rebuiltSettingsRequest } from "../settings-write.ts";
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import { writeRequest } from "./write-families.ts";
@@ -82,13 +83,14 @@ interface ConfirmArgs {
 export const confirmCommand = defineCommand<ConfirmArgs>({
   name: "confirm",
   tool: null,
-  summary: "confirm a pending spend, pick, write or command request at a terminal",
+  summary: "confirm a pending spend, pick, write, command or settings request at a terminal",
   details: `Shows the request a command saved to <stateDir>/pending/<id>.json when it exited 8
 confirmation_required, and asks at the terminal. A spend, pick or write request (id its digest)
 writes <configDir>/confirmations/<id>.json (method terminal); a pick that names no candidate asks
 which one (or none). It shows what the id hashes, rebuilt from the saved body (a spend) or by
 making the pick or write request again from its run, import and grouping. A command a file names (kind command, id its hash) writes
-<configDir>/approvals/<id>.json. The request runs on the next try. CLI only; exits 2 without a TTY
+<configDir>/approvals/<id>.json. A settings change (kind settings, id its digest) writes its fields
+and their confirmedBy entries (method terminal) into the settings file it names. The request runs on the next try. CLI only; exits 2 without a TTY
 on stdin and stderr, with no pending request of that id, or when the saved request (or its run,
 import or grouping) no longer makes that id. Declining exits 8 confirmation_declined.`,
   input: {
@@ -124,6 +126,36 @@ import or grouping) no longer makes that id. Declining exits 8 confirmation_decl
         fields,
         describeRequest(request),
       );
+    if (pending.kind === "settings") {
+      const request = rebuiltSettingsRequest(pending);
+      if (request === undefined) {
+        return refusal(
+          "invalid_input",
+          `pending request ${args.id} does not describe the settings change its id hashes; rerun settings change to save it again`,
+          { id: pending.id, kind: pending.kind },
+          "",
+        );
+      }
+      if (request.body.settings !== ctx.settings.path) {
+        return refusal(
+          "invalid_input",
+          `pending settings change ${args.id} is for ${request.body.settings}, but the settings loaded are ${ctx.settings.path}`,
+          { id: request.id, kind: request.kind },
+          "",
+        );
+      }
+      const fields = { id: request.id, kind: request.kind, request: request.details };
+      if (!(await ctx.prompt.confirm(request))) return decline(request, fields);
+      const result = await applySettingsChange(ctx.settings, request.body.change, {
+        method: "terminal",
+      });
+      await removePending(stateDir, request.id);
+      return {
+        exitCode: 0,
+        fields: { ...fields, confirmed: true, method: "terminal", ...result },
+        human: `confirmed ${request.id}: wrote ${result.written.join(", ") || "nothing"} to ${result.path}`,
+      };
+    }
     if (pending.kind !== "command") {
       const request = await shownRequest(pending);
       if (request === undefined) {
