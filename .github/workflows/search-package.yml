@@ -8,11 +8,15 @@ on:
   pull_request:
     paths:
       - "packages/assetgrove-search/**"
+      - "bench/search/**"
+      - "docs/decisions.md"
       - ".github/workflows/search-package.yml"
   push:
     branches: [main]
     paths:
       - "packages/assetgrove-search/**"
+      - "bench/search/**"
+      - "docs/decisions.md"
       - ".github/workflows/search-package.yml"
 
 concurrency:
@@ -27,7 +31,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-26, windows-2025]
+        # Pull requests run Linux only; a push to main runs Linux, macOS and Windows.
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-26.04","macos-26","windows-2025"]') || fromJSON('["ubuntu-26.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
