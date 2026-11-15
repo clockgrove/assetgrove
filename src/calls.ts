@@ -356,6 +356,7 @@ function decisionLog(
       value: Math.min(1, Math.max(0, answer.score / top)),
       raw: answer.score,
       ...(confidence !== undefined && { confidence }),
+      ...(result.decisionSource !== undefined && { decisionSource: result.decisionSource }),
       latencyMs,
     };
   }
@@ -366,6 +367,7 @@ function decisionLog(
       value: Math.min(1, Math.max(0, answer.probability)),
       raw: answer.probability,
       ...(result.confidence !== undefined && { confidence: result.confidence }),
+      ...(result.decisionSource !== undefined && { decisionSource: result.decisionSource }),
       latencyMs,
     };
   }

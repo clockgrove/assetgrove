@@ -56,10 +56,21 @@ export class InputError extends Error {
   }
 }
 
-/** A model provider call failed or returned nothing usable. Its message is redacted. */
+/**
+ * A model provider call failed or returned nothing usable. Its message is redacted. When the
+ * provider answered, `status` is its HTTP status and `providerCode` its error code, so callers
+ * decide on those rather than on the message.
+ */
 export class ProviderError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly status: number | undefined;
+  readonly providerCode: string | undefined;
+  constructor(
+    message: string,
+    options?: ErrorOptions & { status?: number; providerCode?: string },
+  ) {
     super(redact(message), options);
     this.name = "ProviderError";
+    this.status = options?.status;
+    this.providerCode = options?.providerCode;
   }
 }

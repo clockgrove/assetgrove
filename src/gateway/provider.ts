@@ -184,4 +184,11 @@ export interface DecisionResult extends ProviderResult {
   answer: DecisionAnswer;
   /** The provider's own confidence statistic for the answer, when it reports one. */
   confidence?: number;
+  /**
+   * How the answer was made: a decision model's typed answer (`decision-model`), or a chat model's
+   * answer constrained by structured output (`structured-output`).
+   */
+  decisionSource?: DecisionSource;
 }
+
+export type DecisionSource = "decision-model" | "structured-output";

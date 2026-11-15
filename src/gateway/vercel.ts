@@ -231,6 +231,7 @@ export class VercelGateway implements GenerationProvider {
     const cost = toNumber(gatewayMeta(meta)["cost"]);
     return {
       answer,
+      decisionSource: "decision-model",
       ...requestId(gatewayMeta(meta)["generationId"], result.response.id),
       ...(cost !== undefined && { costUsd: cost }),
       ...(confidence !== undefined && { confidence }),

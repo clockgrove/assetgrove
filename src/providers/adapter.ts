@@ -1,7 +1,7 @@
 /**
  * Provider adapters (design section 11): each makes provider instances from a settings entry and
- * decides what they cost (`billing`). Core registers `vercel-ai-gateway`, `tripo`,
- * `openai-compatible` and `scripted`. Each lists the operations it serves by default
+ * decides what they cost (`billing`). Core registers `vercel-ai-gateway`, `anthropic`, `openai`,
+ * `openai-compatible`, `tripo` and `scripted`. Each lists the operations it serves by default
  * (`defaultRoutes`, src/routes.ts).
  * An adapter reads its key from the entry's `keyEnv` or its default variable and passes `apiKey`
  * and `baseURL` to its SDK explicitly, so no `*_BASE_URL` variable ever applies.
@@ -9,12 +9,20 @@
 import type { Env } from "../env.ts";
 import { SettingsError } from "../env.ts";
 import type { Billing, GenerationProvider } from "../gateway/provider.ts";
+import { ANTHROPIC_BASE_URL, AnthropicProvider } from "../gateway/anthropic.ts";
+import { OPENAI_BASE_URL, OpenAIProvider } from "../gateway/openai.ts";
 import { OpenAICompatibleProvider } from "../gateway/openai-compatible.ts";
 import { ScriptedProvider } from "../gateway/scripted.ts";
 import type { Script } from "../gateway/scripted.ts";
 import { TRIPO_BASE_URL, TripoProvider } from "../gateway/tripo.ts";
 import { VercelGateway } from "../gateway/vercel.ts";
-import { defaultRoutes, GATEWAY_DEFAULT_ROUTES, TRIPO_DEFAULT_ROUTES } from "../routes.ts";
+import {
+  ANTHROPIC_DEFAULT_ROUTES,
+  defaultRoutes,
+  GATEWAY_DEFAULT_ROUTES,
+  OPENAI_DEFAULT_ROUTES,
+  TRIPO_DEFAULT_ROUTES,
+} from "../routes.ts";
 import type { Route } from "../routes.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
@@ -75,6 +83,44 @@ export const gatewayAdapter: ProviderAdapter = {
         reconcile: "per-call-cost",
         ...billingFrom(c),
       },
+    }),
+};
+
+/**
+ * Anthropic's API on its fixed endpoint: vision, decisions (structured output) and planning. Paid;
+ * its limit is declared only, and an ordinary key reports no usage (`reconcile: "unavailable"`).
+ */
+export const anthropicAdapter: ProviderAdapter = {
+  id: "anthropic",
+  capabilities: ["vision", "decide"],
+  defaultKeyEnv: "ANTHROPIC_API_KEY",
+  fixedHosts: [new URL(ANTHROPIC_BASE_URL).host],
+  endpointFromSettings: false,
+  defaultRoutes: ANTHROPIC_DEFAULT_ROUTES,
+  create: (c) =>
+    new AnthropicProvider({
+      apiKey: c.apiKey,
+      ...(c.keyEnv !== undefined && { keyEnv: c.keyEnv }),
+      billing: { adapter: "anthropic", paid: true, reconcile: "unavailable", ...billingFrom(c) },
+    }),
+};
+
+/**
+ * OpenAI's API on its fixed endpoint: every 2D role, decisions through structured output. Paid;
+ * its limit is declared only, and an ordinary key reports no usage (`reconcile: "unavailable"`).
+ */
+export const openaiAdapter: ProviderAdapter = {
+  id: "openai",
+  capabilities: ["image", "edit", "vision", "decide"],
+  defaultKeyEnv: "OPENAI_API_KEY",
+  fixedHosts: [new URL(OPENAI_BASE_URL).host],
+  endpointFromSettings: false,
+  defaultRoutes: OPENAI_DEFAULT_ROUTES,
+  create: (c) =>
+    new OpenAIProvider({
+      apiKey: c.apiKey,
+      ...(c.keyEnv !== undefined && { keyEnv: c.keyEnv }),
+      billing: { adapter: "openai", paid: true, reconcile: "unavailable", ...billingFrom(c) },
     }),
 };
 
@@ -155,6 +201,8 @@ export const scriptedAdapter: ProviderAdapter = {
 /** The core adapters, by id. */
 export const CORE_ADAPTERS: readonly ProviderAdapter[] = [
   gatewayAdapter,
+  anthropicAdapter,
+  openaiAdapter,
   tripoAdapter,
   openaiCompatibleAdapter,
   scriptedAdapter,
