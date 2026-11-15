@@ -5,7 +5,8 @@
  * - ANIMATION_OUT (optional): where the QA reports, onion-skin sheets and loop previews go
  *   (default: a temporary directory, printed).
  * Without ANIMATION_SHEET and ANIMATION_GROUPING the test skips. With AI_GATEWAY_API_KEY as well, it
- * runs the identity-flicker check on one family and one per-frame fix, within a $2 cap in total.
+ * runs the identity-flicker check on one family and one per-frame fix through the product's spend
+ * controls (test/real/budget.ts): the shared budget, with its 1.50 USD run cap across both.
  * Run with `pnpm test:real`.
  */
 import assert from "node:assert/strict";
@@ -14,10 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { importTargets, runAnimationQa, runFixFrame } from "../../src/animation/commands.ts";
-import { VercelGateway } from "../../src/gateway/vercel.ts";
 import { defaultRoutes } from "../../src/routes.ts";
 import { importSheet, writeFamilies } from "../../src/sheet/import.ts";
 import type { TargetProfile } from "../../src/types.ts";
+import { realBudget, RUN_USD, skipWithout } from "./budget.ts";
 
 const sheetPath = process.env["ANIMATION_SHEET"];
 const groupingPath = process.env["ANIMATION_GROUPING"];
@@ -25,8 +26,7 @@ const skip =
   sheetPath && groupingPath ? false : "ANIMATION_SHEET and ANIMATION_GROUPING not both set";
 const ASSET_ID = "bram";
 const SUBJECT = "bram";
-const real = Boolean(process.env["AI_GATEWAY_API_KEY"]);
-const CAP_USD = 2;
+const real = !skipWithout("AI_GATEWAY_API_KEY");
 
 const profile: TargetProfile = {
   name: "painterly-example",
@@ -102,18 +102,18 @@ test(
     assert.equal(offline.spentUsd, 0);
     if (!real) return;
 
-    const provider = {
-      provider: new VercelGateway({ apiKey: process.env["AI_GATEWAY_API_KEY"] }),
-      name: "vercel-ai-gateway",
-    };
+    const rb = realBudget();
+    const gateway = rb.provider("vercel-ai-gateway");
+    const provider = { provider: gateway.provider, name: gateway.id };
     const first = targets[0];
     assert.ok(first);
     const flicker = await runAnimationQa({
       targets: [first],
       outDir: qaDir,
       routes: defaultRoutes,
-      capUsd: 1,
+      capUsd: Math.min(1, rb.runLeftUsd()),
       provider,
+      ledger: rb.ledger,
     });
     const decisions = flicker.results[0]?.decisions ?? [];
     for (const d of decisions) {
@@ -131,12 +131,14 @@ test(
       from: { neighbour: index > 1 ? index - 1 : 2 },
       outDir: join(out, "fix"),
       routes: defaultRoutes,
-      capUsd: CAP_USD - flicker.spentUsd,
+      capUsd: rb.runLeftUsd(),
       provider,
+      ledger: rb.ledger,
     });
     console.log(
       `fixed ${first.family} frame ${index}: ${fixed.stripPath} ($${fixed.spentUsd.toFixed(4)}, ${fixed.fix.requestId})`,
     );
-    assert.ok(flicker.spentUsd + fixed.spentUsd <= CAP_USD);
+    assert.ok(flicker.spentUsd + fixed.spentUsd <= RUN_USD);
+    console.log(`budget left: $${rb.budgetLeftUsd().toFixed(4)}`);
   },
 );
