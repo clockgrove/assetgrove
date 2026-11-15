@@ -774,6 +774,8 @@ export default {
       };
     },
   },
+  { tool: "settings", prepare: async () => ({ action: "path" }) },
+  { tool: "spend", prepare: async () => ({ action: "status", workItem: "mcp-row" }) },
   {
     tool: "migrate",
     prepare: async () => {

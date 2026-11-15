@@ -22,7 +22,7 @@ test(
   "real gateway: one typed identity decision (Score) with reference images",
   { skip },
   async () => {
-    const result = await VercelGateway.fromEnv().decide({
+    const result = await new VercelGateway({ apiKey: process.env["AI_GATEWAY_API_KEY"] }).decide({
       model: defaultRoutes.identity.model,
       prompt:
         "Image 1 is the candidate. Image 2 is the approved reference. Identity record: a plain red disc.",

@@ -6,7 +6,9 @@ import { createRaster, encodePng, setPixel } from "../../src/image/raster.ts";
 const skip = process.env["AI_GATEWAY_API_KEY"] ? false : "AI_GATEWAY_API_KEY not set";
 
 test("real gateway: one image generation", { skip }, async () => {
-  const result = await VercelGateway.fromEnv().generateImage({
+  const result = await new VercelGateway({
+    apiKey: process.env["AI_GATEWAY_API_KEY"],
+  }).generateImage({
     model: "bfl/flux-3-image-klein",
     prompt: "a small red apple on a plain background",
     references: [],
@@ -24,7 +26,9 @@ test("real gateway: one vision call", { skip }, async () => {
   const raster = createRaster(8, 8);
   for (let y = 0; y < 8; y++)
     for (let x = 0; x < 8; x++) setPixel(raster, x, y, [200, 30, 30, 255]);
-  const result = await VercelGateway.fromEnv().analyzeImages({
+  const result = await new VercelGateway({
+    apiKey: process.env["AI_GATEWAY_API_KEY"],
+  }).analyzeImages({
     model: "google/gemini-3-flash",
     prompt: "Describe this image in one short sentence.",
     images: [{ mediaType: "image/png", bytes: encodePng(raster) }],

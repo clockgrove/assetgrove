@@ -9,6 +9,6 @@ import { TripoProvider } from "../../src/gateway/tripo.ts";
 const skip = process.env["TRIPO_API_KEY"] ? false : "TRIPO_API_KEY not set";
 
 test("tripo accepts the key and reports a balance", { skip }, async () => {
-  const balance = await TripoProvider.fromEnv().balance();
+  const balance = await new TripoProvider({ apiKey: process.env["TRIPO_API_KEY"] }).balance();
   assert.equal(typeof balance, "number");
 });

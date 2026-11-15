@@ -34,6 +34,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /** The facts of a thrown SDK error: message, status (`statusCode`/`status`) and provider code. */
 export function failureFacts(error: unknown): FailureFacts {
+  // The AI SDK's RetryError wraps the last attempt's error, which holds the status and code.
+  const last = isRecord(error) ? error["lastError"] : undefined;
+  if (last !== undefined && last !== null) return failureFacts(last);
   if (!isRecord(error) && !(error instanceof Error)) return { message: String(error) };
   const e = error as unknown as Record<string, unknown>;
   const status = [e["statusCode"], e["status"]].find(

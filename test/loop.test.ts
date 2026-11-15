@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -243,6 +244,7 @@ test("a request ID the provider did not report is marked local in provenance", a
   const world = await syntheticWorld();
   const base = scriptedProvider();
   const provider: GenerationProvider = {
+    billing: base.billing,
     generateImage: (request) => base.generateImage(request),
     analyzeImages: async (request) => ({
       ...(await base.analyzeImages(request)),
@@ -351,6 +353,7 @@ test("the CLI takes the gateway key from the environment only, and refuses witho
   await writeFile(spec, JSON.stringify(shelterSpec));
   await writeFile(bible, JSON.stringify(world.bible));
   await writeFile(profile, JSON.stringify(world.profile));
+  declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   const env = { ...process.env };
   delete env["AI_GATEWAY_API_KEY"];
   await assert.rejects(
@@ -412,6 +415,7 @@ test("a provider failure is a ProviderError recorded in the run's errors, and th
   const world = await syntheticWorld();
   const good = scriptedProvider();
   const failing: GenerationProvider = {
+    billing: good.billing,
     generateImage: () => Promise.reject(new Error("upstream 503")),
     analyzeImages: (request) => good.analyzeImages(request),
   };
