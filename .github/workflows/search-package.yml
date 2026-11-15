@@ -2,13 +2,13 @@ name: Search package
 
 # The optional search package (packages/assetgrove-search) has its own install and tests, kept out of
 # the root install so core CI stays light. This job runs only when the package's files change, installs
-# the package alone and runs its check and test commands on Linux, macOS and Windows.
+# the package alone and runs its check and test commands on Linux, macOS and Windows. Not a
+# required check, so it does not run in the merge queue.
 on:
   pull_request:
     paths:
       - "packages/assetgrove-search/**"
       - ".github/workflows/search-package.yml"
-  merge_group:
   push:
     branches: [main]
     paths:
@@ -24,7 +24,6 @@ permissions:
 
 jobs:
   search-package:
-    if: hashFiles('packages/assetgrove-search/package.json') != ''
     strategy:
       fail-fast: false
       matrix:
