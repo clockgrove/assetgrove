@@ -6,9 +6,10 @@
  */
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { InputError } from "../../errors.ts";
 import { readRun, writeRun } from "../../loop.ts";
+import { checkWrites } from "../../paths.ts";
 import type { RunRecord, StagedCandidate } from "../../loop.ts";
 import { sha256 } from "../../request.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "../../types.ts";
@@ -296,10 +297,16 @@ export async function lodChain(
   const runDir = resolve(options.runsDir, runId);
   const id = "c1";
   const folder = `${id}-lod`;
+  // The candidate's whole write set is checked before the first write.
+  checkWrites([
+    ...chain.artifacts.map((artifact) => posix.join(folder, artifact.name)),
+    `${id}.glb`,
+    ...chain.sidecars.map((side) => posix.join(folder, "files", side.name)),
+  ]);
   await mkdir(join(runDir, folder), { recursive: true });
   const artifacts: string[] = [];
   for (const artifact of chain.artifacts) {
-    const name = join(folder, artifact.name);
+    const name = posix.join(folder, artifact.name);
     await writeFile(join(runDir, name), artifact.bytes);
     artifacts.push(name);
   }
@@ -368,7 +375,7 @@ export async function lodChain(
     await writeFile(join(runDir, file), chain.bytes);
     const sidecars: NonNullable<StagedCandidate["sidecars"]> = [];
     for (const side of chain.sidecars) {
-      const staged = join(folder, "files", side.name);
+      const staged = posix.join(folder, "files", side.name);
       await mkdir(join(runDir, folder, "files"), { recursive: true });
       await writeFile(join(runDir, staged), side.bytes);
       sidecars.push({

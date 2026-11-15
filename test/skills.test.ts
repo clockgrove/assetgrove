@@ -25,10 +25,10 @@ async function checkSkill(path: string): Promise<void> {
 }
 
 test("every skill the package ships meets the Agent Skills rules", async () => {
-  const root = new URL("../skills/", import.meta.url);
+  const root = fileURLToPath(new URL("../skills/", import.meta.url));
   const folders = await readdir(root);
   assert.ok(folders.length > 0);
-  for (const folder of folders) await checkSkill(join(root.pathname, folder, "SKILL.md"));
+  for (const folder of folders) await checkSkill(join(root, folder, "SKILL.md"));
 });
 
 test("the skill bible init writes meets the rules, where every harness reads skills", async () => {

@@ -6,10 +6,11 @@
  */
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join, posix, resolve } from "node:path";
 import { Budget } from "../../budget.ts";
 import { Caller } from "../../calls.ts";
 import { InputError, ProviderError } from "../../errors.ts";
+import { checkWrites } from "../../paths.ts";
 import type { GenerationProvider } from "../../gateway/provider.ts";
 import { identityReason, identitySettings3d, scoreIdentity } from "../../identity.ts";
 import type { IdentityScore } from "../../identity.ts";
@@ -1527,15 +1528,21 @@ export async function lookDev(
     source: "deterministic",
   });
 
-  // Stage the candidate.
+  // Stage the candidate. Its whole write set is checked first; the per-view renders already written
+  // above (names fixed by Assetgrove) are among the artifacts and are checked with it.
+  checkWrites([
+    ...artifacts.map((a) => posix.join(dir, a.name)),
+    ...sidecars.map((s) => posix.join(dir, s.name)),
+    `${id}.glb`,
+  ]);
   const artifactNames: string[] = [];
   for (const a of artifacts) {
     await writeFile(join(runDir, dir, a.name), a.bytes);
-    artifactNames.push(join(dir, a.name));
+    artifactNames.push(posix.join(dir, a.name));
   }
   const stagedSidecars: NonNullable<StagedCandidate["sidecars"]> = [];
   for (const s of sidecars) {
-    const file = join(dir, s.name);
+    const file = posix.join(dir, s.name);
     await writeFile(join(runDir, file), s.bytes);
     stagedSidecars.push({
       file,

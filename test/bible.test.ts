@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -49,7 +49,7 @@ test("bible initializes all three repository-owned preset constitutions and skil
       assert.equal(document.hash.length, 64);
       assert.deepEqual(biblePalette(document.data), ["#292433", "#c49b70", "#7c93a8"]);
       assert.deepEqual(
-        paths.skillPaths.map((p) => relative(root, p)),
+        paths.skillPaths.map((p) => relative(root, p).split(sep).join("/")),
         [".claude/skills/art-direction/SKILL.md", ".agents/skills/art-direction/SKILL.md"],
       );
       for (const skillPath of paths.skillPaths)

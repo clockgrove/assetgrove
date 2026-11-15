@@ -5,8 +5,9 @@
  */
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { InputError } from "../../errors.ts";
+import { checkWrites } from "../../paths.ts";
 import {
   DIGITAL_SOURCE_TYPES,
   embedDigitalSourceType,
@@ -79,11 +80,18 @@ export async function rerig(
     options.runId ??
     `${now().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   const runDir = resolve(options.runsDir, runId);
-  await mkdir(runDir, { recursive: true });
   const id = "c1";
+  // The candidate's whole write set is checked before the first write.
+  checkWrites([
+    ...candidate.artifacts.map((artifact) =>
+      posix.join(`${id}-${CHARACTER_3D_KIND}`, basename(artifact.name)),
+    ),
+    `${id}.glb`,
+  ]);
+  await mkdir(runDir, { recursive: true });
   const artifacts: string[] = [];
   for (const artifact of candidate.artifacts) {
-    const name = join(`${id}-${CHARACTER_3D_KIND}`, basename(artifact.name));
+    const name = posix.join(`${id}-${CHARACTER_3D_KIND}`, basename(artifact.name));
     await mkdir(join(runDir, `${id}-${CHARACTER_3D_KIND}`), { recursive: true });
     await writeFile(join(runDir, name), artifact.bytes);
     artifacts.push(name);

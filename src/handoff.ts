@@ -17,6 +17,7 @@ import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
 import { readRun, writeRun } from "./loop.ts";
 import type { StagedCandidate } from "./loop.ts";
+import { checkWrites, readRecordPath, relativeRecordPath } from "./paths.ts";
 import { sha256 } from "./request.ts";
 import { render, renderString, setPath } from "./template.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "./types.ts";
@@ -175,6 +176,13 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   }
   setPath(manifest as Record<string, unknown>, profile.review.path, profile.review.pending);
 
+  // Before anything is written: no two writes differ only by case, and no segment holds ":".
+  checkWrites([
+    mediaRel,
+    manifestRel,
+    ...sidecarRels,
+    ...(provenanceRel === undefined ? [] : [provenanceRel]),
+  ]);
   const mediaPath = inside(targetDir, mediaRel);
   const manifestPath = inside(targetDir, manifestRel);
   const provenancePath = provenanceRel === undefined ? undefined : inside(targetDir, provenanceRel);
@@ -197,7 +205,7 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     mediaPath,
     manifestPath,
     ...(provenancePath !== undefined && { provenancePath }),
-    files: writes.map(([path]) => relative(targetDir, path)),
+    files: writes.map(([path]) => relativeRecordPath(targetDir, path)),
   };
   if (profile.validator) {
     const vars = { manifest: manifestRel, media: mediaRel };
@@ -228,13 +236,17 @@ export async function pick(options: PickOptions): Promise<PickResult> {
       `"${options.candidateId}" is not a QA-passing candidate of run ${record.runId} (passing: ${ids})`,
     );
   }
-  const bytes = new Uint8Array(await readFile(join(options.runDir, candidate.file)));
+  const bytes = new Uint8Array(
+    await readFile(join(options.runDir, readRecordPath(candidate.file, "staged file"))),
+  );
   if (sha256(bytes) !== candidate.sha256) {
     throw new InputError(`staged file ${candidate.file} changed since it was staged`);
   }
   const sidecars = [];
   for (const staged of candidate.sidecars ?? []) {
-    const sidecarBytes = new Uint8Array(await readFile(join(options.runDir, staged.file)));
+    const sidecarBytes = new Uint8Array(
+      await readFile(join(options.runDir, readRecordPath(staged.file, "staged file"))),
+    );
     if (sha256(sidecarBytes) !== staged.sha256) {
       throw new InputError(`staged file ${staged.file} changed since it was staged`);
     }

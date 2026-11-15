@@ -298,7 +298,7 @@ function realish(path: string): string {
     missing.unshift(basename(current));
     current = dirname(current);
   }
-  return join(realpathSync(current), ...missing);
+  return join(realpathSync.native(current), ...missing);
 }
 
 /**
