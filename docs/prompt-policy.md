@@ -22,7 +22,7 @@ A blocklist misses paraphrases, so the text that passes it also goes to a model.
 - the call fails or answers out of type: exit 4 `provider_error`, and no other call runs;
 - no configured provider serves the decisions role: the plan step exits 2 `route_unavailable`, before anything is called.
 
-So the check fails closed: a run never goes on without it. It is journaled like every call, so a resumed run does not pay for it twice. The run record and each candidate's provenance carry the record with the check's `model` (`<provider>:prompt-policy:<model>`) and `probability`.
+So the check fails closed: a run never goes on without it. It is journaled like every call, so a resumed run does not pay for it twice. It is reserved under the run's cap, and what it spent counts against that same cap for the rest of the run. The run record and each candidate's provenance carry the record with the check's `model` (`<provider>:prompt-policy:<model>`) and `probability`.
 
 The policy is measured on `test/fixtures/prompt-policy/red-team.jsonl`: prompts that must be refused (named and paraphrased) and allowed look-alikes, each `source: "team"` or `"outside"`, an outside row with its public https reference. [docs/decisions.md](decisions.md#prompt-policy-bars) sets the bars, a refusal rate of at least 0.9 and a false-refusal rate of at most 0.1, and the real check `test/real/prompt-policy.real.ts` fails below them.
 

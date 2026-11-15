@@ -14,11 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { Budget, BudgetExceededError } from "../src/budget.ts";
 import { checkPromptText } from "../src/policy/text.ts";
+import { withRunScope } from "../src/runs/journal.ts";
 import { PROMPT_POLICY_QUESTION } from "../src/policy/model.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { forecastOf, requestDigest } from "../src/runs/plan.ts";
 import type { PlanJob } from "../src/runs/plan.ts";
+import { syntheticSheet } from "./fixtures/sheet.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -251,4 +254,49 @@ test("red-team.jsonl has at least 60 schema-valid rows, outside rows cite https,
   }
   const rows = lines.map((l) => JSON.parse(l) as RedTeamRow);
   assert.ok(rows.some((r) => r.expect === "refuse") && rows.some((r) => r.expect === "allow"));
+});
+
+test("import --no-propose --bible makes the one prompt-policy call, and without --bible makes none", async () => {
+  writeSettings({});
+  const { script, events } = await recorder(ALLOW);
+  const world = await syntheticWorld();
+  temporary.push(world.dir);
+  const bible = join(world.bibleDir, "bible.json");
+  const profile = join(world.dir, "profile.json");
+  const sheet = join(world.dir, "sheet.png");
+  await writeFile(bible, JSON.stringify(world.bible));
+  await writeFile(profile, JSON.stringify(world.profile));
+  await writeFile(sheet, syntheticSheet().png);
+  approveProfile(world.profile, { targetDir: world.targetDir });
+  const base = [
+    "import",
+    ...["--sheet", sheet, "--profile", profile, "--asset", "fern", "--tool", "hand drawn"],
+    ...["--no-propose", "--imports", join(world.dir, "imports"), "--runs", world.runsDir],
+    ...["--provider-script", script, "--json"],
+  ];
+
+  const bare = doc(await cli([...base, "--dry-run"]));
+  assert.deepEqual(bare["jobs"], [], "no prompt text, no check");
+  assert.equal(bare["paid"], false);
+
+  const withBible = [...base, "--bible", bible];
+  const dry = doc(await cli([...withBible, "--dry-run"]));
+  assert.deepEqual(
+    (dry["jobs"] as PlanJob[]).map((j) => j.operation),
+    ["prompt-policy"],
+  );
+  assert.equal(dry["paid"], true);
+  const run = await cli(withBible);
+  assert.equal(run.code, 0, run.stderr);
+  assert.deepEqual(await events(), ["prompt-policy"]);
+});
+
+test("the prompt-policy call's spend counts against the run's one cap", async () => {
+  await withRunScope({ priorSpentUsd: 0.4 }, async () => {
+    const budget = new Budget(1);
+    assert.equal(budget.spentUsd, 0.4);
+    assert.throws(() => budget.reserve(0.7), BudgetExceededError);
+    budget.settle(budget.reserve(0.6), 0.6);
+  });
+  assert.equal(new Budget(1).spentUsd, 0, "outside a run nothing was spent before");
 });

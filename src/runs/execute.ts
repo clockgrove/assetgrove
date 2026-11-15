@@ -268,13 +268,9 @@ export async function executeRun(options: {
         const text = policyTextOf(plan);
         if (text !== undefined && plan.promptPolicy !== undefined) {
           try {
-            scope.promptPolicy = await promptPolicyCheck(
-              ctx,
-              options,
-              plan,
-              text,
-              plan.promptPolicy,
-            );
+            const checked = await promptPolicyCheck(ctx, options, plan, text, plan.promptPolicy);
+            scope.promptPolicy = checked.record;
+            scope.priorSpentUsd = checked.spentUsd;
           } catch (error) {
             const refusedRecord = (error as { policy?: PromptPolicyRecord }).policy;
             if (refusedRecord !== undefined) promptPolicy = refusedRecord;
@@ -345,7 +341,7 @@ async function promptPolicyCheck(
   plan: WorkPlan,
   text: string,
   record: PromptPolicyRecord,
-): Promise<PromptPolicyRecord> {
+): Promise<{ record: PromptPolicyRecord; spentUsd: number }> {
   const providers = await providerSet(options.providerScript, ctx);
   const budget = new Budget(plan.capUsd, ledgerFor(spendLedger(ctx, options.workItem), providers));
   // The whole request's forecast must fit the ledger before its first call, this one.
@@ -356,7 +352,9 @@ async function promptPolicyCheck(
     routes: providers.routes,
     log: ctx.log,
   });
-  return checkPromptModel(caller, text, record);
+  const checked = await checkPromptModel(caller, text, record);
+  // The command's budgets count this spend against the same cap (src/budget.ts).
+  return { record: checked, spentUsd: budget.spentUsd };
 }
 
 /** The settings and the providers they make, for reconciling; makes no call. */
