@@ -19,6 +19,12 @@ import type {
   StripInput,
 } from "./types.ts";
 
+/**
+ * Animation QA's model-backed checks, identity flicker and holes (src/qa/stability.ts): they
+ * filter only where measured stable on the run's model, otherwise their reasons are advisory.
+ */
+export { ANIMATION_VISION_CHECKS } from "../qa/stability.ts";
+
 const alphaAt = (r: Raster, i: number): number => r.data[i * 4 + 3] as number;
 
 /** Baseline, alpha-weighted centre of mass, area and footprint of every frame. */

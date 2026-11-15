@@ -26,6 +26,9 @@ import {
 } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
+import { VISION_CHECKS } from "../src/qa.ts";
+import type { StabilityEntry } from "../src/qa/stability.ts";
+
 async function syntheticWorld(): Promise<World> {
   const world = await plainWorld();
   approveProfile(world.profile, { targetDir: world.targetDir });
@@ -33,6 +36,20 @@ async function syntheticWorld(): Promise<World> {
 }
 
 const exec = promisify(execFile);
+
+/**
+ * Qualifying stability entries for the vision verdict's checks on the default vision model, so
+ * these runs filter on the scripted verdict as a measured-stable check would.
+ */
+const MEASURED: StabilityEntry[] = VISION_CHECKS.map((checkId) => ({
+  checkId,
+  version: "1",
+  model: defaultRoutes.vision.model,
+  cases: 30,
+  repeats: 3,
+  agreement: 0.95,
+  measuredAt: "2026-11-14T00:00:00.000Z",
+}));
 
 function options(
   world: World,
@@ -50,6 +67,7 @@ function options(
     providerName: "scripted",
     generators: imageGenerators,
     runsDir: world.runsDir,
+    stability: MEASURED,
   };
 }
 

@@ -95,6 +95,10 @@ export function deterministicChecks(strip: Raster, expected: SpecExpectation): R
   return [transparency, frames, palette];
 }
 
+/**
+ * The checks of the vision verdict. Each is model-backed (declared in src/qa/stability.ts), so it
+ * filters only where it is measured stable on the run's vision model.
+ */
 export const VISION_CHECKS = ["transparency", "frame-count", "identity", "perspective"] as const;
 
 export interface VisionPromptInput {
@@ -165,7 +169,12 @@ export function parseVisionVerdict(text: string): Reason[] {
   });
 }
 
+/**
+ * The verdict of a candidate's reasons: passes when every reason that filters passed. A `shadow`
+ * reason (an advisory model-backed check, src/qa/stability.ts) is recorded but never filters.
+ */
 export function combineQa(...groups: Reason[][]): QaResult {
   const reasons = groups.flat();
-  return { passed: reasons.length > 0 && reasons.every((r) => r.passed), reasons };
+  const filtering = reasons.filter((r) => !r.shadow);
+  return { passed: filtering.length > 0 && filtering.every((r) => r.passed), reasons };
 }
