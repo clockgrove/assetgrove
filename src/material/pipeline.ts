@@ -19,6 +19,8 @@ import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256, sniffMediaType } from "../request.ts";
 import type { AssetSpec, LoadedReference, QaResult, Reason, TargetProfile } from "../types.ts";
+import { applyStability, MATERIAL_LIT_CHECKS } from "../qa/stability.ts";
+import type { FilteringState, StabilityEntry } from "../qa/stability.ts";
 import { CORE_METHODS, temporalChecks, validateMaterialMap } from "./core.ts";
 import { checkCompressed } from "./rendition.ts";
 import type { MaterialChannel } from "./core.ts";
@@ -55,13 +57,7 @@ export interface MaterialOutput {
   height: number;
 }
 
-const LIT_CHECKS = [
-  "flat-albedo",
-  "normal-orientation",
-  "emissive-placement",
-  "dusk-rain",
-  "night",
-];
+const LIT_CHECKS = MATERIAL_LIT_CHECKS.map((c) => c.id);
 
 function imageReference(bytes: Uint8Array, role: string, path: string): LoadedReference {
   return { bytes, mediaType: "image/png", role, path, sha256: sha256(bytes) };
@@ -101,7 +97,15 @@ export async function runMaterials(options: {
   call: Caller;
   /** How the profile style's commands are approved; the developer settings with no prompt when absent. */
   gate?: ApprovalGate;
-}): Promise<{ passed: boolean; reportPath: string; outputs: MaterialOutput[]; qa: QaResult }> {
+  /** The stability entries the lit checks filter by (src/qa/stability.json by default). */
+  stability?: readonly StabilityEntry[];
+}): Promise<{
+  passed: boolean;
+  reportPath: string;
+  outputs: MaterialOutput[];
+  qa: QaResult;
+  filtering?: FilteringState[];
+}> {
   const startedAt = new Date().toISOString();
   const outDir = resolve(options.outDir);
   await mkdir(outDir, { recursive: true });
@@ -260,6 +264,7 @@ export async function runMaterials(options: {
   const outputs: MaterialOutput[] = [];
   const sidecars = new Map<string, Record<string, unknown>>();
   let litComplete = false;
+  let filtering: FilteringState[] | undefined;
   const common = {
     startedAt,
     profileHash: sha256(Buffer.from(JSON.stringify(profile))),
@@ -281,7 +286,8 @@ export async function runMaterials(options: {
   };
   const writeReport = async () => {
     const qa = {
-      passed: litComplete && reasons.length > 0 && reasons.every((r) => r.passed),
+      passed:
+        litComplete && reasons.some((r) => !r.shadow) && reasons.every((r) => r.passed || r.shadow),
       reasons,
     };
     const finishedAt = new Date().toISOString();
@@ -327,12 +333,13 @@ export async function runMaterials(options: {
           commandResults,
           lightRig: config.lightRig,
           qa,
+          ...(filtering && { filtering }),
         },
         null,
         2,
       ) + "\n",
     );
-    return { passed: qa.passed, reportPath, outputs, qa };
+    return { passed: qa.passed, reportPath, outputs, qa, ...(filtering && { filtering }) };
   };
   if (reasons.some((r) => !r.passed)) return writeReport();
   try {
@@ -488,7 +495,17 @@ export async function runMaterials(options: {
       `Image 1 is the flat albedo under neutral key light; image 2 is the target renderer at dusk in rain; image 3 is the target renderer at night. Compare all frames and reject inverted normals, misaligned edges, incorrect wetness/flow response and misplaced glow. Only these spec-named sources may emit: ${namedLightSources.join(", ") || "none"}. Return ONLY JSON {"checks":[{"check":"flat-albedo","passed":true,"reason":"..."},...]} with exactly one verdict for each: ${LIT_CHECKS.join(", ")}.`,
       previews,
     );
-    reasons.push(...parseLit(text));
+    // A lit verdict filters only where the material-qa model is measured stable; otherwise advisory.
+    const lit = applyStability(
+      parseLit(text),
+      { "material-qa": call.route("material-qa") },
+      {
+        checks: MATERIAL_LIT_CHECKS,
+        ...(options.stability && { entries: options.stability }),
+      },
+    );
+    filtering = lit.filtering;
+    reasons.push(...lit.reasons);
     litComplete = true;
     await writeFile(
       join(outDir, "preview.html"),

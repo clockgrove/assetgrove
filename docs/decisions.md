@@ -142,11 +142,17 @@ These model-backed checks are advisory at 0.1, with no qualifying entry on the c
   "perspective",
   "identity-flicker",
   "holes",
-  "lookdev-markings"
+  "lookdev-markings",
+  "style-score",
+  "flat-albedo",
+  "normal-orientation",
+  "emissive-placement",
+  "dusk-rain",
+  "night"
 ]
 ```
 
-`transparency`, `frame-count`, `identity` and `perspective` are the vision verdict's checks of a still or strip; the deterministic `transparency` and `frame-count` checks of the same names always filter. `identity-flicker` and `holes` are animation QA's vision checks. `lookdev-markings` measures each marking in boxes a vision model draws, and on the same code it names a different set of drifting markings on each run; while advisory, its reason starts by saying so, and a person judges the compare images.
+`transparency`, `frame-count`, `identity` and `perspective` are the vision verdict's checks of a still or strip; the deterministic `transparency` and `frame-count` checks of the same names always filter. `identity-flicker` and `holes` are animation QA's vision checks. `lookdev-markings` measures each marking in boxes a vision model draws, and on the same code it names a different set of drifting markings on each run; while advisory, its reason starts by saying so, and a person judges the compare images. `style-score` is a planned run's vision verdict on each candidate (`apply`): while advisory, a candidate below the strictness is kept, its reason marked `shadow`. `flat-albedo`, `normal-orientation`, `emissive-placement`, `dusk-rain` and `night` are the material pipeline's lit checks (`materials`): while advisory, a failing lit verdict is recorded in `materials.json` but no longer fails the maps.
 
 ## 3D identity results are provisional
 

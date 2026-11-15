@@ -6,6 +6,23 @@ import { tmpdir } from "node:os";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createPlan, applyPlan, savePlan, assertOriginalDescription } from "../src/planning.ts";
 import { defaultRoutes } from "../src/routes.ts";
+import { STYLE_SCORE_CHECK } from "../src/qa/stability.ts";
+import type { GenerationPlan } from "../src/planning.ts";
+
+/** A qualifying style-score entry for the plan's QA model, so its verdict filters. */
+function stableStyle(plan: GenerationPlan) {
+  return [
+    {
+      checkId: STYLE_SCORE_CHECK.id,
+      version: STYLE_SCORE_CHECK.version,
+      model: plan.settings.qaRoute.model,
+      cases: 30,
+      repeats: 3,
+      agreement: 0.95,
+      measuredAt: "2026-11-14T00:00:00.000Z",
+    },
+  ];
+}
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { createRaster, encodePng, decodeImage, opaqueBox, setPixel } from "../src/image/raster.ts";
@@ -328,9 +345,24 @@ test("plan reserves compiler plus candidate QA cost before calls and filters by 
     provider,
     autoApprove: true,
     outDir: join(f.root, "runs"),
+    stability: stableStyle(plan),
   });
   assert.equal(run.filtered, 1);
   assert.equal(run.candidates.length, 0);
+  assert.deepEqual(run.filtering, [{ check: "style-score", state: "filtering" }]);
+  // Without a qualifying entry the style verdict is advisory: the candidate is kept, marked shadow.
+  const advisory = await applyPlan(plan, {
+    provider,
+    autoApprove: true,
+    outDir: join(f.root, "runs"),
+  });
+  assert.equal(advisory.run.filtered, 0);
+  assert.equal(advisory.run.candidates.length, 1);
+  const reason = advisory.run.candidates[0]!.reasons[0]!;
+  assert.deepEqual([reason.check, reason.passed, reason.shadow], ["style-score", false, true]);
+  assert.deepEqual(advisory.run.filtering, [
+    { check: "style-score", state: "advisory", cause: "no-entry" },
+  ]);
 });
 
 test("sprite-strip compiles and applies each exact frame prompt with approved key pose and full colour rule", async () => {
@@ -500,6 +532,7 @@ test("malformed compiler and QA JSON refuse safely before staging a candidate", 
     provider,
     autoApprove: true,
     outDir: join(f.root, "runs"),
+    stability: stableStyle(plan),
   });
   assert.equal(run.candidates.length, 0);
   assert.equal(run.filtered, 1);

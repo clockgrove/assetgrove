@@ -57,6 +57,8 @@ import {
 } from "./identity.ts";
 import type { IdentityMode, IdentityQuestionKind, IdentityRecordCheck } from "./identity.ts";
 import type { AssetSpec, CallRecord, LoadedReference, Reason, TargetProfile } from "./types.ts";
+import { filteringState, mergeFiltering, STYLE_SCORE_CHECK } from "./qa/stability.ts";
+import type { StabilityEntry } from "./qa/stability.ts";
 import type { RunRecord } from "./loop.ts";
 import { writeRun } from "./loop.ts";
 
@@ -174,6 +176,8 @@ export interface CreatePlanOptions {
   identityMode?: string;
   /** The developer settings' run cap (`caps.runUsd`): the run settings' `capUsd` may lower it, never raise it. */
   runCapUsd?: number;
+  /** The stability entries the style verdict filters by (src/qa/stability.json by default). */
+  stability?: readonly StabilityEntry[];
 }
 
 function hash(value: unknown): string {
@@ -863,6 +867,8 @@ export interface ApplyPlanOptions {
   log?: (message: string) => void;
   /** The developer settings' run cap (`caps.runUsd`): the run settings' `capUsd` may lower it, never raise it. */
   runCapUsd?: number;
+  /** The stability entries the style verdict filters by (src/qa/stability.json by default). */
+  stability?: readonly StabilityEntry[];
 }
 
 async function checkedPlan(
@@ -1113,22 +1119,29 @@ export async function applyPlan(
           : undefined;
       if (identity) pairs.push({ qa: qaPassed, identity: identity.passed });
       const identityReasons: Reason[] = identity ? [identityReason(identity)] : [];
-      if (!qaPassed) {
+      // The style verdict filters only where the QA model is measured stable; otherwise advisory.
+      const styleState = filteringState(
+        STYLE_SCORE_CHECK,
+        plan.settings.qaRoute.model,
+        options.stability,
+      );
+      run.filtering = mergeFiltering(run.filtering ?? [], [styleState]);
+      const styleReason: Reason = {
+        check: "style-score",
+        passed: qaPassed,
+        reason: qaPassed
+          ? `${score} >= ${plan.settings.strictness}; ${typeof verdict.reason === "string" ? verdict.reason : "constitution checks passed"}`
+          : typeof verdict.reason === "string" && verdict.reason
+            ? verdict.reason
+            : `style score ${String(score)} below ${plan.settings.strictness} or QA did not pass`,
+        source: "vision",
+        ...(styleState.state === "advisory" && { shadow: true as const }),
+      };
+      if (!qaPassed && styleState.state === "filtering") {
         run.filtered++;
         (run.rejections ??= []).push({
           candidate: index + 1,
-          reasons: [
-            {
-              check: "style-score",
-              passed: false,
-              reason:
-                typeof verdict.reason === "string" && verdict.reason
-                  ? verdict.reason
-                  : `style score ${String(score)} below ${plan.settings.strictness} or QA did not pass`,
-              source: "vision",
-            },
-            ...identityReasons,
-          ],
+          reasons: [styleReason, ...identityReasons],
         });
         continue;
       }
@@ -1196,15 +1209,7 @@ export async function applyPlan(
         mediaType: image.mediaType,
         extension,
         sha256: sha256(bytes),
-        reasons: [
-          {
-            check: "style-score",
-            passed: true,
-            reason: `${score} >= ${plan.settings.strictness}; ${typeof verdict.reason === "string" ? verdict.reason : "constitution checks passed"}`,
-            source: "vision",
-          },
-          ...identityReasons,
-        ],
+        reasons: [styleReason, ...identityReasons],
         fields: {
           review: "pending",
           styleScore: score,

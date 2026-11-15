@@ -8,7 +8,7 @@
  * `filtering` field says why.
  */
 import { defaultRoutes } from "../routes.ts";
-import type { Routes } from "../routes.ts";
+import type { Route } from "../routes.ts";
 import type { Reason } from "../types.ts";
 import shipped from "./stability.json" with { type: "json" };
 
@@ -96,11 +96,28 @@ export const LOOKDEV_MARKINGS_CHECK: QaCheck = {
   operation: "lookdev-markings",
 };
 
-/** Every declared QA check. Checks not declared here are deterministic and always filter. */
+/** The planned run's style verdict (src/planning.ts): a vision model scores each candidate. */
+export const STYLE_SCORE_CHECK: QaCheck = vision("style-score", "planned-qa");
+
+/** The material pipeline's lit checks (src/material/pipeline.ts): a vision model judges the renders. */
+export const MATERIAL_LIT_CHECKS: readonly QaCheck[] = [
+  "flat-albedo",
+  "normal-orientation",
+  "emissive-placement",
+  "dusk-rain",
+  "night",
+].map((id) => vision(id, "material-qa"));
+
+/**
+ * Every declared QA check that filters candidates. A check whose verdict a model decides is
+ * declared here as model-backed; the coverage test reads this list.
+ */
 export const QA_CHECKS: readonly QaCheck[] = [
   ...IMAGE_QA_CHECKS,
   ...ANIMATION_VISION_CHECKS,
   LOOKDEV_MARKINGS_CHECK,
+  STYLE_SCORE_CHECK,
+  ...MATERIAL_LIT_CHECKS,
 ];
 
 /** The model the coverage rule measures against: the core default vision model. */
@@ -180,7 +197,7 @@ export function checkOf(
  */
 export function applyStability<R extends Reason>(
   reasons: R[],
-  routes: Routes,
+  routes: Readonly<Record<string, Pick<Route, "model"> | undefined>>,
   options: { entries?: readonly StabilityEntry[]; checks?: readonly QaCheck[] } = {},
 ): { reasons: R[]; passed: boolean; filtering: FilteringState[] } {
   const states = new Map<string, FilteringState>();
