@@ -13,6 +13,7 @@ import { ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { InputError, ProviderError } from "./errors.ts";
+import { checkLayout } from "./paths.ts";
 import { readFormat } from "./formats.ts";
 import { licenseFields, requireGrant } from "./license.ts";
 import {
@@ -361,6 +362,8 @@ async function prepare(options: CreatePlanOptions): Promise<Prepared> {
       ? DEFAULT_PROFILE
       : (await loadProfile(options.profilePath)).value,
   );
+  // Before any paid call: the paths the hand-off will write for this spec can be written.
+  checkLayout(profile, spec);
   const routes = routesOf(options);
   const generationOperation = spec.kind === "sprite-strip" ? "edit" : "still";
   const generationRoute = route(routes[generationOperation], "generation");

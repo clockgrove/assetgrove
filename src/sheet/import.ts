@@ -19,8 +19,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Caller } from "../calls.ts";
 import type { ApprovalGate } from "../approvals.ts";
-import { writeToTarget } from "../handoff.ts";
-import type { TargetWriteResult } from "../handoff.ts";
+import { checkPreparedWrites, commitTargetWrite, prepareTargetWrite } from "../handoff.ts";
+import type { PreparedTargetWrite, TargetWriteResult } from "../handoff.ts";
 import type { PresetRegistry } from "../handoff/presets/index.ts";
 import { drawDigits, textWidth } from "../image/digits.ts";
 import {
@@ -651,6 +651,14 @@ export async function writeFamilies(
   const previews: Array<{ name: string; file: string; count: number; jitterPx: number }> = [];
   await mkdir(join(options.importDir, "preview"), { recursive: true });
 
+  const pending: Array<{
+    s: (typeof staged)[number];
+    count: number;
+    bytes: Uint8Array;
+    strip: Raster;
+    digitalSourceType: DigitalSourceType;
+    prepared: PreparedTargetWrite;
+  }> = [];
   for (const s of staged) {
     const count = s.registered.length;
     const styled = runOperation(
@@ -793,7 +801,7 @@ export async function writeFamilies(
         metadataStep(digitalSourceType, [pixelHash(strip)]),
       ],
     };
-    const result = await writeToTarget({
+    const prepared = await prepareTargetWrite({
       profile: record.profile,
       spec,
       bibleVersion: record.bibleVersion,
@@ -817,6 +825,13 @@ export async function writeFamilies(
       ...(options.gate && { gate: options.gate }),
       ...(options.registry && { registry: options.registry }),
     });
+    pending.push({ s, count, bytes, strip, digitalSourceType, prepared });
+  }
+  // Before the first family is written: no two families' writes name or reach one file.
+  checkPreparedWrites(pending.map((p) => p.prepared));
+
+  for (const { s, count, bytes, strip, digitalSourceType, prepared } of pending) {
+    const result = await commitTargetWrite(prepared);
     const previewFile = `preview/${s.family.name}.png`;
     await writeFile(join(options.importDir, previewFile), bytes);
     const durationMs = record.durationMs ?? DEFAULT_DURATION_MS;
