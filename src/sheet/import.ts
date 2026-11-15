@@ -512,6 +512,8 @@ export interface WriteFamiliesOptions {
   targetDir: string;
   jitterBoundPx?: number;
   now?: () => Date;
+  /** Settings and TTY the target validator's approval is checked against; loaded when absent. */
+  approvals?: import("../approvals.ts").ApprovalContext;
 }
 
 export interface WrittenFamily {
@@ -806,6 +808,7 @@ export async function writeFamilies(
       provenance,
       run: { runId: record.importId, candidateId: s.family.name, pickedAt: at },
       targetDir: options.targetDir,
+      ...(options.approvals && { approvals: options.approvals }),
     });
     const previewFile = `preview/${s.family.name}.png`;
     await writeFile(join(options.importDir, previewFile), bytes);

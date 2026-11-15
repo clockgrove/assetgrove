@@ -1,3 +1,4 @@
+import { processTty } from "../confirm/prompt.ts";
 import { pick } from "../handoff.ts";
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -13,7 +14,9 @@ export const pickCommand = defineCommand<PickArgs>({
   tool: "pick",
   summary: "write a chosen candidate and its manifest into the target, review pending",
   details: `Writes the chosen candidate and its manifest into the target with review pending, then runs
-the target profile's validator when it declares one. A human runs pick; agents never do.`,
+the target profile's validator when it declares one. The validator runs only once its command
+hash is approved (settings, an approval file, or a yes on this terminal); otherwise pick writes
+nothing and exits 8 confirmation_required. A human runs pick; agents never do.`,
   input: {
     type: "object",
     properties: {
@@ -30,11 +33,12 @@ the target profile's validator when it declares one. A human runs pick; agents n
   },
   effect: { readOnly: false, spends: "never", writes: "target" },
   confirm: "pick",
-  async run(args) {
+  async run(args, ctx) {
     const result = await pick({
       runDir: args.run,
       candidateId: args.candidate,
       targetDir: args.target,
+      approvals: { settings: ctx.settings, tty: ctx.tty ?? processTty() },
     });
     const lines = [`wrote ${result.mediaPath}`, `wrote ${result.manifestPath}`];
     if (result.provenancePath) lines.push(`wrote ${result.provenancePath}`);

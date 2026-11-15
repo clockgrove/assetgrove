@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { formatReport } from "../animation/run.ts";
+import { processTty } from "../confirm/prompt.ts";
 import { readJson } from "../inputs.ts";
 import { DEFAULT_JITTER_BOUND_PX, GROUPING_FILE, writeFamilies } from "../sheet/import.ts";
 import { refusal } from "./result.ts";
@@ -48,7 +49,7 @@ Agents never confirm a grouping.`,
   },
   effect: { readOnly: false, spends: "never", writes: "target" },
   confirm: "write",
-  async run(args) {
+  async run(args, ctx) {
     const importDir = args.import;
     const groupingPath = args.grouping ?? join(importDir, GROUPING_FILE);
     const result = await writeFamilies({
@@ -56,6 +57,7 @@ Agents never confirm a grouping.`,
       grouping: (await readJson<unknown>(groupingPath)).value,
       targetDir: args.target,
       jitterBoundPx: args.jitterBound ?? DEFAULT_JITTER_BOUND_PX,
+      approvals: { settings: ctx.settings, tty: ctx.tty ?? processTty() },
     });
     const lines: string[] = [];
     for (const f of result.families) {

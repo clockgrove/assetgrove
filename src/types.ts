@@ -302,6 +302,17 @@ export interface Provenance {
   steps?: TransformStep[];
   /** The identity score against the character's identity lock, when the character has one. */
   identity?: import("./identity.ts").IdentityScore;
+  /** Each gated command run on this output (src/approvals.ts): its hash and approval method. */
+  commands?: CommandStep[];
+}
+
+/** A command a developer wrote, as run: kind, argv template, cwd, hash and approval method. */
+export interface CommandStep {
+  kind: string;
+  hash: string;
+  argv: string[];
+  cwd: string;
+  method: string;
 }
 
 /** A file a generator produced. Each output declares its own media type and extension. */

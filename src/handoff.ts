@@ -11,6 +11,9 @@ import {
 } from "./metadata.ts";
 import { decodeImage } from "./image/raster.ts";
 import { pixelHash } from "./transform/run.ts";
+import { requireApproval } from "./approvals.ts";
+import type { ApprovalContext, ApprovalMethod } from "./approvals.ts";
+import { processTty } from "./confirm/prompt.ts";
 import { InputError } from "./errors.ts";
 import { requireLicensable } from "./license.ts";
 import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
@@ -19,6 +22,7 @@ import { readRun, writeRun } from "./loop.ts";
 import type { StagedCandidate } from "./loop.ts";
 import { checkWrites, readRecordPath, relativeRecordPath } from "./paths.ts";
 import { sha256 } from "./request.ts";
+import { loadSettings } from "./settings.ts";
 import { render, renderString, setPath } from "./template.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "./types.ts";
 
@@ -30,6 +34,8 @@ export interface PickOptions {
   /** The target repository (or directory) the pick is written into. */
   targetDir: string;
   now?: () => Date;
+  /** Settings and TTY the validator's approval is checked against; loaded when absent. */
+  approvals?: ApprovalContext;
 }
 
 export interface PickResult {
@@ -37,7 +43,21 @@ export interface PickResult {
   mediaPath: string;
   manifestPath: string;
   provenancePath?: string;
-  validator?: { accepted: boolean; command: string[]; output: string };
+  validator?: ValidatorResult;
+}
+
+/** What the target's validator said, and the approval it ran under. */
+export interface ValidatorResult {
+  accepted: boolean;
+  command: string[];
+  output: string;
+  hash: string;
+  method: ApprovalMethod;
+}
+
+/** The approval context of a hand-off that was given none: the settings and the process TTY. */
+function defaultApprovals(targetDir: string): ApprovalContext {
+  return { settings: loadSettings({ target: targetDir }), tty: processTty() };
 }
 
 function inside(root: string, path: string): string {
@@ -82,6 +102,8 @@ export interface TargetWrite {
   /** Values the templates read as `{{run.*}}`. */
   run: Record<string, unknown>;
   targetDir: string;
+  /** Settings and TTY the validator's approval is checked against; loaded when absent. */
+  approvals?: ApprovalContext;
 }
 
 export interface TargetWriteResult {
@@ -90,7 +112,7 @@ export interface TargetWriteResult {
   provenancePath?: string;
   /** Every written file, relative to the target directory. */
   files: string[];
-  validator?: { accepted: boolean; command: string[]; output: string };
+  validator?: ValidatorResult;
 }
 
 /**
@@ -99,7 +121,8 @@ export interface TargetWriteResult {
  * provenance. Then runs the target's validator, when the profile declares one. Assetgrove never
  * writes any review value other than pending. Refuses with a LicenseError, before writing, an
  * output whose provider grant the target cannot declare (src/license.ts); `{{profile.license}}`
- * renders the licence the output is declared under.
+ * renders the licence the output is declared under. The validator runs only once approved
+ * (src/approvals.ts, kind `validator`); without an approval nothing is written (exit 8).
  */
 export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResult> {
   const { profile, spec } = write;
@@ -117,6 +140,18 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     bytes: embedDigitalSourceType(write.output.bytes, write.output.mediaType, digitalSourceType),
   };
   const provenance = { ...licensed, digitalSourceType };
+  const targetDir = resolve(write.targetDir);
+  // Before anything is written: the validator a shared profile names must be approved.
+  const approved = profile.validator
+    ? await requireApproval(
+        { kind: "validator", argv: profile.validator.command, cwd: targetDir },
+        write.approvals ?? defaultApprovals(targetDir),
+      )
+    : undefined;
+  if (approved) {
+    const { kind, hash, argv, cwd } = approved.command;
+    provenance.commands = [{ kind, hash, argv, cwd, method: approved.method }];
+  }
   const last = provenance.steps?.at(-1);
   if (
     last?.op !== "embed-digital-source-type" ||
@@ -127,7 +162,6 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
       : [];
     provenance.steps = [...(provenance.steps ?? []), metadataStep(digitalSourceType, hashes)];
   }
-  const targetDir = resolve(write.targetDir);
   const context: Record<string, unknown> = {
     spec: { ...spec.fields, ...spec },
     profile: {
@@ -207,18 +241,26 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     ...(provenancePath !== undefined && { provenancePath }),
     files: writes.map(([path]) => relativeRecordPath(targetDir, path)),
   };
-  if (profile.validator) {
+  if (profile.validator && approved) {
+    const { method } = approved;
+    const { hash } = approved.command;
     const vars = { manifest: manifestRel, media: mediaRel };
     const command = profile.validator.command.map((part) => renderString(part, vars));
     const [file, ...args] = command;
     if (!file) throw new InputError("the profile's validator command is empty");
     try {
       const { stdout, stderr } = await run(file, args, { cwd: targetDir });
-      result.validator = { accepted: true, command, output: `${stdout}${stderr}`.trim() };
+      result.validator = {
+        accepted: true,
+        command,
+        output: `${stdout}${stderr}`.trim(),
+        hash,
+        method,
+      };
     } catch (error) {
       const e = error as { stdout?: string; stderr?: string; message: string };
       const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim() || e.message;
-      result.validator = { accepted: false, command, output: out };
+      result.validator = { accepted: false, command, output: out, hash, method };
     }
   }
   return result;
@@ -279,6 +321,7 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     provenance: candidate.provenance,
     run: { runId: record.runId, candidateId: candidate.id, pickedAt: now().toISOString() },
     targetDir,
+    ...(options.approvals && { approvals: options.approvals }),
   });
   const { files, ...rest } = written;
   record.picked = {
