@@ -1,5 +1,17 @@
-import { McpServer, fromJsonSchema } from "@modelcontextprotocol/server";
-import type { ServerContext, ToolAnnotations } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  createRequestStateCodec,
+  fromJsonSchema,
+  inputRequired,
+  inputResponse,
+  isInputRequiredResult,
+} from "@modelcontextprotocol/server";
+import type {
+  RequestStateCodec,
+  ServerContext,
+  ToolAnnotations,
+} from "@modelcontextprotocol/server";
+import { randomBytes } from "node:crypto";
 import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -10,12 +22,15 @@ import { checkContextEnvironment, isPaid } from "./commands/context.ts";
 import { commands } from "./commands/registry.ts";
 import { resultDocument } from "./commands/result.ts";
 import { errorOutcome, runCommand, toolInputSchema } from "./commands/runner.ts";
-import type { CommandSpec, RunContext } from "./commands/types.ts";
+import type { CommandSpec, Outcome, RunContext } from "./commands/types.ts";
+import { clientOf, confirmForm, elicitationPort } from "./confirm/mcp.ts";
+import type { FormAnswer, SealedRequest } from "./confirm/mcp.ts";
+import { digestOf } from "./confirm/records.ts";
 import { InputError, ProviderError } from "./errors.ts";
 import { checkTrackedKeys } from "./guard.ts";
 import { redact } from "./redact.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
-import { applyPlan, createPlan, savePlan } from "./planning.ts";
+import { PlanChangedError, applyPlan, createPlan, savePlan } from "./planning.ts";
 import type { SpendLedger } from "./spend.ts";
 
 export interface ToolContext {
@@ -198,17 +213,85 @@ async function contactImage(
   }
 }
 
+/** The key of the inputRequired form a confirmation is asked under. */
+const FORM_KEY = "confirm";
+
+/** The person's response to the form a call's sealed state asked, when the client sent one. */
+function formAnswer(request: ServerContext): FormAnswer | undefined {
+  const view = inputResponse(request.mcpReq.inputResponses, FORM_KEY);
+  if (view.kind !== "elicit") return undefined;
+  return { action: view.action, ...(view.content && { content: view.content }) };
+}
+
+/**
+ * Runs one tool call. A client that declares form elicitation gets a port answering the request
+ * its sealed state names (src/confirm/mcp.ts); when the command reaches a request no answer covers,
+ * the call returns inputRequired with that request's form and a sealed state naming it, and the
+ * client calls again with the person's response. A call whose arguments differ from the ones its
+ * state sealed exits 2 `plan_changed`.
+ */
+async function callTool(
+  spec: CommandSpec,
+  args: Arguments,
+  ctx: RunContext,
+  request: ServerContext,
+  server: McpServer,
+  codec: RequestStateCodec<SealedRequest>,
+  marked: boolean,
+): Promise<Outcome | ReturnType<typeof inputRequired>> {
+  const tool = spec.tool!;
+  const argsDigest = digestOf(args);
+  const sealed = request.mcpReq.requestState<SealedRequest>();
+  if (sealed !== undefined && (sealed.tool !== tool || sealed.args !== argsDigest)) {
+    return errorOutcome(
+      new PlanChangedError(`the ${tool} call changed since its confirmation form was sent`),
+    );
+  }
+  const client = clientOf(request.mcpReq.envelope as Record<string, unknown> | undefined, {
+    capabilities: server.server.getClientCapabilities(),
+    name: server.server.getClientVersion()?.name,
+    protocolVersion: server.server.getNegotiatedProtocolVersion(),
+  });
+  const answer = formAnswer(request);
+  const port = client.form
+    ? elicitationPort({
+        ...(sealed && { sealed }),
+        ...(answer && { answer }),
+        fields: {
+          ...(client.name !== undefined && { client: client.name }),
+          ...(client.protocolVersion !== undefined && { protocolVersion: client.protocolVersion }),
+          toolMarkedRequiresUser: marked,
+        },
+      })
+    : undefined;
+  // The server's process has no terminal to ask: the form is the only channel.
+  const callCtx: RunContext = { ...withProgress(ctx, request) };
+  delete callCtx.prompt;
+  if (port) callCtx.prompt = port;
+  const outcome = await runCommand(spec, commandArgs(spec, args, ctx), callCtx);
+  const asked = port?.asked();
+  if (asked === undefined || outcome.error?.code !== "confirmation_required") return outcome;
+  return inputRequired({
+    inputRequests: { [FORM_KEY]: inputRequired.elicit(confirmForm(asked)) },
+    requestState: await codec.mint({ tool, args: argsDigest, kind: asked.kind, id: asked.id }),
+  });
+}
+
 /**
  * One MCP server instance with a tool per registry command that names one. Each tool runs its
  * command as the CLI does and returns the CLI's --json document as structuredContent and as text.
+ * `codec` seals each confirmation form's state; one codec serves every round of a process.
  */
-function createServer(ctx: RunContext): McpServer {
+function createServer(ctx: RunContext, codec: RequestStateCodec<SealedRequest>): McpServer {
   const { name, version } = packageInfo();
   const headless = ctx.settings.mode === "headless";
   // The tool list is fixed, so the server never sends list-changed notifications.
   const server = new McpServer(
     { name, version },
-    { capabilities: { tools: { listChanged: false } } },
+    {
+      capabilities: { tools: { listChanged: false } },
+      requestState: { verify: codec.verify },
+    },
   );
   for (const spec of commands) {
     if (spec.tool === null) continue;
@@ -217,6 +300,7 @@ function createServer(ctx: RunContext): McpServer {
     const listed = {
       "~standard": { ...input["~standard"], validate: (value: unknown) => ({ value }) },
     };
+    const marked = requiresUserInteraction(spec, headless);
     server.registerTool(
       spec.tool,
       {
@@ -224,9 +308,7 @@ function createServer(ctx: RunContext): McpServer {
         inputSchema: listed as typeof input,
         outputSchema: fromJsonSchema<Arguments>(outputSchema),
         annotations: toolAnnotations(spec),
-        ...(requiresUserInteraction(spec, headless) && {
-          _meta: { "anthropic/requiresUserInteraction": true },
-        }),
+        ...(marked && { _meta: { "anthropic/requiresUserInteraction": true } }),
       },
       async (args, request) => {
         const checked = await input["~standard"].validate(args ?? {});
@@ -236,7 +318,8 @@ function createServer(ctx: RunContext): McpServer {
                 `invalid ${spec.tool} input: ${checked.issues.map((i) => i.message).join("; ")}`,
               ),
             )
-          : await runCommand(spec, commandArgs(spec, args, ctx), withProgress(ctx, request));
+          : await callTool(spec, args ?? {}, ctx, request, server, codec, marked);
+        if (isInputRequiredResult(outcome)) return outcome;
         const document = resultDocument(spec.name, outcome);
         // The run's contact sheet goes with the result as image content (design section 10).
         const sheet = await contactImage(document);
@@ -267,7 +350,9 @@ export async function serveMcp(
     input.once("end", done);
     input.once("close", done);
   });
-  const handle = serveStdio(() => createServer(ctx), {
+  // A per-process key: stdio serves every round of a confirmation form in this one process.
+  const codec = createRequestStateCodec<SealedRequest>({ key: randomBytes(32) });
+  const handle = serveStdio(() => createServer(ctx, codec), {
     transport: new StdioServerTransport(input, output),
     onerror: (error) => ctx.log(redact(`mcp: ${error.message}`)),
   });

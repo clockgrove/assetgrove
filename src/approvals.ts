@@ -41,7 +41,7 @@ export interface CommandIdentity {
 }
 
 /** How a command came to be approved. */
-export type ApprovalMethod = "settings" | "tty" | "terminal";
+export type ApprovalMethod = "settings" | "tty" | "terminal" | "elicitation";
 
 /** A command step as provenance records it. */
 export interface CommandStep {
@@ -63,7 +63,7 @@ export interface ApprovalRecord {
   argv: string[];
   cwd: string;
   files: Record<string, string>;
-  method: "tty" | "terminal";
+  method: "tty" | "terminal" | "elicitation";
   at: string;
 }
 

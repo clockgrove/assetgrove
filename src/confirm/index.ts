@@ -2,7 +2,8 @@
  * Spend, pick and write confirmation (design section 7). Sources, in order: headless settings
  * (method `headless`; a headless pick must name its candidate); the record at
  * `<configDir>/confirmations/<hex>.json` for the request's digest; a prior confirmation the
- * command names (apply's plan); the inline prompt of a TTY (method `tty`); otherwise the request
+ * command names (apply's plan); an MCP client's form (method `elicitation`, src/confirm/mcp.ts) or
+ * the inline prompt of a TTY (method `tty`); otherwise the request
  * is saved to `<stateDir>/pending/<id>.json` and exit 8 `confirmation_required` carries it, and
  * `assetgrove confirm <id>` completes it (method `terminal`). Every method writes the record.
  */
@@ -11,7 +12,7 @@ import { InputError } from "../errors.ts";
 import type { Settings } from "../settings.ts";
 import type { ConfirmationMethod, ConfirmationRecord } from "../types.ts";
 import { savePending } from "./pending.ts";
-import type { ConfirmPort, ConfirmRequest } from "./prompt.ts";
+import type { ChannelFields, ConfirmPort, ConfirmRequest } from "./prompt.ts";
 import { digestOf, readConfirmation, writeConfirmation } from "./records.ts";
 
 export { confirmationPath, digestOf, readConfirmation, writeConfirmation } from "./records.ts";
@@ -46,7 +47,11 @@ export interface ConfirmGate {
 export function recordOf(
   request: KindRequest,
   method: ConfirmationMethod,
-  extra: { choice?: string; operator?: string } = {},
+  extra: {
+    choice?: string;
+    operator?: string;
+    channel?: ChannelFields;
+  } = {},
 ): ConfirmationRecord {
   const { body } = request;
   const number = (value: unknown) => (typeof value === "number" ? value : 0);
@@ -65,7 +70,12 @@ export function recordOf(
     capUsd: number(body["capUsd"]),
     inputs: { ...inputs },
     ...(choice !== undefined && { choice }),
-    toolMarkedRequiresUser: false,
+    ...(extra.channel?.note !== undefined && { note: extra.channel.note }),
+    ...(extra.channel?.client !== undefined && { client: extra.channel.client }),
+    ...(extra.channel?.protocolVersion !== undefined && {
+      protocolVersion: extra.channel.protocolVersion,
+    }),
+    toolMarkedRequiresUser: extra.channel?.toolMarkedRequiresUser ?? false,
     ...(extra.operator !== undefined && { operator: extra.operator }),
     selfReported: true,
   };
@@ -132,7 +142,11 @@ export async function requireConfirmation(
       choice = await prompt.choose!(request);
       if (choice === undefined || choice === "none") throw declined(request);
     } else if (!(await prompt.confirm(request))) throw declined(request);
-    const record = recordOf(request, prompt.method, choice === undefined ? {} : { choice });
+    const channel = prompt.recordFields?.(request);
+    const record = recordOf(request, prompt.method, {
+      ...(choice !== undefined && { choice }),
+      ...(channel && { channel }),
+    });
     await writeConfirmation(settings.configDir, record);
     return record;
   }

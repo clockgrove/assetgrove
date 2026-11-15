@@ -26,10 +26,21 @@ export interface ConfirmRequest {
   choices?: string[];
 }
 
+/** What a channel reports about itself for a record: the client, its protocol, the tool mark. */
+export interface ChannelFields {
+  client?: string;
+  protocolVersion?: string;
+  toolMarkedRequiresUser: boolean;
+  /** A pick's note, when the person gave one. */
+  note?: string;
+}
+
 /** A channel that can ask a person. */
 export interface ConfirmPort {
-  /** How an accept is recorded: `tty` for an inline prompt. */
-  method: "tty";
+  /** How an accept is recorded: `tty` for an inline prompt, `elicitation` for an MCP form. */
+  method: "tty" | "elicitation";
+  /** What the channel adds to the record of `request` it answered; absent on the TTY. */
+  recordFields?(request: ConfirmRequest): ChannelFields;
   /** True when the person accepts. */
   confirm(request: ConfirmRequest): Promise<boolean>;
   /** The choice a person names among `request.choices`; `none` or undefined declines. */

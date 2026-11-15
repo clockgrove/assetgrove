@@ -61,7 +61,7 @@ export const writeFamiliesCommand = defineCommand<WriteFamiliesArgs>({
   details: `Writes one strip and manifest per family of a grouping (status "confirmed") into the
 target with review pending, registered within the jitter bound in pixels. The grouping's status
 grants nothing: a person confirms the write of these families and this grouping digest (design
-section 7) through headless settings, a record at <configDir>/confirmations/<hex>.json, the TTY,
+section 7) through headless settings, a record at <configDir>/confirmations/<hex>.json, an MCP client's form, the TTY,
 or exit 8 confirmation_required and \`assetgrove confirm <hex>\`. Agents never confirm a write.`,
   input: {
     type: "object",

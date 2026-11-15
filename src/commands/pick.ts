@@ -61,12 +61,12 @@ export const pickCommand = defineCommand<PickArgs>({
   summary: "write a chosen candidate and its manifest into the target, review pending",
   details: `A person confirms the pick (design section 7): headless settings record it unattended and
 must name --candidate (exit 2 without one); otherwise a record at <configDir>/confirmations/<hex>.json
-for the pick's digest, the TTY (which asks for the candidate when none is named), or exit 8
+for the pick's digest, an MCP client's form, the TTY (which asks for the candidate when none is named), or exit 8
 confirmation_required and \`assetgrove confirm <hex>\`. The record goes into the pick's provenance.
 Then writes the chosen candidate and its manifest into the target with review pending, and runs
 the target profile's validator when it declares one. The validator runs only with an approval tied
 to its exact command (settings.commands.approved or <configDir>/approvals/<hash>.json); otherwise
-pick asks on a TTY, or exits 8 confirmation_required before writing, and \`assetgrove confirm <hash>\`
+pick asks in an MCP client's form or on a TTY, or exits 8 confirmation_required before writing, and \`assetgrove confirm <hash>\`
 approves it. A human runs pick; agents never do.`,
   input: {
     type: "object",
