@@ -39,6 +39,28 @@ A generated sheet makes one `sheet` call and one `vision` call for the grouping 
 
 A character with an identity lock adds one `identity` call per candidate (see [generation-knobs.md](generation-knobs.md#identity-lock-scoring)). Some decision models reject images under about 300 px a side, and `liquid/d1` rejects image input entirely, so pick an alternate that accepts images.
 
+## Direct routes (Anthropic and OpenAI)
+
+The `anthropic` and `openai` adapters call each provider's own API through the AI SDK's provider packages (`@ai-sdk/anthropic`, `@ai-sdk/openai`), with the key in `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or the entry's `keyEnv`). Their endpoints are fixed, so a `baseURL` on either entry exits 2 `settings_invalid`. Both are paid. Neither reports a cost or a balance to an ordinary key, so a call costs its route estimate, the limit is declared only, and spend is not reconciled (`reconcile: "unavailable"`). Their default routes are in `src/gateway/anthropic.ts` and `src/gateway/openai.ts`. A typed decision on these adapters, and on openai-compatible, is a chat model's answer through structured output: its call record's `decision.decisionSource` is `structured-output`, where the gateway's decision models record `decision-model`.
+
+| Adapter     | Roles served by default                  | Operations and model                                                                                                          | Estimate per call                          |
+| ----------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `anthropic` | vision, decisions, planning              | every vision operation, `identity` and `compiler` on `claude-opus-5-5`                                                        | $0.10 (deliberate upper bound)             |
+| `openai`    | image, edit, vision, decisions, planning | `still`, `sheet`, `edit` and `lookdev` on `gpt-image-2`; every vision operation, `identity` and `compiler` on `gpt-6.1-terra` | $0.25 to $0.30 for images; $0.02 otherwise |
+
+Anthropic makes no images, so `suggestRoles(["anthropic"])` leaves `image` and `edit` empty: route them to another provider. Every default route carries its provider's API grant (`LicenseRef-anthropic-api` or `LicenseRef-openai-api`, plan `api`, commercial, `relabel: true`) and its terms.
+
+## Local-only 2D
+
+A still can be made with no network at all: point the image role at a loopback OpenAI-compatible image server and the vision, decisions and planning roles at a loopback chat server. Any server that speaks OpenAI's `/v1/images/generations` (and `/v1/images/edits` when references are given) and `/v1/chat/completions` with JSON-schema structured output will do.
+
+1. Start the image server and the chat server on loopback, for example `http://127.0.0.1:8080/v1` and `http://127.0.0.1:8081/v1`.
+2. In the developer settings, add one `openai-compatible` provider for each, with that `baseURL` and `"free": true`. `free` is accepted only on a loopback host (localhost, 127.0.0.0/8 or [::1]); elsewhere it exits 2 `settings_invalid`. Set `keyEnv` only if the server takes a key.
+3. Route `roles.image` to the image server and `roles.vision`, `roles.decisions` and `roles.planning` to the chat server, each with the model name the server expects, the `outputGrant` the model's licence gives and its `providerTerms`. Leave the gateway, Anthropic and OpenAI out of `providers`. The settings are in [settings.md](settings.md#roles-and-routes).
+4. Run `stage` without `--provider-script`. Free providers write nothing to the spend ledger, and the run reaches only the two loopback servers.
+
+`still` works this way. `sprite-strip` also needs the `edit` role: without an edit route it exits 2 `route_unavailable` before any call. Route `roles.edit` to a server that does reference edits to make strips locally. test/local-route.test.ts runs this setup against the loopback fixture server test/fixtures/openai-compatible-server.ts.
+
 ## 3D routes (Tripo, not the gateway)
 
 3D characters (`character-3d`, [characters-3d.md](characters-3d.md)) call Tripo's API directly with the key in the variable the tripo provider entry's `keyEnv` names (`TRIPO_API_KEY` by default). Their identity call still goes through the gateway. The account is on paid credits, so Tripo's output is owned: the routes' `outputGrant` is `LicenseRef-tripo-paid`, plan `paid`, commercial, `relabel: true`. Each call's cost is the task's reported `consumed_credit` × the `usdPerCredit` of the tripo provider entry in the developer settings ([settings.md](settings.md)); without it, the route estimate.
