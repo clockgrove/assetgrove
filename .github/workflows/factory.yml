@@ -43,7 +43,6 @@ env:
   FACTORY_CI_CHECKS: ci
   FACTORY_NODE_VERSION: 24.21.0 # the Node.js your CI uses
   FACTORY_LOCAL_MAX_CONCURRENT: 8 # local runs on the 24-thread box
-  FACTORY_THIRD_PARTY_REVIEWERS: greptile-apps[bot] # Factory waits for its review and answers it before the merge
   FACTORY_WORKER_SECRETS: AI_GATEWAY_API_KEY=WORKER_AI_GATEWAY_API_KEY # the worker's own capped gateway key (assetforge-worker, $25/month); values in the FACTORY_WORKER_SECRET_VALUES secret, or the local shell
 permissions: # the job token reads code and Actions; every write goes through the App's token
   contents: read
