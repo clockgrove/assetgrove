@@ -180,8 +180,16 @@ export type DecisionAnswer =
       probability: number;
     };
 
+/**
+ * How a typed decision was made: by a decision model (the gateway's decision API) or by a chat
+ * model answering through structured output (the direct and OpenAI-compatible adapters).
+ */
+export type DecisionSource = "decision-model" | "structured-output";
+
 export interface DecisionResult extends ProviderResult {
   answer: DecisionAnswer;
+  /** How the answer was made; absent when the provider does not say (the scripted provider). */
+  decisionSource?: DecisionSource;
   /** The provider's own confidence statistic for the answer, when it reports one. */
   confidence?: number;
 }

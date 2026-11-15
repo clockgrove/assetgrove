@@ -235,6 +235,11 @@ export interface DecisionLog {
   raw: number;
   /** The provider's confidence, else the selected level's probability, when either is known. */
   confidence?: number;
+  /**
+   * How the answer was made: `decision-model` (a typed decision model) or `structured-output` (a
+   * chat model answering a schema). Absent when the provider does not say.
+   */
+  decisionSource?: "decision-model" | "structured-output";
   latencyMs: number;
 }
 

@@ -11,6 +11,16 @@ import { ProviderSet } from "./set.ts";
 
 export { loadScript } from "./script.ts";
 export { ProviderSet, suggestRoles } from "./set.ts";
+export {
+  anthropicAdapter,
+  CORE_ADAPTERS,
+  gatewayAdapter,
+  openaiAdapter,
+  openaiCompatibleAdapter,
+  scriptedAdapter,
+  tripoAdapter,
+} from "./adapter.ts";
+export type { ProviderAdapter } from "./adapter.ts";
 export type { ServedBy, SuggestedRole } from "./set.ts";
 
 /** What provider setup reads from the run context: the settings and the environment. */
