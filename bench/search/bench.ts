@@ -39,6 +39,8 @@ export interface BenchReport {
   /** The computed image-similarity threshold, or null when no threshold reaches 0.9. */
   threshold: number | null;
   machine: Machine;
+  /** The embedder that made the vectors; a scripted one never measures real look or words. */
+  embedder: { id: string; revision: string; scripted: boolean };
   images: number;
   paddedTo: number;
 }
@@ -286,52 +288,52 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
 
   // Freshness fixture (also timed inside search-10k).
   const dir = await mkdtemp(join(tmpdir(), "bench-fresh-"));
-  const count = o.freshnessFiles ?? 2000;
-  const files: string[] = [];
-  const known = new Map<string, { size: number; mtimeMs: number }>();
-  const when = new Date(1_700_000_000_000);
-  for (let i = 0; i < count; i++) {
-    const f = join(dir, `f${i}.png`);
-    await writeFile(f, `file ${i}`);
-    await utimes(f, when, when);
-    const s = await stat(f);
-    files.push(f);
-    known.set(f, { size: s.size, mtimeMs: s.mtimeMs });
-  }
+  try {
+    const count = o.freshnessFiles ?? 2000;
+    const files: string[] = [];
+    const known = new Map<string, { size: number; mtimeMs: number }>();
+    const when = new Date(1_700_000_000_000);
+    for (let i = 0; i < count; i++) {
+      const f = join(dir, `f${i}.png`);
+      await writeFile(f, `file ${i}`);
+      await utimes(f, when, when);
+      const s = await stat(f);
+      files.push(f);
+      known.set(f, { size: s.size, mtimeMs: s.mtimeMs });
+    }
 
-  // Speed: pad to padTo rows.
-  await store.upsert(paddingRows(Math.max(0, padTo - rows.length), embedder.dimension, 0));
-  const queries = manifest.writtenQueries.map((q) => q.text);
-  const textMs: number[] = [];
-  // "Fresh": a query preceded by the no-change freshness scan, as the real find does (design 7.4).
-  const freshMs: number[] = [];
-  for (let i = 0; i < timed; i++) {
-    const t0 = performance.now();
-    await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
-    textMs.push(performance.now() - t0);
-    const t1 = performance.now();
-    if ((await freshnessScan(files, known)) !== 0) throw new Error("freshness scan saw changes");
-    await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
-    freshMs.push(performance.now() - t1);
-  }
-  const imageMs: number[] = [];
-  const first = manifest.images[0];
-  if (first) {
-    const bytes = await o.source.bytes(first);
+    // Speed: pad to padTo rows.
+    await store.upsert(paddingRows(Math.max(0, padTo - rows.length), embedder.dimension, 0));
+    const queries = manifest.writtenQueries.map((q) => q.text);
+    const textMs: number[] = [];
+    // "Fresh": a query preceded by the no-change freshness scan, as the real find does (design 7.4).
+    const freshMs: number[] = [];
     for (let i = 0; i < timed; i++) {
       const t0 = performance.now();
-      const [v] = await embedder.embedImages([bytes]);
-      await store.query({ vector: { column: "imageVec", value: v as Float32Array }, limit: 10 });
-      imageMs.push(performance.now() - t0);
+      await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
+      textMs.push(performance.now() - t0);
+      const t1 = performance.now();
+      if ((await freshnessScan(files, known)) !== 0) throw new Error("freshness scan saw changes");
+      await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
+      freshMs.push(performance.now() - t1);
     }
-  }
-  entry("text-query-p95", percentile(textMs, 0.95), textMs.length, true);
-  entry("image-query-p95", percentile(imageMs, 0.95), imageMs.length, true);
-  entry("search-10k", Math.max(...freshMs), freshMs.length, true);
-  entry("indexing", mean(indexMs), indexMs.length, true);
+    const imageMs: number[] = [];
+    const first = manifest.images[0];
+    if (first) {
+      const bytes = await o.source.bytes(first);
+      for (let i = 0; i < timed; i++) {
+        const t0 = performance.now();
+        const [v] = await embedder.embedImages([bytes]);
+        await store.query({ vector: { column: "imageVec", value: v as Float32Array }, limit: 10 });
+        imageMs.push(performance.now() - t0);
+      }
+    }
+    entry("text-query-p95", percentile(textMs, 0.95), textMs.length, true);
+    entry("image-query-p95", percentile(imageMs, 0.95), imageMs.length, true);
+    entry("search-10k", Math.max(...freshMs), freshMs.length, true);
+    entry("indexing", mean(indexMs), indexMs.length, true);
 
-  // Freshness: no changes, many files.
-  try {
+    // Freshness: no changes, many files.
     const t0 = performance.now();
     const changed = await freshnessScan(files, known);
     const ms = performance.now() - t0;
@@ -341,7 +343,19 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     await rm(dir, { recursive: true, force: true });
   }
 
-  return { entries, threshold, machine: mach, images: rows.length, paddedTo: padTo };
+  const embedderInfo = {
+    id: embedder.id,
+    revision: embedder.revision,
+    scripted: embedder.id.startsWith("scripted"),
+  };
+  return {
+    entries,
+    threshold,
+    machine: mach,
+    embedder: embedderInfo,
+    images: rows.length,
+    paddedTo: padTo,
+  };
 }
 
 /** One JSON line per bar, then the threshold, then the machine. */
@@ -349,6 +363,11 @@ export function formatReport(r: BenchReport): string[] {
   return [
     ...r.entries.map((e) => JSON.stringify(e)),
     JSON.stringify({ threshold: r.threshold }),
-    JSON.stringify({ machine: r.machine, images: r.images, paddedTo: r.paddedTo }),
+    JSON.stringify({
+      embedder: r.embedder,
+      machine: r.machine,
+      images: r.images,
+      paddedTo: r.paddedTo,
+    }),
   ];
 }
