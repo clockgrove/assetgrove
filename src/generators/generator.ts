@@ -32,7 +32,8 @@ export interface GeneratedCandidate {
   parameters: Record<string, unknown>;
   /**
    * Files written for the person beside the candidate, such as a 3D model's turntable renders,
-   * whether or not it passes QA. Written to `<run>/c<n>-<generator kind>/`.
+   * whether or not it passes QA. Written to `<run>/c<n>-<generator kind as a slug>/` (`safeSegment`:
+   * `ext:tile` writes to `c1-ext-tile/`).
    */
   artifacts?: Array<{ name: string; bytes: Uint8Array }>;
 }

@@ -27,6 +27,20 @@ export function readRecordPath(rel: string, what = "record path"): string {
 }
 
 /**
+ * `name` as one file-name segment: lower-case letters, digits and hyphens, every other run of
+ * characters (`:` and `/` included) one hyphen. Core asset kinds pass unchanged; `ext:tile`
+ * becomes `ext-tile`; a name with nothing left becomes `kind`.
+ */
+export function safeSegment(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "kind"
+  );
+}
+
+/**
  * Refuses, before anything is written, a set of relative paths in which two differ only by case or
  * a segment holds `:`.
  */

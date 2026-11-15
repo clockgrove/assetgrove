@@ -18,8 +18,12 @@ export class ExtensionError extends InputError {
   }
 }
 
-/** The extension an `<ext>:<name>` id belongs to, or undefined for a core id. */
-export function extensionOf(id: string): string | undefined {
+/**
+ * The extension an `<ext>:<name>` id belongs to, or undefined for a core id. Ids come from JSON
+ * read without a runtime check, so a value that is not a string belongs to no extension.
+ */
+export function extensionOf(id: unknown): string | undefined {
+  if (typeof id !== "string") return undefined;
   const at = id.indexOf(":");
   return at > 0 ? id.slice(0, at) : undefined;
 }

@@ -18,6 +18,8 @@ A package declares `"assetgrove": { "api": 1, "entry": "./index.js" }` in packag
 
 Every extension name matches `^[a-z][a-z0-9-]*$` and is not `core`. Each kind, preset and adapter id is `<name>:<id>`.
 
+A kind's `generate` may return `artifacts`. `stage` writes them to `<run>/c<n>-<kind>/`, with the kind turned into a file-name slug: every run of characters other than lower-case letters, digits and hyphens becomes one hyphen, so `ext:tile` writes to `c1-ext-tile/`.
+
 ## Loading
 
 Only packages named in the developer settings' `extensions` array load:
@@ -28,11 +30,11 @@ Only packages named in the developer settings' `extensions` array load:
 
 Each loads once per process, when the CLI or MCP server starts. A package.json dependency or a shared file never loads anything. Each name must resolve from the working directory (`node_modules/<name>/package.json` there or in a parent), and the package.json is read before any import.
 
-| Exit code | Code                    | When                                                                                                                                                                                                                                  |
-| --------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2         | `extension_unavailable` | A listed package does not resolve (the message names `extensions[i]` and the settings file), or a `<ext>:<name>` id in a spec `kind`, a profile `handoff[].preset` or `providers.<id>.adapter` names an extension that is not loaded. |
-| 2         | `extension_refused`     | `assetgrove.api` is not 1; `entry` leaves the package; the working directory's Git tracks the entry file; the name is invalid; an id is not `<name>:<id>`.                                                                            |
-| 2         | `extension_conflict`    | Two extensions share a name, or an id repeats.                                                                                                                                                                                        |
+| Exit code | Code                    | When                                                                                                                                                                                                                                                                                                                                |
+| --------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2         | `extension_unavailable` | A listed package does not resolve (the message names `extensions[i]` and the settings file), or a `<ext>:<name>` id in a spec `kind`, a profile `handoff[].preset` or `providers.<id>.adapter` names an extension that is not loaded.                                                                                               |
+| 2         | `extension_refused`     | The package.json is not a JSON object; `assetgrove.api` is not 1; `entry` leaves the package; the working directory's Git tracks the entry file; importing the entry fails; the default export is a function that throws; the name is invalid; an id is not `<name>:<id>`. The message names `extensions[i]` and the settings file. |
+| 2         | `extension_conflict`    | Two extensions share a name, or an id repeats.                                                                                                                                                                                                                                                                                      |
 
 Unknown core-form ids keep their existing codes.
 

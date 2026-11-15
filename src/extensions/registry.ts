@@ -184,6 +184,10 @@ interface Manifest {
   assetgrove?: { api?: unknown; entry?: unknown };
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Checks one listed package and imports its entry; every refusal is before the import. */
 async function loadOne(
   name: string,
@@ -205,14 +209,18 @@ async function loadOne(
       `${line} does not resolve from the project ${cwd}: install the package there, or remove it from the list`,
     );
   }
-  let manifest: Manifest;
+  let parsed: unknown;
   try {
-    manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as Manifest;
+    parsed = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   } catch (error) {
     throw new ExtensionError("extension_refused", `${line}: its package.json cannot be read`, {
       cause: error,
     });
   }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new ExtensionError("extension_refused", `${line}: its package.json is not a JSON object`);
+  }
+  const manifest = parsed as Manifest;
   const declared = manifest.assetgrove;
   if (declared === null || typeof declared !== "object") {
     throw new ExtensionError(
@@ -251,12 +259,31 @@ async function loadOne(
       `${line}: the project's Git tracks its entry ${entry}, so the project could supply its code; install it as a dependency instead of committing it`,
     );
   }
-  const module = (await import(pathToFileURL(realEntry).href)) as { default?: unknown };
+  // A failing import or factory is refused naming the settings line and the package.
+  let module: { default?: unknown };
+  try {
+    module = (await import(pathToFileURL(realEntry).href)) as { default?: unknown };
+  } catch (error) {
+    throw new ExtensionError(
+      "extension_refused",
+      `${line}: importing its entry ${realEntry} failed: ${messageOf(error)}`,
+      { cause: error },
+    );
+  }
   const context: ExtensionContext = { api: EXTENSION_API, z };
-  const exported =
-    typeof module.default === "function"
-      ? await (module.default as (c: ExtensionContext) => unknown)(context)
-      : module.default;
+  let exported: unknown;
+  try {
+    exported =
+      typeof module.default === "function"
+        ? await (module.default as (c: ExtensionContext) => unknown)(context)
+        : module.default;
+  } catch (error) {
+    throw new ExtensionError(
+      "extension_refused",
+      `${line}: its entry's default export threw: ${messageOf(error)}`,
+      { cause: error },
+    );
+  }
   const extension = checkExtension(exported, line);
   return {
     extension,
