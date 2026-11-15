@@ -11,6 +11,7 @@ import { providerSet, spendLedger } from "../providers/index.ts";
 import {
   DEFAULT_ROUND,
   DRY_RUN_PROPERTY,
+  NOTE_PROPERTY,
   ROUND_PROPERTY,
   buildWorkPlan,
   paidBy,
@@ -26,6 +27,7 @@ interface ApplyArgs {
   providerScript?: string;
   dryRun?: boolean;
   round?: number;
+  note?: string;
 }
 
 /** The plan step: the saved plan checked as apply checks it, and the calls apply would make. */
@@ -45,6 +47,7 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
     candidates: forecast.candidates,
     runsArg: "out",
     promptAllow: ctx.settings.promptPolicy.allow,
+    promptText: args.note !== undefined ? [args.note] : [],
   });
   return { providers, work };
 }
@@ -96,6 +99,8 @@ export const applyCommand = defineCommand<ApplyArgs>({
   summary: "generate exactly a saved plan after explicit spend approval",
   details: `Refuses stale inputs before generation, and exits 2 plan_changed when the routes, estimates,
 output grants or run cap resolved from the developer settings differ from planning time.
+--note adds the author's note to each image prompt (policy-checked before spend, part of the request's digest);
+with --round it asks for another round, and a plan's confirmation never covers a note.
 The plan's prompts pass the prompt policy (exit 9 prompt_refused) before any spend.
 The plan's spend confirmation covers one apply run of the plan it saved, the default round, while every
 input hash it confirmed still matches and apply's forecast is at or under the confirmed one; --round n > 1,
@@ -121,6 +126,7 @@ confirmation authorizes this generation spend; resulting assets remain pending r
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
+      note: NOTE_PROPERTY,
       round: ROUND_PROPERTY,
       dryRun: DRY_RUN_PROPERTY,
     },
@@ -134,7 +140,7 @@ confirmation authorizes this generation spend; resulting assets remain pending r
     return (await prepare(args.plan, args, ctx)).work;
   },
   priorConfirmation: (args, ctx, work) =>
-    args.plan === undefined
+    args.plan === undefined || args.note !== undefined
       ? Promise.resolve(undefined)
       : planConfirmation(args.plan, work, ctx.settings.configDir, args.round),
   async run(args, ctx) {
@@ -150,6 +156,7 @@ confirmation authorizes this generation spend; resulting assets remain pending r
       runCapUsd: ctx.settings.caps.runUsd,
       promptAllow: ctx.settings.promptPolicy.allow,
       outDir: dirname(dir),
+      ...(args.note !== undefined && { note: args.note }),
       runId: basename(dir),
     });
     const bible = await loadBible(

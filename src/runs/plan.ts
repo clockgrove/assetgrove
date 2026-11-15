@@ -398,6 +398,14 @@ export const ROUND_PROPERTY = {
   minimum: 1,
 } as const;
 
+/** The `note` input property of a command that takes an author's note with a new round. */
+export const NOTE_PROPERTY = {
+  type: "string",
+  description:
+    "the author's note for this round, added to the prompts; part of the request's digest",
+  placeholder: "<text>",
+} as const;
+
 /** The `runs` input property of a paid command that stages nothing else under it. */
 export const RUNS_PROPERTY = {
   type: "string",

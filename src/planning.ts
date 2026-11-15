@@ -28,7 +28,7 @@ import {
 import type { ArtBible, BibleDocument } from "./bible.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { loadProfile, readJson } from "./inputs.ts";
-import { loadReference, paletteSwatch, sha256, subjectOf } from "./request.ts";
+import { loadReference, paletteSwatch, sha256, subjectOf, withNote } from "./request.ts";
 import {
   decodeImage,
   encodePng,
@@ -852,6 +852,8 @@ export interface ApplyPlanOptions extends ResolveOptions {
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   outDir?: string;
+  /** The author's note of this round, appended to each image prompt and checked by the prompt policy. */
+  note?: string;
   /** The run's directory name under `outDir`, when the caller already opened it. */
   runId?: string;
   /** Receives one line per provider decision call. */
@@ -1014,7 +1016,7 @@ export async function applyPlan(
   const bibleLicenses = referenceLicenses(doc.data.referenceLicense, bibleReferences(doc.data));
   // A saved plan's prompts are a request input: the policy reads them before any spend.
   const promptPolicy = enforcePromptPolicy(
-    promptTexts(plan.prompts),
+    [...promptTexts(plan.prompts), ...(options.note !== undefined ? [options.note] : [])],
     options.promptAllow,
     "the saved plan's prompts",
   );
@@ -1076,7 +1078,7 @@ export async function applyPlan(
       for (let frameIndex = 0; frameIndex < plan.prompts.images.length; frameIndex++) {
         const source = await caller.image(
           "planned",
-          plan.prompts.images[frameIndex] as string,
+          withNote(plan.prompts.images[frameIndex] as string, options.note),
           refs,
           seed === undefined ? undefined : seed + frameIndex,
         );

@@ -88,6 +88,9 @@ The package ships its skills under `skills/`. Install them into your harness wit
 - `write-families --import <dir> --target <dir>`: write the strips of a human-confirmed grouping into the target with review pending.
 - `animation-qa --strip <strip> --family <name> --profile <profile.json>` (or `--import <dir>`): motion-template, loop and continuity checks, edge halo, identity flicker and holes within a cap, onion-skin sheet and loop preview. See [docs/animation.md](docs/animation.md).
 - `fix-frame --strip <strip> --family <name> --profile <profile.json> --frame <n> --from <n> --out <dir>`: regenerate one frame by a reference-guided edit within a cap, recorded in provenance.
+- `compare <before> <candidate>`: write a numbers-only compare sheet (before, candidate, difference map, region outlines) and report `outsideChange`; free.
+- `vary --run <dir> --candidate <id> [--count n]`: make variations of one candidate through the edit route, with a contact and a compare sheet; asks for spend once.
+- `stage`, `apply` and `generate-sheet` take `--note <text>` (with `--round n`) for another round; the note passes the prompt policy and changes the digest.
 - `op <operation> <input...> --out <path>`: run one image operation (crop, trim, pad, scale, slice, matte, apply-style, register, join, flip, renditions, convert) on any image, with a provenance record. Options: `--params <json>`, `--profile <profile.json>`.
 - `recipe <recipe.json> <input...> --out <path>`: run a recipe of operations, deterministically. See [docs/transform.md](docs/transform.md).
 - `ops`: list the operations, their parameter schemas and the engines.

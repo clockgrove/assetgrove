@@ -20,6 +20,8 @@ export interface GeneratorContext {
   index: number;
   /** A per-candidate seed, sent to models whose route supports seeds. */
   seed: number;
+  /** The author's note of this round, appended to the generation prompts. */
+  note?: string;
   /** Directory the profile's relative paths (a rig template, reference frames) resolve against. */
   profileDir?: string;
 }

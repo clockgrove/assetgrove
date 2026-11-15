@@ -15,6 +15,7 @@ import { defineCommand } from "./types.ts";
 import type { RunContext } from "./types.ts";
 import {
   DRY_RUN_PROPERTY,
+  NOTE_PROPERTY,
   ROUND_PROPERTY,
   RUNS_PROPERTY,
   bibleReads,
@@ -39,6 +40,7 @@ interface GenerateSheetArgs {
   dryRun?: boolean;
   round?: number;
   runs?: string;
+  note?: string;
 }
 
 /** Generate-sheet's plan step: its inputs, providers, planned calls and WorkPlan, with no call. */
@@ -91,7 +93,10 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
           )
         : {}),
     },
-    promptText: motionLines(template, undefined),
+    promptText: [
+      ...motionLines(template, undefined),
+      ...(args.note !== undefined ? [args.note] : []),
+    ],
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
@@ -115,7 +120,9 @@ work-item limits, writes nothing and needs no key.
 --lock-bible and --identity-mode score the generated sheet against the subject's identity lock
 as the import command does; the scoring call is part of the forecast and the cap.
 The prompt states the family's motion template (its beats, a held pose, the loop). --brief adds
-the author's brief (purpose, setting, what happens), checked as plan checks it.`,
+the author's brief (purpose, setting, what happens), checked as plan checks it.
+--note adds the author's note to the sheet prompt (policy-checked, part of the request's digest); with
+--round it asks for another round.`,
   input: {
     type: "object",
     properties: {
@@ -159,6 +166,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         placeholder: "<module>",
       },
       runs: RUNS_PROPERTY,
+      note: NOTE_PROPERTY,
       round: ROUND_PROPERTY,
       dryRun: DRY_RUN_PROPERTY,
     },
@@ -205,6 +213,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         ...(ctx.run && { runDir: ctx.run.dir }),
         capUsd,
         ledger,
+        ...(args.note !== undefined && { note: args.note }),
         ...(lock && {
           identity: {
             record: lock.record,

@@ -1,6 +1,7 @@
 import { animationQaCommand } from "./animation-qa.ts";
 import { applyCommand } from "./apply.ts";
 import { bibleCommand } from "./bible.ts";
+import { compareCommand } from "./compare.ts";
 import { confirmCommand } from "./confirm.ts";
 import { estimateCommand } from "./estimate.ts";
 import { extensionsCommand } from "./extensions.ts";
@@ -26,6 +27,7 @@ import { settingsChangeCommand, settingsCommand } from "./settings.ts";
 import { spendCommand, spendReconcileCommand } from "./spend.ts";
 import { stageCommand } from "./stage.ts";
 import type { CommandSpec } from "./types.ts";
+import { varyCommand } from "./vary.ts";
 import { writeFamiliesCommand } from "./write-families.ts";
 
 /** Every command, declared once, in the order help lists them. */
@@ -48,6 +50,8 @@ export const commands: readonly CommandSpec[] = [
   identityCheckCommand,
   animationQaCommand,
   fixFrameCommand,
+  compareCommand,
+  varyCommand,
   opCommand,
   recipeCommand,
   opsCommand,

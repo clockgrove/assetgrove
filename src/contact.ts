@@ -51,7 +51,7 @@ export interface ContactSheet {
   cells: ContactCellBox[];
 }
 
-function fit(image: Raster): Raster {
+export function fit(image: Raster): Raster {
   const scale = Math.min(CELL_PX / image.width, CELL_PX / image.height);
   const size = {
     width: Math.max(1, Math.round(image.width * scale)),
@@ -60,7 +60,7 @@ function fit(image: Raster): Raster {
   return resampleTo(image, scale, { x: 0, y: 0 }, size, "crisp");
 }
 
-function fill(r: Raster, x: number, y: number, w: number, h: number, rgba: number[]): void {
+export function fill(r: Raster, x: number, y: number, w: number, h: number, rgba: number[]): void {
   for (let j = y; j < y + h; j++)
     for (let i = x; i < x + w; i++) r.data.set(rgba, (j * r.width + i) * 4);
 }

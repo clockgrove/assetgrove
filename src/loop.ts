@@ -73,6 +73,8 @@ export interface StageOptions {
   log?: (message: string) => void;
   /** The plan step's prompt-policy record, kept in the run record and each candidate's provenance. */
   promptPolicy?: PromptPolicyRecord;
+  /** The author's note of this round, appended to each candidate's generation prompt. */
+  note?: string;
   /** The measured stability entries model-backed checks filter by; src/qa/stability.json by default. */
   stability?: readonly StabilityEntry[];
 }
@@ -328,6 +330,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         call,
         index,
         seed,
+        ...(options.note !== undefined && { note: options.note }),
         ...(options.profileDir !== undefined && { profileDir: options.profileDir }),
       });
       const id = `c${index + 1}`;

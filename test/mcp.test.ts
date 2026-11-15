@@ -539,6 +539,45 @@ const rows: Row[] = [
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
+  {
+    tool: "compare",
+    prepare: async () => {
+      const dir = join(work, "compare");
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "before.png"), encodePng(drawSubject(48)));
+      await writeFile(join(dir, "after.png"), encodePng(drawSubject(48, 2)));
+      return {
+        before: join(dir, "before.png"),
+        candidate: join(dir, "after.png"),
+        region: ["0,0,24,24 : check"],
+        out: join(dir, "out"),
+      };
+    },
+  },
+  {
+    tool: "vary",
+    prepare: async () => {
+      // Variations edit a still, so this row stages one beside the world's sprite-strip run.
+      const dir = paths.world();
+      const stills = join(dir, "still-runs");
+      await writeFile(
+        join(dir, "still.json"),
+        JSON.stringify({ kind: "still", assetId: "fern", fields: { description: "a fern" } }),
+      );
+      const staged = await cli([
+        ...["stage", "--spec", join(dir, "still.json")],
+        ...["--bible", join(dir, "bible", "bible.json"), "--profile", join(dir, "profile.json")],
+        ...["--runs", stills, "--candidates", "1", "--provider-script", script, "--json"],
+      ]);
+      assert.equal(staged.code, 0, staged.stderr + staged.stdout);
+      return {
+        run: (JSON.parse(staged.stdout) as Doc)["runDir"] as string,
+        candidate: "c1",
+        count: 2,
+        runs: join(paths.world(), "vary-runs"),
+      };
+    },
+  },
   { tool: "runs_list", prepare: async () => ({ runs: join(paths.world(), "runs") }) },
   {
     tool: "runs_show",
