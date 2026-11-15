@@ -111,7 +111,7 @@ test(
       targets: [first],
       outDir: qaDir,
       routes: defaultRoutes,
-      capUsd: 1,
+      capUsd: Math.min(1, rb.runLeftUsd()),
       provider,
       ledger: rb.ledger,
     });
@@ -131,7 +131,7 @@ test(
       from: { neighbour: index > 1 ? index - 1 : 2 },
       outDir: join(out, "fix"),
       routes: defaultRoutes,
-      capUsd: RUN_USD - flicker.spentUsd,
+      capUsd: rb.runLeftUsd(),
       provider,
       ledger: rb.ledger,
     });

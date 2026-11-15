@@ -118,6 +118,31 @@ test("a forecast above the run cap refuses even when the budget left is larger",
   assert.equal(scriptedOf(p).calls.length, 0);
 });
 
+test("the run cap bounds every check of one run together, not each check", async () => {
+  const home = temp();
+  const options = {
+    env: syntheticEnv(home),
+    ledgerDir: join(home, "ledger"),
+    shareUsd: 10,
+    providers: { scripted: { limit: { kind: "key-budget", usd: 10 } } },
+  } as const;
+  const check1 = realBudget(options);
+  const p1 = check1.provider("scripted", script);
+  await check1.caller(p1, COST, "check 1", routes).caller.image("still", "a fox", []);
+  assert.ok(Math.abs(check1.runLeftUsd() - (RUN_USD - COST)) < 1e-9);
+
+  // A second check of the same run sees the first check's spend against the one run cap.
+  const check2 = realBudget(options);
+  const p2 = check2.provider("scripted", script);
+  assert.ok(Math.abs(check2.runLeftUsd() - (RUN_USD - COST)) < 1e-9);
+  assert.throws(
+    () => check2.caller(p2, RUN_USD - COST / 2, "check 2", routes),
+    BudgetExceededError,
+  );
+  assert.equal(scriptedOf(p2).calls.length, 0, "no provider call was made");
+  assert.ok(check2.budgetLeftUsd() > RUN_USD, "the budget left alone would have allowed it");
+});
+
 test("every file under test/real imports test/real/budget.ts", () => {
   const realDir = resolve(import.meta.dirname, "real");
   const budgetPath = join(realDir, "budget.ts");

@@ -6,6 +6,10 @@
  * reserves against `<ledger dir>/spend.jsonl` under the work item `real-checks`, so spend
  * accumulates across runs, and a forecast above the budget left is refused before any call.
  *
+ * One `pnpm test:real` invocation is one run: it runs every check in one process
+ * (`--test-isolation=none`), and the 1.50 USD run cap bounds what all of them spend together, read
+ * from the ledger's spend since the invocation's first `realBudget()` on that ledger directory.
+ *
  * Leg: `ci` when `CI` is set (15 USD), else `local` (8 USD); 2 USD stays in reserve. Ledger
  * directory: `ASSETGROVE_REAL_LEDGER` (a CI cache entry), else `<state home>/assetgrove/real-checks/<leg>`.
  */
@@ -40,6 +44,9 @@ export function ledgerDirOf(env: Env = process.env, leg: Leg = legOf(env)): stri
   return env[LEDGER_ENV] || join(stateHome(env), "assetgrove", "real-checks", leg);
 }
 
+/** Work-item spend in each ledger directory when this process (one run) first opened it. */
+const runStarts = new Map<string, number>();
+
 /** The reason a check skips when one of `keys` is unset, else false. */
 export function skipWithout(...keys: string[]): string | false {
   const missing = keys.filter((k) => !process.env[k]);
@@ -69,11 +76,13 @@ export interface RealBudget {
   ledger: SpendLedger;
   /** What is left of this leg's share, from the ledger as it is now. */
   budgetLeftUsd(): number;
+  /** What is left of the 1.50 USD run cap, which every check in this process (one run) shares. */
+  runLeftUsd(): number;
   /** The provider the settings make for an adapter. */
   provider(adapter: string, script?: Script): ConfiguredProvider;
   /**
-   * A run's budget: refuses (`BudgetExceededError`, exit 3) before any call when `forecastUsd` is
-   * above the run cap or the budget left.
+   * A check's budget: refuses (`BudgetExceededError`, exit 3) before any call when `forecastUsd` is
+   * above what is left of the run cap or the budget left.
    */
   begin(forecastUsd: number, what: string, provider?: ConfiguredProvider): Budget;
   /** A recorded, budgeted caller on `provider`, after `begin` accepts the forecast. */
@@ -108,16 +117,18 @@ export function realBudget(options: RealBudgetOptions = {}): RealBudget {
   const env: Env = { ...baseEnv, ASSETGROVE_CONFIG: path };
   const settings = loadSettings({ env, cwd: dir });
   const ledger = SpendLedger.fromSettings(settings, { workItem: WORK_ITEM, env });
-  const budgetLeftUsd = () => {
-    const item = ledger.status().limits.find((l) => l.limit === "work-item");
-    return item?.remainingUsd ?? 0;
-  };
+  const workItem = () => ledger.status().limits.find((l) => l.limit === "work-item");
+  const budgetLeftUsd = () => workItem()?.remainingUsd ?? 0;
+  const spentUsd = () => workItem()?.spentUsd ?? 0;
+  if (!runStarts.has(ledgerDir)) runStarts.set(ledgerDir, spentUsd());
+  const runStart = runStarts.get(ledgerDir) ?? 0;
+  const runLeftUsd = () => Math.max(0, settings.caps.runUsd - (spentUsd() - runStart));
   const provider = (adapter: string, script?: Script) =>
     providerOfAdapter(settings, adapter, { env, ...(script !== undefined && { script }) });
   const begin = (forecastUsd: number, what: string, configured?: ConfiguredProvider) => {
     const runLedger =
       configured === undefined ? ledger : ledgerFor(ledger, configured.provider, undefined);
-    const budget = new Budget(settings.caps.runUsd, runLedger);
+    const budget = new Budget(runLeftUsd(), runLedger);
     budget.check(forecastUsd, what);
     return budget;
   };
@@ -129,6 +140,7 @@ export function realBudget(options: RealBudgetOptions = {}): RealBudget {
     env,
     ledger,
     budgetLeftUsd,
+    runLeftUsd,
     provider,
     begin,
     caller(configured, forecastUsd, what, routes = defaultRoutes) {
