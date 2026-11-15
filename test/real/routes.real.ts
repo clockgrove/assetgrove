@@ -1,7 +1,10 @@
 /**
  * Calls each configured core route once through the product, under the shared budget of
  * test/real/budget.ts: the forecast is refused before any call when above the budget left. A route
- * whose adapter is not in this build skips with that reason.
+ * whose adapter is not in this build skips with that reason, and so does a route whose key is unset.
+ * The direct routes (design section 20): Anthropic vision and decisions, OpenAI planning and
+ * decisions, and OpenAI image and edit, which skip with the provider's reason when the key lacks
+ * image access (the one accepted skip).
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -10,8 +13,15 @@ import { IDENTITY_LEVELS } from "../../src/identity.ts";
 import { createRaster, encodePng, setPixel } from "../../src/image/raster.ts";
 import type { Caller } from "../../src/calls.ts";
 import { CORE_ADAPTERS } from "../../src/providers/adapter.ts";
-import { defaultRoutes, type Route } from "../../src/routes.ts";
+import {
+  ANTHROPIC_DEFAULT_ROUTES,
+  defaultRoutes,
+  OPENAI_DEFAULT_ROUTES,
+  type Route,
+  type Routes,
+} from "../../src/routes.ts";
 import type { LoadedReference } from "../../src/types.ts";
+import { ProviderError } from "../../src/errors.ts";
 import { realBudget, skipWithout } from "./budget.ts";
 
 function disc(role: string, rgb: [number, number, number]): LoadedReference {
@@ -36,8 +46,12 @@ interface Row {
   keyEnv: string;
   name: string;
   route?: Route;
+  /** The operation the call routes, when it is not `name`. */
+  operation?: string;
   /** The call; returns what came back, which must be non-empty. */
   call?: (caller: Caller) => Promise<{ nonEmpty: boolean }>;
+  /** A provider refusal that skips the check, with its reason, instead of failing it. */
+  skipOn?: RegExp;
 }
 
 const red = () => disc("reference", [220, 30, 30]);
@@ -94,15 +108,106 @@ const gatewayRows: Row[] = [
   },
 ];
 
-/** Core routes of design section 20 whose adapters this build may lack; no call is written yet. */
-const absentRows: Row[] = [
-  { adapter: "anthropic", keyEnv: "ANTHROPIC_API_KEY", name: "vision" },
-  { adapter: "anthropic", keyEnv: "ANTHROPIC_API_KEY", name: "decisions" },
-  { adapter: "openai", keyEnv: "OPENAI_API_KEY", name: "planning" },
-  { adapter: "openai", keyEnv: "OPENAI_API_KEY", name: "decisions" },
+const identityCall = async (c: Caller) => {
+  const { result, record } = await c.decide(
+    "identity",
+    "Image 1 is the candidate. Image 2 is the approved reference. Identity record: a plain red disc.",
+    [red(), red()],
+    {
+      type: "score",
+      instructions: "How well does image 1 match the identity record?",
+      levels: [...IDENTITY_LEVELS],
+    },
+  );
+  return {
+    nonEmpty: result.answer.type === "score" && record.decision?.decisionSource !== undefined,
+  };
+};
+
+const visionCall = async (c: Caller) => ({
+  nonEmpty:
+    (await c.vision("vision", "Describe this image in one short sentence.", [red()])).trim()
+      .length > 0,
+});
+
+const planningCall = async (c: Caller) => ({
+  nonEmpty:
+    (
+      await c.vision(
+        "compiler",
+        'Write a one-line image prompt for a red disc on a plain background. Answer as JSON: {"prompt": "..."}.',
+        [red()],
+      )
+    ).trim().length > 0,
+});
+
+/** An OpenAI key without image access (an unverified organization) is the one accepted skip. */
+const NO_IMAGE_ACCESS = /verif|must be verified|not have access|does not have access|HTTP 403/i;
+
+/** The direct routes of design section 20. */
+const directRows: Row[] = [
+  {
+    adapter: "anthropic",
+    keyEnv: "ANTHROPIC_API_KEY",
+    name: "vision",
+    route: ANTHROPIC_DEFAULT_ROUTES["vision"],
+    call: visionCall,
+  },
+  {
+    adapter: "anthropic",
+    keyEnv: "ANTHROPIC_API_KEY",
+    name: "decisions",
+    operation: "identity",
+    route: ANTHROPIC_DEFAULT_ROUTES["identity"],
+    call: identityCall,
+  },
+  {
+    adapter: "openai",
+    keyEnv: "OPENAI_API_KEY",
+    name: "planning",
+    operation: "compiler",
+    route: OPENAI_DEFAULT_ROUTES["compiler"],
+    call: planningCall,
+  },
+  {
+    adapter: "openai",
+    keyEnv: "OPENAI_API_KEY",
+    name: "decisions",
+    operation: "identity",
+    route: OPENAI_DEFAULT_ROUTES["identity"],
+    call: identityCall,
+  },
+  {
+    adapter: "openai",
+    keyEnv: "OPENAI_API_KEY",
+    name: "image",
+    operation: "still",
+    route: OPENAI_DEFAULT_ROUTES["still"],
+    call: async (c) => ({
+      nonEmpty:
+        (await c.image("still", "a small red apple on a plain background", [])).bytes.length > 0,
+    }),
+    skipOn: NO_IMAGE_ACCESS,
+  },
+  {
+    adapter: "openai",
+    keyEnv: "OPENAI_API_KEY",
+    name: "edit",
+    route: OPENAI_DEFAULT_ROUTES["edit"],
+    call: async (c) => ({
+      nonEmpty: (await c.image("edit", "make the disc blue", [red()])).bytes.length > 0,
+    }),
+    skipOn: NO_IMAGE_ACCESS,
+  },
 ];
 
-for (const row of [...gatewayRows, ...absentRows]) {
+/** The declared limit of the direct providers, as budget.ts declares the others'. */
+const directProviders = (shareUsd: number) => ({
+  anthropic: { limit: { kind: "key-budget" as const, usd: shareUsd } },
+  openai: { limit: { kind: "key-budget" as const, usd: shareUsd } },
+});
+
+for (const row of [...gatewayRows, ...directRows]) {
   const registered = CORE_ADAPTERS.some((a) => a.id === row.adapter);
   const skip = !registered
     ? `no "${row.adapter}" adapter in this build`
@@ -110,17 +215,30 @@ for (const row of [...gatewayRows, ...absentRows]) {
       ? "no real call written for this route yet"
       : skipWithout(row.keyEnv);
   const title = `real route: ${row.adapter} ${row.name}${row.route ? ` (${row.route.model})` : ""}`;
-  test(title, { skip }, async () => {
+  test(title, { skip }, async (t) => {
     const { call, route } = row;
     assert.ok(call && route);
-    const rb = realBudget();
+    const share = realBudget().shareUsd;
+    const rb = realBudget({ providers: directProviders(share) });
     const configured = rb.provider(row.adapter);
+    const operation = row.operation ?? row.name;
+    const routes = { ...defaultRoutes, [operation]: route } as Routes;
     const { caller } = rb.caller(
       configured,
       route.estimatedCostUsd,
       `real route ${row.adapter} ${row.name}`,
+      routes,
     );
-    const out = await call(caller);
+    let out: { nonEmpty: boolean };
+    try {
+      out = await call(caller);
+    } catch (error) {
+      if (row.skipOn && error instanceof ProviderError && row.skipOn.test(error.message)) {
+        t.skip(`${row.adapter} ${row.name} unverified: ${error.message}`);
+        return;
+      }
+      throw error;
+    }
     assert.ok(out.nonEmpty, "the route returned something");
     const record = caller.records[0];
     assert.ok(record);

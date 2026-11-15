@@ -53,7 +53,7 @@ The package ships its skills under `skills/`. Install them into your harness wit
 - Run `stage --dry-run` first. It spends nothing and needs no key.
 - Name the work item (`ASSETGROVE_WORK_ITEM` or `--work-item`, for example the Objective). Paid calls across runs are capped by the developer settings, $10 a day and $5 per work item by default; see [Spend limits](#spend-limits).
 - Configure providers and roles in the developer settings ([docs/settings.md](docs/settings.md#roles-and-routes)). Each operation maps to a role (image, edit, vision, decisions, planning, model3d, rig3d, clips3d); a role no configured provider serves exits 2 `route_unavailable` before any spend. Grants belong to the provider and model: an output with a call that has no `outputGrant` is refused at hand-off (exit 7).
-- Set `AI_GATEWAY_API_KEY` in the environment (or the variable a provider's `keyEnv` names). In a sandbox, allow the host `ai-gateway.vercel.sh`; it is the only host Assetgrove reaches besides Tripo and the `baseURL` of an openai-compatible provider. A `baseURL` on the gateway entry in the developer settings moves it.
+- Set `AI_GATEWAY_API_KEY` in the environment (or the variable a provider's `keyEnv` names). In a sandbox, allow the host `ai-gateway.vercel.sh`; it is the only host Assetgrove reaches besides Tripo, api.anthropic.com and api.openai.com (when the settings configure those providers) and the `baseURL` of an openai-compatible provider. A `baseURL` on the gateway entry in the developer settings moves it.
 - Agents stage, humans pick ([PRD principle 2](docs/PRD.md#principles)). Agents never run `pick` or `write-families` and never confirm a grouping.
 
 ## Commands and exit codes
