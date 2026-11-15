@@ -60,6 +60,7 @@ import type { AssetSpec, CallRecord, LoadedReference, Reason, TargetProfile } fr
 import { filteringState, mergeFiltering, STYLE_SCORE_CHECK } from "./qa/stability.ts";
 import type { StabilityEntry } from "./qa/stability.ts";
 import type { RunRecord } from "./loop.ts";
+import { writeContact } from "./contact.ts";
 import { writeRun } from "./loop.ts";
 import { jobOf } from "./runs/plan.ts";
 import type { PlanJob } from "./runs/plan.ts";
@@ -1371,6 +1372,13 @@ export async function applyPlan(
         scores: pairs.length,
       };
     run.spentUsd = budget.spentUsd;
+    const contact = await writeContact(
+      runDir,
+      plan.spec,
+      run.candidates,
+      refs.filter((r) => r.role !== "palette" && r.role !== "perspective").map((r) => r.bytes),
+    );
+    if (contact !== undefined) run.contactSheet = contact;
     await writeRun(runDir, run);
     await savePlan(plan, join(runDir, "plan.json"));
   }

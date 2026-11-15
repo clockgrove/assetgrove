@@ -2,8 +2,9 @@ import { McpServer, fromJsonSchema } from "@modelcontextprotocol/server";
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type { Readable, Writable } from "node:stream";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { describeBible, initBible, useBiblePreset } from "./bible.ts";
 import { checkContextEnvironment, isPaid } from "./commands/context.ts";
 import { commands } from "./commands/registry.ts";
@@ -168,6 +169,20 @@ function packageInfo(): { name: string; version: string } {
   };
 }
 
+/** The contact sheet a result names (`runDir` and `contactSheet`) as MCP image content. */
+async function contactImage(
+  document: Record<string, unknown>,
+): Promise<Array<{ type: "image"; data: string; mimeType: string }>> {
+  const { runDir, contactSheet } = document;
+  if (typeof runDir !== "string" || typeof contactSheet !== "string") return [];
+  try {
+    const bytes = await readFile(join(runDir, contactSheet));
+    return [{ type: "image", data: bytes.toString("base64"), mimeType: "image/png" }];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * One MCP server instance with a tool per registry command that names one. Each tool runs its
  * command as the CLI does and returns the CLI's --json document as structuredContent and as text.
@@ -208,8 +223,10 @@ function createServer(ctx: RunContext): McpServer {
             )
           : await runCommand(spec, commandArgs(spec, args, ctx), ctx);
         const document = resultDocument(spec.name, outcome);
+        // The run's contact sheet goes with the result as image content (design section 10).
+        const sheet = await contactImage(document);
         return {
-          content: [{ type: "text", text: JSON.stringify(document) }],
+          content: [{ type: "text", text: JSON.stringify(document) }, ...sheet],
           structuredContent: document,
           isError: document["ok"] !== true,
         };

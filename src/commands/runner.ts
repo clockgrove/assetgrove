@@ -8,6 +8,7 @@ import { SettingsError } from "../env.ts";
 import { EXIT, InputError } from "../errors.ts";
 import { checkTrackedKeys } from "../guard.ts";
 import { redact } from "../redact.ts";
+import { CONTACT_SHEET_FILE } from "../contact.ts";
 import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "../runs/dir.ts";
 import { checkContextEnvironment, isPaid } from "./context.ts";
 import { failureOutcome, refusal, usd } from "./result.ts";
@@ -172,6 +173,7 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
   await openRunDir(plan);
   // A record left by an earlier run of the same request is replaced by this run's.
   await rm(join(plan.runDir, RUN_RECORD_FILE), { force: true });
+  await rm(join(plan.runDir, CONTACT_SHEET_FILE), { force: true });
   const startedAt = new Date().toISOString();
   let outcome: Outcome;
   try {
@@ -192,6 +194,9 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
       exitCode: outcome.exitCode,
       ...(outcome.error && { error: outcome.error.code }),
       ...(typeof spent === "number" && { spentUsd: spent }),
+      ...(existsSync(join(plan.runDir, CONTACT_SHEET_FILE)) && {
+        contactSheet: CONTACT_SHEET_FILE,
+      }),
     });
   }
   return outcome;

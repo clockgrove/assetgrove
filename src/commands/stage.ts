@@ -5,6 +5,7 @@ import { DEFAULT_CANDIDATES, planStage, stage } from "../loop.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import type { AssetSpec } from "../types.ts";
+import { sharedTexts, withSharedText } from "../request.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext, WorkPlan } from "./types.ts";
@@ -175,7 +176,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       ledger,
       log: ctx.log,
     });
-    const fields = { runDir, ...run };
+    const fields = withSharedText({ runDir, ...run }, sharedTexts(bible.value));
     const human = formatRun(run, runDir);
     if (run.candidates.length > 0) return { exitCode: 0, fields, human };
     if (run.stopped) return refusal("cap_refused", run.stopped, fields, human);
