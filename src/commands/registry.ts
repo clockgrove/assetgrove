@@ -1,6 +1,7 @@
 import { animationQaCommand } from "./animation-qa.ts";
 import { applyCommand } from "./apply.ts";
 import { bibleCommand } from "./bible.ts";
+import { catCommand, lsCommand } from "./browse.ts";
 import { compareCommand } from "./compare.ts";
 import { confirmCommand } from "./confirm.ts";
 import { estimateCommand } from "./estimate.ts";
@@ -73,6 +74,8 @@ export const commands: readonly CommandSpec[] = [
   spendReconcileCommand,
   runsListCommand,
   runsShowCommand,
+  lsCommand,
+  catCommand,
   estimateCommand,
   confirmCommand,
 ];

@@ -37,6 +37,8 @@ import { redact } from "./redact.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { PlanChangedError, applyPlan, createPlan, savePlan } from "./planning.ts";
 import type { SpendLedger } from "./spend.ts";
+import { projectDir } from "./tree/project.ts";
+import { TreeServer } from "./tree/serve.ts";
 
 export interface ToolContext {
   provider?: GenerationProvider;
@@ -240,6 +242,18 @@ async function callContext(server: RunContext, args: Arguments): Promise<RunCont
   });
 }
 
+/** The context with each progress update also checking the tree for changes the call made. */
+function withTreeProgress(ctx: RunContext, check: () => void): RunContext {
+  const report = ctx.progress;
+  return {
+    ...ctx,
+    progress: (update) => {
+      report?.(update);
+      check();
+    },
+  };
+}
+
 /** The key of the inputRequired form a confirmation is asked under. */
 const FORM_KEY = "confirm";
 
@@ -265,6 +279,7 @@ async function callTool(
   server: McpServer,
   codec: RequestStateCodec<SealedRequest>,
   marked: boolean,
+  progress: () => void = () => {},
 ): Promise<Outcome | ReturnType<typeof inputRequired>> {
   const tool = spec.tool!;
   const argsDigest = digestOf(args);
@@ -299,7 +314,7 @@ async function callTool(
     return errorOutcome(error);
   }
   // The server's process has no terminal to ask: the form is the only channel.
-  const callCtx: RunContext = { ...withProgress(fresh, request) };
+  const callCtx: RunContext = withTreeProgress(withProgress(fresh, request), progress);
   delete callCtx.prompt;
   if (port) callCtx.prompt = port;
   const outcome = await runCommand(spec, full, callCtx);
@@ -314,16 +329,26 @@ async function callTool(
 /**
  * One MCP server instance with a tool per registry command that names one. Each tool runs its
  * command as the CLI does and returns the CLI's --json document as structuredContent and as text.
- * `codec` seals each confirmation form's state; one codec serves every round of a process.
+ * `codec` seals each confirmation form's state; one codec serves every round of a process. The
+ * project's asset tree is served as resources (src/tree/serve.ts), and each tool call is checked
+ * for the changes it made to it.
  */
-function createServer(ctx: RunContext, codec: RequestStateCodec<SealedRequest>): McpServer {
+function createServer(
+  ctx: RunContext,
+  codec: RequestStateCodec<SealedRequest>,
+  tree: TreeServer,
+  era: "legacy" | "modern",
+): McpServer {
   const { name, version } = packageInfo();
   const headless = ctx.settings.mode === "headless";
-  // The tool list is fixed, so the server never sends list-changed notifications.
+  // The tool list is fixed; the resource list follows the library.
   const server = new McpServer(
     { name, version },
     {
-      capabilities: { tools: { listChanged: false } },
+      capabilities: {
+        tools: { listChanged: false },
+        resources: { subscribe: true, listChanged: true },
+      },
       requestState: { verify: codec.verify },
       // A 2025-era client's form waits as long as a sealed state stays answerable.
       inputRequired: { roundTimeoutMs: FORM_TTL_SECONDS * 1000 },
@@ -354,7 +379,12 @@ function createServer(ctx: RunContext, codec: RequestStateCodec<SealedRequest>):
                 `invalid ${spec.tool} input: ${checked.issues.map((i) => i.message).join("; ")}`,
               ),
             )
-          : await callTool(spec, args ?? {}, ctx, request, server, codec, marked);
+          : await tree.around(
+              spec.tool!,
+              (progress) =>
+                callTool(spec, args ?? {}, ctx, request, server, codec, marked, progress),
+              (result) => !isInputRequiredResult(result) && result.exitCode === 0,
+            );
         if (isInputRequiredResult(outcome)) return outcome;
         const document = resultDocument(spec.name, outcome);
         // The run's contact sheet goes with the result as image content (design section 10).
@@ -367,18 +397,21 @@ function createServer(ctx: RunContext, codec: RequestStateCodec<SealedRequest>):
       },
     );
   }
+  tree.attach(server, era);
   return server;
 }
 
 /**
- * Serves the tools over MCP stdio with the official SDK until the input closes; no logs on
- * stdout. Refuses (exit 2 `settings_invalid`) to start in an environment the settings disallow,
+ * Serves the tools, and the asset tree of the project at `target` (else the working directory's
+ * Git top level) as resources, over MCP stdio with the official SDK until the input closes; no
+ * logs on stdout. Refuses (exit 2 `settings_invalid`) to start in an environment the settings disallow,
  * and (exit 2 `key_tracked`) when a tracked file of the working directory's repository holds a key.
  */
 export async function serveMcp(
   ctx: RunContext,
   input: Readable = process.stdin,
   output: Writable = process.stdout,
+  options: { target?: string } = {},
 ): Promise<void> {
   checkContextEnvironment(ctx);
   checkTrackedKeys(process.cwd(), { settings: ctx.settings, ...(ctx.env && { env: ctx.env }) });
@@ -388,10 +421,14 @@ export async function serveMcp(
   });
   // A per-process key: stdio serves every round of a confirmation form in this one process.
   const codec = formStateCodec();
-  const handle = serveStdio(() => createServer(ctx, codec), {
-    transport: new StdioServerTransport(input, output),
-    onerror: (error) => ctx.log(redact(`mcp: ${error.message}`)),
-  });
+  const dir = projectDir(options.target);
+  const handle = serveStdio(
+    ({ era }) => createServer(ctx, codec, new TreeServer(dir, ctx.settings.stateDir), era),
+    {
+      transport: new StdioServerTransport(input, output),
+      onerror: (error) => ctx.log(redact(`mcp: ${error.message}`)),
+    },
+  );
   await ended;
   await handle.close();
 }
