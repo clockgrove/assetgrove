@@ -66,7 +66,7 @@ Review the saved plan before apply; this command never generates images.`,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
   confirm: "spend",
-  async run(args) {
+  async run(args, ctx) {
     const result = await generationTool(
       "plan",
       {
@@ -80,7 +80,7 @@ Review the saved plan before apply; this command never generates images.`,
         routes: args.routes,
         identityMode: args.identityMode,
       },
-      await planningContext(args.providerScript, args.workItem),
+      await planningContext(args.providerScript, args.workItem, ctx),
     );
     return { exitCode: 0, fields: { ...result }, human: JSON.stringify(result, null, 2) };
   },

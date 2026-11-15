@@ -1,7 +1,7 @@
 import { evaluateIdentity } from "../identity-eval.ts";
 import type { Breakdown, MediumReport } from "../identity-eval.ts";
 import { loadProfile } from "../inputs.ts";
-import { DEFAULT_CAP_USD } from "../loop.ts";
+import { runCap } from "../budget.ts";
 import { providerFor, spendLedger } from "../providers/index.ts";
 import { loadRoutes } from "../routes.ts";
 import { defineCommand } from "./types.ts";
@@ -64,7 +64,12 @@ hold a game's private art. See docs/generation-knobs.md.`,
         description: "where one JSON line per case is written",
         placeholder: "<identity-eval.jsonl>",
       },
-      cap: { type: "number", description: "the run's cost cap in USD", default: DEFAULT_CAP_USD },
+      cap: {
+        type: "number",
+        description:
+          "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
+        placeholder: "<usd>",
+      },
       routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       workItem: {
         type: "string",
@@ -84,7 +89,7 @@ hold a game's private art. See docs/generation-knobs.md.`,
   confirm: "spend",
   async run(args, ctx) {
     const profile = args.profile ? (await loadProfile(args.profile)).value : {};
-    const { provider, name } = await providerFor(args.providerScript);
+    const { provider, name } = await providerFor(args.providerScript, ctx);
     const report = await evaluateIdentity({
       ...(args.bible !== undefined && { biblePath: args.bible }),
       casesPath: args.cases,
@@ -92,8 +97,8 @@ hold a game's private art. See docs/generation-knobs.md.`,
       routes: await loadRoutes(args.routes),
       provider,
       providerName: name,
-      capUsd: args.cap ?? DEFAULT_CAP_USD,
-      ledger: spendLedger(args.workItem),
+      capUsd: runCap(args.cap, ctx.settings),
+      ledger: spendLedger(ctx, args.workItem),
       ...(args.log !== undefined && { logPath: args.log }),
       log: ctx.log,
     });

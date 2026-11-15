@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { readJson, lockFor, loadProfile, loadStyleBible } from "../inputs.ts";
-import { DEFAULT_CAP_USD } from "../loop.ts";
+import { runCap } from "../budget.ts";
 import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
 import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION, loadRoutes } from "../routes.ts";
 import type { Route } from "../routes.ts";
@@ -52,7 +52,12 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         description: "the author's brief: purpose, setting, what happens",
         placeholder: "<brief.json>",
       },
-      cap: { type: "number", description: "the run's cost cap in USD", default: DEFAULT_CAP_USD },
+      cap: {
+        type: "number",
+        description:
+          "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
+        placeholder: "<usd>",
+      },
       routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       imports: {
         type: "string",
@@ -86,9 +91,9 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
-  async run(args) {
-    const ledger = spendLedger(args.workItem);
-    const capUsd = args.cap ?? DEFAULT_CAP_USD;
+  async run(args, ctx) {
+    const ledger = spendLedger(ctx, args.workItem);
+    const capUsd = runCap(args.cap, ctx.settings);
     const spec = await readJson<AssetSpec>(args.spec);
     const bible = await loadStyleBible(args.bible);
     const profile = await loadProfile(args.profile);
@@ -117,7 +122,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         : []),
     ];
     if (args.dryRun) {
-      const providerName = await dryRunProvider(args.providerScript);
+      const billing = await dryRunProvider(args.providerScript, ctx);
       const estimateUsd = perCall.reduce((sum, c) => sum + c.estimatedCostUsd, 0);
       const plan = {
         kind: "sheet",
@@ -133,9 +138,9 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         `forecast ${usd(estimateUsd)} against a $${capUsd.toFixed(2)} cap` +
           (plan.withinCap ? "" : " (over the cap)"),
       ].join("\n");
-      return dryRunOutcome(plan, human, ledger.forProfile(profile.value), providerName);
+      return dryRunOutcome(plan, human, ledger.forProfile(profile.value), billing);
     }
-    const { provider, name } = await providerFor(args.providerScript);
+    const { provider, name } = await providerFor(args.providerScript, ctx);
     let generated: Awaited<ReturnType<typeof generateSheet>>;
     try {
       generated = await generateSheet({

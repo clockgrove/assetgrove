@@ -47,7 +47,54 @@ export interface VisionResult extends ProviderResult {
   text: string;
 }
 
+/** The kind of provider call; a provider made of several adapters bills each kind to one of them. */
+export type CallKind = "image" | "vision" | "decide" | "model" | "rig" | "animate";
+
+/** What the provider reports about the money its key can still spend. */
+export interface LimitReading {
+  /** The balance the provider reports, in USD; absent when it cannot be priced. */
+  balanceUsd?: number;
+  /** The balance in the provider's own unit, when that is not USD (Tripo credits). */
+  balance?: number;
+  unit?: string;
+  /** Where the reading came from, for example `gateway credits`. */
+  source: string;
+}
+
+/** A declared limit at the provider, as settings hold it (`providers.<id>.limit`). */
+export interface DeclaredLimit {
+  kind: string;
+  usd?: number;
+  period?: string;
+  acceptUnlimited?: boolean;
+}
+
+/**
+ * What a provider instance costs, decided by its adapter (src/providers/adapter.ts), never by a
+ * provider's name: whether its calls are paid, the hosts it reaches, the limit the developer
+ * declared for it and how to read the provider's own balance.
+ */
+export interface Billing {
+  /** The adapter id, for example `vercel-ai-gateway`. */
+  adapter: string;
+  /** The settings id of the provider instance. */
+  providerId: string;
+  paid: boolean;
+  /** The hosts its calls reach. */
+  hosts: string[];
+  /** The limit declared in settings, when one is. */
+  limit?: DeclaredLimit;
+  /** Reads the provider's balance; spends nothing. Absent where the provider offers no reading. */
+  readLimit?: () => Promise<LimitReading>;
+  /** How spend is reconciled with the provider: per-call cost, balance delta, or not at all. */
+  reconcile: "per-call-cost" | "balance-delta" | "unavailable";
+}
+
 export interface GenerationProvider {
+  /** What its calls cost and where they go, from its adapter. */
+  readonly billing: Billing;
+  /** The billing of one kind of call, for a provider made of several adapters. */
+  billingFor?(kind: CallKind): Billing;
   generateImage(request: ImageRequest): Promise<ImageResult>;
   analyzeImages(request: VisionRequest): Promise<VisionResult>;
   /** A typed decision (Score or Boolean); providers without decision models leave it out. */

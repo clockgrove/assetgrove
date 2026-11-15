@@ -191,7 +191,7 @@ export async function generateSheet(
   const plan = planSheet(spec, profile, routes);
   const grid = frameGrid(spec, profile, 1);
   const capUsd = options.capUsd ?? DEFAULT_CAP_USD;
-  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.providerName, profile));
+  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.provider, profile));
   const scoring = options.identity !== undefined && options.identity.settings.mode !== "off";
   const estimate =
     plan.reduce((sum, c) => sum + c.estimatedCostUsd, 0) +

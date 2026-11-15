@@ -91,3 +91,30 @@ export class Budget {
     }
   }
 }
+
+/** A `--cap` above the settings' run cap: refused before any spend. Exit 3 `cap_refused`. */
+export class CapRefusedError extends BudgetExceededError {
+  readonly code = "cap_refused";
+  constructor(capUsd: number, ceilingUsd: number) {
+    super(ceilingUsd, 0, capUsd, "the run");
+    this.name = "CapRefusedError";
+    this.message = `refused: --cap $${capUsd.toFixed(2)} is above the $${ceilingUsd.toFixed(2)} run cap in the developer settings (caps.runUsd); only a person raises a cap`;
+  }
+}
+
+/**
+ * The run's cap: `--cap` when given, which may lower the settings' `caps.runUsd` but never raise
+ * it (`CapRefusedError`); else the settings' cap, or a command's own lower default.
+ */
+export function runCap(
+  cap: number | undefined,
+  settings: { caps: { runUsd: number } },
+  commandDefault?: number,
+): number {
+  const ceiling = settings.caps.runUsd;
+  if (cap === undefined) return Math.min(ceiling, commandDefault ?? ceiling);
+  if (!(typeof cap === "number" && Number.isFinite(cap) && cap >= 0))
+    throw new InputError(`invalid cost cap: ${cap}`);
+  if (cap > ceiling + 1e-9) throw new CapRefusedError(cap, ceiling);
+  return cap;
+}

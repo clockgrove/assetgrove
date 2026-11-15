@@ -642,7 +642,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
   const compilerEstimate = options.provider ? settings.llmRoute.estimatedCostUsd : 0;
   const budget = new Budget(
     settings.capUsd,
-    ledgerFor(options.ledger, options.providerName, options.profile),
+    ledgerFor(options.ledger, options.provider, options.profile),
   );
   budget.check(generationUsd + compilerEstimate, "planned compiler and generation calls");
   const caller = options.provider
@@ -871,7 +871,7 @@ export async function applyPlan(
     );
   const budget = new Budget(
     plan.settings.capUsd,
-    ledgerFor(options.ledger, options.providerName, plan.profile),
+    ledgerFor(options.ledger, options.provider, plan.profile),
   );
   // The compilation was spent (and recorded in any ledger) when the plan was made.
   budget.addPrior(plan.compiler.spentUsd, "prior prompt compilation");

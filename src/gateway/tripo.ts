@@ -1,13 +1,20 @@
 import { ProviderError } from "../errors.ts";
+import { isQuotaRefusal, ProviderQuotaError } from "./failure.ts";
 import type {
   AnimateRequest,
+  GenerationProvider,
+  ImageResult,
+  VisionResult,
+  Billing,
+  LimitReading,
   ImageInput,
   ModelRequest,
   ModelResult,
   RigRequest,
 } from "./provider.ts";
 
-const DEFAULT_BASE_URL = "https://api.tripo3d.ai/v2/openapi";
+/** Tripo's fixed endpoint; settings never move it. */
+export const TRIPO_BASE_URL = "https://api.tripo3d.ai/v2/openapi";
 const FILE_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -32,9 +39,16 @@ function isRecord(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The Tripo image-to-3D adapter: model generation, rigging and animation retargeting. */
-export class TripoProvider {
-  readonly #apiKey: string;
+/**
+ * The Tripo image-to-3D adapter: model generation, rigging and animation retargeting. A call's
+ * cost is the task's reported credits × `usdPerCredit` from settings; without a rate it is unset
+ * and the route's estimate stands.
+ */
+export class TripoProvider implements GenerationProvider {
+  readonly billing: Billing;
+  readonly #apiKey: string | undefined;
+  readonly #keyEnv: string;
+  readonly #usdPerCredit: number | undefined;
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
   readonly #sleep: (ms: number) => Promise<void>;
@@ -42,25 +56,43 @@ export class TripoProvider {
   readonly #timeoutMs: number;
 
   constructor(options: {
-    apiKey: string;
+    apiKey: string | undefined;
+    keyEnv?: string;
+    /** USD per Tripo credit, from settings (`providers.<id>.usdPerCredit`). */
+    usdPerCredit?: number;
+    billing?: Omit<Billing, "hosts" | "readLimit">;
+    /** Tests only: a loopback fixture. Settings never set it. */
     baseUrl?: string;
     fetch?: typeof fetch;
     sleep?: (ms: number) => Promise<void>;
     pollIntervalMs?: number;
     timeoutMs?: number;
   }) {
-    this.#apiKey = options.apiKey;
-    this.#baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.#apiKey = options.apiKey || undefined;
+    this.#keyEnv = options.keyEnv ?? "TRIPO_API_KEY";
+    this.#usdPerCredit = options.usdPerCredit;
+    this.#baseUrl = (options.baseUrl ?? TRIPO_BASE_URL).replace(/\/+$/, "");
+    this.billing = {
+      adapter: "tripo",
+      providerId: "tripo",
+      paid: true,
+      reconcile: "balance-delta",
+      ...options.billing,
+      hosts: [new URL(this.#baseUrl).host],
+      readLimit: () => this.limitReading(),
+    };
     this.#fetch = options.fetch ?? fetch;
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.#pollIntervalMs = options.pollIntervalMs ?? 3000;
     this.#timeoutMs = options.timeoutMs ?? 15 * 60 * 1000;
   }
 
-  static fromEnv(env: Record<string, string | undefined> = process.env): TripoProvider {
-    const apiKey = env["TRIPO_API_KEY"];
-    if (apiKey === undefined || apiKey === "") throw new Error("TRIPO_API_KEY is not set");
-    return new TripoProvider({ apiKey });
+  generateImage(): Promise<ImageResult> {
+    return Promise.reject(new ProviderError("tripo cannot generate images"));
+  }
+
+  analyzeImages(): Promise<VisionResult> {
+    return Promise.reject(new ProviderError("tripo cannot analyze images"));
   }
 
   /** The account's credit balance; spends nothing. */
@@ -69,6 +101,17 @@ export class TripoProvider {
     const balance = data["balance"];
     if (typeof balance !== "number") throw new ProviderError("tripo balance: no balance returned");
     return balance;
+  }
+
+  /** The balance as a limit reading: credits, and USD when settings give `usdPerCredit`. */
+  async limitReading(): Promise<LimitReading> {
+    const balance = await this.balance();
+    return {
+      balance,
+      unit: "credits",
+      ...(this.#usdPerCredit !== undefined && { balanceUsd: balance * this.#usdPerCredit }),
+      source: "tripo balance",
+    };
   }
 
   async generateModel(request: ModelRequest): Promise<ModelResult> {
@@ -102,7 +145,7 @@ export class TripoProvider {
     return {
       ...result,
       ...(request.seed !== undefined && { seed: request.seed }),
-      ...this.#cost(credits, opts),
+      ...this.#cost(credits),
     };
   }
 
@@ -116,11 +159,10 @@ export class TripoProvider {
       ...(opts["spec"] !== undefined && { spec: opts["spec"] }),
       ...(opts["modelVersion"] !== undefined && { model_version: opts["modelVersion"] }),
     });
-    return { ...result, ...this.#cost(credits, opts) };
+    return { ...result, ...this.#cost(credits) };
   }
 
   async animateModel(request: AnimateRequest): Promise<ModelResult> {
-    const opts = tripoOptions(request.providerOptions);
     const { credits, ...result } = await this.#run({
       type: "animate_retarget",
       original_model_task_id: request.source,
@@ -129,12 +171,12 @@ export class TripoProvider {
       bake_animation: true,
       export_with_geometry: true,
     });
-    return { ...result, ...this.#cost(credits, opts) };
+    return { ...result, ...this.#cost(credits) };
   }
 
-  #cost(credits: number | undefined, opts: Options): { costUsd?: number } {
-    const rate = opts["usdPerCredit"];
-    return credits !== undefined && typeof rate === "number" ? { costUsd: credits * rate } : {};
+  #cost(credits: number | undefined): { costUsd?: number } {
+    const rate = this.#usdPerCredit;
+    return credits !== undefined && rate !== undefined ? { costUsd: credits * rate } : {};
   }
 
   async #file(image: ImageInput): Promise<Json> {
@@ -152,6 +194,8 @@ export class TripoProvider {
   }
 
   async #call(label: string, method: string, path: string, body?: FormData | Json): Promise<Json> {
+    if (this.#apiKey === undefined)
+      throw new ProviderError(`tripo ${label}: ${this.#keyEnv} is not set`);
     const headers: Record<string, string> = { Authorization: `Bearer ${this.#apiKey}` };
     let payload: FormData | string | undefined;
     if (body instanceof FormData) payload = body;
@@ -175,11 +219,16 @@ export class TripoProvider {
     } catch {
       throw new ProviderError(`tripo ${label}: HTTP ${response.status} with no JSON body`);
     }
-    if (!isRecord(json)) throw new ProviderError(`tripo ${label}: unexpected response`);
+    if (!isRecord(json))
+      throw new ProviderError(`tripo ${label}: unexpected response (HTTP ${response.status})`);
     const code = json["code"];
     if (code !== 0) {
+      // Only the provider's message, the status and its code; never the rest of the body.
       const message = typeof json["message"] === "string" ? json["message"] : "request failed";
-      throw new ProviderError(`tripo ${label}: ${message} (code ${String(code)})`);
+      const text = `tripo ${label}: ${message} (HTTP ${response.status}, code ${String(code)})`;
+      if (isQuotaRefusal({ message, status: response.status }))
+        throw new ProviderQuotaError(`refused: ${text}`, response.status, String(code));
+      throw new ProviderError(text);
     }
     return isRecord(json["data"]) ? json["data"] : {};
   }

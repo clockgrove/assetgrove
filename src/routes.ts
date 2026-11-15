@@ -193,7 +193,7 @@ export const defaultRoutes: Routes = {
     outputGrant: tripoGrant,
     providerTerms: tripoTerms,
     providerOptions: {
-      tripo: { modelVersion: "v2.5-20250123", texture: true, pbr: true, usdPerCredit: 0.01 },
+      tripo: { modelVersion: "v2.5-20250123", texture: true, pbr: true },
     },
   },
   // Tripo's auto-rig, 25 credits (#72's probe). Quadruped rigs need the v2 rigger; v1 refuses them.
@@ -204,7 +204,7 @@ export const defaultRoutes: Routes = {
     providerTerms: tripoTerms,
     rigTypes: { quadruped: "quadruped", biped: "biped" },
     providerOptions: {
-      tripo: { spec: "tripo", modelVersion: "v2.0-20250506", usdPerCredit: 0.01 },
+      tripo: { spec: "tripo", modelVersion: "v2.0-20250506" },
     },
   },
   // Tripo's animation library retargeted onto the rig.
@@ -233,7 +233,6 @@ export const defaultRoutes: Routes = {
         walk: { clip: "preset:quadruped:walk", loop: true },
       },
     },
-    providerOptions: { tripo: { usdPerCredit: 0.01 } },
   },
   // Look-dev (#82): each flat-lit render of a picked 3D character repainted in the look its
   // approved references and the bible define, then projected back onto the model's own UVs.

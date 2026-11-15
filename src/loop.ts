@@ -46,7 +46,7 @@ export interface StageOptions {
   profileDir?: string;
   routes: Routes;
   provider: GenerationProvider;
-  /** Recorded in each call's route, for example `vercel-ai-gateway`. */
+  /** Recorded in each call's route: the provider's settings id, for example `vercel-ai-gateway`. */
   providerName: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
@@ -228,7 +228,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   const { requested, capUsd, estimateUsd } = plan;
   const generator = options.generators.find((g) => g.kind === spec.kind) as Generator;
 
-  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.providerName, profile));
+  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.provider, profile));
   // The run-level check: refuse the whole run, before any call, if it would exceed the cap or
   // cross a spend ledger limit.
   budget.check(estimateUsd, `a run of ${requested} candidates`);

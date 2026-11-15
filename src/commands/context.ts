@@ -4,6 +4,7 @@
  */
 import { checkEnvironment } from "../env.ts";
 import type { Env } from "../env.ts";
+import { createProviders } from "../providers/adapter.ts";
 import { loadSettings } from "../settings.ts";
 import type { CommandSpec, RunContext } from "./types.ts";
 
@@ -25,6 +26,9 @@ export function createRunContext(options: ContextOptions): RunContext {
     ...(options.env && { env: options.env }),
     ...(options.cwd && { cwd: options.cwd }),
   });
+  // Each provider is made by its adapter now, so an adapter-aware refusal (an unknown adapter, a
+  // baseURL the adapter does not take) exits 2 settings_invalid before any command runs.
+  createProviders(settings, { ...(options.env && { env: options.env }) });
   return {
     settings,
     log: options.log,

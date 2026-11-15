@@ -1,6 +1,8 @@
 import { ProviderError } from "../errors.ts";
 import type {
   AnimateRequest,
+  Billing,
+  CallKind,
   DecisionRequest,
   DecisionResult,
   GenerationProvider,
@@ -18,26 +20,41 @@ export type ModelProvider = Pick<GenerationProvider, "generateModel" | "rigModel
 
 /**
  * One provider made of two adapters: image, vision and decision calls go to the gateway, 3D calls
- * to the 3D adapter. Each adapter is made on its first call, so a missing key fails only the calls
- * that need it (as a provider error) and a run that never makes them needs no key for them.
+ * to the 3D adapter. Each call is billed to the adapter that serves it (`billingFor`); `parts`
+ * lists both. A missing key fails only the calls that need it, as a provider error.
  */
 export class RoutedProvider implements GenerationProvider {
-  private readonly makeGateway: () => GenerationProvider;
-  private readonly makeModels: () => ModelProvider;
-  private gateway?: GenerationProvider;
-  private models?: ModelProvider;
+  readonly billing: Billing;
+  readonly parts: readonly Billing[];
+  private readonly gateway: GenerationProvider;
+  private readonly models: ModelProvider & { billing: Billing };
 
-  constructor(options: { gateway: () => GenerationProvider; models: () => ModelProvider }) {
-    this.makeGateway = options.gateway;
-    this.makeModels = options.models;
+  constructor(options: { gateway: GenerationProvider; models: GenerationProvider }) {
+    this.gateway = options.gateway;
+    this.models = options.models;
+    const [a, b] = [options.models.billing, options.gateway.billing];
+    this.parts = [a, b];
+    this.billing = {
+      adapter: `${a.adapter}+${b.adapter}`,
+      providerId: `${a.providerId}+${b.providerId}`,
+      paid: a.paid || b.paid,
+      hosts: [...new Set([...a.hosts, ...b.hosts])],
+      reconcile: "unavailable",
+    };
+  }
+
+  billingFor(kind: CallKind): Billing {
+    return kind === "model" || kind === "rig" || kind === "animate"
+      ? this.models.billing
+      : this.gateway.billing;
   }
 
   private image(): GenerationProvider {
-    return (this.gateway ??= make(this.makeGateway));
+    return this.gateway;
   }
 
   private model(): ModelProvider {
-    return (this.models ??= make(this.makeModels));
+    return this.models;
   }
 
   generateImage(request: ImageRequest): Promise<ImageResult> {
@@ -70,13 +87,5 @@ export class RoutedProvider implements GenerationProvider {
     const provider = this.model();
     if (!provider.animateModel) throw new ProviderError("the 3D provider cannot animate models");
     return provider.animateModel(request);
-  }
-}
-
-function make<T>(factory: () => T): T {
-  try {
-    return factory();
-  } catch (error) {
-    throw new ProviderError((error as Error).message, { cause: error });
   }
 }

@@ -1,5 +1,7 @@
 import type {
   AnimateRequest,
+  Billing,
+  LimitReading,
   ModelRequest,
   ModelResult,
   RigRequest,
@@ -37,15 +39,18 @@ export interface Script {
   /** Answers clip retargeting calls. */
   animate?(request: AnimateRequest, index: number): Scripted<ModelResult>;
   /**
-   * Test only: the CLI runs this script under the provider name `scripted-paid`, whose calls count
-   * as paid spend in the cross-run ledger, so tests can prove the limits offline.
+   * Test only: the scripted adapter marks the provider paid, so its calls count in the spend
+   * ledger and need a declared limit, and tests can prove the limits offline.
    */
   paid?: boolean;
+  /** Test only: the provider's limit reading, as a real adapter reads its balance. */
+  limitReading?(): LimitReading | Promise<LimitReading>;
 }
 
 type Scripted<T extends { requestId: string }> = Omit<T, "requestId"> & { requestId?: string };
 
 export class ScriptedProvider implements GenerationProvider {
+  readonly billing: Billing;
   readonly calls: Array<
     | { kind: "image"; request: ImageRequest }
     | { kind: "vision"; request: VisionRequest }
@@ -62,8 +67,19 @@ export class ScriptedProvider implements GenerationProvider {
   private visionCount = 0;
   private decideCount = 0;
 
-  constructor(script: Script) {
+  /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
+  constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
     this.script = script;
+    const read = script.limitReading?.bind(script);
+    this.billing = {
+      adapter: "scripted",
+      providerId: "scripted",
+      hosts: [],
+      reconcile: "unavailable",
+      ...billing,
+      paid: script.paid === true,
+      ...(read !== undefined && { readLimit: async () => read() }),
+    };
   }
 
   async generateImage(request: ImageRequest): Promise<ImageResult> {
