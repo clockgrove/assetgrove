@@ -152,7 +152,8 @@ export async function snapshot(dir: string): Promise<string[]> {
   const out: string[] = [];
   for (const name of (await readdir(dir, { recursive: true })).sort()) {
     const s = await stat(join(dir, name));
-    out.push(`${name} ${s.isDirectory() ? "d" : s.size} ${s.mtimeMs}`);
+    // Listed with `/` on every system, so a caller can match a path the same way everywhere.
+    out.push(`${name.replaceAll("\\", "/")} ${s.isDirectory() ? "d" : s.size} ${s.mtimeMs}`);
   }
   return out;
 }

@@ -18,8 +18,10 @@ permissions:
 
 # check: format, lint and types, on Linux. test: the offline suite. A pull request runs it on Linux in four
 # shards, so a push gets its answer in about a third of the time. The merge queue and main run it whole on
-# Linux, macOS and Windows, so nothing reaches main that fails on any of them. The roll-up `ci`, the one
-# required check, needs both jobs.
+# Linux, macOS and Windows, so nothing reaches main that fails on any of them. search: the optional search
+# package (packages/assetgrove-search), which has its own install; its legs do their work only when the
+# change touches the package or the bench that reads it. The roll-up `ci`, the one required check, needs
+# all three jobs.
 #
 # The pnpm store is cached per system and lockfile. Only a push to main saves it; pull requests and the
 # merge queue restore it read-only, so a pull request can't plant a cache that main would use.
@@ -116,19 +118,87 @@ jobs:
           path: ${{ steps.store.outputs.path }}
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+  search:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pull requests run Linux only; the merge queue and main run Linux, macOS and Windows.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-26.04"]') || fromJSON('["ubuntu-26.04","macos-26","windows-2025"]') }}
+    name: search (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The base is the commit this change is measured against: the pull request's base, the merge
+      # group's base, or main before the push. With no usable base the legs run.
+      - name: See whether the change touches the search package
+        id: changed
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          touched=true
+          if [[ "$BASE" =~ ^[0-9a-f]{40}$ && ! "$BASE" =~ ^0+$ ]] && git fetch --quiet --no-tags --depth=1 origin "$BASE"; then
+            if git diff --quiet "$BASE" HEAD -- packages/assetgrove-search bench/search docs/decisions.md .github/workflows/ci.yml; then
+              touched=false
+            fi
+          fi
+          echo "touched=$touched" >> "$GITHUB_OUTPUT"
+          echo "search package touched: $touched"
+
+      - name: Set up Node.js
+        if: steps.changed.outputs.touched == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+
+      - name: Enable pnpm from packageManager
+        if: steps.changed.outputs.touched == 'true'
+        run: corepack enable
+
+      # The bench under bench/search imports the core's source, which needs the core's dependencies.
+      - name: Install the core's locked dependencies
+        if: steps.changed.outputs.touched == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # Optional dependencies stay in: the store's native library is one.
+      - name: Install the package's locked dependencies
+        if: steps.changed.outputs.touched == 'true'
+        working-directory: packages/assetgrove-search
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check
+        if: steps.changed.outputs.touched == 'true'
+        working-directory: packages/assetgrove-search
+        run: pnpm check
+
+      - name: Test
+        if: steps.changed.outputs.touched == 'true'
+        working-directory: packages/assetgrove-search
+        run: pnpm test
+
   ci:
-    needs: [check, test]
+    needs: [check, test, search]
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - name: Require check and every test leg
+      - name: Require check, every test leg and every search leg
         env:
           CHECK: ${{ needs.check.result }}
           TEST: ${{ needs.test.result }}
+          SEARCH: ${{ needs.search.result }}
         run: |
-          echo "check: $CHECK, test: $TEST"
-          test "$CHECK" = success && test "$TEST" = success
+          echo "check: $CHECK, test: $TEST, search: $SEARCH"
+          test "$CHECK" = success && test "$TEST" = success && test "$SEARCH" = success
 
   # Licence metadata: every file must have a licence and copyright under REUSE 3.3, which the root
   # REUSE.toml assigns by path. A separate job, so the required `ci` check is unchanged.

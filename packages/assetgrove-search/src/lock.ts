@@ -17,11 +17,34 @@ export class WriteLock {
 
   async release(): Promise<void> {
     try {
-      const text = await readFile(this.path, "utf8");
+      const text = await retryBusy(() => readFile(this.path, "utf8"));
       if (Number.parseInt(text.trim(), 10) !== process.pid) return;
-      await unlink(this.path);
+      await retryBusy(() => unlink(this.path));
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+  }
+}
+
+/**
+ * On Windows a file that another handle is creating, reading or deleting refuses an open or an
+ * unlink with one of these codes for a few milliseconds. They are contention, not a permission
+ * problem, so the operation is tried again.
+ */
+function busy(e: unknown): boolean {
+  const code = (e as NodeJS.ErrnoException).code;
+  return (
+    process.platform === "win32" && (code === "EPERM" || code === "EBUSY" || code === "EACCES")
+  );
+}
+
+async function retryBusy<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation();
+    } catch (e) {
+      if (!busy(e) || attempt >= 10) throw e;
+      await sleep(5 * attempt);
     }
   }
 }
@@ -41,9 +64,11 @@ async function heldState(
 ): Promise<{ state: "free" | "held" | "stale"; text?: string }> {
   let text: string;
   try {
-    text = await readFile(path, "utf8");
+    text = await retryBusy(() => readFile(path, "utf8"));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return { state: "free" };
+    // Still busy after the retries: another process is working on the lock, so it counts as held.
+    if (busy(e)) return { state: "held" };
     throw e;
   }
   const pid = Number.parseInt(text.trim(), 10);
@@ -72,6 +97,7 @@ async function removeStale(path: string, staleText: string): Promise<void> {
   try {
     handle = await open(guard, "wx");
   } catch (e) {
+    if (busy(e)) return;
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     try {
       const { mtimeMs } = await stat(guard);
@@ -88,9 +114,9 @@ async function removeStale(path: string, staleText: string): Promise<void> {
     const now = await heldState(path);
     if (now.state === "stale" && now.text === staleText) {
       try {
-        await unlink(path);
+        await retryBusy(() => unlink(path));
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT" && !busy(e)) throw e;
       }
     }
   } finally {
@@ -104,7 +130,7 @@ export async function tryAcquireWriteLock(storeDir: string): Promise<WriteLock |
   const path = lockPath(storeDir);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const handle = await open(path, "wx");
+      const handle = await retryBusy(() => open(path, "wx"));
       try {
         await handle.writeFile(`${process.pid}\n`);
       } finally {
@@ -112,7 +138,7 @@ export async function tryAcquireWriteLock(storeDir: string): Promise<WriteLock |
       }
       return new WriteLock(path);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST" && !busy(e)) throw e;
     }
     const { state, text } = await heldState(path);
     if (state === "held") return undefined;
