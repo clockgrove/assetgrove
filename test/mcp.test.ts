@@ -477,14 +477,14 @@ const rows: Row[] = [
       );
       await writeFile(join(dir, "profile.json"), JSON.stringify(syntheticProfile()));
       await writeFile(
-        join(dir, "settings.json"),
-        JSON.stringify({ candidates: 1, capUsd: 2, strictness: 0.5 }),
+        join(dir, "run-options.json"),
+        JSON.stringify({ candidates: 1, strictness: 0.5 }),
       );
       return {
         spec: join(dir, "spec.json"),
         bible: paths.bible(),
         profile: join(dir, "profile.json"),
-        settings: join(dir, "settings.json"),
+        runOptions: join(dir, "run-options.json"),
         out: join(dir, "plan.json"),
       };
     },

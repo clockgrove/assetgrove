@@ -220,8 +220,8 @@ export default {
   );
   const template = join(f.root, "template.md");
   await writeFile(template, "# Prompt template v1\n{{constitution}}\n{{spec}}\n");
-  const settings = join(f.root, "settings.json");
-  await writeFile(settings, JSON.stringify({ candidates: 2, capUsd: 5, strictness: 0.5 }));
+  const runOptions = join(f.root, "run-options.json");
+  await writeFile(runOptions, JSON.stringify({ candidates: 2, strictness: 0.5 }));
   const plan = join(f.root, "plan.json");
   const planned = await exec(
     process.execPath,
@@ -234,8 +234,8 @@ export default {
       f.bible,
       "--profile",
       join(f.root, "profile.json"),
-      "--settings",
-      settings,
+      "--run-options",
+      runOptions,
       "--template",
       template,
       "--out",
@@ -249,8 +249,9 @@ export default {
     { env: env("") },
   );
   const { plan: saved } = JSON.parse(planned.stdout);
-  assert.equal(saved.identityCheck.mode, "enforce");
-  assert.equal(saved.identityCheck.route.model, "perplexity/pplx-decider-v1.2");
+  // Enforce mode: the plan's operations name the scoring and the record check; apply resolves
+  // their routes from the settings again.
+  assert.deepEqual(saved.operations.slice(-2), ["identity", "identity-check"]);
   const applied = await exec(
     process.execPath,
     [
