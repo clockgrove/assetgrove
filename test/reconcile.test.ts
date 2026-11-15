@@ -204,6 +204,42 @@ test("a gap within the margin writes no hold", async () => {
   assert.equal(existsSync(join(stateDir, "holds.jsonl")), false);
 });
 
+test("with default margins, a failed call on a balance-delta provider raises no hold, whether or not it was billed", async () => {
+  for (const billedOnFailure of [false, true]) {
+    const stateDir = await freshState();
+    settings(stateDir);
+    const { args, dir } = await stageArgs();
+    // The balance moves by each answered call's estimate; the third image call fails.
+    const script = join(dir, "balance-script.mjs");
+    await writeFile(
+      script,
+      `import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
+let images = 0;
+let billed = 0;
+export default {
+  paid: true,
+  reconcile: "balance-delta",
+  limitReading: () => ({ balanceUsd: 50 - billed, source: "scripted balance" }),
+  image: (r, i) => {
+    billed += 0.05;
+    if (++images >= 3) {
+      ${billedOnFailure ? "" : "billed -= 0.05;"}
+      throw new Error("the task failed");
+    }
+    return base.image(r, i);
+  },
+  vision: (r, i) => ((billed += 0.02), base.vision(r, i)),
+};`,
+    );
+    approve(script);
+    const r = await cli([...args, "--provider-script", script]);
+    assert.equal(r.code, 4, r.stderr);
+    const [entry] = await runReconcile(r);
+    assert.equal(entry?.status, "reconciled", JSON.stringify(entry));
+    assert.equal(existsSync(join(stateDir, "holds.jsonl")), false, "no hold");
+  }
+});
+
 test("a provider without usage records reconcile unavailable, and settings check says so", async () => {
   const stateDir = await freshState();
   settings(stateDir);

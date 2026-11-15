@@ -155,6 +155,17 @@ export class Journal {
     return total;
   }
 
+  /** What the journaled call of a key cost, as its record settled it; undefined when none. */
+  recordedCostUsd(key: string): number | undefined {
+    try {
+      const entry = JSON.parse(readFileSync(join(this.dir, `${key}.json`), "utf8")) as JournalEntry;
+      const cost = entry.record?.costUsd;
+      return typeof cost === "number" && Number.isFinite(cost) ? cost : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** How many calls the journal holds. */
   count(): number {
     return journalCount(this.dir);

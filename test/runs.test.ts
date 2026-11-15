@@ -2,7 +2,8 @@ import "./fixtures/env.ts";
 import { approve, approveProfile, ledgerPath } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import fs, { existsSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { RunInProgressError, acquireRunLock } from "../src/runs/lock.ts";
+import { RunInProgressError, acquireRunLock, type RunLock } from "../src/runs/lock.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
@@ -360,6 +361,73 @@ test("a resumed run is checked against the spend limit for its missing calls onl
   assert.equal(await provider.count(), n, "only the missing calls were made");
 });
 
+test("a failed call's charge counts against the run's cap when the request is repeated", async () => {
+  const { world, flags } = await stageRequest();
+  // Each process's third and later image calls fail after the provider may have billed them.
+  const script = join(world.dir, "failing.mjs");
+  await writeFile(
+    script,
+    `import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
+let images = 0;
+export default {
+  paid: true,
+  image: (r, i) => {
+    if (++images >= 3) throw new Error("the upstream timed out after making the image");
+    return base.image(r, i);
+  },
+  vision: (r, i) => base.vision(r, i),
+  promptPolicy: () => ({ answer: { type: "boolean", probability: 0 } }),
+};`,
+  );
+  approve(script);
+  const cap = 0.35;
+  const args = [
+    "stage",
+    ...flags,
+    "--candidates",
+    "1",
+    "--cap",
+    String(cap),
+    "--provider-script",
+    script,
+  ];
+  const codes: Array<string | undefined> = [];
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const r = await cli([...args, "--json"]);
+    const runId = doc(r).runId as string;
+    codes.push(doc(r).error?.code as string | undefined);
+    const { reserves } = await ledgerOf(runId);
+    assert.ok(reserves.length > 0);
+    const charged = await ledgerUsd(runId);
+    assert.ok(
+      charged <= cap + 1e-9,
+      `attempt ${attempt + 1}: $${charged} in the ledger, cap $${cap}`,
+    );
+  }
+  assert.equal(codes[0], "provider_error");
+  assert.equal(codes.at(-1), "cap_refused", codes.join(", "));
+});
+
+async function ledgerUsd(runId: string): Promise<number> {
+  const entries = (await readFile(ledgerPath, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map(
+      (l) =>
+        JSON.parse(l) as {
+          op: string;
+          id: string;
+          runId?: string;
+          amountUsd?: number;
+          costUsd?: number;
+        },
+    );
+  const settled = new Map(entries.filter((e) => e.op === "settle").map((e) => [e.id, e.costUsd!]));
+  return entries
+    .filter((e) => e.op === "reserve" && e.runId === runId)
+    .reduce((sum, e) => sum + (settled.get(e.id) ?? e.amountUsd!), 0);
+}
+
 test("round 2 creates a new run directory; a live lock exits 2 run_in_progress; a dead pid's lock is taken over", async () => {
   const { world, flags } = await stageRequest();
   const provider = await countingScript(world.dir);
@@ -415,9 +483,10 @@ test("a dead lock is taken over by exactly one process, and a lock left by this 
   await rm(join(runDir, "lock.takeover"));
   const first = acquireRunLock(runDir, other);
   assert.equal(first.tookOver, true);
-  assert.equal(await readFile(join(runDir, "lock"), "utf8"), `${other}\n`);
+  const holderPid = async () => (await readFile(join(runDir, "lock"), "utf8")).split("\n")[0];
+  assert.equal(await holderPid(), String(other));
   assert.throws(() => acquireRunLock(runDir), RunInProgressError);
-  assert.equal(await readFile(join(runDir, "lock"), "utf8"), `${other}\n`);
+  assert.equal(await holderPid(), String(other));
   first.release();
   assert.equal(existsSync(join(runDir, "lock")), false);
 
@@ -437,6 +506,76 @@ test("a dead lock is taken over by exactly one process, and a lock left by this 
   assert.equal(namesake.tookOver, true);
   namesake.release();
   assert.equal(existsSync(join(runDir, "lock")), false);
+});
+
+test("a claimant arriving while a lock is being created never finds it empty and takes it over", async () => {
+  const runDir = await tempDir("assetgrove-lock-create-");
+  const other = process.ppid; // a live process other than this one
+  // The second claimant runs at the first one's write: after its exclusive create, before its
+  // content, where a reader of an empty lock would take it over as dead.
+  const original = fs.writeFileSync;
+  let second: RunLock | RunInProgressError | undefined;
+  let arrived = false;
+  fs.writeFileSync = ((...args: Parameters<typeof original>) => {
+    if (!arrived) {
+      arrived = true;
+      try {
+        second = acquireRunLock(runDir, other);
+      } catch (error) {
+        if (!(error instanceof RunInProgressError)) throw error;
+        second = error;
+      }
+    }
+    return original(...args);
+  }) as typeof original;
+  syncBuiltinESMExports();
+  let first: RunLock | RunInProgressError;
+  try {
+    first = acquireRunLock(runDir);
+  } catch (error) {
+    if (!(error instanceof RunInProgressError)) throw error;
+    first = error;
+  } finally {
+    fs.writeFileSync = original;
+    syncBuiltinESMExports();
+  }
+  const held = [first, second].filter((l) => l !== undefined && !(l instanceof Error));
+  assert.equal(held.length, 1, "exactly one claimant holds the lock");
+  for (const lock of held) (lock as RunLock).release();
+});
+
+test("a lock whose pid now names another live process is taken over, and a refusal names the lock file", async () => {
+  const runDir = await tempDir("assetgrove-lock-reused-");
+  const lock = join(runDir, "lock");
+  const other = process.ppid; // a live process that never ran this request
+  const stale = [
+    // Its holder started long before this machine's last boot.
+    `${other}\n${JSON.stringify({ startedMs: 0 })}\n`,
+    ...(process.platform === "linux"
+      ? [
+          // Written in another boot.
+          `${other}\n${JSON.stringify({ bootId: "00000000-0000-0000-0000-000000000000", startTicks: "1" })}\n`,
+          // Written in this boot by a process that started at another time.
+          `${other}\n${JSON.stringify({
+            bootId: (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim(),
+            startTicks: "1",
+          })}\n`,
+        ]
+      : []),
+  ];
+  for (const content of stale) {
+    await writeFile(lock, content);
+    const taken = acquireRunLock(runDir);
+    assert.equal(taken.tookOver, true, content);
+    taken.release();
+  }
+  // The live process's own lock still refuses, and the error names the lock file to remove.
+  const held = acquireRunLock(runDir, other);
+  assert.throws(
+    () => acquireRunLock(runDir),
+    (error: Error) => error instanceof RunInProgressError && error.message.includes(lock),
+  );
+  held.release();
 });
 
 test("a materials request's digest covers the preview's script outside the profile folder and the derivation's source images", async () => {

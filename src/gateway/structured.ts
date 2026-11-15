@@ -63,6 +63,8 @@ export async function decideStructured(
   const result = await guard("decide", () =>
     generateText({
       model,
+      // One request per reservation: an SDK retry would resend a paid call.
+      maxRetries: 0,
       messages: userMessage(`${req.prompt}\n\n${instructions}`, req.images),
       output: Output.object({ schema }),
     }),

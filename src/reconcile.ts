@@ -268,7 +268,17 @@ export async function finishRunReconcile(
       if (billing === undefined || billing.reconcile === "unavailable") {
         entries.push({ provider, status: "unavailable", runId: run.runId, ledgerUsd });
       } else if (billing.reconcile === "balance-delta") {
-        entries.push(await balanceDelta(ctx, run, provider, billing, ledgerUsd));
+        // A call the journal answered was paid; a failed or interrupted one may or may not have
+        // been (a refused or failed task leaves the balance alone), so it widens the ledger side.
+        let answeredUsd = 0;
+        const seen = new Set<string>();
+        for (const call of mine.toReversed()) {
+          const key = call.callKey;
+          if (key === undefined || seen.has(key) || !journaled(run.runDir, key)) continue;
+          seen.add(key);
+          answeredUsd += call.costUsd;
+        }
+        entries.push(await balanceDelta(ctx, run, provider, billing, { answeredUsd, ledgerUsd }));
       } else if (billing.callCost === undefined) {
         entries.push({
           provider,
@@ -315,8 +325,9 @@ async function balanceDelta(
   run: RunReconcile,
   provider: string,
   billing: Billing,
-  ledgerUsd: number,
+  spend: { answeredUsd: number; ledgerUsd: number },
 ): Promise<ReconcileEntry> {
+  const { answeredUsd, ledgerUsd } = spend;
   const base = { provider, method: "balance-delta" as const, runId: run.runId };
   const start = run.balances.get(provider);
   const end = await readBalance(billing);
@@ -324,18 +335,31 @@ async function balanceDelta(
     const note = typeof start === "number" ? end : (start ?? "no balance reading at the start");
     return { ...base, status: "failed", ledgerUsd, note: String(note) };
   }
-  const carried = run.carried?.has(provider) === true;
+  const providerUsd = start - end;
+  // The ledger side is the answered calls plus as much of the unanswered ones as the balance
+  // moved, so only a delta outside what the run may have been billed counts as a gap.
+  const side = Math.min(Math.max(providerUsd, answeredUsd), Math.max(answeredUsd, ledgerUsd));
+  const notes = [
+    ...(run.carried?.has(provider) === true
+      ? ["the start reading is an interrupted earlier attempt's; the delta spans both"]
+      : []),
+    ...(ledgerUsd - answeredUsd > EPSILON
+      ? [
+          `$${(ledgerUsd - answeredUsd).toFixed(4)} of failed or interrupted calls counts only as far as the balance moved`,
+        ]
+      : []),
+  ];
   return compare(
     ctx,
-    {
-      ...base,
-      ...(carried && {
-        note: "the start reading is an interrupted earlier attempt's; the delta spans both",
-      }),
-    },
-    ledgerUsd,
-    start - end,
+    { ...base, ...(notes.length > 0 && { note: notes.join("; ") }) },
+    side,
+    providerUsd,
   );
+}
+
+/** Whether the run's journal answered the call of a key. */
+function journaled(runDir: string, callKey: string): boolean {
+  return existsSync(join(runDir, CALLS_DIR, `${callKey}.json`));
 }
 
 /**

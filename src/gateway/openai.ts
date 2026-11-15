@@ -65,6 +65,8 @@ export class OpenAIProvider implements GenerationProvider {
     const result = await this.#guard("image", () =>
       generateImage({
         model,
+        // One request per reservation: an SDK retry would resend a paid call.
+        maxRetries: 0,
         prompt:
           req.references.length === 0
             ? req.prompt
@@ -88,6 +90,7 @@ export class OpenAIProvider implements GenerationProvider {
       generateText({
         model,
         messages: userMessage(req.prompt, req.images),
+        maxRetries: 0,
         ...(req.providerOptions !== undefined && {
           providerOptions: req.providerOptions as Record<string, never>,
         }),
