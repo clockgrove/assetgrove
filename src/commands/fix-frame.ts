@@ -68,6 +68,7 @@ async function prepare(args: FixFrameArgs, ctx: RunContext) {
   const plan = planFrameFix(routes, capUsd);
   const jobs = jobsOf(plan.perCall, routes);
   const work = await buildWorkPlan(fixFrameCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["strip", "profile", "spec", "keyPose", "provenance", "bible"],
     jobs,
     capUsd,

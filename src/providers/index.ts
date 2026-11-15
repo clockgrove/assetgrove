@@ -31,6 +31,7 @@ export async function providerSet(
   const script = providerScript !== undefined ? await loadScript(providerScript, ctx) : undefined;
   return ProviderSet.fromSettings(ctx.settings, {
     ...(ctx.env && { env: ctx.env }),
+    promptAllow: ctx.settings.promptPolicy.allow,
     ...(script && { script }),
     ...(ctx.extensions && { adapters: ctx.extensions.adapters }),
   });
@@ -60,5 +61,6 @@ export async function planningContext(
     provider: await providerSet(providerScript, ctx),
     ledger: spendLedger(ctx, workItem),
     runCapUsd: ctx.settings.caps.runUsd,
+    promptAllow: ctx.settings.promptPolicy.allow,
   };
 }

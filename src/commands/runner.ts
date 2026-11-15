@@ -194,6 +194,7 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
       exitCode: outcome.exitCode,
       ...(outcome.error && { error: outcome.error.code }),
       ...(typeof spent === "number" && { spentUsd: spent }),
+      ...(plan.promptPolicy && { promptPolicy: plan.promptPolicy }),
       ...(existsSync(join(plan.runDir, CONTACT_SHEET_FILE)) && {
         contactSheet: CONTACT_SHEET_FILE,
       }),

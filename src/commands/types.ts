@@ -4,6 +4,7 @@ import type { CommandConfirmation } from "../approvals.ts";
 import type { ConfirmPort } from "../confirm/prompt.ts";
 import type { ExtensionRegistry } from "../extensions/registry.ts";
 import type { Settings } from "../settings.ts";
+import type { PromptPolicyRecord } from "../policy/text.ts";
 import type { WorkPlan } from "../runs/plan.ts";
 
 export type { PlanJob, WorkPlan } from "../runs/plan.ts";
@@ -71,6 +72,8 @@ export interface Failure {
   confirmation?: CommandConfirmation;
   /** For `handoff_check_failed`: each problem a hand-off preset's check found (design section 14). */
   problems?: Array<{ preset: string; problem: string }>;
+  /** For `prompt_refused`: the policy check that refused the prompt. */
+  policy?: PromptPolicyRecord;
   limit?: {
     name: string;
     workItem?: string;

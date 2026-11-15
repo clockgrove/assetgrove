@@ -56,6 +56,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   });
   const jobs = jobsOf(plan.perCandidate, routes, candidates);
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile"],
     reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
     jobs,

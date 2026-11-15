@@ -1,3 +1,4 @@
+import type { PromptPolicyRecord } from "./policy/text.ts";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, posix, resolve } from "node:path";
@@ -159,6 +160,8 @@ export interface RunRecord {
   runId: string;
   /** The run directory this record is in (`<runs>/r-<16 hex>/` for a planned request). */
   runDir?: string;
+  /** The prompt policy's check of the request's prompt text (planned runs). */
+  promptPolicy?: PromptPolicyRecord;
   createdAt: string;
   spec: AssetSpec;
   /** Absolute directory the spec's relative paths resolved against. */

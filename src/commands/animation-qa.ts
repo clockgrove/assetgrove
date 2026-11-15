@@ -82,6 +82,7 @@ async function prepare(args: AnimationQaArgs, ctx: RunContext) {
   if (flickers > 0) jobs.push(jobOf("flicker", routes.flicker, flickers));
   if (holes > 0) jobs.push(jobOf("holes", routes.holes, holes));
   const work = await buildWorkPlan(animationQaCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "strip", "profile", "import"],
     jobs,
     capUsd,

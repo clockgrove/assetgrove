@@ -1,7 +1,6 @@
 import { loadProfile, readJson } from "../inputs.ts";
 import { generationTool } from "../mcp.ts";
 import { planJobs } from "../planning.ts";
-import type { GenerationBrief, RunSettings } from "../planning.ts";
 import { planningContext, providerSet, spendLedger } from "../providers/index.ts";
 import {
   DRY_RUN_PROPERTY,
@@ -23,7 +22,7 @@ interface PlanArgs {
   profile: string;
   out: string;
   brief?: string;
-  settings?: string;
+  runOptions?: string;
   template?: string;
   identityMode?: string;
   workItem?: string;
@@ -40,20 +39,18 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
   const providers = await providerSet(args.providerScript, ctx);
   const forecast = await planJobs({
     biblePath: args.bible,
-    spec: spec.value,
-    specDir: spec.dir,
-    profile: profile.value,
-    ...(args.brief && { brief: (await readJson<GenerationBrief>(args.brief)).value }),
-    ...(args.settings && {
-      settings: (await readJson<Partial<RunSettings>>(args.settings)).value,
-    }),
+    specPath: args.spec,
+    profilePath: args.profile,
+    ...(args.brief && { briefPath: args.brief }),
+    ...(args.runOptions && { runOptionsPath: args.runOptions }),
     ...(args.template && { templatePath: args.template }),
     ...(args.identityMode && { identityMode: args.identityMode }),
     provider: providers,
     runCapUsd: ctx.settings.caps.runUsd,
+    promptAllow: ctx.settings.promptPolicy.allow,
   });
   const work: WorkPlan = await buildWorkPlan(planCommand, args, {
-    inputs: ["spec", "bible", "profile", "brief", "settings", "template"],
+    inputs: ["spec", "bible", "profile", "brief", "runOptions", "template"],
     reads: {
       ...(await bibleReads("bible", args.bible)),
       ...specReads("spec", spec),
@@ -63,6 +60,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     capUsd: forecast.capUsd,
     paid: paidBy(providers, forecast.jobs),
     candidates: forecast.candidates,
+    promptAllow: ctx.settings.promptPolicy.allow,
   });
   return { profile, work };
 }
@@ -76,6 +74,9 @@ shadow (the default) scores candidates beside QA without filtering, enforce filt
 the threshold, off skips scoring. The forecast includes the scoring calls.
 The configured compiler LLM writes prompt and negatives from repository templates.
 Without an available LLM, a marked deterministic template fallback is recorded.
+The saved plan (assetgrove-plan/1) holds operation names, compiled prompts, input hashes, the
+request digest and a hash of the routes, estimates, grants and cap resolved from the developer
+settings; --run-options holds candidates, seed, strictness and exploration only.
 Review the saved plan before apply; this command never generates images.`,
   input: {
     type: "object",
@@ -85,10 +86,10 @@ Review the saved plan before apply; this command never generates images.`,
       profile: { type: "string", description: "the target profile", placeholder: "<profile.json>" },
       out: { type: "string", description: "where the plan is saved", placeholder: "<plan.json>" },
       brief: { type: "string", description: "the generation brief", placeholder: "<brief.json>" },
-      settings: {
+      runOptions: {
         type: "string",
-        description: "the run settings",
-        placeholder: "<settings.json>",
+        description: "the run options: candidates, seed, strictness and exploration only",
+        placeholder: "<run-options.json>",
       },
       template: {
         type: "string",
@@ -137,11 +138,14 @@ Review the saved plan before apply; this command never generates images.`,
         profile: args.profile,
         out: args.out,
         brief: args.brief,
-        settings: args.settings,
+        runOptions: args.runOptions,
         template: args.template,
         identityMode: args.identityMode,
       },
-      await planningContext(args.providerScript, args.workItem, ctx),
+      {
+        ...(await planningContext(args.providerScript, args.workItem, ctx)),
+        ...(ctx.run && { requestDigest: ctx.run.plan.digest }),
+      },
     );
     return { exitCode: 0, fields: { ...result }, human: JSON.stringify(result, null, 2) };
   },

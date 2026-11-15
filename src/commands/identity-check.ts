@@ -54,6 +54,7 @@ async function prepare(args: IdentityCheckArgs, ctx: RunContext) {
     ),
   ];
   const work = await buildWorkPlan(identityCheckCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["bible"],
     reads: await bibleReads("bible", args.bible, subjects),
     jobs,

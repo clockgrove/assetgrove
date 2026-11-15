@@ -71,6 +71,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   ];
   const jobs = jobsOf(perCall, routes);
   const work = await buildWorkPlan(generateSheetCommand, args, {
+    promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile", "brief", "lockBible"],
     reads: {
       ...styleBibleReads("bible", bible),

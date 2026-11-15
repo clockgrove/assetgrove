@@ -45,9 +45,13 @@ export function classify(error: unknown): Failure {
     const reason = (error as { reason?: unknown }).reason;
     const confirmation = (error as { confirmation?: Failure["confirmation"] }).confirmation;
     const problems = (error as { problems?: Failure["problems"] }).problems;
+    const policy = (error as { policy?: unknown }).policy;
     return {
       code: code as ErrorCode,
       message,
+      ...(code === "prompt_refused" &&
+        policy !== null &&
+        typeof policy === "object" && { policy: policy as Failure["policy"] }),
       ...(code === "format_unsupported" && typeof reason === "string" && { reason }),
       ...(confirmation !== undefined && { confirmation }),
       ...(code === "handoff_check_failed" && Array.isArray(problems) && { problems }),
