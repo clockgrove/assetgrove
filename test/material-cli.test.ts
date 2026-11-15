@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approve, approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -44,6 +44,7 @@ test("materials CLI writes native still and animation materials with scripted li
     provider,
     `export default { image(){throw new Error('unexpected model generation')}, vision(){return {text:JSON.stringify({checks:['flat-albedo','normal-orientation','emissive-placement','dusk-rain','night'].map(check=>({check,passed:true,reason:'synthetic fixture'}))})}} };`,
   );
+  approveScript(provider);
   for (const count of [1, 2]) {
     const raster = createRaster(count * 8, 8);
     for (let y = 1; y < 7; y++)
@@ -93,6 +94,11 @@ test("materials CLI writes native still and animation materials with scripted li
         },
       }),
     );
+    approve({
+      kind: "material-preview",
+      argv: [process.execPath, renderer, albedo, "{{output}}"],
+      cwd: dir,
+    });
     const out = join(dir, `out-${count}`);
     const run = await cli(
       "materials",

@@ -11,6 +11,7 @@ import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import type { Grouping } from "../src/sheet/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
+import { approveSyntheticValidator } from "./fixtures/validator-approval.ts";
 
 const exec = promisify(execFile);
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -85,6 +86,7 @@ test("the CLI imports a sheet, refuses an unconfirmed grouping and writes the co
   const proposal = JSON.parse(await readFile(groupingPath, "utf8")) as Grouping;
   assert.equal(proposal.status, "proposed");
 
+  approveSyntheticValidator(target);
   const write = (grouping: string) =>
     exec(
       process.execPath,

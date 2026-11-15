@@ -15,7 +15,7 @@ export async function approveProviderScript(
   path: string,
   ctx: ApprovalContext,
 ): Promise<ApprovedCommand> {
-  let isFile = false;
+  let isFile: boolean;
   try {
     isFile = statSync(resolve(path)).isFile();
   } catch {

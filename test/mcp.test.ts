@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveIn, approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -22,6 +22,7 @@ import { syntheticSheet } from "./fixtures/sheet.ts";
 import { syntheticStrip } from "./fixtures/strip.ts";
 import {
   PALETTE,
+  VALIDATOR,
   drawSubject,
   shelterSpec,
   syntheticProfile,
@@ -34,8 +35,11 @@ type Doc = Record<string, unknown>;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const synthetic = fileURLToPath(new URL("./fixtures/synthetic.ts", import.meta.url));
 const raster = fileURLToPath(new URL("../src/image/raster.ts", import.meta.url));
+const SYNTHETIC_VALIDATOR = [process.execPath, VALIDATOR, "{{manifest}}"];
 const LOOKDEV_SCRIPT = fileURLToPath(new URL("./fixtures/lookdev-script.ts", import.meta.url));
+approveScript(LOOKDEV_SCRIPT);
 const ANIMATION_SCRIPT = fileURLToPath(new URL("./fixtures/animation-script.ts", import.meta.url));
+approveScript(ANIMATION_SCRIPT);
 const temporary: string[] = [];
 const clients: Client[] = [];
 
@@ -150,6 +154,7 @@ export default {
   },
 };`,
   );
+  approveScript(path);
   return path;
 }
 
@@ -222,6 +227,7 @@ async function world() {
 async function moduleScript(name: string, body: string): Promise<string> {
   const path = join(work, name);
   await writeFile(path, body);
+  approveScript(path);
   return path;
 }
 
@@ -513,6 +519,7 @@ const rows: Row[] = [
       const [run] = await readdir(runs);
       const target = join(work, "target");
       await mkdir(target, { recursive: true });
+      approveIn("file", { kind: "validator", argv: SYNTHETIC_VALIDATOR, cwd: target });
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
@@ -569,6 +576,7 @@ const rows: Row[] = [
       );
       const target = join(dir, "target");
       await mkdir(target, { recursive: true });
+      approveIn("file", { kind: "validator", argv: SYNTHETIC_VALIDATOR, cwd: target });
       return { import: imported, target, grouping };
     },
   },
@@ -684,6 +692,11 @@ export default {
           },
         }),
       );
+      approveIn("file", {
+        kind: "material-preview",
+        argv: [process.execPath, renderer, albedo, "{{output}}"],
+        cwd: dir,
+      });
       await writeFile(
         join(dir, "derivation.json"),
         JSON.stringify({

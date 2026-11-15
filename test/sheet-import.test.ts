@@ -1,3 +1,4 @@
+import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { access, mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,6 +20,7 @@ import type { Grouping } from "../src/sheet/types.ts";
 import type { AssetSpec, FrameProvenance, TargetProfile } from "../src/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { PALETTE, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import { approveSyntheticValidator } from "./fixtures/validator-approval.ts";
 
 /** A painterly target: soft 8-bit alpha, full colour; the style passes through to the manifest. */
 function painterlyProfile(): TargetProfile {
@@ -157,6 +159,7 @@ test("an imported sheet is sliced, cleaned to soft alpha, grouped by proposal, a
   };
 
   // 5. One strip, manifest and provenance per family, review pending, validator accepting.
+  approveSyntheticValidator(targetDir);
   const written = await writeFamilies({ importDir, grouping: confirmed, targetDir });
   assert.deepEqual(
     written.families.map((f) => [f.name, f.frames.length, f.mirrored]),
@@ -236,10 +239,12 @@ test("an imported sheet is sliced, cleaned to soft alpha, grouped by proposal, a
   const first = await scaleOf(written.families[0]!.result.manifestPath);
   const stored = JSON.parse(await readFile(join(importDir, "import.json"), "utf8")).scale;
   assert.equal(stored, first);
+  const againTarget = await mkdtemp(join(tmpdir(), "af-target-"));
+  approveSyntheticValidator(againTarget);
   const again = await writeFamilies({
     importDir,
     grouping: { ...confirmed, families: [{ ...saved.families[0]!, name: "idle-only" }] },
-    targetDir: await mkdtemp(join(tmpdir(), "af-target-")),
+    targetDir: againTarget,
   });
   assert.equal(await scaleOf(again.families[0]!.result.manifestPath), first);
 });
@@ -287,6 +292,7 @@ test("a gridless sheet imports by connected components, and a pixel-art profile 
     families: [{ name: "walk-right", frames: [5, 6, 7, 8, 9, 10], reason: "author's grouping" }],
     unassigned: [],
   };
+  approveSyntheticValidator(targetDir);
   const written = await writeFamilies({ importDir, grouping, targetDir });
   const family = written.families[0]!;
   assert.equal(family.result.validator?.accepted, true, family.result.validator?.output);
@@ -367,6 +373,7 @@ test("sheet generation: one request for the whole cycle within the cap, then the
   assert.equal(record.sheet.tool, defaultRoutes.sheet.model);
   assert.equal(grouping.status, "proposed");
 
+  approveSyntheticValidator(targetDir);
   const written = await writeFamilies({
     importDir,
     grouping: { ...grouping, status: "confirmed" },

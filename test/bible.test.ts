@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -348,6 +348,7 @@ async function recordingProvider(dir: string, marker: string): Promise<string> {
     path,
     `import { appendFileSync } from "node:fs";\nexport default { image: ${record}, vision: ${record} };\n`,
   );
+  approveScript(path);
   return path;
 }
 

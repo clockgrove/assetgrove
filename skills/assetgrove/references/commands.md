@@ -40,7 +40,7 @@ MCP tool: `apply`, arguments `plan`, `out`, `workItem`.
 mcp [--work-item <label>] [--provider-script <module>]
 ```
 
-Serves one MCP tool per command other than `mcp` over MCP stdio with the official MCP SDK; each tool takes its command's arguments and returns the same result document as the command's JSON output (as `structuredContent`, with `isError` set when the result is not ok), and file paths are local to the server. Stdout carries the protocol, so it prints no JSON document; logs go to stderr. Spends and writes as the commands it serves do. Like every paid command, it exits 2 `settings_invalid` when a TLS or proxy variable is set that the settings' `environment.allow` does not list.
+Serves one MCP tool per command other than `mcp` and `confirm` over MCP stdio with the official MCP SDK; each tool takes its command's arguments and returns the same result document as the command's JSON output (as `structuredContent`, with `isError` set when the result is not ok), and file paths are local to the server. Stdout carries the protocol, so it prints no JSON document; logs go to stderr. Spends and writes as the commands it serves do. Like every paid command, it exits 2 `settings_invalid` when a TLS or proxy variable is set that the settings' `environment.allow` does not list.
 
 ### `materials`
 
@@ -48,7 +48,7 @@ Serves one MCP tool per command other than `mcp` over MCP stdio with the officia
 materials --albedo <painted.png> --spec <spec.json> --profile <profile.json> --derivation <derivation.json> --out <directory> [--cap 5] [--routes <routes.json>] [--work-item <label>] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--dry-run] [--json]
 ```
 
-Derives the material channels the profile's `style.materials` requests from a painted albedo, checks alignment and temporal stability, writes native-resolution renditions into `--out`, runs the target's compression and lit previews, and judges the flat and lit images with vision QA. Paid gateway calls (vision QA and any model-assisted channel). Rejected materials exit 5 and stay unapproved. Never writes into the target.
+Derives the material channels the profile's `style.materials` requests from a painted albedo, checks alignment and temporal stability, writes native-resolution renditions into `--out`, runs the target's compression and lit previews, and judges the flat and lit images with vision QA. Paid gateway calls (vision QA and any model-assisted channel). The compression and preview commands and a `--provider-script` module run only once approved, as for `pick`. Rejected materials exit 5 and stay unapproved. Never writes into the target.
 
 MCP tool: `materials`, arguments `albedo`, `spec`, `profile`, `derivation`, `out`, `cap`, `workItem`, `digitalSourceType`.
 
@@ -68,9 +68,19 @@ MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `cap`, `r
 pick --run <run directory> --candidate <id> --target <target directory> [--json]
 ```
 
-Writes the chosen candidate and its manifest into the target with review pending, then runs the target profile's validator command locally when it declares one (exit 6 when it rejects). Refuses, before writing, an output the target's licence cannot declare (exit 7). Calls no model and spends nothing. Only a person runs it.
+Writes the chosen candidate and its manifest into the target with review pending, then runs the target profile's validator command locally when it declares one (exit 6 when it rejects). The validator runs only once its command hash is approved: in settings `commands.approved`, in `<configDir>/approvals/<hex>.json`, or by a yes on a terminal. Otherwise pick writes nothing and exits 8 `confirmation_required` with the command and `assetgrove confirm <hex>`. Refuses, before writing, an output the target's licence cannot declare (exit 7). Calls no model and spends nothing. Only a person runs it.
 
 MCP tool: `pick`, arguments `run`, `candidate`, `target`.
+
+### `confirm`
+
+```text
+confirm <id> [--json]
+```
+
+Approves a command that exited 8 `confirmation_required`: shows the saved command (kind, argv, working directory and file hashes), asks on the terminal, and on a yes writes `<configDir>/approvals/<hex>.json` with method `terminal` and removes the pending request. Needs a terminal (exit 2 without one); a no exits 8 `confirmation_declined`. Writes only the approval and the pending request.
+
+No MCP tool; CLI only.
 
 ### `rig`
 

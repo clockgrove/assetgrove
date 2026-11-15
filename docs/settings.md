@@ -2,7 +2,7 @@
 
 Developer settings are one per-user file outside every project, and the only input that steers money, code or keys. Shared files (target profile, style bible, presets, recipes) and request inputs travel between developers, so they never name an endpoint, a cap above the settings, a route, a grant or a command. `src/settings.ts` loads the file, `src/formats.ts` checks its format line and `src/env.ts` supplies every environment value they use.
 
-No command reads settings yet.
+`pick`, `write-families`, `materials` and every command given `--provider-script` read `commands.approved`. A command a developer wrote runs only once its hash is approved there, in `<configDir>/approvals/<hex>.json`, or by a yes on a terminal; headless mode honours only the settings.
 
 ## Location
 
@@ -98,4 +98,4 @@ Settings and the refusal rule read the environment through `src/env.ts`. The spe
 
 ## Tests
 
-`test/fixtures/env.ts` makes one temporary directory outside any repository and puts the spend ledger, a settings file and that file's `stateDir` in it, then points `ASSETGROVE_SPEND_LEDGER` and `ASSETGROVE_CONFIG` there. It unsets every variable `checkEnvironment` refuses, in both cases, for the test process and its children. Its helpers `writeSettings`, `useHeadless`, `approveCommand` and `declareLimit` rewrite the settings file; `resetSettings` restores the base settings (`format` and `stateDir`) and runs before every top-level test, so a helper's change lasts only for the test that made it and its subtests.
+`test/fixtures/env.ts` makes one temporary directory outside any repository and puts the spend ledger, a settings file and that file's `stateDir` in it, then points `ASSETGROVE_SPEND_LEDGER` and `ASSETGROVE_CONFIG` there. It unsets every variable `checkEnvironment` refuses, in both cases, for the test process and its children. Its helpers `writeSettings`, `useHeadless`, `approveCommand`, `approve` (a gated command, by its kind, argv and cwd) and `declareLimit` rewrite the settings file; `resetSettings` restores the base settings (`format` and `stateDir`) and runs before every top-level test, so a helper's change lasts only for the test that made it and its subtests. `approveScript` approves a `--provider-script` module in the base settings for the rest of the test file, and `approveIn("file", command)` writes an approval file, which a running MCP server reads on every call.

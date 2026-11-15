@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approve, approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -15,7 +15,9 @@ import { quadrupedIdle, quadrupedPaw, quadrupedTemplate, walkGait } from "./fixt
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/model3d-quadruped-script.ts", import.meta.url));
+approveScript(SCRIPT);
 const LOOKDEV_SCRIPT = fileURLToPath(new URL("./fixtures/lookdev-script.ts", import.meta.url));
+approveScript(LOOKDEV_SCRIPT);
 const VALIDATOR = fileURLToPath(new URL("./fixtures/validator-3d.ts", import.meta.url));
 
 interface Result {
@@ -385,6 +387,11 @@ test("look-dev gives a rigged model its look, maps and eyes; pick hands it all o
   const status = await cli([...lookDevArgs(w, input), "--dry-run"]);
   assert.equal(doc(status)["spend"].counted, false);
 
+  approve({
+    kind: "validator",
+    argv: [process.execPath, VALIDATOR, "{{manifest}}"],
+    cwd: w.target,
+  });
   const picked = await cli([
     "pick",
     "--run",

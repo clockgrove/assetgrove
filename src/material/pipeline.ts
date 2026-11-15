@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import type { Caller } from "../calls.ts";
 import {
   DIGITAL_SOURCE_TYPES,
+  requireDeclared,
   combineDigitalSourceTypes,
   embedDigitalSourceType,
   readDigitalSourceType,
@@ -10,6 +11,10 @@ import {
   sourceDeclaration,
 } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
+import { requireApproval } from "../approvals.ts";
+import type { ApprovalContext, ApprovedCommand } from "../approvals.ts";
+import { processTty } from "../confirm/prompt.ts";
+import { loadSettings } from "../settings.ts";
 import { InputError } from "../errors.ts";
 import { licenseFields } from "../license.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
@@ -22,6 +27,7 @@ import type { MaterialChannel } from "./core.ts";
 export type { MaterialProfile } from "./profile.ts";
 import { resolveMaterialProfile } from "./profile.ts";
 import { targetCommand } from "./engine.ts";
+import { checkCompressed } from "./rendition.ts";
 import { pixelHash, runRecipeAsync } from "../transform/run.ts";
 import type { TransformStep, ImageItem } from "../transform/types.ts";
 export interface MaterialDerivation {
@@ -95,6 +101,7 @@ export async function runMaterials(options: {
   profileDir?: string;
   outDir: string;
   call: Caller;
+  approvals?: ApprovalContext;
 }): Promise<{ passed: boolean; reportPath: string; outputs: MaterialOutput[]; qa: QaResult }> {
   const startedAt = new Date().toISOString();
   const outDir = resolve(options.outDir);
@@ -103,6 +110,26 @@ export async function runMaterials(options: {
   await rm(reportPath, { force: true });
   const { spec, profile, derivation, call } = options;
   const config = resolveMaterialProfile(profile.style?.materials);
+  const approvals = options.approvals ?? { settings: loadSettings(), tty: processTty() };
+  const commandCwd = resolve(options.profileDir ?? options.baseDir);
+  // The profile's commands run only once approved (src/approvals.ts), checked before any call.
+  const approvedCommands: unknown[] = [];
+  const approve = async (kind: "material-compression" | "material-preview", argv: string[]) => {
+    const approved = await requireApproval({ kind, argv, cwd: commandCwd }, approvals);
+    approvedCommands.push({
+      kind,
+      hash: approved.command.hash,
+      argv: approved.command.argv,
+      cwd: approved.command.cwd,
+      method: approved.method,
+    });
+    return approved;
+  };
+  let compressionApproval: ApprovedCommand | undefined;
+  let previewApproval: ApprovedCommand | undefined;
+  if (config.compression)
+    compressionApproval = await approve("material-compression", config.compression.command);
+  if (config.preview) previewApproval = await approve("material-preview", config.preview.command);
   const steps: TransformStep[] = [];
   const commandResults: unknown[] = [];
   const origins = new WeakMap<Raster, DigitalSourceType>();
@@ -304,6 +331,7 @@ export async function runMaterials(options: {
           outputs,
           steps,
           commandResults,
+          commands: approvedCommands,
           lightRig: config.lightRig,
           qa,
         },
@@ -382,18 +410,27 @@ export async function runMaterials(options: {
           if (!config.compression.version?.trim())
             throw new InputError("compression version required");
           const compressed = path.replace(/\.png$/, ".ktx2");
-          await recipe(
-            "material-encode",
-            {
-              command: config.compression.command,
-              version: config.compression.version,
-              input: path,
-              output: compressed,
-              cwd: options.profileDir ?? options.baseDir,
-            },
-            rendition,
+          requireDeclared(digitalSourceType);
+          const result = await targetCommand(
+            config.compression.command,
+            { input: path, output: compressed },
+            commandCwd,
           );
-          commandResults.push(steps.at(-1)!.report);
+          const compressedBytes = new Uint8Array(await readFile(compressed));
+          checkCompressed(compressedBytes, rendition.width, rendition.height);
+          const approval = {
+            kind: "material-compression",
+            hash: compressionApproval!.command.hash,
+            method: compressionApproval!.method,
+          };
+          commandResults.push({
+            ...result,
+            ...approval,
+            version: config.compression.version,
+            sha256: sha256(compressedBytes),
+            path: compressed,
+            mediaType: "image/ktx2",
+          });
           const packed = new Uint8Array(await readFile(compressed));
           const compressedOutput = {
             ...output,
@@ -409,6 +446,8 @@ export async function runMaterials(options: {
             compression: {
               version: config.compression.version,
               command: config.compression.command,
+              hash: approval.hash,
+              method: approval.method,
             },
           });
         }
@@ -427,9 +466,14 @@ export async function runMaterials(options: {
           scene,
           lightRig: JSON.stringify(config.lightRig ?? {}),
         },
-        options.profileDir ?? options.baseDir,
+        commandCwd,
       );
-      commandResults.push(execution);
+      commandResults.push({
+        ...execution,
+        kind: "material-preview",
+        hash: previewApproval!.command.hash,
+        method: previewApproval!.method,
+      });
       const sourceBytes = new Uint8Array(await readFile(path));
       const raster = decodeImage(sourceBytes);
       const digitalSourceType = combineDigitalSourceTypes(outputs.map((o) => o.digitalSourceType));
@@ -451,6 +495,8 @@ export async function runMaterials(options: {
           version: config.preview.version,
           command: config.preview.command,
           lightRig: config.lightRig,
+          hash: previewApproval!.command.hash,
+          method: previewApproval!.method,
           execution,
         },
       });

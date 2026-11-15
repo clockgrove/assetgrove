@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approve, approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -22,6 +22,7 @@ import {
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/model3d-quadruped-script.ts", import.meta.url));
+approveScript(SCRIPT);
 const VALIDATOR = fileURLToPath(new URL("./fixtures/validator-3d.ts", import.meta.url));
 
 interface Result {
@@ -297,6 +298,11 @@ test("stage fits the shared rig, generates the walk, checks every clip, and pick
     assert.ok(renders.includes(name), name);
   }
 
+  approve({
+    kind: "validator",
+    argv: [process.execPath, VALIDATOR, "{{manifest}}"],
+    cwd: w.target,
+  });
   const picked = await cli([
     "pick",
     "--run",
@@ -402,6 +408,11 @@ test("rig re-rigs a picked model with raised heels; the walk plants them and pic
   const renders = await readdir(join(run["runDir"], "c1-character-3d"));
   assert.ok(renders.includes("walk-vs-reference.png"), renders.join(", "));
 
+  approve({
+    kind: "validator",
+    argv: [process.execPath, VALIDATOR, "{{manifest}}"],
+    cwd: w.target,
+  });
   const picked = await cli([
     "pick",
     "--run",

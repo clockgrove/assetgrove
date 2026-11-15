@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
@@ -17,6 +17,7 @@ import type { World } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approveScript(passingScript);
 
 interface Result {
   code: number;

@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -23,6 +23,7 @@ import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approveScript(passingScript);
 const spendModule = pathToFileURL(join(root, "src/spend.ts")).href;
 
 async function ledgerPath(): Promise<string> {
@@ -316,6 +317,7 @@ export default {
   vision: (r, i) => (count("vision"), base.vision(r, i)),
 };`,
   );
+  approveScript(script);
   // One shelter candidate: six edits at $0.05 and one QA call at $0.02, $0.32 forecast.
   const args = [
     "stage",

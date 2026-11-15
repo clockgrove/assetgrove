@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readdir, readFile, writeFile } from "node:fs/promises";
@@ -15,9 +15,11 @@ import type { Routes } from "../src/routes.ts";
 import type { OutputGrant, TargetProfile } from "../src/types.ts";
 import { scriptedProvider, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
+import { approveValidator } from "./fixtures/validator-approval.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approveScript(passingScript);
 
 /** Meshy's free plan: CC BY 4.0, commercial use with credit. */
 const CC_BY: OutputGrant = {
@@ -82,6 +84,7 @@ test("an output made on routes that give ownership is declared under the target'
     assert.equal(call.outputGrant?.plan, "api");
     assert.equal(call.outputGrant?.relabel, true);
   }
+  approveValidator(world.profile, world.targetDir);
   await pick({ runDir, candidateId: candidate.id, targetDir: world.targetDir });
   const manifest = JSON.parse(
     await readFile(join(world.targetDir, "assets/manifests/fern/shelter.json"), "utf8"),
@@ -122,6 +125,7 @@ test("a target that accepts CC BY on purpose takes a CC BY output declared as CC
   const profile = { ...rest, acceptedLicenses: ["CC-BY-4.0"] };
   const { run, runDir } = await staged(world, routesWith(CC_BY), profile);
   assert.equal(run.candidates[0]!.provenance.license, "CC-BY-4.0");
+  approveValidator(world.profile, world.targetDir);
   await pick({ runDir, candidateId: "c1", targetDir: world.targetDir });
   const manifest = JSON.parse(
     await readFile(join(world.targetDir, "assets/manifests/fern/shelter.json"), "utf8"),
@@ -221,6 +225,7 @@ test("pick of a refused output exits 7 with license_refused", async () => {
   ]);
   assert.equal(s.code, 0, s.stderr);
   const runDir = JSON.parse(s.stdout)["runDir"] as string;
+  approveValidator(world.profile, world.targetDir);
   const r = await cli([
     "pick",
     "--run",

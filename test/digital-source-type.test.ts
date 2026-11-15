@@ -1,3 +1,4 @@
+import "./fixtures/env.ts";
 import jpeg from "jpeg-js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -28,6 +29,7 @@ import {
   syntheticProfile,
   syntheticWorld,
 } from "./fixtures/synthetic.ts";
+import { approveSyntheticValidator, approveValidator } from "./fixtures/validator-approval.ts";
 
 const metadataOp = "embed-digital-source-type";
 
@@ -168,6 +170,7 @@ test("generated Fern strip and model-edited human prop disclose origin through s
     const staged = await readFile(join(runDir, candidate.file));
     assert.equal(readDigitalSourceType(staged, "image/png"), expected);
     assert.equal(candidate.sha256, sha256(staged));
+    approveValidator(world.profile, world.targetDir);
     const picked = await pick({ runDir, candidateId: candidate.id, targetDir: world.targetDir });
     assert.equal(picked.validator?.accepted, true);
     assert.deepEqual(await readFile(picked.mediaPath), staged);
@@ -198,6 +201,7 @@ test("sheet import carries declared model origin into cleaned frames, contact sh
       types.generated,
     );
   }
+  approveSyntheticValidator(join(root, "target"));
   const { families } = await writeFamilies({
     importDir,
     targetDir: join(root, "target"),
@@ -298,6 +302,7 @@ test("undeclared imports stage previews but refuse target export until an identi
     declared.record.sourceDeclaration?.declaredBy,
     (await import("node:os")).userInfo().username,
   );
+  approveSyntheticValidator(join(root, "target"));
   const exported = await writeFamilies({
     importDir: declared.importDir,
     grouping,

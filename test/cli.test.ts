@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -8,9 +8,12 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { approveValidator } from "./fixtures/validator-approval.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approveScript(passingScript);
+approveScript(passingScript.replace("script.ts", "reject.ts"));
 
 interface Result {
   code: number;
@@ -58,6 +61,7 @@ async function files() {
 async function script(dir: string, body: string): Promise<string> {
   const path = join(dir, "script.mjs");
   await writeFile(path, `export default ${body};`);
+  approveScript(path);
   return path;
 }
 
@@ -220,6 +224,7 @@ test("pick reports a validator rejection as validator_rejected with the result",
       "--json",
     ]),
   );
+  approveValidator(world.profile, world.targetDir);
   await mkdir(world.targetDir, { recursive: true });
   const r = await cli([
     "pick",
@@ -372,6 +377,7 @@ async function recordingScript(dir: string): Promise<{ path: string; marker: str
 const record = (kind) => { appendFileSync(${JSON.stringify(marker)}, kind + "\\n"); throw new Error("no call expected"); };
 export default { image: () => record("image"), vision: () => record("vision") };`,
   );
+  approveScript(path);
   return { path, marker };
 }
 

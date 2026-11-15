@@ -24,6 +24,7 @@ import {
   syntheticWorld,
 } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
+import { approveValidator } from "./fixtures/validator-approval.ts";
 
 const exec = promisify(execFile);
 
@@ -125,6 +126,7 @@ test("Fern's shelter strip: 4 candidates within $5, only passing ones staged, th
   }
 
   // The author picks one; the strip and its manifest land in the target, pending, with provenance.
+  approveValidator(world.profile, world.targetDir);
   const result = await pick({ runDir, candidateId: "c3", targetDir: world.targetDir });
   assert.equal(result.validator?.accepted, true, result.validator?.output);
   const manifest = JSON.parse(
@@ -201,6 +203,7 @@ test("a candidate that failed QA cannot be picked, and the review field is alway
     pick({ runDir, candidateId: "c1", targetDir: world.targetDir }),
     /not a QA-passing candidate/,
   );
+  approveValidator(world.profile, world.targetDir);
   await pick({ runDir, candidateId: "c2", targetDir: world.targetDir });
   const manifest = JSON.parse(
     await readFile(join(world.targetDir, "assets/manifests/fern/shelter.json"), "utf8"),
@@ -229,6 +232,7 @@ test("without a provenance path or an embedded record, the pick writes provenanc
     provenance: { prompt: "{{provenance.prompt}}", references: "{{provenance.referenceHashes}}" },
   };
   const { runDir } = await stage({ ...options(world, scriptedProvider()), candidates: 1 });
+  approveValidator(world.profile, world.targetDir);
   const result = await pick({ runDir, candidateId: "c1", targetDir: world.targetDir });
   assert.equal(
     result.provenancePath,
@@ -265,6 +269,7 @@ test("the same loop handles a still image with no code changes", async () => {
   const { run, runDir } = await stage(options(world, provider, spec));
   assert.equal(provider.calls.filter((c) => c.kind === "image").length, 4);
   assert.equal(run.candidates.length, 4);
+  approveValidator(world.profile, world.targetDir);
   const result = await pick({ runDir, candidateId: "c1", targetDir: world.targetDir });
   assert.equal(result.validator?.accepted, true, result.validator?.output);
   const manifest = JSON.parse(
@@ -326,6 +331,7 @@ test("another media type arrives through an added generator; each output declare
     generators: [...imageGenerators, tone],
     candidates: 1,
   });
+  approveValidator(world.profile, world.targetDir);
   const result = await pick({ runDir, candidateId: "c1", targetDir: world.targetDir });
   assert.ok(result.mediaPath.endsWith("assets/source/rain/loop.wav"));
   const manifest = JSON.parse(await readFile(result.manifestPath, "utf8"));
@@ -338,6 +344,7 @@ test("a validator rejection is reported, not hidden", async () => {
     command: [process.execPath, "-e", "console.error('nope'); process.exit(1)"],
   };
   const { runDir } = await stage({ ...options(world, scriptedProvider()), candidates: 1 });
+  approveValidator(world.profile, world.targetDir);
   const result = await pick({ runDir, candidateId: "c1", targetDir: world.targetDir });
   assert.equal(result.validator?.accepted, false);
   assert.match(result.validator?.output ?? "", /nope/);

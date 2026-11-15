@@ -7,7 +7,14 @@
  * `confirmation_required`, saved for `assetgrove confirm <hex>`.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { savePending } from "./confirm/pending.ts";
 import { NO_TTY, type TtyPort } from "./confirm/prompt.ts";
@@ -117,8 +124,12 @@ function sha256File(file: string): string {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+/** The real path of `dir`, or of its nearest existing ancestor joined with the rest. */
 function real(dir: string): string {
-  return existsSync(dir) ? realpathSync.native(dir) : path.resolve(dir);
+  const full = path.resolve(dir);
+  if (existsSync(full)) return realpathSync.native(full);
+  const parent = path.dirname(full);
+  return parent === full ? full : path.join(real(parent), path.basename(full));
 }
 
 /** The nearest directory at or above `dir` holding `.git` (a directory or a file). */
@@ -157,11 +168,17 @@ export function identifyCommand(command: GatedCommand): CommandIdentity {
     }
   }
   for (const module of command.modules ?? []) {
+    if (files.some((f) => f.path === module)) continue;
     files.push({ path: module, sha256: sha256File(path.resolve(cwd, module)) });
   }
   const identity = { kind: command.kind, argv: command.argv, cwd: repoRelative(cwd), files };
-  const hash = createHash("sha256").update(canonicalJson(identity)).digest("hex");
-  return { ...identity, hash };
+  return { ...identity, hash: hashIdentity(identity) };
+}
+
+/** The commandHash of an identity: sha256 hex of canonical `{kind, argv, cwd, files}`. */
+export function hashIdentity(identity: Omit<CommandIdentity, "hash">): string {
+  const { kind, argv, cwd, files } = identity;
+  return createHash("sha256").update(canonicalJson({ kind, argv, cwd, files })).digest("hex");
 }
 
 /**
@@ -257,7 +274,7 @@ export function refuseShims(
   for (const dir of dirs) {
     for (const name of names) {
       const candidate = dir === "" ? name : win.join(dir, name);
-      let isFile = false;
+      let isFile: boolean;
       try {
         isFile = statSync(candidate).isFile();
       } catch {

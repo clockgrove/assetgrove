@@ -90,7 +90,7 @@ export interface CommandSpec<A = Record<string, unknown>> {
   input: JsonSchemaObject;
   positionals?: { name: string; variadic?: boolean }[];
   effect: Effect;
-  confirm?: "spend" | "pick" | "write" | "settings";
+  confirm?: "spend" | "pick" | "write" | "command" | "settings";
   /** False when the command prints no JSON document (it takes no --json). Defaults to true. */
   json?: false;
   /** The free plan step of a paid command. */

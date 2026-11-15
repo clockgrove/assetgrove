@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -13,9 +13,11 @@ import type { TargetProfile } from "../src/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { quadrupedWalk, syntheticStrip } from "./fixtures/strip.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
+import { approveSyntheticValidator } from "./fixtures/validator-approval.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/animation-script.ts", import.meta.url));
+approveScript(SCRIPT);
 
 interface Result {
   code: number;
@@ -276,6 +278,7 @@ test("write-families writes the onion skin and loop preview and reports animatio
     unassigned: [],
   };
   await writeFile(join(root, "confirmed.json"), JSON.stringify(grouping));
+  approveSyntheticValidator(target);
   const written = await cli([
     "write-families",
     ...["--import", importDir, "--target", target, "--grouping", join(root, "confirmed.json")],

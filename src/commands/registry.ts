@@ -13,6 +13,7 @@ import { mcpCommand } from "./mcp.ts";
 import { migrateCommand } from "./migrate.ts";
 import { opCommand } from "./op.ts";
 import { opsCommand } from "./ops.ts";
+import { confirmCommand } from "./confirm.ts";
 import { pickCommand } from "./pick.ts";
 import { planCommand } from "./plan.ts";
 import { recipeCommand } from "./recipe.ts";
@@ -30,6 +31,7 @@ export const commands: readonly CommandSpec[] = [
   materialsCommand,
   stageCommand,
   pickCommand,
+  confirmCommand,
   rigCommand,
   lodCommand,
   lookDevCommand,

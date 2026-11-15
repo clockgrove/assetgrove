@@ -1,3 +1,4 @@
+import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
+import { approve } from "./fixtures/env.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { createRaster, decodeImage, encodePng, getPixel, setPixel } from "../src/image/raster.ts";
 import {
@@ -18,6 +20,13 @@ import type { TargetProfile } from "../src/types.ts";
 import { runMaterials } from "../src/material/pipeline.ts";
 import type { OutputGrant } from "../src/types.ts";
 import type { MaterialDerivation, MaterialProfile } from "../src/material/pipeline.ts";
+
+/** Approves the profile's compression and preview commands, run from `dir`, for this test. */
+function approveCommands(dir: string, config: MaterialProfile) {
+  if (config.compression)
+    approve({ kind: "material-compression", argv: config.compression.command, cwd: dir });
+  if (config.preview) approve({ kind: "material-preview", argv: config.preview.command, cwd: dir });
+}
 
 async function setup(
   options: {
@@ -152,6 +161,7 @@ async function setup(
       "material-height": { model: "depth", estimatedCostUsd: 0.1, providerTerms: "synthetic" },
     },
   });
+  approveCommands(dir, config);
   return {
     dir,
     config,
@@ -287,6 +297,7 @@ test("fake-only KTX2 compressor exercises external container validation per rend
     "require('node:fs').writeFileSync(process.argv[1], 'bad')",
     "{{output}}",
   ];
+  approveCommands(f.dir, f.config);
   await assert.rejects(runMaterials(f.options), /did not produce KTX2/);
 });
 
@@ -310,6 +321,7 @@ test("fractional 3x native downsampling preserves frame grid and preview failure
   assert.equal(map.height, 4);
   assert.equal(getPixel(map, 7, 3)[0], 128);
   f.config.preview.command = [process.execPath, "-e", "process.exit(1)"];
+  approveCommands(f.dir, f.config);
   await assert.rejects(runMaterials(f.options));
   result = JSON.parse(await readFile(join(f.dir, "out", "materials.json"), "utf8"));
   assert.equal(result.qa.passed, false);
@@ -358,6 +370,7 @@ test("rendition normal renormalization fails QA before out-of-range delivery or 
     command: [process.execPath, compressor, "{{input}}", "{{output}}"],
     version: "fake-ktx2-container",
   };
+  approveCommands(f.dir, f.config);
   const normal = createRaster(8, 4);
   for (let y = 0; y < 4; y++)
     for (let x = 0; x < 8; x++) setPixel(normal, x, y, [x % 2 ? 38 : 217, 128, 219, 255]);
@@ -405,6 +418,7 @@ test("undeclared material PNG previews remain local while package compression re
   );
   const compressed = await setup({ compression: true });
   f.config.compression = compressed.config.compression;
+  approveCommands(f.dir, f.config);
   await assert.rejects(runMaterials(f.options), /undeclared.*--digital-source-type/);
   const exported = await runMaterials({
     ...f.options,

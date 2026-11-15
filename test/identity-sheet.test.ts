@@ -1,3 +1,4 @@
+import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,6 +16,7 @@ import type { Grouping } from "../src/sheet/types.ts";
 import type { LoadedReference } from "../src/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
+import { approveSyntheticValidator } from "./fixtures/validator-approval.ts";
 
 const reference: LoadedReference = (() => {
   const bytes = encodePng(createRaster(16, 16));
@@ -107,6 +109,7 @@ test("shadow mode records the score and lock version but never filters", async (
   assert.equal(imp.calls.length, 1);
   assert.equal((await readImport(importDir)).identity?.lockVersion, "v3");
 
+  approveSyntheticValidator(targetDir);
   const written = await writeFamilies({ importDir, grouping: await confirm(importDir), targetDir });
   assert.ok(written.families.length > 0);
   for (const family of written.families) {
@@ -132,6 +135,7 @@ test("enforce mode below the threshold keeps the import but refuses to write it"
 test("enforce mode at or above the threshold writes", async () => {
   const { record: imp, importDir, targetDir } = await run("enforce", 4);
   assert.equal(imp.identity?.filtered, false);
+  approveSyntheticValidator(targetDir);
   const written = await writeFamilies({ importDir, grouping: await confirm(importDir), targetDir });
   assert.ok(written.families.length > 0);
 });

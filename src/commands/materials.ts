@@ -8,6 +8,7 @@ import { runMaterials } from "../material/pipeline.ts";
 import type { MaterialDerivation } from "../material/pipeline.ts";
 import { resolveMaterialProfile } from "../material/profile.ts";
 import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
+import { processTty } from "../confirm/prompt.ts";
 import { loadRoutes } from "../routes.ts";
 import { ledgerFor } from "../spend.ts";
 import type { AssetSpec } from "../types.ts";
@@ -80,7 +81,7 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
   confirm: "spend",
-  async run(args) {
+  async run(args, ctx) {
     const spec = await readJson<AssetSpec>(args.spec);
     const profile = await loadProfile(args.profile);
     const derivation = await readJson<MaterialDerivation>(args.derivation);
@@ -139,6 +140,7 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
       profileDir: profile.dir,
       outDir: resolve(args.out),
       call,
+      approvals: { settings: ctx.settings, tty: ctx.tty ?? processTty() },
     });
     const fields = { ...result };
     const human = `materials ${result.passed ? "passed QA" : "failed QA"}: ${result.reportPath}`;

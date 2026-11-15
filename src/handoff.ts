@@ -141,17 +141,6 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   };
   const provenance = { ...licensed, digitalSourceType };
   const targetDir = resolve(write.targetDir);
-  // Before anything is written: the validator a shared profile names must be approved.
-  const approved = profile.validator
-    ? await requireApproval(
-        { kind: "validator", argv: profile.validator.command, cwd: targetDir },
-        write.approvals ?? defaultApprovals(targetDir),
-      )
-    : undefined;
-  if (approved) {
-    const { kind, hash, argv, cwd } = approved.command;
-    provenance.commands = [{ kind, hash, argv, cwd, method: approved.method }];
-  }
   const last = provenance.steps?.at(-1);
   if (
     last?.op !== "embed-digital-source-type" ||
@@ -204,12 +193,6 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   });
   if (provenanceRel !== undefined) context["provenancePath"] = provenanceRel;
 
-  const manifest = render(profile.manifest, context);
-  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
-    throw new InputError("the profile's manifest template must render to a JSON object");
-  }
-  setPath(manifest as Record<string, unknown>, profile.review.path, profile.review.pending);
-
   // Before anything is written: no two writes differ only by case, and no segment holds ":".
   checkWrites([
     mediaRel,
@@ -220,6 +203,23 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   const mediaPath = inside(targetDir, mediaRel);
   const manifestPath = inside(targetDir, manifestRel);
   const provenancePath = provenanceRel === undefined ? undefined : inside(targetDir, provenanceRel);
+  // Before anything is written, once the writes are known to be valid: the validator a shared
+  // profile names must be approved, and the provenance records how.
+  const approved = profile.validator
+    ? await requireApproval(
+        { kind: "validator", argv: profile.validator.command, cwd: targetDir },
+        write.approvals ?? defaultApprovals(targetDir),
+      )
+    : undefined;
+  if (approved) {
+    const { kind, hash, argv, cwd } = approved.command;
+    provenance.commands = [{ kind, hash, argv, cwd, method: approved.method }];
+  }
+  const manifest = render(profile.manifest, context);
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new InputError("the profile's manifest template must render to a JSON object");
+  }
+  setPath(manifest as Record<string, unknown>, profile.review.path, profile.review.pending);
   const writes: Array<[string, Uint8Array | string]> = [
     [mediaPath, output.bytes],
     [manifestPath, `${JSON.stringify(manifest, null, 2)}\n`],

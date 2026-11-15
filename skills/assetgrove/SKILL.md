@@ -68,7 +68,7 @@ Decide on the exit and `error.code`, never on the message. What the commands ret
 
 - `AI_GATEWAY_API_KEY`: the Vercel AI Gateway key, from the environment only. Not needed for `--dry-run` or `--provider-script`.
 - `TRIPO_API_KEY`: the Tripo key, from the environment only, for the 3D calls of a `character-3d` stage.
-- `--provider-script <module>` answers every model call from a module whose default export is `{ image, vision }`. Its calls cost nothing and the ledger neither counts nor refuses them; `--cap` still applies.
+- `--provider-script <module>` answers every model call from a module whose default export is `{ image, vision }`. Its calls cost nothing and the ledger neither counts nor refuses them; `--cap` still applies. The module runs only once its command hash is approved; otherwise the command exits 8 `confirmation_required` with `assetgrove confirm <hex>`.
 - Every paid call is recorded in a spend ledger shared across runs: `ASSETGROVE_SPEND_LEDGER`, default `$XDG_STATE_HOME/assetgrove/spend.jsonl` or `~/.local/state/assetgrove/spend.jsonl`. A call that would cross the daily limit (`ASSETGROVE_DAILY_LIMIT_USD`, default $10, last 24 hours) or the work item's limit (`ASSETGROVE_WORK_ITEM_LIMIT_USD`, default $5) is refused with exit 3. A target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd` apply too; the stricter of each pair wins. `--dry-run` shows the spend left under each.
 - Name the work item with `--work-item` or `ASSETGROVE_WORK_ITEM`. Without one, a CI work item from `FACTORY_ISSUE` (digits only) is used. With no work item, only the daily limit applies.
 - When `FACTORY_ISSUE` is set, the default ledger is `assetgrove-spend.jsonl` in `$FACTORY_STATE_DIR`, or else in the temp directory.

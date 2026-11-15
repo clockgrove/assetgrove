@@ -15,9 +15,10 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach } from "node:test";
-import { identifyCommand, providerScriptCommand } from "../../src/approvals.ts";
+import { identifyCommand, providerScriptCommand, writeApproval } from "../../src/approvals.ts";
 import type { GatedCommand } from "../../src/approvals.ts";
 import { REFUSED_VARIABLES } from "../../src/env.ts";
+import { loadSettings } from "../../src/settings.ts";
 
 const FORMAT = "assetgrove-settings/1";
 
@@ -98,6 +99,20 @@ export function approveScript(path: string): string {
  * Returns its commandHash.
  */
 export function approve(command: GatedCommand): string {
+  return approveIn("settings", command);
+}
+
+/**
+ * Approves one gated command in settings, or (`file`) with an approval file in the config
+ * directory, which a running MCP server reads on every call and which lasts for the whole file.
+ * Returns its commandHash.
+ */
+export function approveIn(where: "settings" | "file", command: GatedCommand): string {
+  if (where === "file") {
+    const identity = identifyCommand(command);
+    writeApproval(loadSettings(), identity, "terminal");
+    return identity.hash;
+  }
   const identity = identifyCommand(command);
   approveCommand({
     hash: identity.hash,

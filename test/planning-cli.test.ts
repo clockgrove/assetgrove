@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
+import { approveSyntheticValidator } from "./fixtures/validator-approval.ts";
 
 const temporaryRoots: string[] = [];
 after(async () => {
@@ -84,6 +85,7 @@ export default {
   }
 };`,
   );
+  approveScript(script);
   const args = [
     "--spec",
     spec,
@@ -168,6 +170,7 @@ test("CLI apply requires explicit approval, auto-approve generates, stale templa
     readDigitalSourceType(await readFile(join(runDir, candidate.file)), "image/png"),
     DIGITAL_SOURCE_TYPES.generated,
   );
+  approveSyntheticValidator(join(f.dir, "target"));
   const { pick } = await import("../src/handoff.ts");
   const picked = await pick({
     runDir,

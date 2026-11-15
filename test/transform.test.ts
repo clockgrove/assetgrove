@@ -1,3 +1,4 @@
+import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,6 +20,7 @@ import {
 import type { ImageEngine, ImageItem } from "../src/transform/types.ts";
 import { decodeWebpLossless } from "./fixtures/webp-decode.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
+import { approveSyntheticValidator } from "./fixtures/validator-approval.ts";
 
 /** A w x h image, transparent, with an opaque block at (bx, by, bw, bh) and a soft pixel beside it. */
 function blockImage(w: number, h: number, bx: number, by: number, bw: number, bh: number): Raster {
@@ -51,7 +53,6 @@ test("every declared operation is implemented by a default engine", () => {
     "flip",
     "join",
     "material-emissive",
-    "material-encode",
     "material-height",
     "material-normal",
     "material-rendition",
@@ -446,6 +447,7 @@ test("the sheet import records its transformation steps, and each strip's proven
   );
   assert.deepEqual(record.steps?.[0]?.inputs, [pixelHash(sheet.raster)]);
   const target = join(root, "target");
+  approveSyntheticValidator(target);
   const { families } = await writeFamilies({
     importDir,
     targetDir: target,

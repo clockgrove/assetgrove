@@ -1,4 +1,4 @@
-import "./fixtures/env.ts";
+import { approve, approveScript } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -15,6 +15,7 @@ import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/model3d-script.ts", import.meta.url));
+approveScript(SCRIPT);
 const VALIDATOR = fileURLToPath(new URL("./fixtures/validator-3d.ts", import.meta.url));
 
 interface Result {
@@ -300,6 +301,11 @@ test("stage writes rigged candidates with clips, renders and per-candidate QA; p
   assert.deepEqual(glb.json.animations?.[0]?.["extras"], { loop: true });
   assert.ok(measure(glb).bones > 0);
 
+  approve({
+    kind: "validator",
+    argv: [process.execPath, VALIDATOR, "{{manifest}}"],
+    cwd: w.target,
+  });
   const picked = await cli([
     "pick",
     "--run",
@@ -445,6 +451,11 @@ test("a grant the target cannot accept is refused with exit 7 before anything is
   ]);
   assert.equal(staged.code, 0, staged.stdout + staged.stderr);
   const runDir = join(w.runs, doc(staged)["runId"]);
+  approve({
+    kind: "validator",
+    argv: [process.execPath, VALIDATOR, "{{manifest}}"],
+    cwd: w.target,
+  });
   const refused = await cli([
     "pick",
     "--run",
@@ -467,6 +478,11 @@ test("a grant the target cannot accept is refused with exit 7 before anything is
   const run = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
   run.profile.acceptedLicenses = ["CC-BY-4.0"];
   await writeFile(join(runDir, "run.json"), JSON.stringify(run));
+  approve({
+    kind: "validator",
+    argv: [process.execPath, VALIDATOR, "{{manifest}}"],
+    cwd: w.target,
+  });
   const accepted = await cli([
     "pick",
     "--run",
