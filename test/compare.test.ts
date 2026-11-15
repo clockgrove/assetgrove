@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { compareRasters } from "../src/compare.ts";
 import { createRaster, decodePng, encodePng, setPixel } from "../src/image/raster.ts";
 import type { Raster } from "../src/image/raster.ts";
@@ -149,7 +150,34 @@ test("compare writes a sheet, names a strip frame, and refuses bad regions with 
   assert.equal(d.rows[0].outsideChange, 0);
   assert.equal(d.rows[0].identical, false);
   const sheet = decodePng(new Uint8Array(await readFile(join(out, "compare.png"))));
-  assert.ok(sheet.width > 0);
+  // Region outlines are drawn on all three cells (before, candidate, difference map).
+  const reds = outlinePixels(sheet);
+  assert.ok(reds.length > 0);
+  const thirds = new Set(reds.map((x) => Math.floor((x * 3) / sheet.width)));
+  assert.deepEqual([...thirds].sort(), [0, 1, 2]);
+  // Only the region text's note differs: the sheet is byte-identical.
+  const other = await cli(
+    [
+      ...["compare", "before.png", "after.png", "--out", join(dir, "out2")],
+      ...["--region", "0,0,12,12 : something else entirely"],
+      ...["--frame", "2", "--json"],
+    ],
+    dir,
+  );
+  assert.equal(other.code, 0, other.stderr + other.stdout);
+  const bytes = await readFile(join(out, "compare.png"));
+  assert.ok(bytes.equals(await readFile(join(dir, "out2", "compare.png"))));
+  // Without a region there are no outlines.
+  const bare = await cli(
+    ["compare", "before.png", "after.png", "--frame", "2", "--out", join(dir, "out3"), "--json"],
+    dir,
+  );
+  assert.equal(bare.code, 0, bare.stderr + bare.stdout);
+  assert.equal(
+    outlinePixels(decodePng(new Uint8Array(await readFile(join(dir, "out3", "compare.png")))))
+      .length,
+    0,
+  );
   // frame 1 of the strip is unchanged: pixel-identical, difference map black.
   const first = await cli(
     ["compare", "before.png", "after.png", "--frame", "1", "--out", out, "--json"],
@@ -166,13 +194,28 @@ test("compare writes a sheet, names a strip frame, and refuses bad regions with 
   assert.equal(outside.code, 2);
 });
 
-async function stageWorld() {
+/** The x of every pixel in the sheet that has the outline colour. */
+function outlinePixels(sheet: Raster): number[] {
+  const xs: number[] = [];
+  for (let i = 0; i < sheet.width * sheet.height; i++)
+    if (sheet.data[i * 4] === 230 && sheet.data[i * 4 + 1] === 40 && sheet.data[i * 4 + 2] === 40)
+      xs.push(i % sheet.width);
+  return xs;
+}
+
+const stillSpec = {
+  kind: "still",
+  assetId: "fern",
+  fields: { description: "a round icon" },
+};
+
+async function stageWorld(kind: "still" | "strip" = "strip") {
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
   const profile = join(world.dir, "profile.json");
-  await writeFile(spec, JSON.stringify(shelterSpec));
+  await writeFile(spec, JSON.stringify(kind === "still" ? stillSpec : shelterSpec));
   await writeFile(bible, JSON.stringify(world.bible));
   await writeFile(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
@@ -201,7 +244,7 @@ export default {
 }
 
 test("vary makes variations of one candidate with a contact and a compare sheet; a repeat is reused", async () => {
-  const { world, flags } = await stageWorld();
+  const { world, flags } = await stageWorld("still");
   const provider = await countingScript(world.dir);
   const staged = await cli([
     "stage",
@@ -246,6 +289,34 @@ test("vary makes variations of one candidate with a contact and a compare sheet;
   assert.equal(doc(again).reused, true);
   assert.equal(await provider.count(), afterStage + 2, "no provider call");
   assert.equal(await readFile(ledgerPath, "utf8"), ledger);
+  // Another round is another run directory, so its seeds are fresh.
+  const round2 = doc(await cli([...vary, "--round", "2", "--json"]));
+  assert.notEqual(round2.runDir, d.runDir);
+  const seedOf = async (dir: string) =>
+    JSON.parse(await readFile(join(dir, "v1.provenance.json"), "utf8")).seed;
+  assert.notEqual(await seedOf(round2.runDir), await seedOf(d.runDir));
+});
+
+test("vary refuses a sprite-strip candidate", async () => {
+  const { world, flags } = await stageWorld();
+  const provider = await countingScript(world.dir);
+  const staged = await cli([
+    "stage",
+    ...flags,
+    "--candidates",
+    "1",
+    "--provider-script",
+    provider.script,
+    "--json",
+  ]);
+  assert.equal(staged.code, 0, staged.stderr + staged.stdout);
+  const before = await provider.count();
+  const refused = await cli([
+    ...["vary", "--run", doc(staged).runDir, "--candidate", "c1", "--count", "1"],
+    ...["--runs", join(world.dir, "vary-runs"), "--provider-script", provider.script, "--json"],
+  ]);
+  assert.equal(refused.code, 2, refused.stdout + refused.stderr);
+  assert.equal(await provider.count(), before);
 });
 
 test("a stage note changes the digest and a blocklisted note exits 9 before spend", async () => {
@@ -270,6 +341,65 @@ test("a stage note changes the digest and a blocklisted note exits 9 before spen
   const refused = await cli(["stage", ...base, "--note", `in the style of ${term}`]);
   assert.equal(refused.code, 9, refused.stdout + refused.stderr);
   assert.equal(await provider.count(), 0);
+  // The same refusal without --dry-run, which would otherwise spend.
+  const live = base.filter((a) => a !== "--dry-run");
+  const spent = await cli(["stage", ...live, "--note", `in the style of ${term}`]);
+  assert.equal(spent.code, 9, spent.stdout + spent.stderr);
+  assert.equal(doc(spent).error.code, "prompt_refused");
+  assert.equal(await provider.count(), 0, "no provider call");
+});
+
+test("apply and generate-sheet notes change the digest and a blocklisted note exits 9 before spend", async () => {
+  const { world, flags } = await stageWorld();
+  const provider = await countingScript(world.dir);
+  const planFile = join(world.dir, "plan.json");
+  const art = join(world.dir, ".assetgrove/art-direction");
+  await mkdir(art, { recursive: true });
+  await mkdir(join(world.dir, ".assetgrove/prompts"), { recursive: true });
+  const data = structuredClone(BIBLE_PRESETS["flat-cartoon-kids"]!);
+  data.referenceLicense = "NOASSERTION";
+  data.world = "Synthetic Grove";
+  const md = join(art, "BIBLE.md");
+  await writeFile(md, serializeBible(data, "## Do's and Don'ts\nDo keep silhouettes readable.\n"));
+  await writeFile(
+    join(world.dir, ".assetgrove/prompts/default.md"),
+    "---\nversion: 1\n---\nCreate original art.\n{{constitution}}\n{{spec}}\n{{brief}}\n",
+  );
+  const stillFile = join(world.dir, "still.json");
+  await writeFile(stillFile, JSON.stringify(stillSpec));
+  const optionsFile = join(world.dir, "run-options.json");
+  await writeFile(optionsFile, JSON.stringify({ candidates: 1 }));
+  const made = await cli([
+    ...["plan", "--spec", stillFile, "--bible", md, "--profile", flags[5]!],
+    ...["--run-options", optionsFile, "--out", planFile, "--runs", join(world.dir, "plan-runs")],
+    "--json",
+  ]);
+  assert.equal(made.code, 0, made.stderr + made.stdout);
+  const term = packageBlocklist().terms.find(
+    (t) => t.kind === "artist" && t.term.includes(" "),
+  )!.term;
+  const runs = join(world.dir, "apply-runs");
+  const apply = ["apply", planFile, "--out", runs, "--provider-script", provider.script];
+  const plain = doc(await cli([...apply, "--dry-run", "--json"]));
+  const noted = doc(
+    await cli([...apply, "--note", "warmer light", "--round", "2", "--dry-run", "--json"]),
+  );
+  assert.notEqual(plain.digest, noted.digest);
+  const sheet = [
+    ...["generate-sheet", ...flags.slice(0, 6), "--runs", join(world.dir, "sheet-runs")],
+    ...["--provider-script", provider.script],
+  ];
+  const sheetPlain = doc(await cli([...sheet, "--dry-run", "--json"]));
+  const sheetNoted = doc(
+    await cli([...sheet, "--note", "warmer light", "--round", "2", "--dry-run", "--json"]),
+  );
+  assert.notEqual(sheetPlain.digest, sheetNoted.digest);
+  for (const argv of [apply, sheet]) {
+    const refused = await cli([...argv, "--note", `in the style of ${term}`, "--json"]);
+    assert.equal(refused.code, 9, refused.stdout + refused.stderr);
+    assert.equal(doc(refused).error.code, "prompt_refused");
+  }
+  assert.equal(await provider.count(), 0, "no provider call");
 });
 
 test("stage with a note puts it in the prompt of each candidate", async () => {

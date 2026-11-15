@@ -43,11 +43,12 @@ interface VaryArgs {
   round?: number;
 }
 
-const EXTENSIONS: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-};
+/** The file extension a media type names: its subtype, so no format list lives here. */
+function extensionOf(mediaType: string): string {
+  const subtype = (mediaType.split("/")[1] ?? "").split(/[+;]/)[0] ?? "";
+  const clean = subtype.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return clean === "jpeg" ? "jpg" : clean || "bin";
+}
 
 /** The source run's record and the candidate to vary; refused unless it is an image. */
 async function source(args: VaryArgs): Promise<{ run: RunRecord; candidate: StagedCandidate }> {
@@ -61,6 +62,10 @@ async function source(args: VaryArgs): Promise<{ run: RunRecord; candidate: Stag
     throw new InputError(`run ${args.run} has no candidate "${args.candidate}"`);
   if (!candidate.mediaType.startsWith("image/"))
     throw new InputError(`candidate ${candidate.id} is ${candidate.mediaType}; vary edits images`);
+  if (run.spec.kind !== "still")
+    throw new InputError(
+      `candidate ${candidate.id} is a ${run.spec.kind} candidate; vary edits still candidates`,
+    );
   return { run, candidate };
 }
 
@@ -153,7 +158,7 @@ provider call. Variations are not QA-filtered and are never marked approved.
       DIGITAL_SOURCE_TYPES.generated) as DigitalSourceType;
     const rows: CompareRow[] = [];
     const variations: Array<Record<string, unknown>> = [];
-    const shown: Raster[] = [];
+    const shown: Array<{ number: number; image: Raster }> = [];
     const errors: string[] = [];
     for (let index = 0; index < count; index++) {
       const caller = new Caller({
@@ -165,14 +170,15 @@ provider call. Variations are not QA-filtered and are never marked approved.
       });
       const seed = Number.parseInt(
         createHash("sha256")
-          .update(`${basename(resolve(args.run))}:${candidate.id}:${index}`)
+          .update(`${basename(dir)}:${candidate.id}:${index}`)
           .digest("hex")
           .slice(0, 8),
         16,
       );
       try {
         const image = await caller.image("edit", prompt, [reference], seed);
-        const extension = EXTENSIONS[image.mediaType] ?? "png";
+        const decoded = decodeImage(image.bytes);
+        const extension = extensionOf(image.mediaType);
         const name = `v${index + 1}`;
         const bytes = embedDigitalSourceType(image.bytes, image.mediaType, sourceType);
         await writeFile(join(dir, `${name}.${extension}`), bytes);
@@ -203,10 +209,9 @@ provider call. Variations are not QA-filtered and are never marked approved.
           join(dir, `${name}.provenance.json`),
           `${JSON.stringify(provenance, null, 2)}\n`,
         );
-        const decoded = decodeImage(image.bytes);
         const comparison = await compareRasters(before, decoded);
         rows.push({ number: index + 1, comparison });
-        shown.push(decoded);
+        shown.push({ number: index + 1, image: decoded });
         variations.push({
           id: name,
           file: `${name}.${extension}`,
@@ -223,7 +228,7 @@ provider call. Variations are not QA-filtered and are never marked approved.
     const spentUsd = budget.spentUsd;
     const contact = await writeContactRows(
       dir,
-      shown.map((image, i) => ({ number: i + 1, images: [image] })),
+      shown.map(({ number, image }) => ({ number, images: [image] })),
       [before],
     );
     const compareSheet = rows.length > 0 ? await writeCompareSheet(dir, rows) : undefined;
