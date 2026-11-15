@@ -234,7 +234,7 @@ test("pick over MCP: the pick form chooses the candidate, the unapproved validat
   assert.match(forms[1]!.message, /validator/);
   assert.equal(doc["confirmation"].method, "elicitation");
   assert.equal(doc["confirmation"].choice, "c1");
-  assert.equal(doc["confirmation"].note, "chosen in the form");
+  assert.equal("note" in doc["confirmation"], false);
   const saved = await record(doc["confirmation"].digest);
   assert.equal(saved["client"], CLIENT);
   assert.equal(saved["protocolVersion"], MODERN);

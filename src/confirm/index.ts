@@ -70,7 +70,6 @@ export function recordOf(
     capUsd: number(body["capUsd"]),
     inputs: { ...inputs },
     ...(choice !== undefined && { choice }),
-    ...(extra.channel?.note !== undefined && { note: extra.channel.note }),
     ...(extra.channel?.client !== undefined && { client: extra.channel.client }),
     ...(extra.channel?.protocolVersion !== undefined && {
       protocolVersion: extra.channel.protocolVersion,

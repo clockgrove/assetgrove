@@ -31,8 +31,6 @@ export interface ChannelFields {
   client?: string;
   protocolVersion?: string;
   toolMarkedRequiresUser: boolean;
-  /** A pick's note, when the person gave one. */
-  note?: string;
 }
 
 /** A channel that can ask a person. */

@@ -5,7 +5,7 @@ A checklist for driving the real `assetgrove mcp` server through four harnesses:
 What the person should see, with a client that declares form elicitation:
 
 - `stage` returns an input-required form. It shows the jobs, candidates, cost forecast, run cap, providers and digest, and has a Boolean `approve`.
-- `pick` returns a form showing the run, the contact-sheet path and the digest. It asks for `candidate`, an enum of the run's candidate ids plus `none`, and an optional `note`.
+- `pick` returns a form showing the run, the contact-sheet path and the digest. It asks for `candidate`, an enum of the run's candidate ids plus `none`, and an optional `note`, which the confirmation record does not store.
 - Accepting writes a record at `<configDir>/confirmations/<digest>.json` with method `elicitation`, the client's name and its protocol version.
 - Declining exits 8 `confirmation_declined`.
 - A client without form elicitation gets exit 8 `confirmation_required`, with `assetgrove confirm <id>` to finish in a terminal.

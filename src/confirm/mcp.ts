@@ -112,7 +112,11 @@ export function confirmForm(request: ConfirmRequest): ElicitRequestFormParams {
             description: "the candidate to pick; none declines",
             enum: pickChoices(request),
           },
-          note: { type: "string", title: "Note", description: "a note kept with the pick" },
+          note: {
+            type: "string",
+            title: "Note",
+            description: "a note for the person's own reference; the record does not store it",
+          },
         },
         required: ["candidate"],
       },
@@ -142,11 +146,10 @@ export function confirmForm(request: ConfirmRequest): ElicitRequestFormParams {
 export function elicitationPort(options: {
   sealed?: SealedRequest;
   answer?: FormAnswer;
-  fields: Omit<ChannelFields, "note">;
+  fields: ChannelFields;
 }): ElicitationPort {
   let pending = options.sealed;
   let asked: ConfirmRequest | undefined;
-  let note: string | undefined;
   const answerFor = (request: ConfirmRequest): FormAnswer => {
     if (pending !== undefined && pending.kind === request.kind) {
       if (pending.id !== request.id) {
@@ -156,9 +159,6 @@ export function elicitationPort(options: {
       }
       pending = undefined;
       if (options.answer !== undefined) {
-        const content = options.answer.content;
-        if (request.kind === "pick" && typeof content?.["note"] === "string" && content["note"])
-          note = content["note"];
         return options.answer;
       }
     }
@@ -186,6 +186,6 @@ export function elicitationPort(options: {
         ? candidate
         : undefined;
     },
-    recordFields: () => ({ ...options.fields, ...(note !== undefined && { note }) }),
+    recordFields: () => options.fields,
   };
 }
