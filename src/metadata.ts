@@ -1,6 +1,7 @@
 import { userInfo } from "node:os";
 import { InputError } from "./errors.ts";
 import { inflateSync } from "node:zlib";
+import { read as readKtx2, write as writeKtx2 } from "ktx-parse";
 import type { TransformStep } from "./transform/types.ts";
 import { parseGlb, writeGlb } from "./model3d/glb.ts";
 import type { GltfDocument } from "./model3d/glb.ts";
@@ -368,7 +369,11 @@ type Gltf = {
   [key: string]: unknown;
 };
 /** Adds a document-level packet while preserving other extensions and packet references. */
-export function embedGltfDigitalSourceType(document: Gltf, value: DigitalSourceType): Gltf {
+export function embedGltfDigitalSourceType(
+  document: Gltf,
+  value: DigitalSourceType,
+  models?: readonly string[],
+): Gltf {
   const result = structuredClone(document);
   if (value === "undeclared") return result;
   const extensions = (result.extensions ??= {});
@@ -401,6 +406,8 @@ export function embedGltfDigitalSourceType(document: Gltf, value: DigitalSourceT
   packet["@id"] ??= "";
   packet["@context"] = { ...((packet["@context"] as object) ?? {}), Iptc4xmpExt: namespace };
   packet["Iptc4xmpExt:DigitalSourceType"] = value;
+  const modelsText = modelText(models);
+  if (modelsText !== undefined) packet["Iptc4xmpExt:AISystemUsed"] = modelsText;
   packets[index] = packet;
   extensions["KHR_xmp_json_ld"] = { ...old, packets };
   assetExtensions["KHR_xmp_json_ld"] = { ...reference, packet: index };
@@ -452,13 +459,63 @@ export function embedDigitalSourceType(
   }
   if (mediaType === "model/gltf-binary") {
     const glb = parseGlb(bytes);
-    return writeGlb({ ...glb, json: embedGltfDigitalSourceType(glb.json, value) as GltfDocument });
+    return writeGlb({
+      ...glb,
+      json: embedGltfDigitalSourceType(glb.json, value, models) as GltfDocument,
+    });
   }
   if (mediaType === "model/gltf+json")
     return Buffer.from(
-      `${JSON.stringify(embedGltfDigitalSourceType(JSON.parse(Buffer.from(bytes).toString("utf8")) as Gltf, value))}\n`,
+      `${JSON.stringify(embedGltfDigitalSourceType(JSON.parse(Buffer.from(bytes).toString("utf8")) as Gltf, value, models))}\n`,
     );
+  if (mediaType === "image/ktx2") {
+    // The container's key-value data holds the XMP packet under `XMP`; ktx-parse is the only
+    // maintained reader and writer (docs/decisions.md).
+    const container = readKtx2(bytes);
+    const previous = ktx2Xmp(container.keyValue[ktx2Key]);
+    const packet = xmp(value, previous, models);
+    if (previous === packet) return bytes;
+    container.keyValue[ktx2Key] = packet;
+    container.keyValue["KTXwriter"] ??= "assetgrove";
+    return writeKtx2Container(container);
+  }
   return bytes;
+}
+
+const ktx2Key = "XMP";
+/**
+ * ktx-parse 1.1.0 writes each key-value entry's length through `new Uint8Array(Uint32Array)`, which
+ * keeps only its low byte, so an entry of 256 bytes or more reads back corrupt. This writes with
+ * ktx-parse and then sets the true length of each entry (docs/decisions.md); the reader is correct.
+ */
+function writeKtx2Container(container: ReturnType<typeof readKtx2>): Uint8Array {
+  const bytes = writeKtx2(container, { keepWriter: true });
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = view.getUint32(56, true);
+  const entries = Object.entries(container.keyValue).sort((a, b) => (a[0] > b[0] ? 1 : -1));
+  for (const [key, value] of entries) {
+    const data = typeof value === "string" ? Buffer.byteLength(value) + 1 : value.byteLength;
+    const length = Buffer.byteLength(key) + 1 + data;
+    view.setUint32(offset, length, true);
+    offset += 4 + length + ((4 - (length % 4)) % 4);
+  }
+  return bytes;
+}
+function ktx2Xmp(value: string | Uint8Array | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const text = typeof value === "string" ? value : Buffer.from(value).toString("utf8");
+  return text.replace(/\0+$/, "");
+}
+function gltfPacket(doc: Gltf): Record<string, unknown> | undefined {
+  const ext = doc.extensions?.["KHR_xmp_json_ld"] as
+    { packets?: Record<string, unknown>[] } | undefined;
+  const reference = doc.asset?.extensions?.["KHR_xmp_json_ld"] as { packet?: number } | undefined;
+  return reference?.packet === undefined ? undefined : ext?.packets?.[reference.packet];
+}
+function gltfDocument(bytes: Uint8Array, mediaType: string): Gltf {
+  return mediaType === "model/gltf-binary"
+    ? (parseGlb(bytes).json as Gltf)
+    : (JSON.parse(Buffer.from(bytes).toString("utf8")) as Gltf);
 }
 
 export function readDigitalSourceType(
@@ -480,15 +537,12 @@ export function readDigitalSourceType(
       ?.data.toString("utf8");
     if (xml !== undefined) return readXmp(xml);
   } else if (mediaType === "model/gltf+json" || mediaType === "model/gltf-binary") {
-    const doc =
-      mediaType === "model/gltf-binary"
-        ? (parseGlb(bytes).json as Gltf)
-        : (JSON.parse(Buffer.from(bytes).toString("utf8")) as Gltf);
-    const ext = doc.extensions?.["KHR_xmp_json_ld"] as
-      { packet?: number; packets?: Record<string, unknown>[] } | undefined;
-    const reference = doc.asset?.extensions?.["KHR_xmp_json_ld"] as { packet?: number } | undefined;
-    if (reference?.packet === undefined) return undefined;
-    return sourceType(ext?.packets?.[reference.packet]?.["Iptc4xmpExt:DigitalSourceType"]);
+    return sourceType(
+      gltfPacket(gltfDocument(bytes, mediaType))?.["Iptc4xmpExt:DigitalSourceType"],
+    );
+  } else if (mediaType === "image/ktx2") {
+    const xml = ktx2Xmp(readKtx2(bytes).keyValue[ktx2Key]);
+    return xml === undefined ? undefined : readXmp(xml);
   }
   return undefined;
 }
@@ -501,6 +555,10 @@ export function readMarkedModels(bytes: Uint8Array, mediaType: string): string |
       .map(pngXmp)
       .find((x) => x !== undefined);
   else if (mediaType === "image/jpeg") xml = readJpegXmp(bytes);
+  else if (mediaType === "model/gltf+json" || mediaType === "model/gltf-binary") {
+    const text = gltfPacket(gltfDocument(bytes, mediaType))?.["Iptc4xmpExt:AISystemUsed"];
+    return typeof text === "string" && text !== "" ? text : undefined;
+  } else if (mediaType === "image/ktx2") xml = ktx2Xmp(readKtx2(bytes).keyValue[ktx2Key]);
   else if (mediaType === "image/webp")
     xml = webpChunks(bytes)
       .find((c) => c.type === "XMP ")

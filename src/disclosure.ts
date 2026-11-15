@@ -1,0 +1,215 @@
+/**
+ * The disclosure summary (design section 6): what a library says about its AI-made assets, read
+ * from the cards and the provenance each card names, for a developer filling in Steam's AI content
+ * survey or itch.io's AI tags. Only the fields it reports are read: no prompt, parameter or
+ * request ID reaches the summary. It is help for the developer, not a compliance claim.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { markableMediaType } from "./handoff/mark-check.ts";
+import { readDigitalSourceType, readMarkedModels } from "./metadata.ts";
+import { parseCard } from "./library/card.ts";
+import { libraryPath } from "./library/paths.ts";
+import { scanCards } from "./library/write.ts";
+
+export interface DisclosureCount {
+  name: string;
+  assets: number;
+}
+export interface DisclosureTerms {
+  terms: string;
+  /** The `as of` date the terms were recorded with, when they say one. */
+  asOf?: string;
+  assets: number;
+}
+export interface Disclosure {
+  /** Cards read. */
+  assets: number;
+  /** Assets by kind, then by IPTC source type (the vocabulary's last segment, or `unknown`). */
+  byKind: Record<string, Record<string, number>>;
+  bySourceType: DisclosureCount[];
+  models: DisclosureCount[];
+  providers: DisclosureCount[];
+  terms: DisclosureTerms[];
+  /** Cards whose provenance could not be read; they count as `unknown`. */
+  withoutProvenance: string[];
+  steam: string;
+  itch: { tags: string[]; text: string };
+}
+
+const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+function list(map: Map<string, number>): DisclosureCount[] {
+  return [...map]
+    .map(([name, assets]) => ({ name, assets }))
+    .sort((a, b) => b.assets - a.assets || compare(a.name, b.name));
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+const AI_TYPES = new Set(["trainedAlgorithmicMedia", "compositeWithTrainedAlgorithmicMedia"]);
+
+/** The provenance record in a file: the file itself, or the object a manifest embeds it as. */
+function findProvenance(value: unknown, depth: number): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || depth > 4)
+    return undefined;
+  const object = value as Record<string, unknown>;
+  if (Array.isArray(object["models"]) && typeof object["route"] === "string") return object;
+  for (const child of Object.values(object)) {
+    const found = findProvenance(child, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** Summarises the library under `root` from its cards and provenance. */
+export function disclose(root: string): Disclosure {
+  const byKind: Record<string, Record<string, number>> = {};
+  const sources = new Map<string, number>();
+  const models = new Map<string, number>();
+  const providers = new Map<string, number>();
+  const terms = new Map<string, number>();
+  const withoutProvenance: string[] = [];
+  const cards = scanCards(root).sort((a, b) => compare(join(a.dir, a.id), join(b.dir, b.id)));
+  const bump = (map: Map<string, number>, key: string): void => {
+    map.set(key, (map.get(key) ?? 0) + 1);
+  };
+  for (const found of cards) {
+    const path = join(found.dir, `${found.id}.md`);
+    let kind = "unknown";
+    let provenance: Record<string, unknown> | undefined;
+    try {
+      const data = parseCard(readFileSync(path, "utf8"), path).data as Record<string, unknown>;
+      if (typeof data["kind"] === "string") kind = data["kind"];
+      const entry = (Array.isArray(data["sources"]) ? data["sources"] : []).find(
+        (s: unknown) => (s as { id?: unknown } | null)?.id === "provenance",
+      ) as { resource?: unknown } | undefined;
+      if (typeof entry?.resource === "string") {
+        // The source is the provenance file, or the manifest when the profile embeds provenance.
+        const doc = JSON.parse(
+          readFileSync(libraryPath(root, found.dir, entry.resource, path), "utf8"),
+        ) as Record<string, unknown>;
+        provenance = findProvenance(doc, 0);
+      }
+    } catch {
+      provenance = undefined;
+    }
+    // Without a provenance file (a profile that embeds it in its manifest) the media's own mark
+    // says the source type and the models.
+    let marked: { source?: string; models: string[] } | undefined;
+    if (provenance === undefined) {
+      withoutProvenance.push(path);
+      const type = found.resource === undefined ? undefined : markableMediaType(found.resource);
+      if (found.resource !== undefined && type !== undefined) {
+        try {
+          const bytes = new Uint8Array(readFileSync(join(found.dir, found.resource)));
+          marked = {
+            ...(readDigitalSourceType(bytes, type) !== undefined && {
+              source: readDigitalSourceType(bytes, type) as string,
+            }),
+            models: (readMarkedModels(bytes, type) ?? "").split("; ").filter(Boolean),
+          };
+        } catch {
+          marked = undefined;
+        }
+      }
+    }
+    const declared = provenance?.["digitalSourceType"] ?? marked?.source;
+    const source =
+      typeof declared === "string" && declared !== "undeclared"
+        ? (declared.split("/").pop() ?? "unknown")
+        : "unknown";
+    const row = (byKind[kind] ??= {});
+    row[source] = (row[source] ?? 0) + 1;
+    bump(sources, source);
+    for (const model of new Set(
+      provenance ? strings(provenance["models"]) : (marked?.models ?? []),
+    ))
+      bump(models, model);
+    const calls = Array.isArray(provenance?.["calls"]) ? (provenance["calls"] as unknown[]) : [];
+    const named = new Set<string>();
+    for (const call of calls) {
+      const model = (call as { model?: unknown } | null)?.model;
+      if (typeof model === "string" && model.includes("/")) named.add(model.split("/")[0]!);
+    }
+    if (
+      named.size === 0 &&
+      strings(provenance?.["models"]).length > 0 &&
+      typeof provenance?.["route"] === "string"
+    )
+      named.add(provenance["route"]);
+    for (const provider of named) bump(providers, provider);
+    for (const t of new Set(strings(provenance?.["providerTerms"]))) bump(terms, t);
+  }
+  const termList = [...terms]
+    .map(([text, assets]): DisclosureTerms => {
+      const asOf = /\(as of (\d{4}-\d{2}-\d{2})\)/.exec(text)?.[1];
+      return { terms: text, ...(asOf !== undefined && { asOf }), assets };
+    })
+    .sort((a, b) => compare(a.terms, b.terms));
+  const generated = cards.length;
+  const aiAssets = [...sources].filter(([s]) => AI_TYPES.has(s)).reduce((n, [, c]) => n + c, 0);
+  const modelNames = list(models).map((m) => m.name);
+  const kinds = Object.keys(byKind).sort();
+  const made = modelNames.length > 0 ? ` with ${modelNames.join(", ")}` : "";
+  const steam =
+    aiAssets === 0
+      ? `Pre-generated AI content: none recorded in ${generated} library assets.`
+      : `Pre-generated AI content: ${aiAssets} of ${generated} assets (${kinds.join(", ")}) were made${made}, ` +
+        `reviewed and approved by the developer before shipping. Live-generated AI content: none.`;
+  const itchTags = aiAssets === 0 ? [] : ["ai-generated-assets"];
+  const itchText =
+    aiAssets === 0
+      ? "No AI-generated assets recorded."
+      : `AI-generated assets: ${aiAssets} of ${generated} (${kinds.join(", ")})${made}.`;
+  return {
+    assets: generated,
+    byKind,
+    bySourceType: list(sources),
+    models: list(models),
+    providers: list(providers),
+    terms: termList,
+    withoutProvenance,
+    steam,
+    itch: { tags: itchTags, text: itchText },
+  };
+}
+
+/** The summary as Markdown, for `--out`. */
+export function disclosureMarkdown(d: Disclosure): string {
+  const rows = (items: DisclosureCount[]): string[] =>
+    items.length ? items.map((i) => `- ${i.name}: ${i.assets}`) : ["- none"];
+  return (
+    [
+      "# AI disclosure summary",
+      "",
+      `Assets read: ${d.assets}`,
+      "",
+      "## Assets by kind and source type",
+      ...Object.entries(d.byKind).flatMap(([kind, row]) =>
+        Object.entries(row).map(([source, n]) => `- ${kind} / ${source}: ${n}`),
+      ),
+      "",
+      "## Models",
+      ...rows(d.models),
+      "",
+      "## Providers",
+      ...rows(d.providers),
+      "",
+      "## Provider terms",
+      ...(d.terms.length
+        ? d.terms.map((t) => `- ${t.terms}${t.asOf ? ` [${t.asOf}]` : ""}: ${t.assets}`)
+        : ["- none"]),
+      "",
+      "## Steam AI content survey",
+      d.steam,
+      "",
+      "## itch.io AI tags",
+      `Tags: ${d.itch.tags.join(", ") || "none"}`,
+      d.itch.text,
+      "",
+    ].join("\n") + "\n"
+  );
+}

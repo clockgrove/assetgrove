@@ -239,6 +239,20 @@ A request's digest covers its input files' bytes, including the files a material
 
 The marking module (`src/metadata.ts`) writes the IPTC digital source type, and the model names in IPTC's `AISystemUsed`, into PNG (`iTXt`), JPEG (APP1) and WebP (`XMP ` chunk) with its own XMP writer. The prompt is never written. I looked for a maintained library that writes XMP into those three formats without native code: `exiftool-vendored` and the `exiftool` it wraps are a Perl program shipped as a vendored binary, and the other XMP libraries read packets or write only into one format. A native binary at run time is what this repository avoids, and the output must be byte-for-byte stable so that marking a marked file again leaves it unchanged, which a process that rewrites whole files does not promise. `exiftool-vendored` is therefore a devDependency only: the tests read the marks back through it, independently of the writer. glTF and GLB go through `KHR_xmp_json_ld`, and KTX2 through a key-value entry (design section 6).
 
+### Which reader checks each format, and why
+
+| Format          | Written by                                                                                                         | Read back in tests by                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| PNG, JPEG, WebP | the XMP writer in `src/metadata.ts`                                                                                | `exiftool-vendored`                                                   |
+| glTF, GLB       | `KHR_xmp_json_ld` in the document's JSON (the model names go in `Iptc4xmpExt:AISystemUsed` beside the source type) | Khronos `gltf-validator` (it must accept the file) and the JSON chunk |
+| KTX2            | `ktx-parse`: the IPTC XMP packet under the key-value entry `XMP`                                                   | `ktx-parse`                                                           |
+
+KTX2 has no second reader: no other maintained KTX2 reader exists in Node without a native binary (`@gltf-transform/extensions` reads KTX2 through the same `ktx-parse`; the KTX-Software tools are native programs). So the entry is written and read by `ktx-parse` and the test also checks that the level data survives.
+
+`@gltf-transform/extensions` stays a devDependency and does not write the glTF mark. Its `KHRXMP` extension works on a whole `Document` through the async `WebIO`, which rewrites the file (accessors, buffers, names) and does not promise that marking a marked file leaves it unchanged; the document-level `KHR_xmp_json_ld` packet is small, and the existing JSON-level writer produces exactly the extension the specification defines, which the Khronos validator accepts.
+
+`ktx-parse` 1.1.0 writes each key-value entry's length through `new Uint8Array(Uint32Array)`, which keeps only the low byte, so an entry of 256 bytes or more reads back corrupt (the XMP packet is longer than that). `writeKtx2Container` in `src/metadata.ts` writes with `ktx-parse` and then sets each entry's true length; the reader is correct. Remove it when `ktx-parse` fixes the writer. `ktx-parse` is a direct dependency, at the version the lockfile already held through `@gltf-transform/extensions`.
+
 C2PA signing is not done. A signature needs a signing identity and certificate chain Assetgrove does not manage, and the XMP marks are help for disclosure, not compliance.
 
 ## The Web Annotation subset is validated by zod

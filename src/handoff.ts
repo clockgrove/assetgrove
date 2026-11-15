@@ -1,3 +1,4 @@
+import { canCarryMark, markableMediaType, markProblems } from "./handoff/mark-check.ts";
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -319,7 +320,9 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   requireDeclared(digitalSourceType);
   const output = {
     ...write.output,
-    bytes: embedDigitalSourceType(write.output.bytes, write.output.mediaType, digitalSourceType),
+    bytes: embedDigitalSourceType(write.output.bytes, write.output.mediaType, digitalSourceType, {
+      models: write.provenance.models,
+    }),
   };
   const provenance = { ...licensed, digitalSourceType };
   const last = provenance.steps?.at(-1);
@@ -490,13 +493,29 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
       () => undefined,
     );
   const problems: HandoffProblem[] = [];
+  const { write } = prepared;
   for (const [i, { preset, options }] of presets.entries()) {
     const found = await preset.check(presetContext, options, presetFiles[i] ?? [], read);
     problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
+    // The mark is read back from the media and from every file this preset wrote that can carry it.
+    const expected = {
+      digitalSourceType: prepared.provenance.digitalSourceType ?? "undeclared",
+      models: prepared.provenance.models,
+    };
+    const marked: Array<[string, string]> = [];
+    if (canCarryMark(write.output.mediaType))
+      marked.push([prepared.mediaRel, write.output.mediaType]);
+    for (const file of presetFiles[i] ?? []) {
+      const type = markableMediaType(file.path);
+      if (type !== undefined) marked.push([file.path, type]);
+    }
+    for (const [path, type] of marked) {
+      const missing = markProblems(path, await read(path), type, expected);
+      problems.push(...missing.map((problem) => ({ preset: preset.name, problem })));
+    }
   }
   if (problems.length > 0) throw new HandoffCheckError(problems);
   // Every preset check passed: the version goes into the library.
-  const { write } = prepared;
   const library = await commitLibraryWrite(prepared.library, {
     mediaBytes: prepared.mediaBytes,
     provenance: prepared.provenance,
