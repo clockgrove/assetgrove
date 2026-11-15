@@ -12,7 +12,8 @@ import { disclose, disclosureMarkdown } from "../src/disclosure.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
-import type { SignerRecord } from "../src/credentials.ts";
+import { developmentSigner } from "../src/credentials.ts";
+import { loadSettings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
 import { shelterSpec, syntheticProfile } from "./fixtures/synthetic.ts";
 
@@ -98,7 +99,7 @@ function cli(args: string[]): Promise<string> {
 }
 
 test("disclose reports kinds, source types, models, providers and terms with dates", async () => {
-  const d = disclose(await library());
+  const d = await disclose(await library());
   assert.equal(d.assets, 3);
   assert.deepEqual(d.byKind["sprite-strip"], {
     trainedAlgorithmicMedia: 2,
@@ -164,24 +165,19 @@ test("--out writes the Markdown summary without prompt text", async () => {
 
 test("content credentials count development and settings signers, and the note names the development one", async () => {
   const target = await mkdtemp(join(tmpdir(), "assetgrove-disclosure-cc-"));
-  const dev: SignerRecord = {
-    development: true,
-    certificateSha256: "a".repeat(64),
-    subject: "Assetgrove development",
-    issuer: "Assetgrove development",
-    serialNumber: "01",
-    alg: "es256",
+  // A certificate of the developer's own, named by the developer settings.
+  const keys = await mkdtemp(join(tmpdir(), "assetgrove-disclosure-keys-"));
+  const own = await developmentSigner(keys);
+  const settings = {
+    ...loadSettings(),
+    contentCredentials: {
+      certificate: join(keys, "content-credentials", "chain.pem"),
+      privateKey: join(keys, "content-credentials", "signer.key"),
+    },
   };
-  const configured: SignerRecord = {
-    ...dev,
-    development: false,
-    certificateSha256: "b".repeat(64),
-    subject: "Studio",
-  };
-  for (const [family, signer] of [
-    ["shelter", dev],
-    ["walk", configured],
-    ["idle", undefined],
+  for (const [family, gate] of [
+    ["shelter", undefined],
+    ["walk", { settings }],
   ] as const) {
     const profile = syntheticProfile({ handoff: [{ preset: "atlas-json" }] });
     delete profile.validator;
@@ -197,20 +193,23 @@ test("content credentials count development and settings signers, and the note n
         extension: "png",
         fields: { frames: { width: 16, height: 8, count: 6, durationMs: 120 } },
       },
-      provenance: provenance(signer ? { contentCredentials: signer } : {}),
+      provenance: provenance({}),
       run: { runId: `r-${family}`, candidateId: "c1", pickedAt: "2026-01-01T00:00:02.000Z" },
       targetDir: target,
+      ...(gate && { gate }),
     });
   }
-  const d = disclose(target);
+  const d = await disclose(target);
   assert.equal(d.contentCredentials.signed, 2);
   assert.equal(d.contentCredentials.development, 1);
-  assert.deepEqual(
-    d.contentCredentials.signers.map((s) => [s.subject, s.development, s.assets]).sort(),
-    [
-      ["Assetgrove development", true, 1],
-      ["Studio", false, 1],
-    ],
+  assert.deepEqual(d.contentCredentials.signers.map((s) => [s.development, s.assets]).sort(), [
+    [false, 1],
+    [true, 1],
+  ]);
+  assert.ok(
+    d.contentCredentials.signers.some(
+      (s) => !s.development && s.certificateSha256 === own.record.certificateSha256,
+    ),
   );
   assert.match(
     d.contentCredentials.note ?? "",
@@ -219,8 +218,5 @@ test("content credentials count development and settings signers, and the note n
   assert.match(d.contentCredentials.note ?? "", /no C2PA trust list/);
   const md = disclosureMarkdown(d);
   assert.match(md, /## Content credentials\nSigned assets: 2/);
-  assert.match(md, /Studio \(sha256 b{64}\): 1/);
-  const none = disclose(await library());
-  assert.equal(none.contentCredentials.signed, 0);
-  assert.equal(none.contentCredentials.note, undefined);
+  assert.ok(md.includes(`(sha256 ${own.record.certificateSha256}): 1`));
 });

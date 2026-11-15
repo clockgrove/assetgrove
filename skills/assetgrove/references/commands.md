@@ -308,6 +308,16 @@ Lists `stale` assets (the card's bible is older than the style bible's version; 
 
 MCP tool: `library_drift`, arguments `target`, `profile`, `bible`.
 
+### `library adopt`
+
+```text
+library adopt --asset <id> --original <file> [--target <dir>] [--profile <profile.json>] [--json]
+```
+
+Adopts the asset's hand-edited working media as its next version. `--original` is the AI-made version the card locks (its sha256 must equal `lock.sha256`). The file gets the IPTC mark `compositeWithTrainedAlgorithmicMedia` and C2PA content credentials that record the edit with the original as a `parentOf` ingredient; the version is appended with the annotation action `adopt`, under the library write lock. Exits 2 when the file is unchanged, is not a PNG, JPEG or WebP, or the original is not the locked version; 6 `handoff_check_failed` when the written file does not read back. Result: `assetId`, `version`, `sha256`, `files`, `contentCredentials` (with a `warning` when the development certificate signed).
+
+MCP tool: `library_adopt`, arguments `target`, `profile`, `asset`, `original`.
+
 ### `settings`
 
 ```text

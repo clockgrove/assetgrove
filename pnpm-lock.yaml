@@ -239,9 +239,9 @@ importers:
       '@types/pngjs':
         specifier: 6.0.5
         version: 6.0.5
-      cbor-x:
-        specifier: 1.6.9
-        version: 1.6.9
+      cbor2:
+        specifier: 2.4.2
+        version: 2.4.2
       eslint:
         specifier: 10.14.0
         version: 10.14.0
@@ -335,6 +335,10 @@ packages:
 
   '@contentauth/c2pa-wasm@0.15.0':
     resolution: {integrity: sha512-Q6ngA3V7RFbycqVujohL50z5bBlai+yBinbjUosjgtVRSKz8PftFe3qDUcSI3uWlJB9lG+/cCXZ6T26vW8QFSQ==}
+
+  '@cto.af/wtf8@1.0.1':
+    resolution: {integrity: sha512-kl6pH/D6SOCqArCVBcx7E45urbzBAPNr4xkMMaRAjrFSeI3y/s2+x78x5H0/UNr6F4GCgdxooTutPCNRymVzMg==}
+    engines: {node: '>=22'}
 
   '@eslint-community/eslint-utils@4.10.1':
     resolution: {integrity: sha512-cuadcxVFE8sDK6iWJbs8Sn0av2Nrh2QSGQhVlBW9AaAHqHwjWsZHT8LJ4hFGPh7ASBV2deFdM7H/DPjulmh8rg==}
@@ -585,6 +589,10 @@ packages:
 
   cbor-x@1.6.9:
     resolution: {integrity: sha512-TCT9XHLb4iPGQ99fpQjcTRncbus6cXHvSD/RY+bPrDACBCJKiQLmAM6r7/BgQcI5i+8h4gwp4vjfb6S6T8bPGw==}
+
+  cbor2@2.4.2:
+    resolution: {integrity: sha512-fuz4FXnURAEvtFA8rS+3R85eSZAKZRL4vI9AU6eokOE1TghPsp7WZSh+VvB/3ltKaWZreWtjR/kahn/ogmsgsQ==}
+    engines: {node: '>=22'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -1018,6 +1026,8 @@ snapshots:
 
   '@contentauth/c2pa-wasm@0.15.0': {}
 
+  '@cto.af/wtf8@1.0.1': {}
+
   '@eslint-community/eslint-utils@4.10.1(eslint@10.14.0)':
     dependencies:
       eslint: 10.14.0
@@ -1306,6 +1316,10 @@ snapshots:
   cbor-x@1.6.9:
     optionalDependencies:
       cbor-extract: 2.2.3
+
+  cbor2@2.4.2:
+    dependencies:
+      '@cto.af/wtf8': 1.0.1
 
   cross-spawn@7.0.6:
     dependencies:

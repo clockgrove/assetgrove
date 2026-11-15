@@ -3,6 +3,7 @@ import {
   canCarryCredentials,
   credentialed,
   credentialProblem,
+  DEVELOPMENT_SIGNER_WARNING,
   resolveSigner,
 } from "./credentials.ts";
 import type { ContentSigner, SignerRecord } from "./credentials.ts";
@@ -262,9 +263,7 @@ export interface CredentialsResult extends SignerRecord {
   warning?: string;
 }
 
-/** What the result says when the development certificate signed. */
-export const DEVELOPMENT_SIGNER_WARNING =
-  "signed with Assetgrove's local development certificate, which no C2PA trust list holds; set contentCredentials in the developer settings to sign with your own certificate";
+export { DEVELOPMENT_SIGNER_WARNING } from "./credentials.ts";
 
 export interface TargetWriteResult {
   mediaPath: string;

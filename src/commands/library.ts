@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { EXIT, InputError } from "../errors.ts";
 import { BIBLE_PATH, PROFILE_PATH } from "../init.ts";
 import { loadProfile } from "../inputs.ts";
+import { adoptHandEdit } from "../library/adopt.ts";
 import {
   bibleVersionOf,
   libraryDrift,
@@ -197,5 +198,57 @@ Read-only.`,
       ...drift.modified.map((m) => `  ${m.asset}: ${m.reason}`),
     ].join("\n");
     return { exitCode: 0, fields: { ...drift }, human };
+  },
+});
+
+interface AdoptArgs extends LibraryArgs {
+  asset?: string;
+  original?: string;
+}
+
+export const libraryAdoptCommand = defineCommand<AdoptArgs>({
+  name: "library adopt",
+  tool: "library_adopt",
+  summary: "adopt a person's hand edit of an asset as its next version, with C2PA credentials",
+  details: `Takes the asset's working media, edited by hand, as the next version. --original is the AI-made
+version the card locks (its sha256 must equal lock.sha256). The new file carries the IPTC mark
+compositeWithTrainedAlgorithmicMedia and signed C2PA content credentials that record the edit with the
+original as a parentOf ingredient; the version is appended with the annotation action adopt, under the
+library write lock. Exits 2 when the file is unchanged, is not a PNG, JPEG or WebP, or the original is not
+the locked version; exit 6 handoff_check_failed when the written file does not read back.`,
+  input: {
+    ...input(false),
+    properties: {
+      ...input(false).properties,
+      asset: { type: "string", description: "the asset id", placeholder: "<id>" },
+      original: {
+        type: "string",
+        description: "the AI-made version that was handed off",
+        placeholder: "<file>",
+      },
+    },
+    required: ["asset", "original"],
+  },
+  effect: { readOnly: false, spends: "never", writes: "target" },
+  async run(args, ctx) {
+    if (args.asset === undefined || args.original === undefined) {
+      throw new InputError("missing required option --asset and --original");
+    }
+    const { targetDir, profile } = await open(args);
+    const result = await adoptHandEdit({
+      profile,
+      targetDir,
+      assetId: args.asset,
+      originalPath: resolve(args.original),
+      settings: ctx.settings,
+    });
+    const human = [
+      `adopted ${result.assetId} as version ${result.version} (sha256 ${result.sha256})`,
+      ...result.files.map((f) => `  ${f}`),
+      ...(result.contentCredentials.warning
+        ? [`warning: ${result.contentCredentials.warning}`]
+        : []),
+    ].join("\n");
+    return { exitCode: 0, fields: { ...result }, human };
   },
 });

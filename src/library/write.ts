@@ -537,6 +537,8 @@ export interface LibraryVersionInput {
   confirmation?: ConfirmationRecord;
   candidateReview?: CandidateReview;
   now: Date;
+  /** The annotation's action for the new version; `pick` or `replace` when absent. */
+  action?: "adopt";
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
 }
@@ -601,7 +603,7 @@ export async function commitLibraryWrite(
       motivation: "moderating",
       created: at,
       target: { source: resource, "ag:version": sha256 },
-      "ag:action": first ? "pick" : "replace",
+      "ag:action": input.action ?? (first ? "pick" : "replace"),
     });
   }
   for (const [path, bytes] of copies) {

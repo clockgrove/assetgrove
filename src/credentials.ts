@@ -32,6 +32,10 @@ export const DEVELOPMENT_DIR = "content-credentials";
 /** Validation codes that do not fail the check: no trust list is configured. */
 const ACCEPTED_FAILURES = new Set(["signingCredential.untrusted"]);
 
+/** What a result says when the local development certificate signed. */
+export const DEVELOPMENT_SIGNER_WARNING =
+  "signed with Assetgrove's local development certificate, which no C2PA trust list holds; set contentCredentials in the developer settings to sign with your own certificate";
+
 /** Whether a media type is one C2PA credentials are written into. */
 export function canCarryCredentials(mediaType: string): boolean {
   return SIGNABLE.has(mediaType);
@@ -400,7 +404,11 @@ export async function signCredentials(
       { label: "c2pa.actions.v2", data: { actions: actions(claim) } },
       {
         label: INPUT_ASSERTION,
-        data: { sha256: sha256(bytes), certificateSha256: signer.record.certificateSha256 },
+        data: {
+          sha256: sha256(bytes),
+          certificateSha256: signer.record.certificateSha256,
+          development: signer.record.development,
+        },
       },
     ],
   };
@@ -448,6 +456,8 @@ export interface ReadCredentials {
   inputSha256?: string;
   /** The sha256 of the signing certificate, as the manifest names it. */
   certificateSha256?: string;
+  /** Whether the manifest says Assetgrove's development certificate signed it. */
+  development?: boolean;
   ingredients: { title?: string; relationship?: string; validationState?: string }[];
   signer: { subject?: string; issuer?: string; serialNumber?: string };
 }
@@ -534,6 +544,7 @@ export async function readCredentials(
       actions: actionList,
       ...(typeof input === "string" && { inputSha256: input }),
       ...(typeof certificate === "string" && { certificateSha256: certificate }),
+      ...(typeof own["development"] === "boolean" && { development: own["development"] }),
       ingredients: (manifest.ingredients ?? []).map((i) => ({
         ...(i.title !== undefined && { title: i.title }),
         ...(i.relationship !== undefined && { relationship: i.relationship }),

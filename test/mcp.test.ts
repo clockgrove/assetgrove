@@ -15,7 +15,7 @@ import { REFUSED_VARIABLES } from "../src/env.ts";
 import { flagName } from "../src/commands/runner.ts";
 import type { CommandSpec } from "../src/commands/types.ts";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
-import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
+import { createRaster, decodeImage, encodePng, setPixel } from "../src/image/raster.ts";
 import type { TargetProfile } from "../src/types.ts";
 import { GAME, fixtureLibrary } from "./fixtures/library.ts";
 import { lodModel } from "./fixtures/lod.ts";
@@ -117,8 +117,8 @@ function commandLine(command: CommandSpec, args: Args, script: string): string[]
 }
 
 /**
- * What legitimately differs between two runs of one command: run IDs, times, random seeds and
- * what hashes them.
+ * What legitimately differs between two runs of one command: run IDs, times, random seeds, signed
+ * C2PA manifests and what hashes them.
  */
 function normalise(value: unknown): unknown {
   return JSON.parse(
@@ -127,7 +127,9 @@ function normalise(value: unknown): unknown {
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]+/g, "<run>")
       .replace(/"(durationMs|elapsedMs|latencyMs|seed)":\d+(\.\d+)?/g, '"$1":0')
       // A plan's digest covers its creation time.
-      .replace(/"digest":"[0-9a-f]{64}"/g, '"digest":"<digest>"'),
+      .replace(/"digest":"[0-9a-f]{64}"/g, '"digest":"<digest>"')
+      // A signed image's bytes: its C2PA manifest holds random identifiers and a fresh signature.
+      .replace(/("version":\d+,"sha256":)"[0-9a-f]{64}"/g, '$1"<signed>"'),
   );
 }
 
@@ -876,6 +878,22 @@ export default {
       return { target: join(work, "target"), profile };
     },
   })),
+  // The picked asset's file, edited by hand, adopted with the handed-off version as the original.
+  {
+    tool: "library_adopt",
+    prepare: async (): Promise<Args> => {
+      const profile = join(work, "library-profile.json");
+      await writeFile(profile, JSON.stringify(syntheticProfile()));
+      const target = join(work, "target");
+      const media = join(target, "assets/source/fern/shelter.png");
+      const original = join(work, "original.png");
+      await cp(media, original);
+      const edited = decodeImage(new Uint8Array(await readFile(media)));
+      edited.data[3] = 255 - edited.data[3]!;
+      await writeFile(media, encodePng(edited));
+      return { target, profile, asset: "fern-shelter", original };
+    },
+  },
   { tool: "settings", prepare: async () => ({ action: "path" }) },
   // Headless settings: the change exits 8 confirmation_required and writes nothing.
   { tool: "settings_change", prepare: async () => ({ runUsd: 4 }), exitCode: 8 },

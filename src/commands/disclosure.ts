@@ -35,7 +35,7 @@ Spends nothing; nothing is written without --out.`,
   effect: { readOnly: false, spends: "never", writes: "out" },
   async run(args) {
     const root = resolve(args.root ?? ".");
-    const summary = disclose(root);
+    const summary = await disclose(root);
     if (args.out !== undefined) {
       if (args.out === "") throw new InputError("--out needs a file");
       if (isAbsolute(args.out) || args.out.split(/[\\/]/).includes(".."))

@@ -6,6 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { canCarryCredentials, readCredentials } from "./credentials.ts";
 import { markableMediaType } from "./handoff/mark-check.ts";
 import { readDigitalSourceType, readMarkedModels } from "./metadata.ts";
 import { parseCard } from "./library/card.ts";
@@ -81,7 +82,7 @@ function findProvenance(value: unknown, depth: number): Record<string, unknown> 
 }
 
 /** Summarises the library under `root` from its cards and provenance. */
-export function disclose(root: string): Disclosure {
+export async function disclose(root: string): Promise<Disclosure> {
   const byKind: Record<string, Record<string, number>> = {};
   const sources = new Map<string, number>();
   const models = new Map<string, number>();
@@ -119,6 +120,8 @@ export function disclose(root: string): Disclosure {
     // Without a provenance file (a profile that embeds it in its manifest) the media's own mark
     // says the source type and the models.
     let marked: { source?: string; models: string[] } | undefined;
+    // Without a provenance file, the media's own C2PA manifest says which certificate signed.
+    let credentials: Record<string, unknown> | undefined;
     if (provenance === undefined) {
       withoutProvenance.push(path);
       const type = found.resource === undefined ? undefined : markableMediaType(found.resource);
@@ -131,6 +134,13 @@ export function disclose(root: string): Disclosure {
             }),
             models: (readMarkedModels(bytes, type) ?? "").split("; ").filter(Boolean),
           };
+          const read = canCarryCredentials(type) ? await readCredentials(bytes, type) : undefined;
+          if (read?.certificateSha256 !== undefined)
+            credentials = {
+              certificateSha256: read.certificateSha256,
+              subject: read.signer.subject ?? "",
+              development: read.development === true,
+            };
         } catch {
           marked = undefined;
         }
@@ -163,7 +173,8 @@ export function disclose(root: string): Disclosure {
       named.add(provenance["route"]);
     for (const provider of named) bump(providers, provider);
     for (const t of new Set(strings(provenance?.["providerTerms"]))) bump(terms, t);
-    const signer = provenance?.["contentCredentials"] as Record<string, unknown> | null | undefined;
+    const signer = (provenance?.["contentCredentials"] ?? credentials) as
+      Record<string, unknown> | null | undefined;
     if (signer && typeof signer === "object" && typeof signer["certificateSha256"] === "string") {
       const hash = signer["certificateSha256"];
       const entry = signers.get(hash) ?? {
