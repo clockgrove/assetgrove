@@ -4,8 +4,8 @@ import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
 import { checkIdentityRecord, loadIdentity } from "../identity.ts";
 import type { IdentityRecordCheck } from "../identity.ts";
-import { providerFor, spendLedger } from "../providers/index.ts";
-import { IDENTITY_CHECK_OPERATION, loadRoutes } from "../routes.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
+import { IDENTITY_CHECK_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { ledgerFor } from "../spend.ts";
 import { defineCommand } from "./types.ts";
@@ -13,7 +13,6 @@ import { defineCommand } from "./types.ts";
 interface IdentityCheckArgs {
   bible: string;
   subject?: string[];
-  routes?: string;
   cap?: number;
   workItem?: string;
   providerScript?: string;
@@ -42,7 +41,6 @@ fixes its text or its references. See docs/generation-knobs.md.`,
         description: "a subject to check; repeat for several (default: every identity)",
         placeholder: "<name>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       cap: {
         type: "number",
         description:
@@ -77,8 +75,8 @@ fixes its text or its references. See docs/generation-knobs.md.`,
       }),
     );
     if (loaded.length === 0) throw new InputError(`${doc.path} has no identity locks`);
-    const routes = await loadRoutes(args.routes);
-    const { provider, name } = await providerFor(args.providerScript, ctx);
+    const provider = await providerSet(args.providerScript, ctx);
+    const routes = provider.routes;
     const budget = new Budget(
       runCap(args.cap, ctx.settings),
       ledgerFor(spendLedger(ctx, args.workItem), provider, {}),
@@ -89,7 +87,6 @@ fixes its text or its references. See docs/generation-knobs.md.`,
     );
     const caller = new Caller({
       provider,
-      providerName: name,
       budget,
       routes,
       log: ctx.log,

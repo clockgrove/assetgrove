@@ -10,8 +10,7 @@ import {
 import { formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
 import { specForQa, loadProfile, loadStyleBible } from "../inputs.ts";
-import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
-import { loadRoutes } from "../routes.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
 import { dryRunOutcome, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
 
@@ -30,7 +29,6 @@ interface FixFrameArgs {
   bible?: string;
   anchor?: string;
   cap?: number;
-  routes?: string;
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
@@ -109,7 +107,6 @@ limits, and needs no key.`,
         description: "the run's cost cap in USD",
         default: DEFAULT_FIX_CAP_USD,
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       workItem: {
         type: "string",
         description: "the work item the spend ledger counts against",
@@ -135,7 +132,8 @@ limits, and needs no key.`,
       throw new InputError("give exactly one of --from <frame> or --key-pose <image>");
     }
     const capUsd = runCap(args.cap, ctx.settings, DEFAULT_FIX_CAP_USD);
-    const routes = await loadRoutes(args.routes);
+    const providers = await providerSet(args.providerScript, ctx);
+    const routes = providers.routes;
     const profile = await loadProfile(args.profile);
     const anchor = parseAnchor(args.anchor);
     const spec = await specForQa(args.spec);
@@ -149,7 +147,7 @@ limits, and needs no key.`,
       ...(spec.gait !== undefined && { gait: spec.gait }),
     });
     if (args.dryRun) {
-      const billing = await dryRunProvider(args.providerScript, ctx);
+      const billing = providers.billing;
       const plan = planFrameFix(routes, capUsd);
       const human = [
         `dry run: fix frame ${index}, ${plan.calls} planned call(s), nothing spent`,
@@ -176,7 +174,7 @@ limits, and needs no key.`,
       routes,
       capUsd,
       ledger: spendLedger(ctx, args.workItem),
-      provider: await providerFor(args.providerScript, ctx),
+      provider: { provider: providers, name: providers.billing.providerId },
     });
     const human = [
       `fixed frame ${index} of ${target.family} with ${result.fix.model} (request ${result.fix.requestId}), $${result.spentUsd.toFixed(4)} spent`,

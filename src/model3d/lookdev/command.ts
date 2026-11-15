@@ -148,7 +148,7 @@ export interface LookdevOptions {
   profileDir: string;
   routes: Routes;
   provider: GenerationProvider;
-  providerName: string;
+  providerName?: string;
   ledger?: SpendLedger;
   runsDir: string;
   /** Overrides the profile's look-dev cap ($3 by default). */
@@ -904,7 +904,7 @@ export async function lookDev(
   budget.check(plan.estimateUsd, "a look-dev of one character");
   const caller = new Caller({
     provider: options.provider,
-    providerName: options.providerName,
+    ...(options.providerName !== undefined && { providerName: options.providerName }),
     budget,
     routes: options.routes,
     ...(options.now && { now: options.now }),
@@ -1625,7 +1625,10 @@ export async function lookDev(
     models: [...new Set([...provenance.models, ...caller.records.map((c) => c.model)])],
     requestIds: [...provenance.requestIds, ...caller.records.map((c) => c.requestId)],
     providerTerms: [
-      ...new Set([...provenance.providerTerms, ...caller.records.map((c) => c.providerTerms)]),
+      ...new Set([
+        ...provenance.providerTerms,
+        ...caller.records.flatMap((c) => (c.providerTerms !== undefined ? [c.providerTerms] : [])),
+      ]),
     ],
     referenceHashes: [
       ...new Set([...provenance.referenceHashes, ...references.map((r) => r.sha256)]),

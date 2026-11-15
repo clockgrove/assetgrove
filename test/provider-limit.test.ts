@@ -87,7 +87,7 @@ async function stageArgs(): Promise<{ args: string[]; dir: string }> {
 
 test("a paid call to a provider with no declared limit exits 3 provider_limit_undeclared before spend", async () => {
   const stateDir = await freshState();
-  writeSettings({ stateDir, providers: {} });
+  writeSettings({ stateDir, providers: { scripted: {} } });
   const { args, dir } = await stageArgs();
   const script = await paidScript(dir);
   const r = await cli([...args, "--provider-script", script.path]);

@@ -154,7 +154,7 @@ test("enforce mode checks the record against its references once per run", async
   assert.equal(checks.length, 1);
 });
 
-test("the plan records the record check's route, so a routes file applies at apply time", async () => {
+test("the plan records the record check's route from the routes it plans with", async () => {
   const checkRoute = {
     ...defaultRoutes[IDENTITY_CHECK_OPERATION]!,
     model: "test/record-checker",

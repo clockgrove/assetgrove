@@ -384,7 +384,10 @@ export async function fixFrame(
     models: unique([...base.models, record.model]),
     requestIds: [...base.requestIds, record.requestId],
     referenceHashes: unique([...base.referenceHashes, first.sha256, second.sha256]),
-    providerTerms: unique([...base.providerTerms, record.providerTerms]),
+    providerTerms: unique([
+      ...base.providerTerms,
+      ...(record.providerTerms !== undefined ? [record.providerTerms] : []),
+    ]),
     finishedAt: at,
     costUsd: base.costUsd + record.costUsd,
     calls: [...base.calls, record],

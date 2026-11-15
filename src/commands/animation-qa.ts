@@ -10,8 +10,7 @@ import { formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
 import { specForQa, loadProfile } from "../inputs.ts";
 import { runCap } from "../budget.ts";
-import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
-import { loadRoutes } from "../routes.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
 
@@ -26,7 +25,6 @@ interface AnimationQaArgs {
   anchor?: string;
   noVision?: boolean;
   cap?: number;
-  routes?: string;
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
@@ -96,7 +94,6 @@ Exits 5 when any check fails; every failed check names its frame.`,
           "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
         placeholder: "<usd>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       workItem: {
         type: "string",
         description: "the work item the spend ledger counts against",
@@ -115,7 +112,8 @@ Exits 5 when any check fails; every failed check names its frame.`,
   confirm: "spend",
   async run(args, ctx) {
     const capUsd = runCap(args.cap, ctx.settings);
-    const routes = await loadRoutes(args.routes);
+    const providers = await providerSet(args.providerScript, ctx);
+    const routes = providers.routes;
     const vision = !args.noVision;
     const spec = await specForQa(args.spec);
     let targets;
@@ -145,7 +143,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
       if (spec.gait !== undefined) t.gait = spec.gait;
     }
     if (args.dryRun) {
-      const billing = await dryRunProvider(args.providerScript, ctx);
+      const billing = providers.billing;
       const plan = await planAnimationQa(targets, routes, capUsd, vision);
       const human = [
         `dry run: ${targets.length} strip(s), ${plan.calls} planned vision call(s), nothing spent`,
@@ -169,7 +167,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
       routes,
       capUsd,
       ledger: spendLedger(ctx, args.workItem),
-      ...(vision && { provider: await providerFor(args.providerScript, ctx) }),
+      ...(vision && { provider: { provider: providers, name: providers.billing.providerId } }),
     });
     const lines: string[] = [];
     for (const r of results) {

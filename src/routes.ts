@@ -1,6 +1,10 @@
-import { InputError } from "./errors.ts";
-import { parseJsonFile } from "./json.ts";
-import { requireGrant } from "./license.ts";
+/**
+ * Model routes (design section 12): which provider and model serve each operation. Routes come
+ * only from the developer settings: `settings.routes[op]` over `settings.roles[role]` over the
+ * configured adapters' `defaultRoutes`. Grants and terms belong to the (provider, model) pair.
+ */
+import { SettingsError } from "./env.ts";
+import type { Settings } from "./settings.ts";
 import type { OutputGrant } from "./types.ts";
 
 export const IDENTITY_CAST_OPERATION = "identity-cast";
@@ -10,17 +14,21 @@ export const LOOKDEV_GROOM_OPERATION = "lookdev-groom";
 export const LOOKDEV_MARKINGS_OPERATION = "lookdev-markings";
 export const IDENTITY_CHECK_OPERATION = "identity-check";
 
-/** A model route: which gateway model serves an operation, its per-call estimate and its terms. */
+/** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
+  /** The settings id of the provider that serves it; set on every resolved route. */
+  provider?: string;
   model: string;
   /** Upper estimate of one call's cost in USD; reserved against the cap before the call. */
   estimatedCostUsd: number;
-  /** The provider terms the output was made under, recorded in provenance. */
-  providerTerms: string;
+  /**
+   * The provider terms the output was made under, recorded in provenance. Absent on a route whose
+   * provider or model was overridden without its own terms.
+   */
+  providerTerms?: string;
   /**
    * What the provider grants for this route's outputs on the plan it is called on, recorded on
-   * every call. A route to a provider whose terms do not give ownership (a free plan) must
-   * declare it, or its outputs are taken as relabellable (docs/generation-knobs.md).
+   * every call. A call without one is refused at hand-off (exit 7 `license_refused`).
    */
   outputGrant?: OutputGrant;
   size?: string;
@@ -78,7 +86,20 @@ const tripoGrant = {
 };
 const tripoTerms = "Tripo API Terms of Service, paid credits (as of 2026-11-10)";
 
-/** Defaults from the gateway survey of 2026-11-07 (docs/models.md). */
+const googleGrant: OutputGrant = {
+  license: "LicenseRef-google-api",
+  plan: "api",
+  commercial: true,
+  relabel: true,
+};
+const googleTerms =
+  "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)";
+
+/**
+ * The core default routes, each with the grant its terms give: the gateway survey of 2026-11-07
+ * (docs/models.md) for the 2D operations, Tripo for the 3D ones. Each adapter's `defaultRoutes`
+ * is its part of this table; the scripted adapter, the test stand-in, serves all of it.
+ */
 export const defaultRoutes: Routes = {
   still: {
     model: "openai/gpt-image-2",
@@ -297,23 +318,252 @@ export const defaultRoutes: Routes = {
   holes: {
     model: "google/gemini-3-flash",
     estimatedCostUsd: 0.01,
+    outputGrant: googleGrant,
     providerTerms:
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-09)",
   },
+  // Prompt compilation for plan (the planning role) and material QA: the vision model.
+  compiler: {
+    model: "google/gemini-3-flash",
+    estimatedCostUsd: 0.02,
+    outputGrant: googleGrant,
+    providerTerms: googleTerms,
+  },
+  "material-qa": {
+    model: "google/gemini-3-flash",
+    estimatedCostUsd: 0.02,
+    outputGrant: googleGrant,
+    providerTerms: googleTerms,
+  },
 };
 
-/** Loads a JSON file of route overrides and merges it over the defaults. */
-export async function loadRoutes(path?: string): Promise<Routes> {
-  if (!path) return defaultRoutes;
-  const overrides = await parseJsonFile(path, "routes");
-  if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
-    throw new InputError(`routes ${path} must be a JSON object of operation to route`);
+/** The 3D operations, served by Tripo; every other core default is a gateway route. */
+const MODEL3D_OPERATIONS = new Set(["model3d", "rig3d", "clips3d"]);
+
+function pick(keep: (operation: string) => boolean): Record<string, Route> {
+  return Object.fromEntries(Object.entries(defaultRoutes).filter(([op]) => keep(op)));
+}
+
+/** The gateway adapter's default routes: the 2D operations of the core defaults. */
+export const GATEWAY_DEFAULT_ROUTES: Readonly<Record<string, Route>> = pick(
+  (op) => !MODEL3D_OPERATIONS.has(op),
+);
+/** The Tripo adapter's default routes: the 3D operations of the core defaults. */
+export const TRIPO_DEFAULT_ROUTES: Readonly<Record<string, Route>> = pick((op) =>
+  MODEL3D_OPERATIONS.has(op),
+);
+
+/** The role each operation maps to (design section 12). */
+export const OPERATION_ROLES: Readonly<Record<string, string>> = {
+  still: "image",
+  sheet: "image",
+  edit: "edit",
+  [LOOKDEV_OPERATION]: "edit",
+  fix: "edit",
+  vision: "vision",
+  flicker: "vision",
+  holes: "vision",
+  [LOOKDEV_LOCATE_OPERATION]: "vision",
+  [LOOKDEV_GROOM_OPERATION]: "vision",
+  [LOOKDEV_MARKINGS_OPERATION]: "vision",
+  [IDENTITY_CAST_OPERATION]: "vision",
+  [IDENTITY_CHECK_OPERATION]: "vision",
+  "material-qa": "vision",
+  identity: "decisions",
+  "prompt-policy": "decisions",
+  compiler: "planning",
+  model3d: "model3d",
+  rig3d: "rig3d",
+  clips3d: "clips3d",
+};
+
+/** The adapter capability each role needs. */
+export const ROLE_CAPABILITY: Readonly<Record<string, string>> = {
+  image: "image",
+  edit: "edit",
+  vision: "vision",
+  decisions: "decide",
+  planning: "vision",
+  model3d: "model",
+  rig3d: "rig",
+  clips3d: "animate",
+};
+
+/** The role of an operation; undefined for an operation outside the table. */
+export function roleOf(operation: string): string | undefined {
+  return Object.hasOwn(OPERATION_ROLES, operation) ? OPERATION_ROLES[operation] : undefined;
+}
+
+/** The settings fields that route an operation: its route, then its role. */
+export function routeFields(operation: string): string[] {
+  const role = roleOf(operation);
+  return [`routes.${operation}`, ...(role !== undefined ? [`roles.${role}`] : [])];
+}
+
+/** No configured provider serves an operation. Exit 2 `route_unavailable`, before any reservation. */
+export class RouteUnavailableError extends Error {
+  readonly code = "route_unavailable";
+  readonly operation: string;
+  constructor(operation: string, message: string) {
+    super(message);
+    this.name = "RouteUnavailableError";
+    this.operation = operation;
   }
-  const merged: Record<string, Route> = { ...defaultRoutes };
-  for (const [operation, route] of Object.entries(overrides as Record<string, Partial<Route>>)) {
-    merged[operation] = { ...merged[operation], ...route } as Route;
-    const grant = merged[operation]?.outputGrant;
-    if (grant !== undefined) requireGrant(grant, `the ${operation} route in ${path}`);
+}
+
+/** A configured provider as resolution sees it: its settings id, its adapter and its entry. */
+export interface RouteProvider {
+  id: string;
+  adapter: {
+    id: string;
+    capabilities: readonly string[];
+    defaultRoutes?: Readonly<Record<string, Route>>;
+  };
+  /** The provider's settings entry; `free` lets an override leave out its estimate. */
+  settings?: { free?: boolean };
+}
+
+/** A route or role entry of the settings. */
+type Override = Settings["routes"][string];
+
+/**
+ * The adapter of the test stand-in. Its default routes mirror the core defaults, so it serves an
+ * operation only when no other configured provider has a default route for it.
+ */
+const STAND_IN_ADAPTER = "scripted";
+
+/**
+ * The route of one operation: `settings.routes[op]` over `settings.roles[role]` over the default
+ * route of the first configured provider (by id, the scripted stand-in last) whose adapter lists
+ * the operation. An override that names the default's provider and model keeps the whole default
+ * route. One that changes either belongs to another (provider, model) pair, so it takes nothing
+ * from the default: it carries only its own `estimatedCostUsd`, `outputGrant` and `providerTerms`,
+ * and it must set `estimatedCostUsd` unless its provider is `free` or the scripted stand-in
+ * (`settings_invalid` otherwise). Throws `RouteUnavailableError` when the result names no
+ * configured provider whose adapter has the role's capability.
+ */
+export function resolveRoute(
+  settings: Pick<Settings, "roles" | "routes">,
+  operation: string,
+  providers: readonly RouteProvider[],
+): Route {
+  const role = roleOf(operation);
+  const capability = role !== undefined ? ROLE_CAPABILITY[role] : undefined;
+  const fields = routeFields(operation)
+    .map((f) => `settings.${f}`)
+    .join(" or ");
+  const what = `the ${operation} operation${role !== undefined ? ` (role ${role})` : ""}`;
+  const standIn = (p: RouteProvider): number => (p.adapter.id === STAND_IN_ADAPTER ? 1 : 0);
+  const sorted = [...providers].sort(
+    (a, b) => standIn(a) - standIn(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  const serving = sorted.find((p) => p.adapter.defaultRoutes?.[operation] !== undefined);
+  const fallback: Route | undefined = serving
+    ? { ...structuredClone(serving.adapter.defaultRoutes![operation]!), provider: serving.id }
+    : undefined;
+  const field = Object.hasOwn(settings.routes, operation)
+    ? `routes.${operation}`
+    : role !== undefined && Object.hasOwn(settings.roles, role)
+      ? `roles.${role}`
+      : undefined;
+  const override: Override | undefined =
+    field === undefined
+      ? undefined
+      : field.startsWith("routes.")
+        ? settings.routes[operation]
+        : settings.roles[role!];
+  let route: Route;
+  /** The settings field of an override that changes the pair and sets no estimate. */
+  let missingEstimate: string | undefined;
+  if (override !== undefined) {
+    const same = fallback?.provider === override.provider && fallback?.model === override.model;
+    if (same) {
+      route = {
+        ...fallback!,
+        ...(override.estimatedCostUsd !== undefined && {
+          estimatedCostUsd: override.estimatedCostUsd,
+        }),
+        ...(override.outputGrant !== undefined && {
+          outputGrant: structuredClone(override.outputGrant) as OutputGrant,
+        }),
+        ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
+      };
+    } else {
+      missingEstimate = override.estimatedCostUsd === undefined ? field : undefined;
+      route = {
+        provider: override.provider,
+        model: override.model,
+        estimatedCostUsd: override.estimatedCostUsd ?? 0,
+        ...(override.outputGrant !== undefined && {
+          outputGrant: structuredClone(override.outputGrant) as OutputGrant,
+        }),
+        ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
+      };
+    }
+  } else if (fallback !== undefined) {
+    route = fallback;
+  } else {
+    throw new RouteUnavailableError(
+      operation,
+      `route unavailable: no configured provider serves ${what}; set ${fields} in the developer settings to a configured provider${capability !== undefined ? ` whose adapter has the ${capability} capability` : ""}`,
+    );
   }
-  return merged as Routes;
+  const provider = providers.find((p) => p.id === route.provider);
+  if (provider === undefined) {
+    throw new RouteUnavailableError(
+      operation,
+      `route unavailable: ${what} names provider "${route.provider}", which is not in the developer settings' providers`,
+    );
+  }
+  if (capability !== undefined && !provider.adapter.capabilities.includes(capability)) {
+    throw new RouteUnavailableError(
+      operation,
+      `route unavailable: ${what} names provider "${provider.id}", whose ${provider.adapter.id} adapter has no ${capability} capability; set ${fields} in the developer settings to a provider that has it`,
+    );
+  }
+  if (
+    missingEstimate !== undefined &&
+    provider.settings?.free !== true &&
+    provider.adapter.id !== STAND_IN_ADAPTER
+  ) {
+    throw new SettingsError(
+      `settings.${missingEstimate} routes ${what} to provider "${route.provider}" and model "${route.model}", which is not that operation's default (provider, model) pair, and sets no estimatedCostUsd; set settings.${missingEstimate}.estimatedCostUsd to the most one call can cost, since every paid call reserves its estimate before it is made`,
+    );
+  }
+  return route;
+}
+
+/** Every operation the settings could route: the role table's and the settings' own routes. */
+export function knownOperations(settings: Pick<Settings, "routes">): string[] {
+  return [...new Set([...Object.keys(OPERATION_ROLES), ...Object.keys(settings.routes)])];
+}
+
+/**
+ * The routes of the settings, by operation. An operation no configured provider serves is absent,
+ * and reading it throws its `RouteUnavailableError` (exit 2 `route_unavailable`), so a command
+ * that plans a call on it stops before any reservation.
+ */
+export function resolveRoutes(
+  settings: Pick<Settings, "roles" | "routes">,
+  providers: readonly RouteProvider[],
+): Routes {
+  const resolved: Record<string, Route> = {};
+  const unavailable = new Map<string, RouteUnavailableError>();
+  for (const operation of knownOperations(settings)) {
+    try {
+      resolved[operation] = resolveRoute(settings, operation, providers);
+    } catch (error) {
+      if (!(error instanceof RouteUnavailableError)) throw error;
+      unavailable.set(operation, error);
+    }
+  }
+  return new Proxy(resolved, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && !Object.hasOwn(target, key)) {
+        const error = unavailable.get(key);
+        if (error !== undefined) throw new RouteUnavailableError(error.operation, error.message);
+      }
+      return Reflect.get(target, key, receiver) as unknown;
+    },
+  }) as Routes;
 }

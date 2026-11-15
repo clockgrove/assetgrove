@@ -774,7 +774,9 @@ export async function writeFamilies(
       referenceHashes: unique(calls.flatMap((c) => c.referenceHashes)),
       bibleVersion: record.bibleVersion,
       ...licenseFields(record.profile, calls),
-      providerTerms: unique(calls.map((c) => c.providerTerms)),
+      providerTerms: unique(
+        calls.flatMap((c) => (c.providerTerms !== undefined ? [c.providerTerms] : [])),
+      ),
       startedAt: calls[0]?.startedAt ?? record.createdAt,
       finishedAt: calls[calls.length - 1]?.finishedAt ?? record.createdAt,
       costUsd: calls.reduce((sum, c) => sum + c.costUsd, 0),

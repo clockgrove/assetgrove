@@ -34,7 +34,14 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
   "roles": {
     "<role>": { "provider": "<id>", "model": "...", "outputGrant": {}, "providerTerms": "..." },
   },
-  "routes": { "<operation>": { "provider": "<id>", "model": "..." } },
+  "routes": {
+    "<operation>": {
+      "provider": "<id>",
+      "model": "...",
+      "outputGrant": {},
+      "providerTerms": "...",
+    },
+  },
   "extensions": ["<package>"],
   "environment": { "allow": ["HTTPS_PROXY"] },
   "reconcile": { "marginUsd": 0.05, "marginPct": 5 },
@@ -49,23 +56,23 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 }
 ```
 
-| Field                  | Meaning                                                                                                                                                  | Default                                                                                       |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `format`               | `assetgrove-settings/1`. Required.                                                                                                                       | —                                                                                             |
-| `stateDir`             | Absolute directory for run state; never inside a project.                                                                                                | `<stateHome>/assetgrove` (`$XDG_STATE_HOME` or `~/.local/state`; `%LOCALAPPDATA%` on Windows) |
-| `headless.operator`    | Present: headless mode, run by this operator. Set only by an operator outside the repository.                                                            | attended                                                                                      |
-| `caps`                 | `runUsd`, `dailyUsd`, `workItemUsd`. Shared files may lower them, never raise them.                                                                      | 5 / 10 / 5                                                                                    |
-| `providers.<id>`       | `adapter`, `keyEnv` (the variable that holds the key, never the key), `baseURL`, `free`, `usdPerCredit`, `limit`. An entry may hold only `limit`.        | none                                                                                          |
-| `providers.<id>.limit` | `kind`: `key-budget`, `team-budget`, `project-hard-limit`, `workspace-limit`, `prepaid` or `unlimited` (needs `acceptUnlimited: true`); `usd`; `period`. | none                                                                                          |
-| `roles.<role>`         | `provider`, `model`, `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`), `providerTerms`.                                         | none                                                                                          |
-| `routes.<operation>`   | `provider`, `model`.                                                                                                                                     | none                                                                                          |
-| `extensions`           | Packages whose extension code may run.                                                                                                                   | none                                                                                          |
-| `environment.allow`    | Refused environment variables (below) that are allowed anyway.                                                                                           | none                                                                                          |
-| `reconcile`            | `marginUsd`, `marginPct`.                                                                                                                                | none                                                                                          |
-| `spend`                | `acknowledgedHolds`: hex hashes of acknowledged holds.                                                                                                   | none                                                                                          |
-| `commands.approved`    | Approved commands, matched by `hash` (the `commandHash`); `kind`, `argv`, `cwd`, `note` are for the reader. The only approvals headless settings honour. | none                                                                                          |
-| `promptPolicy.allow`   | Prompt-policy allow terms.                                                                                                                               | none                                                                                          |
-| `confirmedBy.<path>`   | Who confirmed a field: `method`, `at`, `client`.                                                                                                         | none                                                                                          |
+| Field                  | Meaning                                                                                                                                                                                                         | Default                                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `format`               | `assetgrove-settings/1`. Required.                                                                                                                                                                              | —                                                                                             |
+| `stateDir`             | Absolute directory for run state; never inside a project.                                                                                                                                                       | `<stateHome>/assetgrove` (`$XDG_STATE_HOME` or `~/.local/state`; `%LOCALAPPDATA%` on Windows) |
+| `headless.operator`    | Present: headless mode, run by this operator. Set only by an operator outside the repository.                                                                                                                   | attended                                                                                      |
+| `caps`                 | `runUsd`, `dailyUsd`, `workItemUsd`. Shared files may lower them, never raise them.                                                                                                                             | 5 / 10 / 5                                                                                    |
+| `providers.<id>`       | `adapter`, `keyEnv` (the variable that holds the key, never the key), `baseURL`, `free`, `usdPerCredit`, `limit`. An entry may hold only `limit`.                                                               | none                                                                                          |
+| `providers.<id>.limit` | `kind`: `key-budget`, `team-budget`, `project-hard-limit`, `workspace-limit`, `prepaid` or `unlimited` (needs `acceptUnlimited: true`); `usd`; `period`.                                                        | none                                                                                          |
+| `roles.<role>`         | `provider`, `model`, `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`; all but `attribution` required), `providerTerms`, `estimatedCostUsd`. See [Roles and routes](#roles-and-routes). | the adapters' default routes                                                                  |
+| `routes.<operation>`   | The same fields as a role, for one operation; overrides its role.                                                                                                                                               | the role                                                                                      |
+| `extensions`           | Packages whose extension code may run.                                                                                                                                                                          | none                                                                                          |
+| `environment.allow`    | Refused environment variables (below) that are allowed anyway.                                                                                                                                                  | none                                                                                          |
+| `reconcile`            | `marginUsd`, `marginPct`.                                                                                                                                                                                       | none                                                                                          |
+| `spend`                | `acknowledgedHolds`: hex hashes of acknowledged holds.                                                                                                                                                          | none                                                                                          |
+| `commands.approved`    | Approved commands, matched by `hash` (the `commandHash`); `kind`, `argv`, `cwd`, `note` are for the reader. The only approvals headless settings honour.                                                        | none                                                                                          |
+| `promptPolicy.allow`   | Prompt-policy allow terms.                                                                                                                                                                                      | none                                                                                          |
+| `confirmedBy.<path>`   | Who confirmed a field: `method`, `at`, `client`.                                                                                                                                                                | none                                                                                          |
 
 ## Refusals
 
@@ -104,13 +111,98 @@ Adapter errors carry only the provider's message, the HTTP status and the provid
 
 Each provider instance is made by an adapter from `providers.<id>`. The adapter is the entry's `adapter` field, else its id. Paid-ness comes from the adapter's billing, never from the name. The key is read from the variable named by `keyEnv` and passed to the SDK together with the `baseURL`, so `*_BASE_URL` variables never apply.
 
-| Adapter             | Key variable (default) | `baseURL`                                                                                 | Cost                                                                                      |
-| ------------------- | ---------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `vercel-ai-gateway` | `AI_GATEWAY_API_KEY`   | Allowed: https, or http on a loopback host. Default `https://ai-gateway.vercel.sh/v4/ai`. | Paid. A relay is set here.                                                                |
-| `tripo`             | `TRIPO_API_KEY`        | Refused. The endpoint is api.tripo3d.ai.                                                  | Paid. `usdPerCredit` prices its credits; without it a call costs the route estimate.      |
-| `scripted`          | none                   | Refused.                                                                                  | Free, unless its script sets `paid: true`. It may export `limitReading()`. Used by tests. |
+| Adapter             | Key variable (default)                          | `baseURL`                                                                                 | Cost                                                                                              |
+| ------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `vercel-ai-gateway` | `AI_GATEWAY_API_KEY`                            | Allowed: https, or http on a loopback host. Default `https://ai-gateway.vercel.sh/v4/ai`. | Paid. A relay is set here.                                                                        |
+| `tripo`             | `TRIPO_API_KEY`                                 | Refused. The endpoint is api.tripo3d.ai.                                                  | Paid. `usdPerCredit` prices its credits; without it a call costs the route estimate.              |
+| `openai-compatible` | none (set `keyEnv` when the server takes a key) | Required: https, or http on a loopback host.                                              | Paid, unless `free` (loopback only). The server reports no cost: a call costs the route estimate. |
+| `scripted`          | none                                            | Refused.                                                                                  | Free, unless its script sets `paid: true`. It may export `limitReading()`. Used by tests.         |
 
-`keyEnv` overrides the key variable of any adapter. Until settings routes choose a provider, a command uses the entry whose id equals the adapter id, else the first entry of that adapter, else the adapter with no settings (and so no limit).
+`keyEnv` overrides the key variable of any adapter.
+
+## Roles and routes
+
+Which provider and model serve each operation is a money and licence decision, so it comes only from these settings. There is no default provider, routes file, `--routes` option, or route in run options or plans.
+
+Each operation maps to a role:
+
+| Role                          | Operations                                                                                                                            | Capability          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `image`                       | `still`, `sheet`                                                                                                                      | image               |
+| `edit`                        | `edit`, `lookdev`, `fix`                                                                                                              | edit                |
+| `vision`                      | `vision`, `flicker`, `holes`, `lookdev-locate`, `lookdev-groom`, `lookdev-markings`, `identity-cast`, `identity-check`, `material-qa` | vision              |
+| `decisions`                   | `identity`, `prompt-policy`                                                                                                           | decide              |
+| `planning`                    | `compiler`                                                                                                                            | vision              |
+| `model3d`, `rig3d`, `clips3d` | the operation of the same name                                                                                                        | model, rig, animate |
+
+An operation's route is `routes.<operation>`, else `roles.<role>`, else the default route of the first configured provider (by id) whose adapter has one for it: the gateway serves the 2D operations, Tripo the 3D ones, openai-compatible none (route each role to it), and the scripted adapter (the test stand-in) all of them, but only where no other configured provider has a default, so it never takes an operation from a real provider. The route must name a configured provider whose adapter has the role's capability; otherwise the command exits 2 `route_unavailable` before any reservation, naming the operation and the fields that would serve it.
+
+**Grants belong to (provider, model).** A default route carries the grant its provider's terms give, and its terms. An override that names the default's provider and model keeps them; one that changes either, or routes an operation with no default, belongs to another pair and takes nothing from the default: it carries only its own `estimatedCostUsd`, `outputGrant` and `providerTerms`, and no size or provider options. Such an override must set `estimatedCostUsd` unless its provider is `free` or scripted; otherwise loading the routes exits 2 `settings_invalid`, since every paid call reserves its estimate before it is made. A call without a grant is refused at hand-off: see [Provider output grants](decisions.md#provider-output-grants). `estimatedCostUsd` sets the amount reserved before each call.
+
+Every call records its route as `<providerId>:<operation>:<model>`. `routeDataFlows(settings)` (src/dataflows.ts) lists, per routed operation, the provider, the host its data goes to, the model vendor behind a gateway route (`upstream`), the terms recorded and `retention` (`local` for a loopback or scripted provider; otherwise not recorded). The terms are recorded, not a licence. `suggestRoles(adapterIds)` gives the roles the adapters' default routes would serve.
+
+A local-only setup routes `image` to a loopback OpenAI-compatible image server and `vision`, `decisions` and `planning` to a loopback chat server, each entry `free`:
+
+```jsonc
+{
+  "providers": {
+    "images": {
+      "adapter": "openai-compatible",
+      "baseURL": "http://127.0.0.1:8080/v1",
+      "free": true,
+    },
+    "chat": { "adapter": "openai-compatible", "baseURL": "http://127.0.0.1:8081/v1", "free": true },
+  },
+  "roles": {
+    "image": {
+      "provider": "images",
+      "model": "<model>",
+      "outputGrant": {
+        "license": "<SPDX or LicenseRef-*>",
+        "plan": "local",
+        "commercial": true,
+        "relabel": true,
+      },
+      "providerTerms": "<the model's licence>",
+    },
+    "vision": {
+      "provider": "chat",
+      "model": "<model>",
+      "outputGrant": {
+        "license": "<SPDX or LicenseRef-*>",
+        "plan": "local",
+        "commercial": true,
+        "relabel": true,
+      },
+      "providerTerms": "<the model's licence>",
+    },
+    "decisions": {
+      "provider": "chat",
+      "model": "<model>",
+      "outputGrant": {
+        "license": "<SPDX or LicenseRef-*>",
+        "plan": "local",
+        "commercial": true,
+        "relabel": true,
+      },
+      "providerTerms": "<the model's licence>",
+    },
+    "planning": {
+      "provider": "chat",
+      "model": "<model>",
+      "outputGrant": {
+        "license": "<SPDX or LicenseRef-*>",
+        "plan": "local",
+        "commercial": true,
+        "relabel": true,
+      },
+      "providerTerms": "<the model's licence>",
+    },
+  },
+}
+```
+
+Every call in a provenance needs a grant, vision QA calls included, so each role carries the `outputGrant` its model's licence gives. A role left without one still stages, but `pick` and `write-families` refuse its output (exit 7 `license_refused`).
 
 ## Caps and ledger
 

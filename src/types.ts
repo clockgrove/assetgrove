@@ -199,7 +199,8 @@ export interface CallRecord {
   finishedAt: string;
   costUsd: number;
   costSource: "provider" | "estimate";
-  providerTerms: string;
+  /** The provider terms of its route; absent when the route records none. */
+  providerTerms?: string;
   /** What the provider grants for this call's output, from its route. */
   outputGrant?: OutputGrant;
   /** For a typed decision call: what it answered, how sure and how long it took. */

@@ -1,5 +1,5 @@
 import "./fixtures/env.ts";
-import { approve, approveProfile, declareLimit } from "./fixtures/env.ts";
+import { approve, approveProfile, declareLimit, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -199,6 +199,8 @@ test("fix-frame: regenerates only that frame and records it in provenance", asyn
   assert.equal((await cli([...base, "--json"])).code, 4, "no key and no script: provider error");
   const bad = await cli([...base, "--key-pose", join(root, "walk-right.png"), "--json"]);
   assert.equal(bad.code, 2);
+  // With the gateway configured it serves the edit role, not the scripted stand-in.
+  writeSettings({});
 
   const r = await cli([...base, "--provider-script", SCRIPT, "--json"]);
   assert.equal(r.code, 0, r.stderr);

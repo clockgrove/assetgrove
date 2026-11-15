@@ -85,7 +85,11 @@ async function settings(allow: string[]): Promise<string> {
   const path = join(dir, "settings.json");
   await writeFile(
     path,
-    JSON.stringify({ format: "assetgrove-settings/1", environment: { allow } }),
+    JSON.stringify({
+      format: "assetgrove-settings/1",
+      providers: { "vercel-ai-gateway": {} },
+      environment: { allow },
+    }),
   );
   return path;
 }

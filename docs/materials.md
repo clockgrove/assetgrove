@@ -7,7 +7,7 @@ assetgrove materials --albedo painted.png --spec asset.json --profile target.jso
   --derivation derivation.json --out .assetgrove/materials/asset --cap 2 --json
 ```
 
-Albedo generation requests use a neutral key light without baked directional shadows, highlights or emissive glow. The materials command consumes that albedo; it does not remove existing baked lighting. Derivation and lit QA records preserve provider calls and costs. Model keys come from the environment; `--provider-script` provides offline scripted calls for tests, and `--routes` selects model routes. Real models are opt-in.
+Albedo generation requests use a neutral key light without baked directional shadows, highlights or emissive glow. The materials command consumes that albedo; it does not remove existing baked lighting. Derivation and lit QA records preserve provider calls and costs. Model keys come from the environment; `--provider-script` provides offline scripted calls for tests, and the developer settings choose model routes (`roles` and `routes`). Real models are opt-in.
 
 ## World profile
 

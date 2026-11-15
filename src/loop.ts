@@ -16,6 +16,7 @@ import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { referenceLicenses } from "./bible.ts";
 import { InputError } from "./errors.ts";
+import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import { checkWrites } from "./paths.ts";
@@ -45,9 +46,10 @@ export interface StageOptions {
   /** Directory the profile's relative paths resolve against (the profile file's directory). */
   profileDir?: string;
   routes: Routes;
+  /** The provider set of the settings, or one provider that serves every route. */
   provider: GenerationProvider;
-  /** Recorded in each call's route: the provider's settings id, for example `vercel-ai-gateway`. */
-  providerName: string;
+  /** One provider's settings id, recorded in each call's route; a set records each route's own. */
+  providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   generators: Generator[];
@@ -207,7 +209,9 @@ function provenanceOf(
     bibleVersion: bible.version,
     ...(licenses.length > 0 && { referenceLicenses: licenses }),
     ...licenseFields(profile, calls),
-    providerTerms: unique(calls.map((c) => c.providerTerms)),
+    providerTerms: unique(
+      calls.flatMap((c) => (c.providerTerms !== undefined ? [c.providerTerms] : [])),
+    ),
     startedAt: calls[0]?.startedAt ?? "",
     finishedAt: calls[calls.length - 1]?.finishedAt ?? "",
     costUsd: calls.reduce((sum, c) => sum + c.costUsd, 0),
@@ -258,7 +262,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   for (let index = 0; index < requested; index++) {
     const call = new Caller({
       provider: options.provider,
-      providerName: options.providerName,
+      ...(options.providerName !== undefined && { providerName: options.providerName }),
       budget,
       routes,
       now,
@@ -347,9 +351,10 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
     } catch (error) {
       run.filtered++;
       const message = error instanceof Error ? error.message : String(error);
-      // Bad input fails every candidate the same way: refuse the run rather than go on, but
-      // leave its record so the runs directory never holds a run without one.
-      if (error instanceof InputError) {
+      // Bad input, or a provider with no declared limit, fails every candidate the same way:
+      // refuse the run rather than go on, but leave its record so the runs directory never holds
+      // a run without one.
+      if (error instanceof InputError || error instanceof ProviderLimitError) {
         run.errors.push(`candidate ${index + 1}: ${message}`);
         run.stopped = `refused: ${message}`;
         run.spentUsd = budget.spentUsd;

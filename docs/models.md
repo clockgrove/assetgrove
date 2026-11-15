@@ -18,7 +18,7 @@ Video is not used yet: animation is generated as a whole contact sheet first, wi
 
 ## Default routes
 
-Set in `src/routes.ts` and overridable with `--routes <file.json>` (a JSON object of operation → partial route).
+Set in `src/routes.ts`. Each is the default route of the adapter that serves it: the gateway's for the 2D operations, Tripo's for the 3D ones. The developer settings override any of them by role or by operation ([docs/settings.md](settings.md#roles-and-routes)); an override that changes the provider or the model carries only the `estimatedCostUsd`, `outputGrant` and `providerTerms` it declares, and must declare the estimate unless its provider is `free`. Each default carries the grant its terms give: every gateway route here is a paid API route that gives ownership, and Tripo on paid credits gives ownership. `compiler` (prompt compilation) and `material-qa` use the `vision` model.
 
 | Operation                       | Model                          | Why                                                                                                                                                                                                           | Estimate per call                                |
 | ------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
@@ -56,6 +56,6 @@ The `clips3d` route's `library` maps gait → family → `{ clip, loop }`. Tripo
 - biped: `preset:idle`, `preset:walk`, `preset:run`, `preset:jump`, `preset:turn`, `preset:hurt`, `preset:fall`, `preset:climb`, `preset:dive`, `preset:slash` and `preset:shoot`;
 - quadruped: only `preset:quadruped:walk`. Tripo refuses `preset:quadruped:idle`, `:run`, `:trot`, `:stand`, `:jump` and others as invalid animation names.
 
-So a quadruped `idle` is reported missing, not faked. Override the library with `--routes` when the provider adds clips.
+So a quadruped `idle` is reported missing, not faked. When the provider adds clips, the library in `src/routes.ts` gains them.
 
 Each route records its provider terms in provenance. The values name the provider's current terms; check and update them when a route changes.

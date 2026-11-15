@@ -38,7 +38,13 @@ import { applyStyle } from "./image/apply-style.ts";
 import { matteFigure } from "./sheet/matte.ts";
 import { wholeImageFigure } from "./sheet/slice.ts";
 import { resolveStyle } from "./style.ts";
-import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION, defaultRoutes } from "./routes.ts";
+import { ProviderSet } from "./providers/set.ts";
+import {
+  IDENTITY_CAST_OPERATION,
+  IDENTITY_CHECK_OPERATION,
+  RouteUnavailableError,
+  defaultRoutes,
+} from "./routes.ts";
 import type { Route, Routes } from "./routes.ts";
 import {
   agreement,
@@ -188,16 +194,38 @@ function route(value: Route, label: string): Route {
     !value.model.trim() ||
     !Number.isFinite(value.estimatedCostUsd) ||
     value.estimatedCostUsd < 0 ||
-    typeof value.providerTerms !== "string"
+    (value.providerTerms !== undefined && typeof value.providerTerms !== "string")
   )
     throw new InputError(`invalid ${label} route`);
   if (value.outputGrant !== undefined) requireGrant(value.outputGrant, `the ${label} route`);
   return structuredClone(value);
 }
 
+/**
+ * The routes a plan or apply resolves its calls from: the provider set's, which come from the
+ * developer settings; else the routes given, else the core defaults (a single provider).
+ */
+function routesOf(options: { routes?: Routes; provider?: GenerationProvider }): Routes {
+  if (options.provider instanceof ProviderSet) return options.provider.routes;
+  return options.routes ?? defaultRoutes;
+}
+
+/** The route of an operation, or undefined when no configured provider serves it. */
+function optionalRoute(routes: Routes, operation: string): Route | undefined {
+  try {
+    return Object.hasOwn(routes, operation) ? routes[operation] : undefined;
+  } catch (error) {
+    if (error instanceof RouteUnavailableError) return undefined;
+    throw error;
+  }
+}
+
+/** Run options carry no route (design section 12): routes come only from developer settings. */
+const ROUTE_SETTINGS = ["modelRoute", "llmRoute", "qaRoute"] as const;
+
 function settingsOf(options: CreatePlanOptions): RunSettings {
   const values = options.settings ?? {};
-  const routes = options.routes ?? defaultRoutes;
+  const routes = routesOf(options);
   const settings: RunSettings = {
     candidates: values.candidates ?? 4,
     capUsd:
@@ -208,7 +236,10 @@ function settingsOf(options: CreatePlanOptions): RunSettings {
       values.modelRoute ?? (options.spec.kind === "sprite-strip" ? routes.edit : routes.still),
       "generation",
     ),
-    llmRoute: route(values.llmRoute ?? routes["compiler"] ?? routes.vision, "compiler"),
+    llmRoute: route(
+      values.llmRoute ?? optionalRoute(routes, "compiler") ?? routes.vision,
+      "compiler",
+    ),
     qaRoute: route(values.qaRoute ?? routes.vision, "QA"),
     ...(values.seed !== undefined && { seed: values.seed }),
     strictness: values.strictness ?? 0.8,
@@ -473,6 +504,12 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
     typeof options.spec.kind !== "string"
   )
     throw new InputError("plan needs an asset spec with kind and assetId");
+  for (const key of ROUTE_SETTINGS) {
+    if (options.settings !== undefined && Object.hasOwn(options.settings, key))
+      throw new InputError(
+        `run settings cannot set ${key}: routes come only from the developer settings (routes and roles)`,
+      );
+  }
   const settings = settingsOf(options);
   const subject = subjectOf(options.spec);
   const allowedNames = [doc.data.world, subject, ...Object.keys(doc.data.identities)];
@@ -624,14 +661,14 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
           threshold: identitySetting.threshold,
           question: identitySetting.question,
           route: route(
-            (options.routes ?? defaultRoutes)[
+            routesOf(options)[
               identitySetting.question === "cast" ? IDENTITY_CAST_OPERATION : "identity"
             ] as Route,
             identitySetting.question === "cast" ? IDENTITY_CAST_OPERATION : "identity",
           ),
           ...(identitySetting.mode === "enforce" && {
             checkRoute: route(
-              (options.routes ?? defaultRoutes)[IDENTITY_CHECK_OPERATION] as Route,
+              routesOf(options)[IDENTITY_CHECK_OPERATION] as Route,
               IDENTITY_CHECK_OPERATION,
             ),
           }),
@@ -644,20 +681,25 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
         (identityCheck?.route.estimatedCostUsd ?? 0)) +
     // Enforce mode first checks the record against its references, once per run.
     (identityCheck?.checkRoute?.estimatedCostUsd ?? 0);
-  const compilerEstimate = options.provider ? settings.llmRoute.estimatedCostUsd : 0;
+  // The compiler runs when its route's provider can be called; otherwise the template applies.
+  const compiles =
+    options.provider !== undefined &&
+    (!(options.provider instanceof ProviderSet) || options.provider.callable(settings.llmRoute));
+  const compilerEstimate = compiles ? settings.llmRoute.estimatedCostUsd : 0;
   const budget = new Budget(
     settings.capUsd,
     ledgerFor(options.ledger, options.provider, options.profile),
   );
   budget.check(generationUsd + compilerEstimate, "planned compiler and generation calls");
-  const caller = options.provider
-    ? new Caller({
-        provider: options.provider,
-        providerName: options.providerName ?? "provider",
-        budget,
-        routes: { ...defaultRoutes, compiler: settings.llmRoute },
-      })
-    : undefined;
+  const caller =
+    compiles && options.provider
+      ? new Caller({
+          provider: options.provider,
+          ...(options.providerName !== undefined && { providerName: options.providerName }),
+          budget,
+          routes: { ...routesOf(options), compiler: settings.llmRoute },
+        })
+      : undefined;
   let rawOutput: string | undefined;
   let mode: GenerationPlan["compiler"]["mode"] = "template-fallback";
   let fallbackReason: string | undefined = "LLM provider unavailable";
@@ -866,6 +908,33 @@ async function checkedPlan(
   return { plan, refs, doc };
 }
 
+/**
+ * The routes apply calls on. With the settings' provider set, each comes from the current
+ * settings (the plan's routes are a record of what it forecast with); a single provider takes the
+ * plan's own. Resolving reads every route the plan needs, so an unavailable one stops apply here.
+ */
+function applyRoutes(plan: GenerationPlan, provider: GenerationProvider): Routes {
+  const check = plan.identityCheck;
+  const identityOperation = check?.question === "cast" ? IDENTITY_CAST_OPERATION : "identity";
+  if (provider instanceof ProviderSet) {
+    const routes = provider.routes;
+    return {
+      ...routes,
+      planned: routes[plan.spec.kind === "sprite-strip" ? "edit" : "still"]!,
+      "planned-qa": routes.vision,
+      ...(check && { [identityOperation]: routes[identityOperation]! }),
+      ...(check?.checkRoute && { [IDENTITY_CHECK_OPERATION]: routes[IDENTITY_CHECK_OPERATION]! }),
+    };
+  }
+  return {
+    ...defaultRoutes,
+    planned: plan.settings.modelRoute,
+    "planned-qa": plan.settings.qaRoute,
+    ...(check && { [identityOperation]: check.route }),
+    ...(check?.checkRoute && { [IDENTITY_CHECK_OPERATION]: check.checkRoute }),
+  };
+}
+
 export async function applyPlan(
   input: GenerationPlan | string,
   options: ApplyPlanOptions,
@@ -888,6 +957,7 @@ export async function applyPlan(
   const runDir = resolve(options.outDir ?? ".assetgrove/runs", runId);
   await mkdir(runDir, { recursive: true });
   const check = plan.identityCheck;
+  const callRoutes = applyRoutes(plan, options.provider);
   const loadedIdentity =
     check && plan.identity ? await loadIdentity(doc, plan.identity.subject) : undefined;
   if (check && !loadedIdentity) throw new InputError("stale plan: identity changed since planning");
@@ -913,17 +983,9 @@ export async function applyPlan(
     for (let index = 0; index < plan.settings.candidates; index++) {
       const caller = new Caller({
         provider: options.provider,
-        providerName: options.providerName ?? "provider",
+        ...(options.providerName !== undefined && { providerName: options.providerName }),
         budget,
-        routes: {
-          ...defaultRoutes,
-          planned: plan.settings.modelRoute,
-          "planned-qa": plan.settings.qaRoute,
-          ...(check && {
-            [check.question === "cast" ? IDENTITY_CAST_OPERATION : "identity"]: check.route,
-          }),
-          ...(check?.checkRoute && { [IDENTITY_CHECK_OPERATION]: check.checkRoute }),
-        },
+        routes: callRoutes,
         ...(options.log && { log: options.log }),
       });
       const seed =
@@ -1113,7 +1175,11 @@ export async function applyPlan(
         bibleVersion: plan.bible.version,
         ...(bibleLicenses.length > 0 && { referenceLicenses: bibleLicenses }),
         ...licenseFields(plan.profile, calls),
-        providerTerms: [...new Set(calls.map((c) => c.providerTerms))],
+        providerTerms: [
+          ...new Set(
+            calls.flatMap((c) => (c.providerTerms !== undefined ? [c.providerTerms] : [])),
+          ),
+        ],
         startedAt: calls[0]?.startedAt ?? run.createdAt,
         finishedAt: calls.at(-1)?.finishedAt ?? run.createdAt,
         costUsd: plan.compiler.spentUsd + caller.records.reduce((sum, c) => sum + c.costUsd, 0),

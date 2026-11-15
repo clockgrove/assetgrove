@@ -94,7 +94,7 @@ test("the full Phase 1 field set validates", () => {
       judge: {
         provider: "gateway",
         model: "m",
-        outputGrant: { relabel: true },
+        outputGrant: { license: "LicenseRef-x", plan: "api", commercial: true, relabel: true },
         providerTerms: "t",
       },
     },
@@ -458,4 +458,37 @@ test("a repository at the home directory is not a project, so the default direct
       }),
     invalid(),
   );
+});
+
+test("a route naming a provider id missing from settings exits 2 settings_invalid", () => {
+  const settings = {
+    format: FORMAT,
+    stateDir: tempDir(),
+    providers: { scripted: { limit: { kind: "prepaid", usd: 5 } } },
+    routes: { still: { provider: "elsewhere", model: "m" } },
+  };
+  assert.throws(() => load(settings), invalid(/routes\.still names provider "elsewhere"/));
+  // Through the CLI: a paid command reads the settings first and exits 2.
+  let failure: { status: number; stdout: string } | undefined;
+  try {
+    execFileSync(process.execPath, ["src/cli.ts", "spend", "status", "--json"], {
+      env: { ...process.env, ASSETGROVE_CONFIG: settingsFile(settings) },
+      stdio: "pipe",
+      encoding: "utf8",
+    });
+  } catch (error) {
+    failure = error as { status: number; stdout: string };
+  }
+  assert.equal(failure?.status, 2);
+  assert.equal(JSON.parse(failure.stdout).error.code, "settings_invalid");
+});
+
+test("a role or route outputGrant that is not a whole grant is settings_invalid", () => {
+  const settings = {
+    format: FORMAT,
+    stateDir: tempDir(),
+    providers: { scripted: {} },
+    roles: { image: { provider: "scripted", model: "m", outputGrant: { license: "CC-BY-4.0" } } },
+  };
+  assert.throws(() => load(settings), invalid(/roles\.image\.outputGrant is not a grant/));
 });

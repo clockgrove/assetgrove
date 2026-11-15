@@ -1,0 +1,301 @@
+import "./fixtures/env.ts";
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { ProviderSet, suggestRoles } from "../src/providers/index.ts";
+import {
+  defaultRoutes,
+  GATEWAY_DEFAULT_ROUTES,
+  LOOKDEV_MARKINGS_OPERATION,
+  resolveRoute,
+  RouteUnavailableError,
+} from "../src/routes.ts";
+import { SettingsError } from "../src/env.ts";
+import type { Settings } from "../src/settings.ts";
+import type { Provenance } from "../src/types.ts";
+import { approve, approveProfile, writeSettings } from "./fixtures/env.ts";
+import { shelterSpec, syntheticWorld as plainWorld } from "./fixtures/synthetic.ts";
+import type { World } from "./fixtures/synthetic.ts";
+
+async function syntheticWorld(): Promise<World> {
+  const world = await plainWorld();
+  approveProfile(world.profile, { targetDir: world.targetDir });
+  return world;
+}
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approve(passingScript);
+
+interface Result {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+function cli(args: string[], env: Record<string, string> = {}): Promise<Result> {
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      ["src/cli.ts", ...args],
+      { cwd: root, env: { ...process.env, ...env } },
+      (error, stdout, stderr) =>
+        resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
+    );
+  });
+}
+
+async function stageArgs(): Promise<string[]> {
+  const world = await syntheticWorld();
+  const spec = join(world.dir, "spec.json");
+  const bible = join(world.bibleDir, "bible.json");
+  const profile = join(world.dir, "profile.json");
+  await writeFile(spec, JSON.stringify(shelterSpec));
+  await writeFile(bible, JSON.stringify(world.bible));
+  await writeFile(profile, JSON.stringify(world.profile));
+  return [
+    "stage",
+    ...["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir],
+    ...["--candidates", "1", "--provider-script", passingScript, "--json"],
+  ];
+}
+
+const LIMIT = { kind: "prepaid", usd: 100 };
+
+/** Settings of the given providers, roles and routes, as ProviderSet reads them. */
+function settingsOf(
+  providers: Settings["providers"],
+  extra: { roles?: Settings["roles"]; routes?: Settings["routes"] } = {},
+): Pick<Settings, "providers" | "roles" | "routes" | "path"> {
+  return { providers, roles: extra.roles ?? {}, routes: extra.routes ?? {}, path: "settings.json" };
+}
+
+test("a role no configured provider serves exits 2 route_unavailable with no ledger entry", async () => {
+  // Tripo serves only the 3D roles; a sprite strip needs the edit and vision roles.
+  for (const settings of [
+    { providers: { tripo: { limit: LIMIT } } },
+    {
+      providers: { scripted: { limit: LIMIT }, tripo: { limit: LIMIT } },
+      roles: { edit: { provider: "tripo", model: "tripo/v2.5-20250123" } },
+    },
+  ]) {
+    const stateDir = await mkdtemp(join(tmpdir(), "assetgrove-routes-"));
+    writeSettings({ stateDir, ...settings });
+    const r = await cli(await stageArgs());
+    assert.equal(r.code, 2, r.stderr);
+    const document = JSON.parse(r.stdout) as { error: { code: string; message: string } };
+    assert.equal(document.error.code, "route_unavailable");
+    assert.match(document.error.message, /edit operation \(role edit\)/);
+    assert.match(document.error.message, /settings\.routes\.edit or settings\.roles\.edit/);
+    assert.equal(existsSync(join(stateDir, "spend.jsonl")), false, "no ledger entry");
+  }
+});
+
+test("overriding only the model of a gateway route resolves with no outputGrant and no providerTerms; an override with its own keeps them", () => {
+  const providers = { gateway: { adapter: "vercel-ai-gateway" } };
+  const plain = ProviderSet.fromSettings(settingsOf(providers), { env: {} }).routes;
+  assert.equal(plain.edit.provider, "gateway");
+  assert.equal(plain.edit.model, defaultRoutes.edit.model);
+  assert.deepEqual(plain.edit.outputGrant, defaultRoutes.edit.outputGrant);
+  assert.equal(plain.edit.providerTerms, defaultRoutes.edit.providerTerms);
+
+  const model = "bfl/flux-kontext-max";
+  for (const extra of [
+    { routes: { edit: { provider: "gateway", model, estimatedCostUsd: 0.2 } } },
+    { roles: { edit: { provider: "gateway", model, estimatedCostUsd: 0.2 } } },
+  ]) {
+    const route = ProviderSet.fromSettings(settingsOf(providers, extra), { env: {} }).routes.edit;
+    assert.equal(route.provider, "gateway");
+    assert.equal(route.model, model);
+    assert.equal(route.outputGrant, undefined);
+    assert.equal(route.providerTerms, undefined);
+  }
+
+  const grant = { license: "LicenseRef-bfl-api", plan: "api", commercial: true, relabel: true };
+  const own = ProviderSet.fromSettings(
+    settingsOf(providers, {
+      routes: {
+        edit: {
+          provider: "gateway",
+          model,
+          estimatedCostUsd: 0.2,
+          outputGrant: grant,
+          providerTerms: "BFL API terms",
+        },
+      },
+    }),
+    { env: {} },
+  ).routes.edit;
+  assert.deepEqual(own.outputGrant, grant);
+  assert.equal(own.providerTerms, "BFL API terms");
+
+  // Naming the default's own provider and model keeps its grant and terms.
+  const same = resolveRoute(
+    settingsOf(providers, { roles: { edit: { provider: "gateway", model: plain.edit.model } } }),
+    "edit",
+    [
+      {
+        id: "gateway",
+        adapter: {
+          id: "vercel-ai-gateway",
+          capabilities: ["edit"],
+          defaultRoutes: GATEWAY_DEFAULT_ROUTES,
+        },
+      },
+    ],
+  );
+  assert.deepEqual(same.outputGrant, defaultRoutes.edit.outputGrant);
+});
+
+test("a route to a provider whose adapter lacks the capability is route_unavailable", () => {
+  const routes = ProviderSet.fromSettings(
+    settingsOf(
+      { gateway: { adapter: "vercel-ai-gateway" }, tripo: {} },
+      { routes: { vision: { provider: "tripo", model: "m", estimatedCostUsd: 0.1 } } },
+    ),
+    { env: {} },
+  ).routes;
+  assert.throws(
+    () => routes.vision,
+    (error: unknown) =>
+      error instanceof RouteUnavailableError &&
+      error.code === "route_unavailable" &&
+      /no vision capability/.test(error.message),
+  );
+  // Other operations still resolve.
+  assert.equal(routes.still.provider, "gateway");
+});
+
+test("`node src/cli.ts stage --routes x.json` exits 2 invalid_input", async () => {
+  const r = await cli([...(await stageArgs()), "--routes", "x.json"]);
+  assert.equal(r.code, 2, r.stderr);
+  assert.equal((JSON.parse(r.stdout) as { error: { code: string } }).error.code, "invalid_input");
+});
+
+test("a stage call record shows <providerId>:<operation>:<model>", async () => {
+  writeSettings({ providers: { mine: { adapter: "scripted", limit: LIMIT } } });
+  const r = await cli(await stageArgs());
+  assert.equal(r.code, 0, r.stderr);
+  const run = JSON.parse(r.stdout) as { candidates: Array<{ provenance: Provenance }> };
+  const routes = new Set(run.candidates[0]!.provenance.calls.map((c) => c.route));
+  assert.deepEqual([...routes].sort(), [
+    `mine:edit:${defaultRoutes.edit.model}`,
+    `mine:vision:${defaultRoutes.vision.model}`,
+  ]);
+});
+
+test("suggestRoles gives each role of the adapters' defaults, first adapter first", () => {
+  const roles = suggestRoles(["vercel-ai-gateway", "tripo"]);
+  assert.deepEqual(roles["image"], {
+    provider: "vercel-ai-gateway",
+    model: defaultRoutes.still.model,
+  });
+  assert.deepEqual(roles["edit"], {
+    provider: "vercel-ai-gateway",
+    model: defaultRoutes.edit.model,
+  });
+  assert.equal(roles["vision"]?.provider, "vercel-ai-gateway");
+  assert.equal(roles["decisions"]?.model, defaultRoutes.identity.model);
+  assert.equal(roles["planning"]?.provider, "vercel-ai-gateway");
+  assert.deepEqual(roles["model3d"], { provider: "tripo", model: defaultRoutes.model3d.model });
+  assert.equal(roles["rig3d"]?.provider, "tripo");
+  assert.equal(roles["clips3d"]?.provider, "tripo");
+  assert.deepEqual(suggestRoles(["openai-compatible"]), {});
+});
+
+test("an override that changes the (provider, model) pair takes nothing else from the default and must set its estimate", () => {
+  const providers = {
+    gateway: { adapter: "vercel-ai-gateway" },
+    local: { adapter: "openai-compatible", baseURL: "http://127.0.0.1:8080/v1", free: true },
+    remote: { adapter: "openai-compatible", baseURL: "https://models.example/v1" },
+  };
+  const routesOf = (extra: Parameters<typeof settingsOf>[1]) =>
+    ProviderSet.fromSettings(settingsOf(providers, extra), { env: {} }).routes;
+
+  // Another provider: none of the gateway model's options, size or estimate.
+  const markings = routesOf({
+    roles: { vision: { provider: "remote", model: "m", estimatedCostUsd: 0.03 } },
+  })[LOOKDEV_MARKINGS_OPERATION];
+  assert.deepEqual(markings, { provider: "remote", model: "m", estimatedCostUsd: 0.03 });
+  assert.notEqual(
+    defaultRoutes[LOOKDEV_MARKINGS_OPERATION]!.providerOptions,
+    undefined,
+    "the default has options",
+  );
+
+  // The same provider with another model takes nothing from the default model either.
+  const edit = routesOf({
+    routes: { edit: { provider: "gateway", model: "bfl/flux-kontext-max", estimatedCostUsd: 0.2 } },
+  }).edit;
+  assert.deepEqual(edit, {
+    provider: "gateway",
+    model: "bfl/flux-kontext-max",
+    estimatedCostUsd: 0.2,
+  });
+
+  // A paid provider with no estimate is refused, naming the field; an operation with no default too.
+  for (const extra of [
+    { roles: { vision: { provider: "remote", model: "m" } } } as Parameters<typeof settingsOf>[1],
+    { routes: { edit: { provider: "gateway", model: "bfl/flux-kontext-max" } } },
+    { routes: { fix: { provider: "remote", model: "m" } } },
+  ]) {
+    assert.throws(
+      () => routesOf(extra),
+      (error: unknown) =>
+        error instanceof SettingsError &&
+        error.code === "settings_invalid" &&
+        /estimatedCostUsd/.test(error.message),
+    );
+  }
+  // A free provider needs no estimate: it reserves nothing.
+  assert.equal(
+    routesOf({ roles: { vision: { provider: "local", model: "m" } } }).vision.estimatedCostUsd,
+    0,
+  );
+});
+
+test("the scripted stand-in serves an operation only when no other configured provider has a default for it", () => {
+  const routes = ProviderSet.fromSettings(
+    settingsOf({ scripted: {}, gateway: { adapter: "vercel-ai-gateway" }, tripo: {} }),
+    { env: {} },
+  ).routes;
+  assert.equal(routes.still.provider, "gateway");
+  assert.equal(routes.vision.provider, "gateway");
+  assert.equal(routes.model3d.provider, "tripo");
+  const alone = ProviderSet.fromSettings(settingsOf({ scripted: {}, tripo: {} }), {
+    env: {},
+  }).routes;
+  assert.equal(alone.still.provider, "scripted");
+  assert.equal(alone.model3d.provider, "tripo");
+});
+
+test("--provider-script with no route naming a scripted provider exits 2 invalid_input before any spend", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "assetgrove-routes-"));
+  writeSettings({
+    stateDir,
+    providers: { gateway: { adapter: "vercel-ai-gateway", limit: LIMIT } },
+  });
+  const r = await cli(await stageArgs(), {
+    AI_GATEWAY_API_KEY: `synthetic-${process.pid}-${Date.now()}`,
+  });
+  assert.equal(r.code, 2, r.stderr);
+  const document = JSON.parse(r.stdout) as { error: { code: string; message: string } };
+  assert.equal(document.error.code, "invalid_input");
+  assert.match(
+    document.error.message,
+    /no route of the developer settings names a scripted provider/,
+  );
+  assert.equal(existsSync(join(stateDir, "spend.jsonl")), false, "no ledger entry");
+});
+
+test("a 2D stage checks the limits of the providers it calls, not of every configured one", async () => {
+  // Tripo declares no limit but serves only the 3D roles, which a sprite strip never calls.
+  writeSettings({ providers: { scripted: { limit: LIMIT }, tripo: {} } });
+  const r = await cli(await stageArgs());
+  assert.equal(r.code, 0, r.stderr);
+});

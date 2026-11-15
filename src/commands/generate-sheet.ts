@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { readJson, lockFor, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
-import { dryRunProvider, providerFor, spendLedger } from "../providers/index.ts";
-import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION, loadRoutes } from "../routes.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
+import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { generateSheet, planSheet, sheetBrief } from "../sheet/generate.ts";
 import { SliceError } from "../sheet/slice.ts";
@@ -17,7 +17,6 @@ interface GenerateSheetArgs {
   profile: string;
   brief?: string;
   cap?: number;
-  routes?: string;
   imports?: string;
   lockBible?: string;
   identityMode?: string;
@@ -58,7 +57,6 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
           "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
         placeholder: "<usd>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       imports: {
         type: "string",
         description: "where imports are staged",
@@ -101,7 +99,8 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
       args.brief === undefined
         ? undefined
         : sheetBrief((await readJson<unknown>(args.brief)).value);
-    const routes = await loadRoutes(args.routes);
+    const providers = await providerSet(args.providerScript, ctx);
+    const routes = providers.routes;
     const lock = await lockFor(
       args.lockBible,
       args.identityMode,
@@ -122,7 +121,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         : []),
     ];
     if (args.dryRun) {
-      const billing = await dryRunProvider(args.providerScript, ctx);
+      const billing = providers.billing;
       const estimateUsd = perCall.reduce((sum, c) => sum + c.estimatedCostUsd, 0);
       const plan = {
         kind: "sheet",
@@ -140,7 +139,6 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
       ].join("\n");
       return dryRunOutcome(plan, human, ledger.forProfile(profile.value), billing);
     }
-    const { provider, name } = await providerFor(args.providerScript, ctx);
     let generated: Awaited<ReturnType<typeof generateSheet>>;
     try {
       generated = await generateSheet({
@@ -151,8 +149,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         bibleDir: bible.dir,
         profile: profile.value,
         routes,
-        provider,
-        providerName: name,
+        provider: providers,
         importsDir: resolve(args.imports ?? ".assetgrove/imports"),
         capUsd,
         ledger,

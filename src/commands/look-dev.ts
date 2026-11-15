@@ -2,8 +2,7 @@ import { resolve } from "node:path";
 import { readJson, readModel, loadProfile, loadStyleBible } from "../inputs.ts";
 import { lookDev, planLookdev } from "../model3d/lookdev/command.ts";
 import { runCap } from "../budget.ts";
-import { gatewayProvider, scriptedFrom, spendLedger } from "../providers/index.ts";
-import { loadRoutes } from "../routes.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
 import type { AssetSpec } from "../types.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
@@ -16,7 +15,6 @@ interface LookDevArgs {
   bible: string;
   profile: string;
   cap?: number;
-  routes?: string;
   runs?: string;
   workItem?: string;
   providerScript?: string;
@@ -53,7 +51,6 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
           "the run's cost cap in USD; defaults to the profile's look-dev cap, at most the settings' caps.runUsd",
         placeholder: "<usd>",
       },
-      routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       runs: {
         type: "string",
         description: "where runs are staged",
@@ -81,18 +78,17 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
     const spec = await readJson<AssetSpec>(args.spec);
     const bible = await loadStyleBible(args.bible);
     const profile = await loadProfile(args.profile);
-    const routes = await loadRoutes(args.routes);
+    const providers = await providerSet(args.providerScript, ctx);
+    const routes = providers.routes;
     const capUsd = runCap(args.cap, ctx.settings, planLookdev(profile.value, routes).capUsd);
     const plan = planLookdev(profile.value, routes, capUsd);
-    const scripted = await scriptedFrom(args.providerScript, ctx);
-    const named = scripted ?? gatewayProvider(ctx);
     if (args.dryRun) {
       const human = [
         `look-dev: ${plan.calls.length} call(s), forecast ${usd(plan.estimateUsd)} against the $${plan.capUsd.toFixed(2)} cap`,
         ...plan.calls.map((c) => `  ${c.operation}  ${c.model}  ${usd(c.estimatedCostUsd)}`),
         `  seasons: ${plan.seasons.join(", ")}`,
       ].join("\n");
-      return dryRunOutcome(plan, human, ledger.forProfile(profile.value), named.provider.billing);
+      return dryRunOutcome(plan, human, ledger.forProfile(profile.value), providers.billing);
     }
     const model = await readModel(args.model);
     const { run, runDir, passed } = await lookDev({
@@ -105,8 +101,7 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
       profile: profile.value,
       profileDir: profile.dir,
       routes,
-      provider: named.provider,
-      providerName: named.name,
+      provider: providers,
       ledger,
       runsDir: resolve(args.runs ?? ".assetgrove/runs"),
       capUsd,

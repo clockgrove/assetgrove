@@ -29,9 +29,12 @@ export const WORK_ITEM_ENV = "ASSETGROVE_WORK_ITEM";
 
 /**
  * The ledger a run with this provider reserves against, with the profile's caps: none when no
- * part of the provider is paid. A paid part with no declared limit is refused here, before any
- * spend (`provider_limit_undeclared`). With no provider yet (a plan made without a key), the
- * ledger still bounds the forecast, as an unknown provider counts as paid.
+ * part of the provider is paid. A single paid provider with no declared limit is refused here,
+ * before any spend (`provider_limit_undeclared`). A provider set (src/providers/set.ts) is not
+ * checked as a whole: the routes of the settings may name providers this command never calls, so
+ * the `Caller` refuses each call whose own provider declares no limit, before its reservation.
+ * With no provider yet (a plan made without a key), the ledger still bounds the forecast, as an
+ * unknown provider counts as paid.
  */
 export function ledgerFor(
   ledger: SpendLedger | undefined,
@@ -40,7 +43,8 @@ export function ledgerFor(
 ): SpendLedger | undefined {
   if (provider === undefined) return ledger?.forProfile(profile);
   if (!billingParts(provider).some((b) => b.paid)) return undefined;
-  assertLimitsDeclared(provider);
+  const isSet = (provider as { parts?: unknown }).parts !== undefined;
+  if (!isSet) assertLimitsDeclared(provider);
   return ledger?.forProfile(profile);
 }
 const DAY_MS = 24 * 60 * 60 * 1000;
