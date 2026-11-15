@@ -47,6 +47,7 @@ export function classify(error: unknown): Failure {
       code: code as ErrorCode,
       message,
       ...(code === "format_unsupported" && typeof reason === "string" && { reason }),
+      ...(code === "confirmation_required" && confirmationOf(error)),
     };
   }
   if (error instanceof InputError) return { code: "invalid_input", message };
@@ -68,6 +69,14 @@ export function classify(error: unknown): Failure {
   if (error instanceof ProviderError) return { code: "provider_error", message };
   if (error instanceof LicenseError) return { code: "license_refused", message };
   return { code: "internal_error", message };
+}
+
+/** The `confirmation` a confirmation_required error carries, as a Failure field. */
+function confirmationOf(error: unknown): { confirmation?: Record<string, unknown> } {
+  const confirmation = (error as { confirmation?: unknown }).confirmation;
+  return typeof confirmation === "object" && confirmation !== null
+    ? { confirmation: confirmation as Record<string, unknown> }
+    : {};
 }
 
 /** The outcome of a thrown error. */

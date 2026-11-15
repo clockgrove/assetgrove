@@ -8,12 +8,15 @@
  *
  * Every top-level test starts from the base settings; the helpers rewrite the file for tests that
  * need a headless operator, approved commands or declared limits, and the change ends with that
- * test.
+ * test. `approveScript` is the exception: it approves a --provider-script module for every later
+ * test of the file, so scripted suites run without a person and offline.
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach } from "node:test";
+import { identifyCommand, providerScriptCommand } from "../../src/approvals.ts";
+import type { GatedCommand } from "../../src/approvals.ts";
 import { REFUSED_VARIABLES } from "../../src/env.ts";
 
 const FORMAT = "assetgrove-settings/1";
@@ -66,12 +69,46 @@ function child(parent: Settings, key: string): Settings {
   return created;
 }
 
-/** Writes the base settings (format and stateDir) with `settings` over them. */
+/** The approved commands every test of this file starts with (`approveScript`). */
+const standing: Settings[] = [];
+
+/** Writes the base settings (format, stateDir, standing approvals) with `settings` over them. */
 export function writeSettings(settings: Settings): Settings {
-  return save({ format: FORMAT, stateDir, ...settings });
+  const base: Settings = { format: FORMAT, stateDir };
+  if (standing.length > 0) base["commands"] = { approved: [...standing] };
+  return save({ ...base, ...settings });
 }
 
-/** Restores the base settings. Runs before every top-level test. */
+/**
+ * Approves a --provider-script module in settings for the current test and every later test of
+ * this file (headless ones too). Returns its commandHash.
+ */
+export function approveScript(path: string): string {
+  const command = identifyCommand(providerScriptCommand(path));
+  const entry = { hash: command.hash, kind: command.kind, argv: command.argv, cwd: command.cwd };
+  if (!standing.some((s) => s["hash"] === command.hash)) {
+    standing.push(entry);
+    approveCommand(entry);
+  }
+  return command.hash;
+}
+
+/**
+ * Approves one gated command (a validator, a material command) in settings for the current test.
+ * Returns its commandHash.
+ */
+export function approve(command: GatedCommand): string {
+  const identity = identifyCommand(command);
+  approveCommand({
+    hash: identity.hash,
+    kind: identity.kind,
+    argv: identity.argv,
+    cwd: identity.cwd,
+  });
+  return identity.hash;
+}
+
+/** Restores the base settings and standing approvals. Runs before every top-level test. */
 export function resetSettings(): Settings {
   return writeSettings({});
 }

@@ -1,9 +1,11 @@
 import { parseArgs } from "node:util";
 import type { ParseArgsOptionsConfig } from "node:util";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
+import { processTty } from "../confirm/prompt.ts";
 import { SettingsError } from "../env.ts";
 import { EXIT, InputError } from "../errors.ts";
 import { checkTrackedKeys } from "../guard.ts";
+import { approveProviderScript } from "../providers/script.ts";
 import { redact } from "../redact.ts";
 import { checkContextEnvironment, isPaid } from "./context.ts";
 import { failureOutcome } from "./result.ts";
@@ -134,6 +136,13 @@ export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext)
     await validateArgs(spec, args);
     if (spec.tool !== null && GUARDED_TARGETS.has(spec.tool) && typeof args["target"] === "string")
       checkTrackedKeys(args["target"], guard);
+    // A --provider-script module is code a developer wrote: it loads only once approved.
+    if (typeof args["providerScript"] === "string" && args["providerScript"] !== "")
+      await approveProviderScript(args["providerScript"], {
+        settings: ctx.settings,
+        tty: ctx.tty ?? processTty(),
+        ...(ctx.env && { env: ctx.env }),
+      });
     return await spec.run(args, { ...ctx, log: (message) => ctx.log(redact(message)) });
   } catch (error) {
     return errorOutcome(error);

@@ -1,5 +1,6 @@
 import type { Env } from "../env.ts";
 import type { ErrorCode } from "../errors.ts";
+import type { TtyPort } from "../confirm/prompt.ts";
 import type { Settings } from "../settings.ts";
 
 /** What running a command can do: whether it only reads, whether it spends, and where it writes. */
@@ -41,6 +42,8 @@ export interface RunContext {
   providerScript?: string;
   /** The MCP server's --work-item, given to each tool call that names no work item. */
   workItem?: string;
+  /** Where a confirmation asks a person; the process's TTY when absent. */
+  tty?: TtyPort;
 }
 
 /** A refusal's code and message; a spend-limit refusal also names the limit and its numbers. */
@@ -57,6 +60,8 @@ export interface Failure {
     requestedUsd: number;
     ledger: string;
   };
+  /** For `confirmation_required`: what a person must confirm and the command that confirms it. */
+  confirmation?: Record<string, unknown>;
 }
 
 /** What a command produced: the JSON fields, the human summary and an optional refusal. */
