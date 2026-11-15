@@ -142,7 +142,8 @@ export function parseIndex(text: string, source: string): ParsedIndex {
     } catch (error) {
       throw new InputError(`${source}: invalid front matter YAML: ${(error as Error).message}`);
     }
-    const map = fields !== null && typeof fields === "object" ? (fields as Record<string, unknown>) : {};
+    const map =
+      fields !== null && typeof fields === "object" ? (fields as Record<string, unknown>) : {};
     result.root = { okfVersion: frontField(map.okf_version), game: frontField(map.game) };
     lines = prose.split(/\r?\n/);
   }
