@@ -198,6 +198,18 @@ async function riggedModel(w: Awaited<ReturnType<typeof world>>) {
   return { model, provenance: riggedProvenance, source: run["candidates"][0].provenance };
 }
 
+/**
+ * A model and provenance a dry run never decodes: its plan step only hashes their bytes into the
+ * request digest.
+ */
+async function unreadInputs(w: Awaited<ReturnType<typeof world>>) {
+  const model = join(w.dir, "x.glb");
+  const provenance = join(w.dir, "x.json");
+  await writeFile(model, "not a model: a dry run never reads it");
+  await writeFile(provenance, "{}");
+  return { model, provenance };
+}
+
 const lookDevArgs = (
   w: Awaited<ReturnType<typeof world>>,
   m: { model: string; provenance: string },
@@ -217,7 +229,7 @@ const lookDevArgs = (
 
 test("look-dev forecasts its calls, refuses over the cap and needs a model3d profile", async () => {
   const w = await world();
-  const none = { model: "x.glb", provenance: "x.json" };
+  const none = await unreadInputs(w);
   const r = await cli([...lookDevArgs(w, none), "--dry-run"]);
   assert.equal(r.code, 0, r.stdout + r.stderr);
   const plan = doc(r)["plan"];
@@ -243,7 +255,7 @@ test("look-dev forecasts its calls, refuses over the cap and needs a model3d pro
 
 test("look-dev with enforce asked for forecasts identity in shadow: no record check", async () => {
   const w = await world({ identity: { mode: "enforce" } });
-  const none = { model: "x.glb", provenance: "x.json" };
+  const none = await unreadInputs(w);
   const r = await cli([...lookDevArgs(w, none), "--dry-run"]);
   assert.equal(r.code, 0, r.stdout + r.stderr);
   const operations = doc(r)["plan"].calls.map((c: { operation: string }) => c.operation);

@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { ParseArgsOptionsConfig } from "node:util";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
@@ -5,9 +8,9 @@ import { SettingsError } from "../env.ts";
 import { EXIT, InputError } from "../errors.ts";
 import { checkTrackedKeys } from "../guard.ts";
 import { redact } from "../redact.ts";
-import { openRunDir, runIdOfDir, writeRunRecord } from "../runs/dir.ts";
+import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "../runs/dir.ts";
 import { checkContextEnvironment, isPaid } from "./context.ts";
-import { failureOutcome } from "./result.ts";
+import { failureOutcome, refusal, usd } from "./result.ts";
 import type {
   CommandSpec,
   JsonSchemaObject,
@@ -153,13 +156,22 @@ export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext)
 
 /**
  * A paid command's real run (design section 6): its free plan step first, then the run directory
- * `<runs>/r-<16 hex>/` with `request.json`, given to the command as `ctx.run`. A command whose
- * outcome does not name that directory as its `runDir` wrote no run record there, so the runner
- * writes one.
+ * `<runs>/r-<16 hex>/` with `request.json`, given to the command as `ctx.run`. A forecast over
+ * the cap is refused (exit 3) before the directory exists. A command that writes no run record
+ * of its own there gets the runner's.
  */
 async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
   const plan = await spec.plan!(args, ctx);
+  if (plan.forecastUsd > plan.capUsd + 1e-9)
+    return refusal(
+      "cap_refused",
+      `refused: the forecast ${usd(plan.forecastUsd)} exceeds the $${plan.capUsd.toFixed(2)} cap`,
+      {},
+      "",
+    );
   await openRunDir(plan);
+  // A record left by an earlier run of the same request is replaced by this run's.
+  await rm(join(plan.runDir, RUN_RECORD_FILE), { force: true });
   const startedAt = new Date().toISOString();
   let outcome: Outcome;
   try {
@@ -167,7 +179,7 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
   } catch (error) {
     outcome = errorOutcome(error);
   }
-  if (outcome.fields["runDir"] !== plan.runDir) {
+  if (!existsSync(join(plan.runDir, RUN_RECORD_FILE))) {
     const spent = outcome.fields["spentUsd"];
     await writeRunRecord({
       runId: runIdOfDir(plan.runDir),

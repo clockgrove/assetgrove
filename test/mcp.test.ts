@@ -107,6 +107,8 @@ function commandLine(command: CommandSpec, args: Args, script: string): string[]
     if (positionals.has(name)) continue;
     if (value === true) argv.push(`--${flagName(name)}`);
     else if (Array.isArray(value)) for (const v of value) argv.push(`--${flagName(name)}`, v);
+    else if (typeof value === "object" && value !== null)
+      argv.push(`--${flagName(name)}`, JSON.stringify(value));
     else argv.push(`--${flagName(name)}`, String(value));
   }
   if ("providerScript" in command.input.properties) argv.push("--provider-script", script);
@@ -507,6 +509,22 @@ const rows: Row[] = [
         profile: join(dir, "profile.json"),
         runs: join(dir, "runs"),
         candidates: 1,
+      };
+    },
+  },
+  {
+    tool: "estimate",
+    prepare: async () => {
+      const dir = paths.world();
+      return {
+        command: "stage",
+        args: {
+          spec: join(dir, "spec.json"),
+          bible: join(dir, "bible", "bible.json"),
+          profile: join(dir, "profile.json"),
+          runs: join(dir, "runs"),
+          candidates: 1,
+        },
       };
     },
   },
