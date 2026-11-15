@@ -451,12 +451,12 @@ async function stripWorld() {
 const rows: Row[] = [
   { tool: "ops", prepare: async () => ({}) },
   {
-    tool: "bible",
+    tool: "init",
     prepare: async () => ({
-      action: "init",
       directory: paths.repo(),
+      profilePreset: "sprite-32",
+      stylePreset: "flat-cartoon-kids",
       world: "Synthetic Grove",
-      preset: "flat-cartoon-kids",
     }),
   },
   { tool: "bible", prepare: async () => ({ action: "describe", bible: paths.bible() }) },

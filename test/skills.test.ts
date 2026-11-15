@@ -5,9 +5,9 @@ import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parseDocument } from "yaml";
-import { initBible } from "../src/bible.ts";
 import { commandNames, commands } from "../src/commands/registry.ts";
 import { cliFlags, toolInputSchema } from "../src/commands/runner.ts";
+import { writeProjectFiles } from "../src/init.ts";
 
 /** The Agent Skills rules every SKILL.md must meet, so each harness loads it. */
 async function checkSkill(path: string): Promise<void> {
@@ -31,21 +31,24 @@ test("every skill the package ships meets the Agent Skills rules", async () => {
   for (const folder of folders) await checkSkill(join(root, folder, "SKILL.md"));
 });
 
-test("the skill bible init writes meets the rules, where every harness reads skills", async () => {
+test("the skill init writes meets the rules, where every harness reads skills", async () => {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-skills-"));
   try {
-    const paths = await initBible({
+    const files = await writeProjectFiles({
       directory: dir,
+      profilePreset: "sprite-32",
+      stylePreset: "cozy-storybook",
       world: "Synthetic world",
-      preset: "cozy-storybook",
     });
-    assert.equal(paths.skillPaths.length, 2);
-    for (const path of paths.skillPaths) await checkSkill(path);
-    const [claude, agents] = await Promise.all(paths.skillPaths.map((p) => readFile(p, "utf8")));
+    const skillPaths = files.filter((f) => f.role === "skill").map((f) => f.path);
+    const biblePath = files.find((f) => f.role === "bible")!.path;
+    assert.equal(skillPaths.length, 2);
+    for (const path of skillPaths) await checkSkill(path);
+    const [claude, agents] = await Promise.all(skillPaths.map((p) => readFile(p, "utf8")));
     assert.equal(claude, agents);
     // The skill's links resolve from its folder to the bible init wrote.
     const link = /\]\(([^)]*BIBLE\.md)\)/.exec(claude!)![1]!;
-    assert.equal(join(dirname(paths.skillPaths[0]!), link), paths.biblePath);
+    assert.equal(join(dirname(skillPaths[0]!), link), biblePath);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

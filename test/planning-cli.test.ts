@@ -39,21 +39,23 @@ async function setup() {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-planning-cli-"));
   temporaryRoots.push(dir);
   const init = await cli([
-    "bible",
     "init",
     "--directory",
     dir,
     "--world",
     "Synthetic Grove",
-    "--preset",
+    "--profile-preset",
+    "sprite-32",
+    "--style-preset",
     "flat-cartoon-kids",
     "--json",
   ]);
   assert.equal(init.code, 0, init.stderr);
-  const paths = JSON.parse(init.stdout) as {
-    biblePath: string;
-    templatePath: string;
-    skillPaths: string[];
+  const files = (JSON.parse(init.stdout) as { files: { path: string; role: string }[] }).files;
+  const paths = {
+    biblePath: files.find((f) => f.role === "bible")?.path as string,
+    templatePath: files.find((f) => f.role === "template")?.path as string,
+    skillPaths: files.filter((f) => f.role === "skill").map((f) => f.path),
   };
   const spec = join(dir, "spec.json");
   const profile = join(dir, "profile.json");

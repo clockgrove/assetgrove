@@ -313,18 +313,21 @@ test("a direct Caller paid call without a clearance exits 8", async () => {
 async function planFiles() {
   const dir = await tempDir("assetgrove-confirm-plan-");
   const init = await cli([
-    "bible",
     "init",
     "--directory",
     dir,
     "--world",
     "Synthetic Grove",
-    "--preset",
+    "--profile-preset",
+    "sprite-32",
+    "--style-preset",
     "flat-cartoon-kids",
     "--json",
   ]);
   assert.equal(init.code, 0, init.stderr);
-  const bible = doc(init)["biblePath"] as string;
+  const bible = (doc(init)["files"] as { path: string; role: string }[]).find(
+    (f) => f.role === "bible",
+  )?.path as string;
   const spec = join(dir, "spec.json");
   const profile = join(dir, "profile.json");
   const runOptions = join(dir, "run-options.json");
