@@ -14,7 +14,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { confirmCommand } from "../src/commands/confirm.ts";
@@ -95,30 +95,8 @@ async function gitWorld(): Promise<World> {
   return world;
 }
 
-/** A provider script whose images differ from the passing script's, so a second run's media differs. */
-async function otherScript(dir: string): Promise<string> {
-  const path = join(dir, "other-script.mjs");
-  const href = (file: string) => JSON.stringify(pathToFileURL(file).href);
-  await writeFile(
-    path,
-    `import { encodePng } from ${href(fileURLToPath(new URL("../src/image/raster.ts", import.meta.url)))};
-import { drawSubject } from ${href(fileURLToPath(new URL("./fixtures/synthetic.ts", import.meta.url)))};
-import base from ${href(passingScript)};
-export default {
-  image: (request) => {
-    const m = /frame (\\d+) of/.exec(request.prompt);
-    return { images: [{ mediaType: "image/png", bytes: encodePng(drawSubject(96, (m?.[1] ? Number(m[1]) : 0) + 9)) }] };
-  },
-  vision: base.vision,
-};
-`,
-  );
-  approve(path);
-  return path;
-}
-
 /** Writes the world's inputs and stages one candidate through the CLI. */
-async function stage(world: World, spec: AssetSpec = shelterSpec, script = passingScript) {
+async function stage(world: World, spec: AssetSpec = shelterSpec) {
   const specPath = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
   const profile = join(world.dir, "profile.json");
@@ -129,7 +107,7 @@ async function stage(world: World, spec: AssetSpec = shelterSpec, script = passi
     "stage",
     ...["--spec", specPath, "--bible", bible, "--profile", profile],
     ...["--runs", world.runsDir, "--candidates", "1"],
-    ...["--provider-script", script, "--json"],
+    ...["--provider-script", passingScript, "--json"],
   ]);
 }
 
@@ -167,12 +145,11 @@ async function stagedStill(
   folder: string,
   library?: TargetProfile["library"],
   world?: World,
-  script = passingScript,
 ) {
   const w = world ?? (await gitWorld());
   Object.assign(w.profile, stillProfile(folder, library));
   delete w.profile.validator;
-  const staged = await stage(w, stillSpec(assetId), script);
+  const staged = await stage(w, stillSpec(assetId));
   assert.equal(staged.code, 0, staged.stdout + staged.stderr);
   return { world: w, runDir: doc(staged)["runDir"] as string };
 }
@@ -570,7 +547,8 @@ test("a second pick of the same asset with different bytes replaces the media, a
     .concat("\nA hand-written note.\n");
   await writeFile(cardPath, written);
 
-  const second = await stage(world, shelterSpec, await otherScript(world.dir));
+  // A different request, so the provider makes different media for the same asset id.
+  const second = await stage(world, { ...shelterSpec, frames: { count: 4 } });
   assert.equal(second.code, 0, second.stdout + second.stderr);
   const out = await picked(doc(second)["runDir"], world.targetDir);
   assert.equal(out["library"].version, 2);
