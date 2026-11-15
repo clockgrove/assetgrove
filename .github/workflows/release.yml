@@ -86,8 +86,9 @@ jobs:
           cat "$tarball.sha256"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
+      # "./" matters: npm reads a bare "out/x.tgz" as a GitHub owner/repository shorthand.
       - name: Dry-run the publish
-        run: npm publish "out/${{ steps.pack.outputs.tarball }}" --access public --dry-run
+        run: npm publish "./out/${{ steps.pack.outputs.tarball }}" --access public --dry-run
 
       - name: Attest the tarball
         id: attest
@@ -174,4 +175,4 @@ jobs:
           TARBALL: ${{ needs.pack.outputs.tarball }}
         run: |
           (cd out && sha256sum -c "$TARBALL.sha256")
-          npm publish "out/$TARBALL" --access public --tag latest
+          npm publish "./out/$TARBALL" --access public --tag latest
