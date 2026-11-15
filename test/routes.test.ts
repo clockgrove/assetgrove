@@ -18,11 +18,19 @@ import {
 import { SettingsError } from "../src/env.ts";
 import type { Settings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
-import { writeSettings } from "./fixtures/env.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { approve, approveProfile, writeSettings } from "./fixtures/env.ts";
+import { shelterSpec, syntheticWorld as plainWorld } from "./fixtures/synthetic.ts";
+import type { World } from "./fixtures/synthetic.ts";
+
+async function syntheticWorld(): Promise<World> {
+  const world = await plainWorld();
+  approveProfile(world.profile, { targetDir: world.targetDir });
+  return world;
+}
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approve(passingScript);
 
 interface Result {
   code: number;
