@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { basename, dirname } from "node:path";
 import { imageGenerators } from "../generators/image.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
@@ -8,6 +8,8 @@ import { providerSet, spendLedger } from "../providers/index.ts";
 import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext, WorkPlan } from "./types.ts";
+import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, jobsOf, paidBy } from "../runs/plan.ts";
 
 /** Every generator `stage` runs: the image kinds and 3D characters. */
 const stageGenerators = [...imageGenerators, character3dGenerator];
@@ -22,6 +24,35 @@ interface StageArgs {
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
+  round?: number;
+}
+
+/** Everything stage's plan step reads: the inputs, providers, the stage plan and the WorkPlan. */
+async function prepare(args: StageArgs, ctx: RunContext) {
+  const candidates = args.candidates ?? DEFAULT_CANDIDATES;
+  const capUsd = runCap(args.cap, ctx.settings);
+  const spec = await readJson<AssetSpec>(args.spec);
+  const bible = await loadStyleBible(args.bible);
+  const profile = await loadProfile(args.profile);
+  const providers = await providerSet(args.providerScript, ctx);
+  const routes = providers.routes;
+  const plan = planStage({
+    spec: spec.value,
+    profile: profile.value,
+    routes,
+    generators: stageGenerators,
+    candidates,
+    capUsd,
+  });
+  const jobs = jobsOf(plan.perCandidate, routes, candidates);
+  const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
+    inputs: ["spec", "bible", "profile"],
+    jobs,
+    capUsd,
+    paid: paidBy(providers, jobs),
+    candidates,
+  });
+  return { candidates, capUsd, spec, bible, profile, providers, routes, plan, work };
 }
 
 export const stageCommand = defineCommand<StageArgs>({
@@ -71,40 +102,31 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
-      dryRun: { type: "boolean", description: "print the plan and forecast; spend nothing" },
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["spec", "bible", "profile"],
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     const ledger = spendLedger(ctx, args.workItem);
-    const candidates = args.candidates ?? DEFAULT_CANDIDATES;
-    const capUsd = runCap(args.cap, ctx.settings);
-    const spec = await readJson<AssetSpec>(args.spec);
-    const bible = await loadStyleBible(args.bible);
-    const profile = await loadProfile(args.profile);
-    const providers = await providerSet(args.providerScript, ctx);
-    const routes = providers.routes;
-    const plan = planStage({
-      spec: spec.value,
-      profile: profile.value,
-      routes,
-      generators: stageGenerators,
-      candidates,
-      capUsd,
-    });
+    const { candidates, capUsd, spec, bible, profile, providers, routes, plan, work } =
+      await prepare(args, ctx);
 
     if (args.dryRun) {
       return dryRunOutcome(
-        plan,
+        work,
         formatPlan(plan),
         ledger.forProfile(profile.value),
-        providers.billing,
+        plan as unknown as Record<string, unknown>,
       );
     }
 
+    // The runner opened the request's run directory `<runs>/r-<16 hex>/`; stage runs in it.
+    const dir = ctx.run?.dir ?? work.runDir;
     const { run, runDir } = await stage({
       spec: spec.value,
       specDir: spec.dir,
@@ -115,7 +137,8 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       routes,
       provider: providers,
       generators: stageGenerators,
-      runsDir: resolve(args.runs ?? ".assetgrove/runs"),
+      runsDir: dirname(dir),
+      runId: basename(dir),
       candidates,
       capUsd,
       ledger,

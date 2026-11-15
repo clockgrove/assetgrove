@@ -1686,6 +1686,7 @@ export async function lookDev(
   const passed = qaPassed(reasons);
   const run: RunRecord = {
     runId,
+    runDir,
     createdAt: now().toISOString(),
     spec,
     specDir: resolve(options.specDir),

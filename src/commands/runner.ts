@@ -5,6 +5,7 @@ import { SettingsError } from "../env.ts";
 import { EXIT, InputError } from "../errors.ts";
 import { checkTrackedKeys } from "../guard.ts";
 import { redact } from "../redact.ts";
+import { openRunDir, runIdOfDir, writeRunRecord } from "../runs/dir.ts";
 import { checkContextEnvironment, isPaid } from "./context.ts";
 import { failureOutcome } from "./result.ts";
 import type {
@@ -54,6 +55,13 @@ function parseOptions(spec: CommandSpec): ParseArgsOptionsConfig {
 
 /** A command-line string as the number its property declares. */
 function coerce(flag: string, property: JsonSchemaProperty, raw: string): unknown {
+  if (property.type === "object") {
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      throw new InputError(`--${flag} must be a JSON object, got "${raw}"`);
+    }
+  }
   if (property.type !== "number" && property.type !== "integer") return raw;
   const n = Number(raw);
   if (raw.trim() === "" || !Number.isFinite(n)) {
@@ -134,10 +142,47 @@ export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext)
     await validateArgs(spec, args);
     if (spec.tool !== null && GUARDED_TARGETS.has(spec.tool) && typeof args["target"] === "string")
       checkTrackedKeys(args["target"], guard);
-    return await spec.run(args, { ...ctx, log: (message) => ctx.log(redact(message)) });
+    const logged: RunContext = { ...ctx, log: (message) => ctx.log(redact(message)) };
+    if (spec.plan !== undefined && args["dryRun"] !== true)
+      return await planned(spec, args, logged);
+    return await spec.run(args, logged);
   } catch (error) {
     return errorOutcome(error);
   }
+}
+
+/**
+ * A paid command's real run (design section 6): its free plan step first, then the run directory
+ * `<runs>/r-<16 hex>/` with `request.json`, given to the command as `ctx.run`. A command whose
+ * outcome does not name that directory as its `runDir` wrote no run record there, so the runner
+ * writes one.
+ */
+async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
+  const plan = await spec.plan!(args, ctx);
+  await openRunDir(plan);
+  const startedAt = new Date().toISOString();
+  let outcome: Outcome;
+  try {
+    outcome = await spec.run(args, { ...ctx, run: { dir: plan.runDir, plan } });
+  } catch (error) {
+    outcome = errorOutcome(error);
+  }
+  if (outcome.fields["runDir"] !== plan.runDir) {
+    const spent = outcome.fields["spentUsd"];
+    await writeRunRecord({
+      runId: runIdOfDir(plan.runDir),
+      runDir: plan.runDir,
+      command: spec.name,
+      digest: plan.digest,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      ok: outcome.exitCode === 0,
+      exitCode: outcome.exitCode,
+      ...(outcome.error && { error: outcome.error.code }),
+      ...(typeof spent === "number" && { spentUsd: spent }),
+    });
+  }
+  return outcome;
 }
 
 /** The outcome of a thrown error; a settings refusal keeps its own code, `settings_invalid`. */

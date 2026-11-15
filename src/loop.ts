@@ -55,7 +55,10 @@ export interface StageOptions {
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   generators: Generator[];
-  /** Directory runs are staged under; each run gets `<runsDir>/<runId>/`. */
+  /**
+   * Directory runs are staged under; each run gets `<runsDir>/<runId>/`. The stage command gives
+   * the run id of its request digest, `r-<16 hex>` (src/runs/dir.ts).
+   */
   runsDir: string;
   candidates?: number;
   capUsd?: number;
@@ -143,6 +146,8 @@ export interface StagedCandidate {
 
 export interface RunRecord {
   runId: string;
+  /** The run directory this record is in (`<runs>/r-<16 hex>/` for a planned request). */
+  runDir?: string;
   createdAt: string;
   spec: AssetSpec;
   /** Absolute directory the spec's relative paths resolved against. */
@@ -255,6 +260,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
 
   const run: RunRecord = {
     runId,
+    runDir,
     createdAt: now().toISOString(),
     spec,
     specDir: resolve(options.specDir),
