@@ -163,7 +163,7 @@ nothing.`,
     const runDir = join(resolve(args.runs ?? DEFAULT_RUNS), args.run);
     if (!existsSync(runDir)) throw new InputError(`no run ${args.run} in ${dirname(runDir)}`);
     const callsDir = join(runDir, CALLS_DIR);
-    let names: string[] = [];
+    let names: string[];
     try {
       names = readdirSync(callsDir).filter((n) => /^[0-9a-f]{64}\.json$/.test(n));
     } catch {

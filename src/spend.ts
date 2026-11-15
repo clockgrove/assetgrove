@@ -20,7 +20,9 @@ import type { TargetProfile } from "./types.ts";
  * reservation is checked against the entries before it in the file, so concurrent runs are
  * ordered by their appends and can never both fit into the same remaining spend; a reservation
  * that does not fit is cancelled (settled at 0) and the call is refused. A reservation never
- * settled (a crashed run) keeps its estimate, as a failed call does in `Budget`. Whether a call is
+ * settled (a crashed run) keeps its estimate, as a failed call does in `Budget`, until the same
+ * run retries that call (same `runId` and `callKey`), which settles it rather than reserving
+ * again: the ledger counts each call once. Whether a call is
  * paid is its provider's billing (src/providers/adapter.ts); free calls are never recorded.
  */
 

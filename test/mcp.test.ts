@@ -539,6 +539,15 @@ const rows: Row[] = [
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
+  { tool: "runs_list", prepare: async () => ({ runs: join(paths.world(), "runs") }) },
+  {
+    tool: "runs_show",
+    prepare: async () => {
+      const runs = join(paths.world(), "runs");
+      const [run] = await readdir(runs);
+      return { run: run!, runs };
+    },
+  },
   {
     tool: "op",
     prepare: async () => {
@@ -825,6 +834,11 @@ test("every tool's structuredContent deep-equals the CLI --json document", async
     if (!servers.has(provider))
       servers.set(provider, await connect(["--provider-script", provider]));
     const args = await row.prepare(previous);
+    // A paid row runs under the work directory, which is restored between the command and the
+    // tool, so neither returns a finished run another test left in the default runs directory.
+    const command = spec(row.tool);
+    if (command.plan !== undefined && "runs" in command.input.properties && !("runs" in args))
+      args["runs"] = join(work, ".runs");
     const label = `${row.tool} ${JSON.stringify(args)}`;
     // The command and the tool start from the same files: the work directory is restored between.
     const snapshot = `${work}.snapshot`;
