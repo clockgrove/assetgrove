@@ -50,7 +50,8 @@
     "format": "prettier --write .",
     "prepack": "pnpm build",
     "test": "node --test \"test/**/*.test.ts\"",
-    "test:real": "node --test --test-isolation=none \"test/real/**/*.real.ts\""
+    "test:real": "node --test --test-isolation=none \"test/real/**/*.real.ts\"",
+    "gate": "node scripts/gate.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.105",
