@@ -66,9 +66,25 @@ function assertContents(paths: string[]): void {
 const SHIPPED_FILES = ["package.json", "README.md", "LICENSE"];
 const SHIPPED_DIRS = ["dist/", "skills/", "policy/"];
 
+/** Each path is one of the shipped files or under a shipped directory, and each directory is there. */
+function assertOnlyShipped(paths: string[]): void {
+  assert.deepEqual(
+    paths.filter((p) => !SHIPPED_FILES.includes(p) && !SHIPPED_DIRS.some((d) => p.startsWith(d))),
+    [],
+  );
+  for (const dir of SHIPPED_DIRS) {
+    assert.ok(
+      paths.some((p) => p.startsWith(dir)),
+      `package lacks ${dir}`,
+    );
+  }
+}
+
 test(
   "npm pack lists only package.json, README.md, LICENSE, dist/, skills/ and policy/",
-  { timeout: FIVE_MINUTES },
+  // With a prebuilt tarball the next test checks that tarball's own listing, and the checkout is
+  // neither packed nor built.
+  { timeout: FIVE_MINUTES, skip: prebuilt ? "ASSETGROVE_TEST_TARBALL is set" : false },
   async () => {
     try {
       await rm(join(root, "dist"), { recursive: true, force: true });
@@ -76,18 +92,7 @@ test(
       const [packed] = JSON.parse(stdout) as Array<{ files: { path: string }[] }>;
       assert.ok(packed);
       const paths = packed.files.map((f) => f.path);
-      assert.deepEqual(
-        paths.filter(
-          (p) => !SHIPPED_FILES.includes(p) && !SHIPPED_DIRS.some((d) => p.startsWith(d)),
-        ),
-        [],
-      );
-      for (const dir of SHIPPED_DIRS) {
-        assert.ok(
-          paths.some((p) => p.startsWith(dir)),
-          `package lacks ${dir}`,
-        );
-      }
+      assertOnlyShipped(paths);
       assertContents(paths);
     } finally {
       await rm(join(root, "dist"), { recursive: true, force: true });
@@ -135,17 +140,18 @@ test(
       await stat(join(install, "node_modules/.bin/assetgrove"));
       const installed = join(install, "node_modules/@clockgrove/assetgrove");
       if (prebuilt) {
+        // The installed package directory holds exactly the tarball's files.
         const entries = await readdir(installed, { recursive: true, withFileTypes: true });
-        assertContents(
-          entries
-            .filter((e) => e.isFile())
-            .map((e) =>
-              join(e.parentPath, e.name)
-                .slice(installed.length + 1)
-                .split(sep)
-                .join("/"),
-            ),
-        );
+        const paths = entries
+          .filter((e) => e.isFile())
+          .map((e) =>
+            join(e.parentPath, e.name)
+              .slice(installed.length + 1)
+              .split(sep)
+              .join("/"),
+          );
+        assertOnlyShipped(paths);
+        assertContents(paths);
       }
 
       const env = { ...process.env };
@@ -217,7 +223,7 @@ test(
       const version = await run(["--version"]);
       assert.equal(version.stdout.trim(), pkg.version);
     } finally {
-      await rm(join(root, "dist"), { recursive: true, force: true });
+      if (!prebuilt) await rm(join(root, "dist"), { recursive: true, force: true });
       for (const dir of temps) await rm(dir, { recursive: true, force: true });
     }
   },

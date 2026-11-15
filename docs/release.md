@@ -16,12 +16,15 @@ The package does not exist on the registry before 0.1.0, so for 0.1.0 the workfl
 You need: an npm account that owns the `@clockgrove` scope with two-factor authentication on for writes, the GitHub CLI (`gh`) signed in to the repository, and Node 24.
 
 1. Dispatch `release.yml` on `main` without publish and wait for **verify** to pass on all three systems.
-2. Download the run's artifact into an empty directory:
+2. Download the run's artifact into an empty directory. `<artifact>` is the artifact's name as the run lists it (`gh run view <run-id> --repo clockgrove/assetgrove` shows it); naming it with `-n` puts its files in the current directory rather than in a directory of that name:
 
    ```sh
    mkdir assetgrove-0.1.0 && cd assetgrove-0.1.0
-   gh run download <run-id> --repo clockgrove/assetgrove
+   gh run download <run-id> --repo clockgrove/assetgrove -n <artifact>
+   ls   # clockgrove-assetgrove-0.1.0.tgz, its .sha256 and the attestation
    ```
+
+   Steps 3 to 5 run in this directory.
 
 3. Check the tarball is the one the run verified and attested:
 
