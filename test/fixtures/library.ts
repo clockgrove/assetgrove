@@ -4,7 +4,7 @@
  * media, and a runs directory. Every image is drawn here; nothing is private.
  *
  * - `lantern`: a still with two versions, the first's bytes only in a run folder, tags prop and light.
- * - `fern` (in `assets/props/`): a still made under an older bible, so stale.
+ * - `fern` (in `assets/props/`): a still made under bible 2, older than the style bible's 3, so stale.
  * - `walk`: a sprite strip of four 32 px frames.
  * - `boat`: a 3D asset (`boat.glb`) with turntable renders in `boat-views/`.
  * - `rock`: three versions: the first's bytes nowhere, the second's only in the local LFS store.
@@ -192,6 +192,8 @@ export function fixtureLibrary(options: { bulk?: number } = {}): FixtureLibrary 
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-tree-")));
   execFileSync("git", ["init", "-q", dir]);
   write(join(dir, ".assetgrove", "profile.json"), `${JSON.stringify(libraryProfile(), null, 2)}\n`);
+  // The style bible's version is what `stale/` compares each card's bible with, as drift does.
+  write(join(dir, ".assetgrove", "art-direction", "BIBLE.md"), "---\nversion: 3\n---\n# Bible\n");
   const root = join(dir, LIBRARY_ROOT);
   const runsDir = join(dir, ".assetgrove", "runs");
   const versions: Record<string, string[]> = {};

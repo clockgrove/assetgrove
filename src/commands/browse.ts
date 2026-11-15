@@ -90,13 +90,20 @@ contents the MCP server's resources/read returns, each {uri, mimeType, text} or 
 blob}. A folder gives its JSON document (and the root its index.md); <asset>/card and log give
 Markdown, provenance and review JSON, image a PNG thumbnail of at most 512 px, image/full the file,
 versions/<n> the version record with its image while its bytes are local. No read exceeds 64 KB.
---out writes the file a file address names (the whole file, for image/full) instead.`,
+--out (CLI only; the cat tool is read-only and takes no out) writes the file a file address names
+(the whole file, for image/full) instead.`,
   input: {
     type: "object",
     properties: {
       address: ADDRESS,
       target: TARGET,
-      out: { type: "string", description: "write the file's bytes here", placeholder: "<file>" },
+      // CLI only: the cat tool is read-only, so it never writes a file on the server's machine.
+      out: {
+        type: "string",
+        description: "write the file's bytes here",
+        placeholder: "<file>",
+        cliOnly: true,
+      },
     },
     required: ["address"],
     additionalProperties: false,

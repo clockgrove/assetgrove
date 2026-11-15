@@ -7,6 +7,7 @@ import {
   isInputRequiredResult,
 } from "@modelcontextprotocol/server";
 import type {
+  CallToolResult,
   RequestStateCodec,
   ServerContext,
   ToolAnnotations,
@@ -156,6 +157,42 @@ export function toolAnnotations(spec: CommandSpec): ToolAnnotations {
     destructiveHint: spec.tool === "pick" || spec.tool === "write_families",
     idempotentHint: paid,
     openWorldHint: paid,
+  };
+}
+
+type ReadContent = { uri: string; mimeType: string } & ({ text: string } | { blob: string });
+
+/**
+ * The cat tool's result, carrying the read once so it stays inside the 64 KB a read may hold
+ * (design section 2): the document lists each content's `uri` and `mimeType`, and the content
+ * follows it in the same order, an image as image content and anything else as an embedded
+ * resource, exactly as `resources/read` returns it.
+ */
+export function catResult(document: Record<string, unknown>): CallToolResult {
+  const contents = document["contents"];
+  if (!Array.isArray(contents)) {
+    return {
+      content: [{ type: "text", text: JSON.stringify(document) }],
+      structuredContent: document,
+      isError: document["ok"] !== true,
+    };
+  }
+  const read = contents as ReadContent[];
+  const listed = {
+    ...document,
+    contents: read.map(({ uri, mimeType }) => ({ uri, mimeType })),
+  };
+  return {
+    content: [
+      { type: "text", text: JSON.stringify(listed) },
+      ...read.map((c) =>
+        "blob" in c && c.mimeType.startsWith("image/")
+          ? { type: "image" as const, data: c.blob, mimeType: c.mimeType }
+          : { type: "resource" as const, resource: c },
+      ),
+    ],
+    structuredContent: listed,
+    isError: document["ok"] !== true,
   };
 }
 
@@ -402,6 +439,7 @@ function createServer(
             );
         if (isInputRequiredResult(outcome)) return outcome;
         const document = resultDocument(spec.name, outcome);
+        if (spec.tool === "cat") return catResult(document);
         // The run's contact sheet goes with the result as image content (design section 10).
         const sheet = await contactImage(document);
         return {

@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { gitTopLevel } from "../approvals.ts";
 import { InputError } from "../errors.ts";
+import { VIEWS } from "./address.ts";
 import { PROFILE_PATH } from "../init.ts";
 import { loadProfile } from "../inputs.ts";
 import { checkCardPaths, parseCard } from "../library/card.ts";
@@ -15,7 +16,7 @@ import type { Card } from "../library/card.ts";
 import { libraryPath } from "../library/paths.ts";
 import { checkReviewPaths, parseReview } from "../library/review.ts";
 import type { ReviewRecord } from "../library/review.ts";
-import { libraryConfig, scanCards } from "../library/write.ts";
+import { libraryConfig, newer, scanCards } from "../library/write.ts";
 import type { LibraryConfig } from "../library/write.ts";
 import { DEFAULT_RUNS } from "../runs/plan.ts";
 import type { TargetProfile } from "../types.ts";
@@ -70,11 +71,19 @@ export interface Asset {
   tags: string[];
 }
 
-/** Every asset under the library root by id; the first card found wins an id carded twice. */
-export function loadAssets(project: Project): Map<string, Asset> {
+/**
+ * Every asset under the library root by id; the first card found wins an id carded twice. An id
+ * that is a view's name (`runs`, `stale`, `by-kind`, `by-subject`, `by-tag`) has no address of its
+ * own, since `asset://<game>/<view>/` reads the view: it is left out and pushed onto `reserved`.
+ */
+export function loadAssets(project: Project, reserved?: string[]): Map<string, Asset> {
   const assets = new Map<string, Asset>();
   for (const found of scanCards(project.library.root)) {
     if (assets.has(found.id)) continue;
+    if ((VIEWS as readonly string[]).includes(found.id)) {
+      if (!reserved?.includes(found.id)) reserved?.push(found.id);
+      continue;
+    }
     const cardPath = join(found.dir, `${found.id}.md`);
     let card: Card;
     try {
@@ -151,23 +160,7 @@ export function readAssetReview(project: Project, asset: Asset): ReviewRecord | 
   return record;
 }
 
-/** Numeric-aware ordering of bible versions ("10" after "9"). */
-export function newerBible(a: string, b: string): boolean {
-  return a.localeCompare(b, "en", { numeric: true }) > 0;
-}
-
-/** The library's current bible: the newest any card records. */
-export function currentBible(assets: Iterable<Asset>): string | undefined {
-  let newest: string | undefined;
-  for (const asset of assets) {
-    if (asset.bible !== undefined && (newest === undefined || newerBible(asset.bible, newest))) {
-      newest = asset.bible;
-    }
-  }
-  return newest;
-}
-
-/** Whether the asset was made under a bible older than the library's current one. */
-export function isStale(asset: Asset, current: string | undefined): boolean {
-  return asset.bible !== undefined && current !== undefined && newerBible(current, asset.bible);
+/** Whether the asset was made under a bible older than the style bible's own version, as `library drift` says. */
+export function isStale(asset: Asset, bible: string | undefined): boolean {
+  return asset.bible !== undefined && bible !== undefined && newer(bible, asset.bible);
 }

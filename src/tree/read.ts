@@ -12,9 +12,11 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 import { turntableViews } from "../compare.ts";
 import { InputError } from "../errors.ts";
+import { BIBLE_PATH } from "../init.ts";
 import { MACHINE_FIELDS } from "../library/card.ts";
 import { sha256Hex } from "../library/canonical.ts";
 import { logEntriesFromReview, renderLog } from "../library/folder.ts";
+import { bibleVersionOf } from "../library/maintain.ts";
 import { findGitDir, lfsObjectPath, readMedia } from "../library/lfs.ts";
 import { versionStatus } from "../library/review.ts";
 import type { ReviewRecord } from "../library/review.ts";
@@ -23,7 +25,6 @@ import { VIEWS, formatAddress, pageAddress, parseAddress } from "./address.ts";
 import type { Address } from "./address.ts";
 import {
   checkedCard,
-  currentBible,
   isStale,
   loadAssets,
   mediaPath,
@@ -204,6 +205,8 @@ interface View {
   game: string;
   assets: Map<string, Asset>;
   bible: string | undefined;
+  /** Carded ids that are view names, so have no address; the root reports them. */
+  reserved: string[];
 }
 
 function assetChild(view: View, asset: Asset): Child {
@@ -428,7 +431,13 @@ async function readRoot(view: View, at: Address, r: Reader): Promise<void> {
     stale,
     runs,
   };
-  r.json(folderDoc(r.address, page(r.address, children, at.after), { game, counts }));
+  r.json(
+    folderDoc(r.address, page(r.address, children, at.after), {
+      game,
+      counts,
+      ...(view.reserved.length > 0 && { reserved: view.reserved.sort() }),
+    }),
+  );
   const index = join(view.project.library.root, "index.md");
   if (existsSync(index)) {
     r.text(r.address, MARKDOWN, readFileSync(index, "utf8"), index);
@@ -685,8 +694,9 @@ function viewOf(project: Project, game: string): View {
   if (game !== project.library.game) {
     throw new InputError(`this project's game is "${project.library.game}", not "${game}"`);
   }
-  const assets = loadAssets(project);
-  return { project, game, assets, bible: currentBible(assets.values()) };
+  const reserved: string[] = [];
+  const assets = loadAssets(project, reserved);
+  return { project, game, assets, reserved, bible: bibleVersionOf(join(project.dir, BIBLE_PATH)) };
 }
 
 /** Whether segments below a game root name a folder (views, runs, an asset, its versions). */

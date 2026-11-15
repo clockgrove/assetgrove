@@ -15,9 +15,12 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { decodePng } from "../src/image/raster.ts";
+import { libraryDrift, readLibrary } from "../src/library/maintain.ts";
 import { appendAnnotation, parseReview, writeReview } from "../src/library/review.ts";
 import { changed, fingerprint, listTree } from "../src/tree/list.ts";
 import { openProject } from "../src/tree/project.ts";
+import { TreeServer } from "../src/tree/serve.ts";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { PAGE_SIZE, readTree } from "../src/tree/read.ts";
 import type { Content, ReadResult } from "../src/tree/read.ts";
 import { READ_LIMIT, THUMB_PX } from "../src/tree/thumbs.ts";
@@ -90,6 +93,49 @@ test("every folder address returns a JSON folder document, the root its index.md
   // A view lists the asset folder by its own address; nothing is copied.
   assert.equal(json(await read(A("by-tag/prop/"))).children[1].address, A("lantern/"));
   assert.equal(json(await read(A("lantern"))).address, A("lantern/"));
+});
+
+test("stale/ lists what library drift does: cards older than the style bible's version", async () => {
+  const bumped = fixtureLibrary();
+  try {
+    writeFileSync(
+      join(bumped.dir, ".assetgrove", "art-direction", "BIBLE.md"),
+      "---\nversion: 4\n---\n# Bible\n",
+    );
+    const opened = await openProject(bumped.dir, stateDir);
+    const drift = await libraryDrift(await readLibrary(opened.profile, bumped.dir), "4");
+    const stale = json(await readTree(opened, A("stale/"))).children.map(
+      (c: { name: string }) => c.name,
+    );
+    assert.ok(stale.length > 1);
+    // drift reads only cards that pass the library check; escape's resource leaves the root.
+    assert.deepEqual(
+      stale.filter((id: string) => id !== "escape"),
+      drift.stale.map((s) => s.asset).sort(),
+    );
+    assert.equal(json(await readTree(opened, A(""))).counts.stale, stale.length);
+  } finally {
+    await rm(bumped.dir, { recursive: true, force: true });
+  }
+});
+
+test("a carded id that is a view's name is left out of the tree and reported at the root", async () => {
+  const clash = fixtureLibrary();
+  try {
+    const card = readFileSync(join(clash.dir, "assets", "lantern.md"), "utf8");
+    writeFileSync(join(clash.dir, "assets", "runs.md"), card);
+    const opened = await openProject(clash.dir, stateDir);
+    const rootDoc = json(await readTree(opened, A("")));
+    assert.deepEqual(rootDoc.reserved, ["runs"]);
+    assert.equal(rootDoc.children.filter((c: { name: string }) => c.name === "runs").length, 1);
+    assert.deepEqual(
+      json(await readTree(opened, A("runs/"))).children.map((c: { name: string }) => c.name),
+      [RUN_ID],
+    );
+    assert.equal(listTree(opened).filter((l) => l.uri.startsWith(A("runs"))).length, 2);
+  } finally {
+    await rm(clash.dir, { recursive: true, force: true });
+  }
 });
 
 test("a folder read returns at most 200 children and a next address that reads the rest", async () => {
@@ -289,6 +335,61 @@ test("the listing holds the root, folder and card addresses; the fingerprint see
     ),
   );
   assert.deepEqual(changed(before.addresses, fingerprint(p).addresses), [A("rock/")]);
+});
+
+test("a tool call during a running one keeps the running call's changes announced", async () => {
+  const own = fixtureLibrary();
+  try {
+    const updates: string[] = [];
+    const tree = new TreeServer(own.dir, stateDir);
+    const fake = {
+      server: {
+        setRequestHandler() {},
+        sendResourceUpdated: async ({ uri }: { uri: string }) => void updates.push(uri),
+        sendResourceListChanged: async () => {},
+      },
+    };
+    tree.attach(fake as unknown as McpServer, "modern");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let wrote!: () => void;
+    const written = new Promise<void>((r) => (wrote = r));
+    // A long call (a stage) writes, then waits; an ls runs meanwhile on the same connection.
+    const long = tree.around(
+      "stage",
+      async () => {
+        const path = join(own.root, "rock.review.json");
+        const record = parseReview(readFileSync(path, "utf8"), path);
+        writeFileSync(
+          path,
+          writeReview(
+            appendAnnotation(record, {
+              type: "Annotation",
+              created: "2026-11-20T10:00:00Z",
+              motivation: "commenting",
+              body: [{ type: "TextualBody", value: "darker" }],
+              target: "rock.png",
+            }),
+          ),
+        );
+        wrote();
+        await gate;
+        return {};
+      },
+      () => true,
+    );
+    await written;
+    await tree.around(
+      "ls",
+      async () => ({}),
+      () => true,
+    );
+    release();
+    await long;
+    assert.ok(updates.includes(A("rock/")), updates.join(", "));
+  } finally {
+    await rm(own.dir, { recursive: true, force: true });
+  }
 });
 
 interface Result {

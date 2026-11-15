@@ -944,7 +944,24 @@ test("every tool's structuredContent deep-equals the CLI --json document", async
     );
     assert.ok(fields.length > 0, `${label}: no result fields`);
     assert.equal(result.isError, document["ok"] !== true, label);
-    assert.deepEqual(normalise(result.structuredContent), normalise(document), label);
+    if (row.tool === "cat") {
+      // cat carries the read once: the document lists each content's uri and mimeType, and the
+      // contents follow as image content or embedded resources, in order.
+      const contents = document["contents"] as Array<{ uri: string; mimeType: string }>;
+      const listed = contents.map(({ uri, mimeType }) => ({ uri, mimeType }));
+      assert.deepEqual(
+        normalise(result.structuredContent),
+        normalise({ ...document, contents: listed }),
+        label,
+      );
+      const items = (result.content as Array<Doc>).slice(1);
+      const carried = items.map((item, i) =>
+        item["type"] === "image" ? { ...listed[i], blob: item["data"] } : item["resource"],
+      );
+      assert.deepEqual(carried, contents, label);
+    } else {
+      assert.deepEqual(normalise(result.structuredContent), normalise(document), label);
+    }
     const [text] = result.content as { type: string; text: string }[];
     assert.deepEqual(JSON.parse(text!.text), result.structuredContent, label);
     previous = result.structuredContent as Doc;

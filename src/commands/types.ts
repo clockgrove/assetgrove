@@ -26,6 +26,8 @@ export interface JsonSchemaProperty {
   minimum?: number;
   /** How help shows the value, for example `<spec.json>`; defaults to `<name>`. */
   placeholder?: string;
+  /** True when only the CLI takes the option: the command's tool leaves it out of its schema. */
+  cliOnly?: true;
 }
 
 /** A command's input: an object schema whose properties are its options and positionals. */

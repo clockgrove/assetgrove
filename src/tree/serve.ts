@@ -47,6 +47,10 @@ export class TreeServer {
   private server?: McpServer;
   private legacy = true;
   private last?: ReturnType<typeof fingerprint>;
+  /** Tool calls running now. */
+  private running = 0;
+  /** The fingerprint steps, one at a time. */
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(dir: string, stateDir: string) {
     this.dir = dir;
@@ -156,17 +160,35 @@ export class TreeServer {
     }
   }
 
-  /** Runs `call` between `before` and `after`; `tool` names it. */
+  /**
+   * Runs `call` between `before` and `after`; `tool` names it. Fingerprints are taken one at a
+   * time; a call that starts while another is running (an `ls` during a `stage`) does not take a
+   * new baseline, which would swallow what the running call wrote: it diffs instead, so those
+   * changes are announced now and the running call's own check sees the rest.
+   */
   async around<T>(tool: string, call: (progress: () => void) => Promise<T>, ok: (r: T) => boolean) {
-    await this.before();
-    let pending: Promise<void> = Promise.resolve();
-    const progress = () => {
-      pending = pending.then(() => this.after());
-    };
-    const result = await call(progress);
-    await pending;
-    await this.after(LIBRARY_WRITERS.has(tool) && ok(result));
-    return result;
+    this.running++;
+    try {
+      const overlapping = this.running > 1;
+      await this.serial(() => (overlapping ? this.after() : this.before()));
+      let pending: Promise<void> = Promise.resolve();
+      const progress = () => {
+        pending = pending.then(() => this.serial(() => this.after()));
+      };
+      const result = await call(progress);
+      await pending;
+      await this.serial(() => this.after(LIBRARY_WRITERS.has(tool) && ok(result)));
+      return result;
+    } finally {
+      this.running--;
+    }
+  }
+
+  /** Runs one fingerprint step after the ones already queued. */
+  private serial(step: () => Promise<void>): Promise<void> {
+    const run = this.queue.then(step);
+    this.queue = run.catch(() => {});
+    return run;
   }
 
   private updated(address: string): void {

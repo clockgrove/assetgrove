@@ -9,6 +9,7 @@
 import "./fixtures/env.ts";
 import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
@@ -16,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { REFUSED_VARIABLES } from "../src/env.ts";
+import { READ_LIMIT } from "../src/tree/thumbs.ts";
 import { GAME, RUN_ID, fixtureLibrary, libraryProfile } from "./fixtures/library.ts";
 import { syntheticWorld } from "./fixtures/synthetic.ts";
 
@@ -144,11 +146,46 @@ test("ls and cat as tools return what resources/read returns", async () => {
     A("lantern/"),
     A("lantern/versions/1"),
     A("walk/image"),
+    A("big/image"),
   ]) {
     const read = (await client.readResource({ uri: address })).contents;
     const cat = await client.callTool({ name: "cat", arguments: { address } });
-    assert.deepEqual((cat.structuredContent as { contents: unknown }).contents, read, address);
+    // The document lists each content's uri and mimeType; the content follows once, in order.
+    const listed = (cat.structuredContent as { contents: { uri: string; mimeType: string }[] })
+      .contents;
+    const items = cat.content as Array<
+      | { type: "image"; data: string; mimeType: string }
+      | { type: "resource"; resource: Record<string, unknown> }
+      | { type: "text"; text: string }
+    >;
+    assert.equal(items[0]!.type, "text");
+    const carried = items.slice(1).map((item, i) => {
+      if (item.type === "image") return { ...listed[i], blob: item.data };
+      assert.equal(item.type, "resource", address);
+      return (item as { resource: Record<string, unknown> }).resource;
+    });
+    assert.deepEqual(carried, read, address);
+    // The read travels once, so the tool result stays near the read's own encoded size.
+    const encoded = read.reduce(
+      (n, c) => n + ("text" in c ? Buffer.byteLength(c.text) : (c as { blob: string }).blob.length),
+      0,
+    );
+    const size = Buffer.byteLength(JSON.stringify(cat));
+    assert.ok(size <= encoded + 4096, `${address}: ${size} for a ${encoded}-byte read`);
+    assert.ok(size <= READ_LIMIT + 4096, address);
   }
+  // cat --out is the CLI's: the read-only tool takes no out and writes nothing.
+  const { tools } = await client.listTools();
+  const catTool = tools.find((t) => t.name === "cat")!;
+  assert.equal(catTool.annotations?.readOnlyHint, true);
+  assert.equal("out" in (catTool.inputSchema.properties ?? {}), false);
+  const out = join(lib.dir, "written.png");
+  const refused = await client.callTool({
+    name: "cat",
+    arguments: { address: A("walk/image"), out },
+  });
+  assert.equal(refused.isError, true);
+  assert.equal(existsSync(out), false);
   const ls = await client.callTool({ name: "ls", arguments: { address: A("stale/") } });
   const read = first((await client.readResource({ uri: A("stale/") })).contents as Contents);
   assert.deepEqual((ls.structuredContent as { children: unknown }).children, read.children);
