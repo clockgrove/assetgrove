@@ -66,7 +66,7 @@
     {
       "id": "confirm-second-harness",
       "kind": "manual-owner",
-      "title": "Confirmation proven in one more harness (default Copilot CLI)",
+      "title": "Confirmation proven in one more harness (Codex)",
       "evidence": "A spend confirmation and a pick confirmed in the second harness on this commit: the harness and version, and the confirmation records."
     },
     {
@@ -86,12 +86,6 @@
       "kind": "manual-owner",
       "title": "Every real-check skip is the accepted one",
       "evidence": "The real-checks run's summary: the only skips are OpenAI image and edit for a key without image access, with the provider's reason, and docs/quick-start.md then lists them as unverified."
-    },
-    {
-      "id": "trademark",
-      "kind": "manual-owner",
-      "title": "The trademark check on the name is done",
-      "evidence": "The owner's record of the trademark search on \"Assetgrove\" and its result, before the first npm release."
     },
     {
       "id": "data-bars",

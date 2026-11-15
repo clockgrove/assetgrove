@@ -15,5 +15,12 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "scripts", "test", "eslint.config.js", "../../bench"]
+  "include": [
+    "src",
+    "scripts",
+    "test",
+    "eslint.config.js",
+    "../../bench",
+    "../../src/model3d/gltf-validator.d.ts"
+  ]
 }

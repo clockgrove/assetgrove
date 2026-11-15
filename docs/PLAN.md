@@ -17,7 +17,6 @@ This plan delivers [the 1.0 PRD](PRD.md) in four phases, taken from its [Scope o
 - Generic settings in place of those named after a CI product.
 - The rest of the core: the extension contract, core routes (Vercel AI Gateway, Anthropic, OpenAI and any OpenAI-compatible endpoint), generic sprite-atlas hand-off, runs that resume and never pay twice, versioned shared files, `init` with the style bible, and the skills in the Agent Skills format. See [What we build on](PRD.md#what-we-build-on) and [Trust, safety and legal](PRD.md#trust-safety-and-legal).
 - Linux, macOS and Windows in CI.
-- A trademark check on the name.
 
 **Gate:** everything above checked, the data-dependent bars in [Success measures and the 1.0 exit](PRD.md#success-measures-and-the-10-exit) set, and a release candidate, version 0.1.0, ready to publish to npm.
 
