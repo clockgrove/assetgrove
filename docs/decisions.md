@@ -237,3 +237,35 @@ A package whose entry file the working directory's Git tracks is refused (`exten
 ## Atlas writers are hand-written
 
 The `atlas-json` and `aseprite-json` presets (`src/handoff/presets`) write their JSON themselves. I looked for a maintained library that writes sprite-atlas or Aseprite JSON: the packers (`free-tex-packer`, `texturepacker` wrappers, `spritesmith`) pack images into a new sheet and would repack a strip whose geometry is already fixed, and the Aseprite tooling is the Aseprite program itself or readers of its export. None writes this document from known frame rectangles. The output is a handful of fixed-shape objects, byte-stable, and each preset reads it back and checks it ([handoff.md](handoff.md)).
+
+## Search bars and the image-similarity threshold (design section 7.9)
+
+The owner confirmed these bars, and they are committed here before the measuring run. Quality bars are the search spike's measured values minus two standard errors, rounded down to 0.05. Speed bars are measured on the 24-thread reference box. `bench/search/bars.ts` reads the table below at run time; `packages/assetgrove-search/test/bench-bars.test.ts` fails when this table and the design's values disagree.
+
+| Id               | Measure                                                 | Bar       | Where         |
+| ---------------- | ------------------------------------------------------- | --------- | ------------- |
+| look-category    | By look: at least 3 of the top 5 share the category     | >= 0.85   | dispatch      |
+| look-recall10    | By look: recall@10, same pack and category              | >= 0.65   | dispatch      |
+| look-pixel16     | By look: 16-px pixel art                                | >= 0.50   | dispatch      |
+| words-image-p5   | By words, P@5: image vector only                        | >= 0.45   | dispatch      |
+| words-shipped-p5 | By words, P@5: shipped mode                             | >= 0.85   | dispatch      |
+| filters-rebuild  | Filters return only matching rows; rebuild is identical | = 100%    | test          |
+| text-query-p95   | Text query p95                                          | <= 150 ms | reference box |
+| image-query-p95  | Image query p95                                         | <= 500 ms | reference box |
+| search-10k       | Search over 10,000 assets, fresh                        | < 1000 ms | reference box |
+| indexing         | Indexing, per image                                     | <= 150 ms | reference box |
+| freshness-2000   | Freshness, no changes, 2,000 files                      | <= 100 ms | reference box |
+
+**Precision.** The labelled library is about 300 images, so each quality measure is precise to roughly ±0.05. The bars keep the spike's values and are read with that margin: a miss within 0.05 is re-run once on the reference box before it counts. There is no other re-run.
+
+**Unmeasured int8.** The int8 text part is unmeasured on card vectors. If shipped mode fails on it, the text part goes to fp32.
+
+**Image-similarity threshold rule.** The threshold is the lowest cosine similarity `t` such that, over every pair of library images whose similarity is at least `t`, the share that are labelled same-asset pairs is at least 0.9. The bench computes it from the labelled library and prints it; the number that ships in the search package is that printed value. The bench writes `null` when no `t` reaches 0.9.
+
+**Written card texts.** The spike measured shipped mode with card text derived from file names, which inflates it. The labelled library's card texts are written from the images by a vision model (`bench/search/write-card-texts.ts`), recording model, prompt and date per text; a person spot-checks a sample and the manifest records which texts. A card text never contains its image's file stem, except that a stem of one plain lower-case word (`bear`, `left`) names the subject and a truthful text may say it. The calls go through the AI Gateway relay, which counts them against the Objective's cap; `--max-calls` is the script's own cap.
+
+**Same-asset pairs.** Two images are the same asset when they share a pack and differ only by folder (a restyle) or by colour (`playerLife3_green`/`_red`, `character_black_blue`/`_green`, `barrier_red`/`barrier_red_race`). The threshold rests on these pairs.
+
+**By-words P@5.** A query with fewer than five relevant images in the subset divides by its relevant count, so a perfect ranking scores 1; queries with no relevant image are skipped.
+
+**Inventory parsing.** `build-manifest.ts` reads `inventory.csv` with a short fixed-shape parser instead of a CSV library: the file is a dev input with seven known columns, no embedded quotes beyond one optional quoted path, and a library would add a dependency to a script that otherwise has none.
