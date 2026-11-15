@@ -13,7 +13,7 @@ export type { PlanJob, WorkPlan } from "../runs/plan.ts";
 export interface Effect {
   readOnly: boolean;
   spends: "never" | "always" | "conditional";
-  writes: "none" | "runs" | "out" | "target" | "settings";
+  writes: "none" | "runs" | "out" | "target" | "settings" | "state";
 }
 
 /** A JSON Schema for one property of a command's input. */

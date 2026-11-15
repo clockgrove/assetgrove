@@ -88,6 +88,12 @@ export interface Billing {
   readLimit?: () => Promise<LimitReading>;
   /** How spend is reconciled with the provider: per-call cost, balance delta, or not at all. */
   reconcile: "per-call-cost" | "balance-delta" | "unavailable";
+  /**
+   * The provider's own cost of one call, in USD, by the request ID it returned; spends nothing.
+   * Undefined while the provider has not reported it yet (the lookup stays pending); null for an ID
+   * the provider can never look up. Present only where `reconcile` is `per-call-cost`.
+   */
+  callCost?: (requestId: string) => Promise<number | null | undefined>;
 }
 
 export interface GenerationProvider {

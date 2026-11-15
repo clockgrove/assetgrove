@@ -65,7 +65,7 @@ export class VercelGateway implements GenerationProvider {
     apiKey: string | undefined;
     keyEnv?: string;
     baseURL?: string;
-    billing?: Omit<Billing, "hosts" | "readLimit">;
+    billing?: Omit<Billing, "hosts" | "readLimit" | "callCost">;
   }) {
     const baseURL = options.baseURL ?? GATEWAY_BASE_URL;
     this.#keyEnv = options.keyEnv ?? "AI_GATEWAY_API_KEY";
@@ -81,6 +81,7 @@ export class VercelGateway implements GenerationProvider {
       ...options.billing,
       hosts: [new URL(baseURL).host],
       readLimit: () => this.credits(),
+      callCost: (requestId) => this.generationCost(requestId),
     };
   }
 
@@ -110,6 +111,26 @@ export class VercelGateway implements GenerationProvider {
     const balanceUsd = toNumber((credits as { balance?: unknown }).balance);
     if (balanceUsd === undefined) throw new ProviderError("gateway credits: no balance returned");
     return { balanceUsd, source: "gateway credits" };
+  }
+
+  /**
+   * The gateway's own cost of one generation (`getGenerationInfo`, `totalCost` in USD); spends
+   * nothing. Undefined while the answer may still come: the gateway does not know the generation
+   * yet (404), is busy or failing (429, 5xx, no response), or this process has no key to ask with.
+   * Null when it never will: an ID that is not a generation ID (a response header or a local ID),
+   * a request the gateway rejects (400, 401, 403), or an answer with no numeric cost.
+   */
+  async generationCost(requestId: string): Promise<number | null | undefined> {
+    if (!requestId.startsWith("gen_")) return null;
+    if (this.#gateway === undefined) return undefined;
+    let info: { totalCost?: unknown };
+    try {
+      info = await this.#gateway.getGenerationInfo({ id: requestId });
+    } catch (error) {
+      const status = (error as { statusCode?: unknown }).statusCode;
+      return status === 400 || status === 401 || status === 403 ? null : undefined;
+    }
+    return toNumber(info.totalCost) ?? null;
   }
 
   async generateImage(req: ImageRequest): Promise<ImageResult> {

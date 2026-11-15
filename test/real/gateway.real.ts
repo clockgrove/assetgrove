@@ -47,6 +47,15 @@ test("real gateway: one image generation", { skip }, async () => {
   assert.equal(record.requestIdSource, "provider", `request ID ${record.requestId}`);
   assert.ok(!record.requestId.startsWith("local-"));
   assert.equal(record.costSource, "provider", "the gateway reports the call's cost");
+  // One reconciled call: the gateway's own cost of the generation, read back by its ID (spends
+  // nothing). It may not be reported yet; reconcile then leaves the lookup pending.
+  assert.ok(gw.provider.billing.callCost, "the gateway reconciles per call");
+  const reported = await gw.provider.billing.callCost(record.requestId);
+  assert.notEqual(reported, null, "a generation ID can be looked up");
+  if (typeof reported === "number") {
+    assert.ok(Number.isFinite(reported) && reported >= 0);
+    console.log(`reconciled: ledger $${record.costUsd} vs gateway $${reported}`);
+  } else console.log("reconcile: the gateway has not reported the cost yet (pending)");
   console.log(`budget left: $${rb.budgetLeftUsd().toFixed(4)}`);
 });
 
