@@ -47,7 +47,7 @@ export interface RunContext {
   extensions?: ExtensionRegistry;
   /** Receives log lines; the CLI sends them to stderr. */
   log: (message: string) => void;
-  /** The environment the refusal rule reads; process.env when absent. */
+  /** The environment the refusal rule reads; the process environment when absent. */
   env?: Env;
   /** The MCP server's --provider-script, given to each tool call of a command that takes one. */
   providerScript?: string;

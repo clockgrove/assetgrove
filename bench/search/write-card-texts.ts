@@ -2,6 +2,8 @@
  * Orchestrator step o-6 runs this once: it writes the card texts into the manifest with a vision
  * model. `node bench/search/write-card-texts.ts --provider gateway --model <id>`.
  * `--provider scripted` runs offline. `--max-calls` caps the vision calls of one run (default 700).
+ * `--base-url <url>` is the gateway's base URL, as the gateway adapter's `baseURL` setting; default its
+ * fixed endpoint.
  * `--sample <n> [--seed s]` prints the image ids a person should spot-check;
  * `--mark <id,id> --by <name>` records that they did.
  */
@@ -25,6 +27,7 @@ const { values } = parseArgs({
     images: { type: "string", default: join(import.meta.dirname, ".cache") },
     provider: { type: "string", default: "gateway" },
     model: { type: "string", default: "anthropic/claude-sonnet-5-5" },
+    "base-url": { type: "string" },
     force: { type: "boolean", default: false },
     "max-calls": { type: "string", default: "700" },
     sample: { type: "string" },
@@ -60,7 +63,11 @@ if (values.sample) {
           ),
       }
     : await fetchImages(manifest, values.images as string);
-  const provider = scripted ? new ScriptedVision() : await gatewayVision(values.model as string);
+  const provider = scripted
+    ? new ScriptedVision()
+    : await gatewayVision(values.model as string, {
+        ...(values["base-url"] !== undefined && { baseURL: values["base-url"] }),
+      });
   const n = await writeCardTexts({
     manifest,
     source,

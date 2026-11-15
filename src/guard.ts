@@ -7,7 +7,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
-import type { Env } from "./env.ts";
+import { gitDirSet, keyValue, type Env } from "./env.ts";
 import { InputError } from "./errors.ts";
 import { DEFAULT_KEY_ENV, registerKeyEnv } from "./redact.ts";
 import type { Settings } from "./settings.ts";
@@ -99,7 +99,7 @@ function existingDir(dir: string): string {
 
 /** Whether `dir` or an ancestor holds a `.git` entry (a directory, or a worktree's file). */
 function insideGit(dir: string): boolean {
-  if (process.env.GIT_DIR) return true;
+  if (gitDirSet()) return true;
   let at = dir;
   for (;;) {
     if (existsSync(join(at, ".git"))) return true;
@@ -246,12 +246,11 @@ export function findTrackedKeys(
   dir: string,
   options: { env?: Env; keyEnv?: readonly string[] } = {},
 ): TrackedKey[] {
-  const env = options.env ?? process.env;
   const names = [...new Set(options.keyEnv ?? DEFAULT_KEY_ENV)];
   const top = topLevel(dir);
   if (top === undefined) return [];
   const values = names
-    .map((name) => [name, env[name]?.trim() ?? ""] as const)
+    .map((name) => [name, keyValue(name, options.env)?.trim() ?? ""] as const)
     .filter(([, value]) => value.length >= MIN_KEY_VALUE_LENGTH);
   const entries = trackedFiles(top);
   const staged = stagedBlobs(top, entries);

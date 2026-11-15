@@ -4,18 +4,51 @@
  */
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { InputError } from "./errors.ts";
+import { SettingsError } from "./errors.ts";
 
 export type Env = Record<string, string | undefined>;
 
-/** A refusal of settings or the environment they allow, with the code `settings_invalid`. */
-export class SettingsError extends InputError {
-  readonly code = "settings_invalid";
+export { SettingsError };
 
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "SettingsError";
-  }
+/** The key variable each adapter reads by default; settings may name more with `keyEnv`. */
+export const DEFAULT_KEY_ENV = [
+  "AI_GATEWAY_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "TRIPO_API_KEY",
+] as const;
+
+/** The one spend variable read: the work item when `--work-item` names none. */
+export const WORK_ITEM_ENV = "ASSETGROVE_WORK_ITEM";
+
+/** The value of the key variable `name` as set, untrimmed; undefined when unset. */
+export function keyValue(name: string, env: Env = process.env): string | undefined {
+  return env[name];
+}
+
+/** `$ASSETGROVE_WORK_ITEM` as set, untrimmed; undefined when unset. */
+export function workItemEnv(env: Env = process.env): string | undefined {
+  return env["ASSETGROVE_WORK_ITEM"];
+}
+
+/** Whether `$GIT_DIR` is set to a non-empty value. */
+export function gitDirSet(env: Env = process.env): boolean {
+  return Boolean(env["GIT_DIR"]);
+}
+
+/**
+ * The Windows search path: `PATH` and `PATHEXT` as set, each found case-insensitively since the
+ * Windows environment is; undefined when unset.
+ */
+export function windowsSearchPath(env: Env = process.env): {
+  path: string | undefined;
+  pathext: string | undefined;
+} {
+  const lookup = (name: string): string | undefined => {
+    const key = Object.keys(env).find((k) => k.toUpperCase() === name);
+    return key === undefined ? undefined : env[key];
+  };
+  return { path: lookup("PATH"), pathext: lookup("PATHEXT") };
 }
 
 /** Variables that redirect or unwrap TLS; each is refused in either case unless allowed. */

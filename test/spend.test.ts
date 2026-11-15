@@ -91,7 +91,7 @@ test("the work item is --work-item, else ASSETGROVE_WORK_ITEM, and no other vari
   assert.equal(item({ ASSETGROVE_WORK_ITEM: "campaign-a" }).workItem, "campaign-a");
   assert.equal(item({ ASSETGROVE_WORK_ITEM: "campaign-a" }, "obj-1").workItem, "obj-1");
   const ignored = item({
-    FACTORY_ISSUE: "72",
+    CI_ISSUE: "72",
     ASSETGROVE_SPEND_LEDGER: "/elsewhere/ledger.jsonl",
     ASSETGROVE_DAILY_LIMIT_USD: "0.01",
     ASSETGROVE_WORK_ITEM_LIMIT_USD: "0.01",

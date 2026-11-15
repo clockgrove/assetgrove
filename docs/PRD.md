@@ -271,7 +271,7 @@ Nothing in the repository is secret: there are no keys and no private data in it
 
 | What | Where it goes | Why |
 | --- | --- | --- |
-| `FACTORY_ISSUE` and `FACTORY_STATE_DIR` in the spend ledger, and the relay address setting in the gateway adapter | A generic work-item and state-dir setting that any CI or agent can set; a CI product sets it like anyone else | No product name in the core |
+| Settings named after a CI product in the spend ledger and the gateway adapter | Generic work-item, state-dir and base-URL settings that any CI or agent can set; a CI product sets them like anyone else | No product name in the core |
 | One package with every dependency | Search, engines, asset kinds and routes as separate packages on the extension contract | A 2D pixel-art developer shouldn't need 3D tooling, and each extension can ship on its own. |
 | `docs/decisions.md` | Stays public, but off the front page | It records the decisions in force, not how to use the tool |
 

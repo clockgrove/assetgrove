@@ -12,7 +12,7 @@ import type { CommandSpec, RunContext } from "./types.ts";
 
 export interface ContextOptions {
   log: (message: string) => void;
-  /** The environment settings are found from; process.env when absent. */
+  /** The environment settings are found from; the process environment when absent. */
   env?: Env;
   /** The working directory whose Git top level the settings file may not be inside. */
   cwd?: string;
@@ -64,5 +64,5 @@ export function isPaid(spec: CommandSpec): boolean {
  * command.
  */
 export function checkContextEnvironment(ctx: RunContext): void {
-  checkEnvironment(ctx.settings.environment.allow, ctx.env ?? process.env);
+  checkEnvironment(ctx.settings.environment.allow, ctx.env);
 }

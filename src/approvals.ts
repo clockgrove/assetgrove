@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
-import type { Env } from "./env.ts";
+import { windowsSearchPath, type Env } from "./env.ts";
 import { savePending } from "./confirm/pending.ts";
 import type { ConfirmPort, ConfirmRequest } from "./confirm/prompt.ts";
 import type { RequestConfirmation } from "./confirm/index.ts";
@@ -348,11 +348,6 @@ export function defaultGate(): ApprovalGate {
   return { settings: loadSettings() };
 }
 
-function envValue(env: Env, name: string): string | undefined {
-  const key = Object.keys(env).find((k) => k.toUpperCase() === name);
-  return key === undefined ? undefined : env[key];
-}
-
 /**
  * The program a command starts. On Windows `argv[0]` is resolved through the cwd, PATH and PATHEXT
  * the way the process would be found, and a `.cmd` or `.bat` result is refused (exit 2
@@ -365,8 +360,8 @@ export function resolveProgram(
 ): string {
   const platform = options.platform ?? process.platform;
   if (platform !== "win32") return argv0;
-  const env = options.env ?? process.env;
-  const exts = (envValue(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+  const search = windowsSearchPath(options.env);
+  const exts = (search.pathext ?? ".COM;.EXE;.BAT;.CMD")
     .split(";")
     .filter(Boolean)
     .map((e) => e.toLowerCase());
@@ -375,7 +370,7 @@ export function resolveProgram(
       ? [win32.resolve(cwd, argv0)]
       : [
           win32.join(cwd, argv0),
-          ...(envValue(env, "PATH") ?? "")
+          ...(search.path ?? "")
             .split(";")
             .filter(Boolean)
             .map((dir) => win32.join(dir, argv0)),
