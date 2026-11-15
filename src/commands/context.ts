@@ -5,6 +5,7 @@
 import { checkEnvironment } from "../env.ts";
 import type { Env } from "../env.ts";
 import { ttyPort } from "../confirm/prompt.ts";
+import { loadExtensions } from "../extensions/registry.ts";
 import { createProviders } from "../providers/adapter.ts";
 import { loadSettings } from "../settings.ts";
 import type { CommandSpec, RunContext } from "./types.ts";
@@ -23,18 +24,27 @@ export interface ContextOptions {
   interactive?: boolean;
 }
 
-/** Loads the developer settings once and builds the context every command of this process runs in. */
-export function createRunContext(options: ContextOptions): RunContext {
+/**
+ * Loads the developer settings and the extensions they list once, and builds the context every
+ * command of this process runs in.
+ */
+export async function createRunContext(options: ContextOptions): Promise<RunContext> {
   const settings = loadSettings({
     ...(options.env && { env: options.env }),
     ...(options.cwd && { cwd: options.cwd }),
   });
+  // Extensions first: a listed package that cannot load refuses (exit 2) before anything else.
+  const extensions = await loadExtensions(settings, options.cwd ?? process.cwd());
   // Each provider is made by its adapter now, so an adapter-aware refusal (an unknown adapter, a
   // baseURL the adapter does not take) exits 2 settings_invalid before any command runs.
-  createProviders(settings, { ...(options.env && { env: options.env }) });
+  createProviders(settings, {
+    ...(options.env && { env: options.env }),
+    adapters: extensions.adapters,
+  });
   const prompt = options.interactive ? ttyPort() : undefined;
   return {
     settings,
+    extensions,
     log: options.log,
     ...(prompt && { prompt }),
     ...(options.providerScript !== undefined && { providerScript: options.providerScript }),

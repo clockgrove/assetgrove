@@ -39,6 +39,7 @@ approves it. A human runs pick; agents never do.`,
       candidateId: args.candidate,
       targetDir: args.target,
       gate: { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
+      ...(ctx.extensions && { registry: ctx.extensions }),
     });
     const lines = [`wrote ${result.mediaPath}`, `wrote ${result.manifestPath}`];
     if (result.provenancePath) lines.push(`wrote ${result.provenancePath}`);

@@ -85,7 +85,10 @@ Spends nothing and writes nothing.`,
     const providerScript = args.providerScript ?? ctx.providerScript;
     const script = providerScript !== undefined ? await loadScript(providerScript, ctx) : undefined;
     const options = { ...(ctx.env && { env: ctx.env }), ...(script && { script }) };
-    const configured = createProviders(ctx.settings, options);
+    const configured = createProviders(ctx.settings, {
+      ...options,
+      ...(ctx.extensions && { adapters: ctx.extensions.adapters }),
+    });
     if (script !== undefined && !configured.some((c) => c.adapter.id === "scripted"))
       configured.push(providerOfAdapter(ctx.settings, "scripted", options));
     const selected =

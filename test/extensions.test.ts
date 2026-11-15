@@ -1,0 +1,219 @@
+import "./fixtures/env.ts";
+import { SCRIPTED_LIMIT, settingsPath, writeSettings } from "./fixtures/env.ts";
+import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import { cpSync, existsSync, realpathSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { CORE_REGISTRY } from "../src/extensions/registry.ts";
+import { syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const fixture = fileURLToPath(new URL("./fixtures/extension-package", import.meta.url));
+const PACKAGE = "assetgrove-fixture-extension";
+
+interface Result {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+function cli(args: string[], cwd: string): Promise<Result> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      process.execPath,
+      [join(root, "src", "cli.ts"), ...args],
+      { cwd, env: process.env },
+      (error, stdout, stderr) =>
+        resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
+    );
+    child.stdin?.end();
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function doc(result: Result): Record<string, any> {
+  return JSON.parse(result.stdout);
+}
+
+/**
+ * A project with the fixture package installed under node_modules and named in its package.json,
+ * as `npm install` would leave it. Returns the project, the package directory and the marker the
+ * entry writes when it is imported.
+ */
+async function project(name = PACKAGE): Promise<{ dir: string; pkg: string; marker: string }> {
+  const dir = await mkdtemp(join(realpathSync(tmpdir()), "assetgrove-ext-"));
+  const pkg = join(dir, "node_modules", name);
+  cpSync(fixture, pkg, { recursive: true, filter: (src) => !src.endsWith(".marker") });
+  if (name !== PACKAGE) {
+    const manifest = JSON.parse(await readFile(join(pkg, "package.json"), "utf8"));
+    await writeFile(join(pkg, "package.json"), JSON.stringify({ ...manifest, name }));
+  }
+  await writeFile(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "a-game", private: true, dependencies: { [name]: "1.0.0" } }),
+  );
+  return { dir, pkg, marker: join(pkg, "imported.marker") };
+}
+
+function settings(extensions: string[], withEcho = false): void {
+  writeSettings({
+    extensions,
+    providers: {
+      scripted: { limit: { ...SCRIPTED_LIMIT } },
+      ...(withEcho && { echo: { adapter: "fixture:echo" } }),
+    },
+  });
+}
+
+/** A spec of the fixture's kind, a bible and a profile whose hand-off uses the fixture's preset. */
+async function inputs(dir: string): Promise<string[]> {
+  const world = await syntheticWorld();
+  const spec = join(dir, "spec.json");
+  const bible = join(world.bibleDir, "bible.json");
+  const profile = join(dir, "profile.json");
+  await writeFile(
+    spec,
+    JSON.stringify({ kind: "fixture:tile", assetId: "tile-1", animationFamily: "idle" }),
+  );
+  await writeFile(bible, JSON.stringify(world.bible));
+  const p = syntheticProfile({
+    manifest: { assetId: "{{spec.assetId}}", review: { status: "pending" } },
+    handoff: [{ preset: "manifest" }, { preset: "fixture:list", options: { file: "tiles.txt" } }],
+  });
+  delete p.validator;
+  await writeFile(profile, JSON.stringify(p));
+  return ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", join(dir, "runs")];
+}
+
+test("core registers its kinds, presets and adapters through the extension contract", () => {
+  const [core] = CORE_REGISTRY.loaded;
+  assert.equal(core?.name, "core");
+  assert.deepEqual(core?.kinds, ["still", "sprite-strip", "character-3d"]);
+  assert.deepEqual(core?.presets, ["manifest"]);
+  assert.deepEqual(
+    [...(core?.adapters ?? [])].sort(),
+    ["anthropic", "openai", "openai-compatible", "scripted", "tripo", "vercel-ai-gateway"].sort(),
+  );
+});
+
+test("a listed package's kind, preset and adapter stage and pick offline", async () => {
+  const { dir, marker } = await project();
+  settings([PACKAGE], true);
+  const listed = await cli(["extensions", "--json"], dir);
+  assert.equal(listed.code, 0, listed.stderr);
+  const fixtureExt = doc(listed)["extensions"].find((e: { name: string }) => e.name === "fixture");
+  assert.equal(fixtureExt.package, PACKAGE);
+  assert.deepEqual(fixtureExt.kinds, ["fixture:tile"]);
+  assert.deepEqual(fixtureExt.presets, ["fixture:list"]);
+  assert.deepEqual(fixtureExt.adapters, ["fixture:echo"]);
+  assert.ok(existsSync(marker));
+
+  const base = await inputs(dir);
+  const staged = await cli(["stage", ...base, "--candidates", "1", "--json"], dir);
+  assert.equal(staged.code, 0, staged.stderr);
+  const run = doc(staged);
+  assert.equal(run["candidates"].length, 1);
+  assert.deepEqual(run["candidates"][0].provenance.models, ["echo-1"]);
+  assert.match(run["candidates"][0].provenance.calls[0].route, /^echo:still:echo-1$/);
+
+  const target = join(dir, "target");
+  await mkdir(target);
+  const picked = await cli(
+    ["pick", "--run", run["runDir"], "--candidate", "c1", "--target", target, "--json"],
+    dir,
+  );
+  assert.equal(picked.code, 0, picked.stderr);
+  assert.equal(await readFile(join(target, "tiles.txt"), "utf8"), "tile-1\n");
+  assert.deepEqual(
+    doc(picked)["handoff"].map((h: { preset: string }) => h.preset),
+    ["manifest", "fixture:list"],
+  );
+});
+
+test("a package installed and in package.json but not listed in settings loads nothing", async () => {
+  const { dir, marker } = await project();
+  settings([]);
+  const listed = await cli(["extensions", "--json"], dir);
+  assert.equal(listed.code, 0, listed.stderr);
+  assert.deepEqual(
+    doc(listed)["extensions"].map((e: { name: string }) => e.name),
+    ["core"],
+  );
+  // A spec naming the package's kind is refused, naming the settings file; nothing is imported.
+  const staged = await cli(["stage", ...(await inputs(dir)), "--json"], dir);
+  assert.equal(staged.code, 2, staged.stderr);
+  assert.equal(doc(staged)["error"].code, "extension_unavailable");
+  assert.ok(doc(staged)["error"].message.includes(settingsPath));
+  assert.equal(existsSync(marker), false);
+});
+
+test("a listed package whose entry the project's Git tracks is refused before import", async () => {
+  const { dir, marker } = await project();
+  execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["add", "-f", join("node_modules", PACKAGE, "index.js")], { cwd: dir });
+  settings([PACKAGE]);
+  const r = await cli(["extensions", "--json"], dir);
+  assert.equal(r.code, 2, r.stderr);
+  assert.equal(doc(r)["error"].code, "extension_refused");
+  assert.match(doc(r)["error"].message, /tracks its entry/);
+  assert.equal(existsSync(marker), false);
+});
+
+test("an api mismatch is refused before import", async () => {
+  const { dir, pkg, marker } = await project();
+  const manifest = JSON.parse(await readFile(join(pkg, "package.json"), "utf8"));
+  manifest.assetgrove.api = 2;
+  await writeFile(join(pkg, "package.json"), JSON.stringify(manifest));
+  settings([PACKAGE]);
+  const r = await cli(["extensions", "--json"], dir);
+  assert.equal(r.code, 2, r.stderr);
+  assert.equal(doc(r)["error"].code, "extension_refused");
+  assert.match(doc(r)["error"].message, /api 2/);
+  assert.equal(existsSync(marker), false);
+});
+
+test("two packages registering one extension's ids exit 2 extension_conflict", async () => {
+  const { dir } = await project();
+  const twin = "assetgrove-fixture-twin";
+  cpSync(join(fixture), join(dir, "node_modules", twin), {
+    recursive: true,
+    filter: (src) => !src.endsWith(".marker"),
+  });
+  const manifest = JSON.parse(
+    await readFile(join(dir, "node_modules", twin, "package.json"), "utf8"),
+  );
+  await writeFile(
+    join(dir, "node_modules", twin, "package.json"),
+    JSON.stringify({ ...manifest, name: twin }),
+  );
+  settings([PACKAGE, twin]);
+  const r = await cli(["extensions", "--json"], dir);
+  assert.equal(r.code, 2, r.stderr);
+  assert.equal(doc(r)["error"].code, "extension_conflict");
+
+  settings([PACKAGE, PACKAGE]);
+  const twice = await cli(["extensions", "--json"], dir);
+  assert.equal(twice.code, 2, twice.stderr);
+  assert.equal(doc(twice)["error"].code, "extension_conflict");
+});
+
+test("an unknown id exits 2 extension_unavailable naming the settings line", async () => {
+  const { dir } = await project();
+  settings(["assetgrove-no-such-extension"]);
+  const r = await cli(["extensions", "--json"], dir);
+  assert.equal(r.code, 2, r.stderr);
+  assert.equal(doc(r)["error"].code, "extension_unavailable");
+  assert.ok(doc(r)["error"].message.includes(`extensions[0] "assetgrove-no-such-extension"`));
+  assert.ok(doc(r)["error"].message.includes(settingsPath));
+
+  // An adapter of an extension the settings do not list.
+  settings([], true);
+  const adapter = await cli(["extensions", "--json"], dir);
+  assert.equal(adapter.code, 2, adapter.stderr);
+  assert.equal(doc(adapter)["error"].code, "extension_unavailable");
+  assert.match(doc(adapter)["error"].message, /fixture:echo/);
+});

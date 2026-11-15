@@ -2,6 +2,7 @@ import type { Env } from "../env.ts";
 import type { ErrorCode } from "../errors.ts";
 import type { CommandConfirmation } from "../approvals.ts";
 import type { ConfirmPort } from "../confirm/prompt.ts";
+import type { ExtensionRegistry } from "../extensions/registry.ts";
 import type { Settings } from "../settings.ts";
 import type { WorkPlan } from "../runs/plan.ts";
 
@@ -38,6 +39,11 @@ export interface JsonSchemaObject {
 export interface RunContext {
   /** The developer settings, loaded once per process (src/commands/context.ts). */
   settings: Settings;
+  /**
+   * Core and the extensions the settings list, loaded once per process (src/extensions/registry.ts);
+   * core alone when absent.
+   */
+  extensions?: ExtensionRegistry;
   /** Receives log lines; the CLI sends them to stderr. */
   log: (message: string) => void;
   /** The environment the refusal rule reads; process.env when absent. */

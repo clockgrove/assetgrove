@@ -23,6 +23,7 @@ import { checkWrites, readRecordPath, relativeRecordPath } from "./paths.ts";
 import { sha256 } from "./request.ts";
 import { renderString, setPath } from "./template.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
+import type { PresetRegistry } from "./handoff/presets/index.ts";
 import type { HandoffProblem, PresetFile } from "./handoff/presets/index.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "./types.ts";
 
@@ -36,6 +37,8 @@ export interface PickOptions {
   now?: () => Date;
   /** How the profile's validator is approved; the developer settings with no prompt when absent. */
   gate?: ApprovalGate;
+  /** The presets the profile's `handoff` list chooses among; core's when absent. */
+  registry?: PresetRegistry;
 }
 
 export interface PickResult {
@@ -107,6 +110,8 @@ export interface TargetWrite {
   targetDir: string;
   /** How the profile's validator is approved; the developer settings with no prompt when absent. */
   gate?: ApprovalGate;
+  /** The presets the profile's `handoff` list chooses among; core's when absent. */
+  registry?: PresetRegistry;
 }
 
 export interface TargetWriteResult {
@@ -136,7 +141,7 @@ export interface TargetWriteResult {
 export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResult> {
   const { profile, spec } = write;
   // First: the profile's hand-off presets and their options.
-  const presets = resolveHandoff(profile);
+  const presets = resolveHandoff(profile, write.registry);
   // Before anything is written: the output must be declarable under a licence the target takes.
   const licensed = requireLicensable(profile, write.provenance);
   if (write.provenance.digitalSourceType === "undeclared") requireDeclared("undeclared");
@@ -346,6 +351,7 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     run: { runId: record.runId, candidateId: candidate.id, pickedAt: now().toISOString() },
     targetDir,
     ...(options.gate && { gate: options.gate }),
+    ...(options.registry && { registry: options.registry }),
   });
   const { files, ...rest } = written;
   record.picked = {

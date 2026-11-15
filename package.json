@@ -8,6 +8,13 @@
     "url": "git+https://github.com/clockgrove/assetgrove.git"
   },
   "type": "module",
+  "exports": {
+    "./extension": {
+      "types": "./dist/extension/api.d.ts",
+      "default": "./dist/extension/api.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "assetgrove": "dist/cli.js"
   },

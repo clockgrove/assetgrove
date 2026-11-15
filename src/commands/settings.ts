@@ -23,7 +23,10 @@ function shown(configured: ConfiguredProvider) {
 }
 
 function providers(ctx: RunContext): ConfiguredProvider[] {
-  return createProviders(ctx.settings, { ...(ctx.env && { env: ctx.env }) });
+  return createProviders(ctx.settings, {
+    ...(ctx.env && { env: ctx.env }),
+    ...(ctx.extensions && { adapters: ctx.extensions.adapters }),
+  });
 }
 
 export const settingsCommand = defineCommand<SettingsArgs>({

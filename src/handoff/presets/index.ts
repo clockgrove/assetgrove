@@ -7,6 +7,7 @@
  */
 import type { z } from "zod";
 import { InputError } from "../../errors.ts";
+import { extensionOf, unavailableId } from "../../extensions/errors.ts";
 import type { TargetProfile } from "../../types.ts";
 import { manifestPreset } from "./manifest.ts";
 
@@ -43,7 +44,7 @@ export interface HandoffPreset<Options = unknown> {
   ): Promise<string[]>;
 }
 
-/** Every preset by name. */
+/** Core's presets by name; the registry (src/extensions/registry.ts) adds the extensions'. */
 export const PRESETS: ReadonlyMap<string, HandoffPreset> = new Map<string, HandoffPreset>(
   [manifestPreset as HandoffPreset].map((preset) => [preset.name, preset]),
 );
@@ -57,11 +58,23 @@ export interface ResolvedPreset {
   options: unknown;
 }
 
+/** The presets a profile chooses among, and the settings file that lists their extensions. */
+export interface PresetRegistry {
+  presets: ReadonlyMap<string, HandoffPreset>;
+  settingsPath?: string | undefined;
+}
+
 /**
- * The profile's `handoff` list, each entry's preset found and its options validated against the
- * preset's `optionsSchema`. Throws an InputError (exit 2) naming what is wrong.
+ * The profile's `handoff` list, each entry's preset found in the registry (core's presets when
+ * none is given) and its options validated against the preset's `optionsSchema`. Throws an
+ * InputError (exit 2) naming what is wrong; an `<ext>:<name>` preset no loaded extension provides
+ * is `extension_unavailable`.
  */
-export function resolveHandoff(profile: TargetProfile): ResolvedPreset[] {
+export function resolveHandoff(
+  profile: TargetProfile,
+  registry: PresetRegistry = { presets: PRESETS },
+): ResolvedPreset[] {
+  const known = registry.presets;
   const list: unknown = profile.handoff ?? DEFAULT_HANDOFF;
   if (!Array.isArray(list) || list.length === 0) {
     throw new InputError("the profile's handoff must list at least one preset");
@@ -75,10 +88,12 @@ export function resolveHandoff(profile: TargetProfile): ResolvedPreset[] {
     if (extra.length > 0) {
       throw new InputError(`handoff[${i}] has unknown field(s) ${extra.join(", ")}`);
     }
-    const preset = typeof name === "string" ? PRESETS.get(name) : undefined;
+    const preset = typeof name === "string" ? known.get(name) : undefined;
     if (!preset) {
+      if (typeof name === "string" && extensionOf(name) !== undefined)
+        throw unavailableId(name, `handoff[${i}].preset`, registry.settingsPath);
       throw new InputError(
-        `handoff[${i}].preset ${JSON.stringify(name)} is not a preset (known: ${[...PRESETS.keys()].join(", ")})`,
+        `handoff[${i}].preset ${JSON.stringify(name)} is not a preset (known: ${[...known.keys()].join(", ")})`,
       );
     }
     const parsed = preset.optionsSchema.safeParse(options ?? {});
