@@ -5,9 +5,10 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { BUILTIN_TEMPLATES } from "../src/animation/templates.ts";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
@@ -570,4 +571,127 @@ test("stage keeps the plan step's promptPolicy in its run record and each candid
   assert.ok(record.candidates.length > 0);
   for (const candidate of record.candidates)
     assert.deepEqual(candidate.provenance.promptPolicy, record.promptPolicy);
+});
+
+const jobNames = (d: Doc): string[] =>
+  (d.jobs as Array<{ operation: string }>).map((j) => j.operation);
+
+test("free-text options that reach a prompt are checked at the plan step, and carry the model check", async () => {
+  const dir = await tempDir("assetgrove-policy-options-");
+  const watch = await recorder(dir);
+  const strip = await stripFiles(dir, "");
+  const id = await identityFiles(await tempDir("assetgrove-policy-options-id-"), "");
+  const fix = [
+    ...["fix-frame", "--strip", strip.strip, "--family", "walk-right", "--profile", strip.profile],
+    ...["--frame", "3", "--from", "2", "--out", join(dir, "fixed")],
+  ];
+  const sheet = ["import", "--sheet", id.sheet, "--profile", strip.profile, "--asset", "fern"];
+  const cases: string[][] = [
+    [...fix, "--note", `make it ${STYLE}`],
+    [...fix, "--spec", strip.spec, "--note", `make it ${STYLE}`],
+    [...fix, "--subject", `fern ${STYLE}`],
+    [
+      ...["animation-qa", "--strip", strip.strip, "--family", "walk-right"],
+      ...["--profile", strip.profile, "--subject", `fern ${STYLE}`],
+    ],
+    [...sheet, "--tool", "hand", "--hints", `fern, ${STYLE}`],
+    [...sheet, "--tool", "hand", "--subject", `fern ${STYLE}`],
+  ];
+  for (const args of cases) {
+    const run = await cli([
+      ...args,
+      ...["--runs", join(dir, "runs"), "--provider-script", watch.script, "--dry-run", "--json"],
+    ]);
+    assert.equal(run.code, 9, `${args.join(" ")}: ${run.stdout}${run.stderr}`);
+    assert.equal(doc(run).error.policy.match.term, TERM, args.join(" "));
+  }
+  // A note with no spec still gets the model check, which reads paraphrases.
+  const clean = await cli([
+    ...fix,
+    ...["--note", "keep the tail curled", "--runs", join(dir, "runs")],
+    ...["--provider-script", watch.script, "--dry-run", "--json"],
+  ]);
+  assert.equal(clean.code, 0, clean.stdout + clean.stderr);
+  assert.ok(jobNames(doc(clean)).includes("prompt-policy"), clean.stdout);
+  assert.equal(existsSync(watch.events), false, "no provider call");
+});
+
+test("profile text that reaches a prompt is checked at the plan step: motion templates and groom traits", async () => {
+  const dir = await tempDir("assetgrove-policy-profile-");
+  const watch = await recorder(dir);
+  const stage = await stageFiles("");
+  const own = BUILTIN_TEMPLATES.find((t) => t.name === "shelter")!;
+  const profile = {
+    ...stage.world.profile,
+    animation: { templates: [{ ...own, description: `a crouch ${STYLE}` }] },
+  };
+  await writeFile(stage.profile, JSON.stringify(profile));
+  approveProfile(profile, { targetDir: stage.world.targetDir });
+  const sheet = await cli([
+    ...["generate-sheet", "--spec", stage.spec, "--bible", stage.bible],
+    ...["--profile", stage.profile, "--runs", join(dir, "runs")],
+    ...["--provider-script", watch.script, "--dry-run", "--json"],
+  ]);
+  assert.equal(sheet.code, 9, sheet.stdout + sheet.stderr);
+  assert.equal(doc(sheet).error.policy.match.term, TERM);
+
+  const lookDev = await lookDevFiles(await tempDir("assetgrove-policy-profile-ld-"), "");
+  const lookProfile = JSON.parse(await readFile(lookDev.profile, "utf8")) as Doc;
+  lookProfile.model3d.groom.traits.winter = `long, dense, ${STYLE}`;
+  await writeFile(lookDev.profile, JSON.stringify(lookProfile));
+  const look = await cli([
+    ...["look-dev", "--model", lookDev.model, "--provenance", lookDev.provenance],
+    ...["--spec", lookDev.spec, "--bible", lookDev.bible, "--profile", lookDev.profile],
+    ...["--runs", join(dir, "runs"), "--provider-script", watch.script, "--dry-run", "--json"],
+  ]);
+  assert.equal(look.code, 9, look.stdout + look.stderr);
+  assert.equal(doc(look).error.policy.match.term, TERM);
+  assert.equal(existsSync(watch.events), false, "no provider call");
+});
+
+test("names split by invisible format characters still match", () => {
+  for (const mark of ["­", "​", "‌", "‍", "⁠", "﻿"]) {
+    const split = `${LAST.slice(0, 2)}${mark}${LAST.slice(2)}`;
+    const record = checkPromptText(`a fox painted by ${FIRST} ${split}`);
+    assert.equal(record.verdict, "refused", JSON.stringify(mark));
+    assert.equal(record.match?.term, TERM, JSON.stringify(mark));
+  }
+});
+
+test("the digest covers the profile's rig template and fix-frame's default provenance sidecar", async () => {
+  const dir = await tempDir("assetgrove-policy-reads-");
+  const watch = await recorder(dir);
+  const digestOf = async (args: string[]): Promise<string> => {
+    const run = await cli([
+      ...args,
+      ...["--runs", join(dir, "runs"), "--provider-script", watch.script, "--dry-run", "--json"],
+    ]);
+    assert.equal(run.code, 0, run.stdout + run.stderr);
+    return doc(run).digest as string;
+  };
+
+  const lookDev = await lookDevFiles(await tempDir("assetgrove-policy-reads-ld-"), "");
+  const rig = join(dirname(lookDev.profile), "rig", "quadruped.json");
+  const three = ["--spec", lookDev.spec, "--bible", lookDev.bible, "--profile", lookDev.profile];
+  const commands = [
+    ["stage", ...three],
+    ["look-dev", "--model", lookDev.model, "--provenance", lookDev.provenance, ...three],
+  ];
+  const before = await Promise.all(commands.map(digestOf));
+  const template = JSON.parse(await readFile(rig, "utf8")) as Doc;
+  await writeFile(rig, JSON.stringify({ ...template, edited: true }));
+  const after = await Promise.all(commands.map(digestOf));
+  for (const [i, command] of commands.entries())
+    assert.notEqual(after[i], before[i], `${command[0]}: the rig template is in the digest`);
+
+  const strip = await stripFiles(dir, "");
+  const fix = [
+    ...["fix-frame", "--strip", strip.strip, "--family", "walk-right"],
+    ...["--profile", strip.profile, "--frame", "3", "--from", "2", "--out", join(dir, "fixed")],
+  ];
+  const sidecar = `${strip.strip}.provenance.json`;
+  await writeFile(sidecar, JSON.stringify({ calls: [] }));
+  const first = await digestOf(fix);
+  await writeFile(sidecar, JSON.stringify({ calls: [], edited: true }));
+  assert.notEqual(await digestOf(fix), first, "the default sidecar is in the digest");
 });

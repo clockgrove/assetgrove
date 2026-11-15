@@ -507,6 +507,22 @@ export function declaresRig(profile: TargetProfile): boolean {
   return profile.model3d?.rig !== undefined;
 }
 
+/**
+ * The rig template file a profile names, as `<arg>/model3d.rig.template`, resolved against the
+ * profile's directory as `loadRig` reads it; none when the profile names none. For a request's
+ * digest.
+ */
+export function rigReads(
+  arg: string,
+  profile: { value: TargetProfile; dir: string },
+): Record<string, string> {
+  const rig = profile.value.model3d?.rig as unknown;
+  const template = isObject(rig) ? rig["template"] : undefined;
+  return typeof template === "string" && template.length > 0
+    ? { [`${arg}/model3d.rig.template`]: resolve(profile.dir, template) }
+    : {};
+}
+
 /** Checks the profile's `model3d.rig` and `model3d.gaits` shape without reading files. */
 export function rigProfileOf(profile: TargetProfile): RigProfile {
   const rig = profile.model3d?.rig as unknown;

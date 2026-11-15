@@ -51,11 +51,13 @@ export class PromptRefusedError extends Error {
 }
 
 /**
- * Text as the policy compares it: NFKC, lower case, combining marks removed, and every run of
- * characters that are neither letters nor digits made one space, trimmed.
+ * Text as the policy compares it: invisible format characters (soft hyphen, zero-width space and
+ * joiners) removed, NFKC, lower case, combining marks removed, and every run of characters that
+ * are neither letters nor digits made one space, trimmed.
  */
 export function normalizeText(text: string): string {
   return text
+    .replace(/\p{Cf}+/gu, "")
     .normalize("NFKC")
     .toLowerCase()
     .normalize("NFKD")

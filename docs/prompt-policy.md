@@ -10,9 +10,11 @@ Every paid command's free plan step (`plan`, `apply`, `stage`, `generate-sheet`,
 - the brief;
 - the bible's fields that feed prompts (its front matter strings and its Do's and Don'ts);
 - the prompt template's body;
-- at `apply`, the saved plan's prompts.
+- at `apply`, the saved plan's prompts;
+- the free-text options a prompt carries: `fix-frame`'s `--family`, `--subject` and `--note`; `animation-qa`'s `--family` and `--subject` when it makes vision calls; `import`'s `--subject` and `--hints` when it proposes a grouping;
+- the target profile's text a prompt carries: the motion template `generate-sheet` states (its description and beat names) and the groom seasons and their traits `look-dev` describes.
 
-The text is normalised (NFKC, lower case, diacritics removed, every run of spaces and punctuation one space) and matched against `policy/blocklist.json` (`format: "assetgrove-blocklist/1"`, shipped with the package) on word boundaries; a two-word term also matches run together. A hit exits 9 `prompt_refused` with `error.policy`: `match` (`term`, `kind`), `blocklistSha256`, `textSha256`, `verdict` and `allowedBy`. Nothing is called, spent or written. `--dry-run` and `estimate` refuse the same way.
+The text is normalised (invisible format characters such as soft hyphens and zero-width spaces removed, NFKC, lower case, diacritics removed, every run of spaces and punctuation one space) and matched against `policy/blocklist.json` (`format: "assetgrove-blocklist/1"`, shipped with the package) on word boundaries; a two-word term also matches run together. A hit exits 9 `prompt_refused` with `error.policy`: `match` (`term`, `kind`), `blocklistSha256`, `textSha256`, `verdict` and `allowedBy`. Nothing is called, spent or written. `--dry-run` and `estimate` refuse the same way.
 
 ## The model check
 
