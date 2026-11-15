@@ -12,6 +12,7 @@ import { applyEdits, findNodeAtLocation, format, modify, parse, parseTree } from
 import type { FormattingOptions } from "jsonc-parser";
 import { digestOf } from "./confirm/records.ts";
 import type { ConfirmRequest } from "./confirm/prompt.ts";
+import { withConfigOverride } from "./env.ts";
 import { InputError } from "./errors.ts";
 import { CORE_ADAPTERS } from "./providers/adapter.ts";
 import { LIMIT_KINDS, loadSettings } from "./settings.ts";
@@ -375,7 +376,7 @@ export async function applySettingsChange(
   const trial = `${path}.${process.pid}.tmp`;
   await writeFile(trial, text);
   try {
-    loadSettings({ env: { ...process.env, ASSETGROVE_CONFIG: trial } });
+    loadSettings({ env: withConfigOverride(trial) });
   } finally {
     await rm(trial, { force: true });
   }

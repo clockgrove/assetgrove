@@ -92,6 +92,11 @@ export function configOverride(env: Env = process.env): string | undefined {
   return env["ASSETGROVE_CONFIG"] || undefined;
 }
 
+/** The environment with `$ASSETGROVE_CONFIG` set to `path`, to load a settings file in trial. */
+export function withConfigOverride(path: string, env: Env = process.env): Env {
+  return { ...env, ASSETGROVE_CONFIG: path };
+}
+
 /** `$XDG_CONFIG_HOME` or `~/.config`; `%APPDATA%` on Windows. */
 export function configHome(env: Env = process.env, platform: string = process.platform): string {
   if (platform === "win32" && env["APPDATA"] && isAbsolute(env["APPDATA"])) return env["APPDATA"];

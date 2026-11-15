@@ -109,7 +109,9 @@ function envRead(node: ts.Node): string | undefined {
     ts.isCallExpression(node) &&
     ts.isIdentifier(node.expression) &&
     node.expression.text === "require" &&
-    node.arguments.some((a) => ts.isStringLiteralLike(a) && ["process", "node:process"].includes(a.text))
+    node.arguments.some(
+      (a) => ts.isStringLiteralLike(a) && ["process", "node:process"].includes(a.text),
+    )
   ) {
     return "requires the process module";
   }
@@ -155,7 +157,11 @@ test("the environment check catches every way to reach process.env", () => {
   ]) {
     assert.equal(reads(source), true, source);
   }
-  for (const source of ["process.platform;", "process.exitCode = 1;", "globalThis.process.cwd();"]) {
+  for (const source of [
+    "process.platform;",
+    "process.exitCode = 1;",
+    "globalThis.process.cwd();",
+  ]) {
     assert.equal(reads(source), false, source);
   }
 });
