@@ -38,6 +38,15 @@ interface Result {
   stderr: string;
 }
 
+/**
+ * True when the child was killed, not ended by itself. POSIX reports the signal; Windows has no
+ * signals, so a killed process shows a non-zero exit code and no result document.
+ */
+function killed(result: Result): boolean {
+  if (result.signal === "SIGKILL") return true;
+  return process.platform === "win32" && result.code !== 0 && result.stdout.trim() === "";
+}
+
 function childEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env["AI_GATEWAY_API_KEY"];
@@ -286,7 +295,7 @@ test("a run stopped after k of n calls resumes making only n-k calls, and the le
 
   await writeFile(provider.stop, String(k));
   const stopped = await cli([...args, "--json"]);
-  assert.equal(stopped.signal, "SIGKILL", "the run was killed mid-way");
+  assert.ok(killed(stopped), "the run was killed mid-way");
   assert.equal(await provider.count(), k);
   assert.equal((await journal(plan.runDir)).length, k);
   const state = JSON.parse(await readFile(join(plan.runDir, "state.json"), "utf8"));
@@ -341,7 +350,7 @@ test("a resumed run is checked against the spend limit for its missing calls onl
   assert.ok(n > k);
   await writeFile(provider.stop, String(k));
   const stopped = await cli(limited);
-  assert.equal(stopped.signal, "SIGKILL", stopped.stderr);
+  assert.ok(killed(stopped), stopped.stderr);
   await rm(provider.stop);
   // The whole forecast again would cross the limit; the missing calls and the interrupted one fit.
   const resumed = await cli(limited);
