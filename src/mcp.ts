@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Readable, Writable } from "node:stream";
 import { join, resolve } from "node:path";
-import { describeBible, initBible, useBiblePreset } from "./bible.ts";
+import { describeBible, useBiblePreset } from "./bible.ts";
 import { checkContextEnvironment, isPaid } from "./commands/context.ts";
 import { commands } from "./commands/registry.ts";
 import { resultDocument } from "./commands/result.ts";
@@ -79,13 +79,6 @@ export async function generationTool(
     return useBiblePreset({
       biblePath: stringArg(args, "bible")!,
       preset: stringArg(args, "preset")!,
-    });
-  }
-  if (name === "bible_init") {
-    return initBible({
-      directory: stringArg(args, "directory")!,
-      world: stringArg(args, "world")!,
-      preset: stringArg(args, "preset")! as Parameters<typeof initBible>[0]["preset"],
     });
   }
   if (name === "plan") {
