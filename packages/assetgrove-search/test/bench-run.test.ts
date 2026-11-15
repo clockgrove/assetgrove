@@ -12,7 +12,7 @@ import {
 } from "../../../bench/search/card-text.ts";
 import { buildFixtureManifest, fixtureSource } from "../../../bench/search/fixture.ts";
 import { readManifest } from "../../../bench/search/manifest.ts";
-import { allPairs, similarityThreshold } from "../../../bench/search/metrics.ts";
+import { allPairs, precisionAt5, similarityThreshold } from "../../../bench/search/metrics.ts";
 import { ScriptedEmbedder } from "../src/scripted.ts";
 
 const fixtureUrl = new URL("../../../bench/search/fixture/manifest.json", import.meta.url);
@@ -112,5 +112,45 @@ describe("card texts", () => {
     const sample = spotCheckSample(manifest, 3, "s");
     assert.deepEqual(sample, spotCheckSample(manifest, 3, "s"));
     assert.throws(() => markSpotChecked(manifest, sample, "kirk", "2026-01-01"), /no card text/);
+  });
+});
+
+describe("by-words precision", () => {
+  it("scores 1 for a perfect ranking even when fewer than five images are relevant", () => {
+    assert.equal(precisionAt5(["a", "x", "y", "z", "w"], ["a"]), 1);
+    assert.equal(precisionAt5(["a", "b", "c", "d", "e"], ["a", "b", "c", "d", "e", "f"]), 1);
+    assert.equal(precisionAt5(["x"], ["a"]), 0);
+  });
+
+  it("can reach the shipped bar on the committed queries: the best possible mean is 1", async () => {
+    const m = await readManifest(new URL("../../../bench/search/manifest.json", import.meta.url));
+    const scored = m.writtenQueries.filter((q) => q.relevant.length > 0);
+    assert.ok(scored.length >= 25);
+    const best = scored.map((q) => precisionAt5(q.relevant, q.relevant));
+    assert.equal(best.reduce((a, b) => a + b, 0) / best.length, 1);
+  });
+});
+
+describe("manifest building", () => {
+  it("matches the owner's id rule for the female adventurer and finds recolour pairs", async () => {
+    const m = await readManifest(new URL("../../../bench/search/manifest.json", import.meta.url));
+    assert.ok(m.writtenQueries.find((q) => q.id === "q14")?.relevant.length);
+    assert.ok(m.pairs.length >= 20);
+  });
+
+  it("calls the vision model only up to the cap, and saves each text as it is written", async () => {
+    const manifest = buildFixtureManifest();
+    let saved = 0;
+    await assert.rejects(
+      writeCardTexts({
+        manifest,
+        source: fixtureSource(),
+        provider: new ScriptedVision(),
+        maxCalls: 3,
+        onWritten: () => void saved++,
+      }),
+      /cap/,
+    );
+    assert.equal(saved, 3);
   });
 });

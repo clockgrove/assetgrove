@@ -64,3 +64,13 @@ export function similarityThreshold(pairs: PairSim[], precision = 0.9): number |
   }
   return best;
 }
+
+/**
+ * Precision at 5, capped by what exists: a query with fewer than five relevant images in the
+ * subset divides by its relevant count, so a perfect ranking scores 1 for every query.
+ */
+export function precisionAt5(top: string[], relevant: string[]): number {
+  if (relevant.length === 0) return 0;
+  const hit = top.slice(0, 5).filter((k) => relevant.includes(k)).length;
+  return hit / Math.min(5, relevant.length);
+}

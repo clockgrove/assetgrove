@@ -9,7 +9,7 @@ import type { Row, Store } from "../../packages/assetgrove-search/src/store.ts";
 import { passes, type Bar } from "./bars.ts";
 import type { ImageSource } from "./fetch.ts";
 import type { Label, Manifest } from "./manifest.ts";
-import { allPairs, mean, percentile, rrf, similarityThreshold } from "./metrics.ts";
+import { allPairs, mean, percentile, precisionAt5, rrf, similarityThreshold } from "./metrics.ts";
 
 export interface BenchEntry {
   bar: string;
@@ -243,7 +243,7 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
       // A query nothing in this subset answers (empty `relevant`) cannot score; skip it.
       if (q.relevant.length === 0) continue;
       const top = await run(q.text);
-      out.push(top.filter((k) => q.relevant.includes(k)).length / 5);
+      out.push(precisionAt5(top, q.relevant));
     }
     return out;
   };
@@ -284,14 +284,35 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   const vecs = new Map(rows.map((r) => [r.key, r.imageVec as Float32Array]));
   const threshold = similarityThreshold(allPairs(ids, vecs, manifest.pairs));
 
+  // Freshness fixture (also timed inside search-10k).
+  const dir = await mkdtemp(join(tmpdir(), "bench-fresh-"));
+  const count = o.freshnessFiles ?? 2000;
+  const files: string[] = [];
+  const known = new Map<string, { size: number; mtimeMs: number }>();
+  const when = new Date(1_700_000_000_000);
+  for (let i = 0; i < count; i++) {
+    const f = join(dir, `f${i}.png`);
+    await writeFile(f, `file ${i}`);
+    await utimes(f, when, when);
+    const s = await stat(f);
+    files.push(f);
+    known.set(f, { size: s.size, mtimeMs: s.mtimeMs });
+  }
+
   // Speed: pad to padTo rows.
   await store.upsert(paddingRows(Math.max(0, padTo - rows.length), embedder.dimension, 0));
   const queries = manifest.writtenQueries.map((q) => q.text);
   const textMs: number[] = [];
+  // "Fresh": a query preceded by the no-change freshness scan, as the real find does (design 7.4).
+  const freshMs: number[] = [];
   for (let i = 0; i < timed; i++) {
     const t0 = performance.now();
     await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
     textMs.push(performance.now() - t0);
+    const t1 = performance.now();
+    if ((await freshnessScan(files, known)) !== 0) throw new Error("freshness scan saw changes");
+    await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
+    freshMs.push(performance.now() - t1);
   }
   const imageMs: number[] = [];
   const first = manifest.images[0];
@@ -306,24 +327,11 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   }
   entry("text-query-p95", percentile(textMs, 0.95), textMs.length, true);
   entry("image-query-p95", percentile(imageMs, 0.95), imageMs.length, true);
-  entry("search-10k", Math.max(...textMs), textMs.length, true);
+  entry("search-10k", Math.max(...freshMs), freshMs.length, true);
   entry("indexing", mean(indexMs), indexMs.length, true);
 
   // Freshness: no changes, many files.
-  const dir = await mkdtemp(join(tmpdir(), "bench-fresh-"));
   try {
-    const count = o.freshnessFiles ?? 2000;
-    const files: string[] = [];
-    const known = new Map<string, { size: number; mtimeMs: number }>();
-    const when = new Date(1_700_000_000_000);
-    for (let i = 0; i < count; i++) {
-      const f = join(dir, `f${i}.png`);
-      await writeFile(f, `file ${i}`);
-      await utimes(f, when, when);
-      const s = await stat(f);
-      files.push(f);
-      known.set(f, { size: s.size, mtimeMs: s.mtimeMs });
-    }
     const t0 = performance.now();
     const changed = await freshnessScan(files, known);
     const ms = performance.now() - t0;

@@ -258,4 +258,10 @@ The owner confirmed these bars, and they are committed here before the measuring
 
 **Image-similarity threshold rule.** The threshold is the lowest cosine similarity `t` such that, over every pair of library images whose similarity is at least `t`, the share that are labelled same-asset pairs is at least 0.9. The bench computes it from the labelled library and prints it; the number that ships in the search package is that printed value. The bench writes `null` when no `t` reaches 0.9.
 
-**Written card texts.** The spike measured shipped mode with card text derived from file names, which inflates it. The labelled library's card texts are written from the images by a vision model (`bench/search/write-card-texts.ts`), recording model, prompt and date per text; a person spot-checks a sample and the manifest records which texts. A card text never contains its image's file stem.
+**Written card texts.** The spike measured shipped mode with card text derived from file names, which inflates it. The labelled library's card texts are written from the images by a vision model (`bench/search/write-card-texts.ts`), recording model, prompt and date per text; a person spot-checks a sample and the manifest records which texts. A card text never contains its image's file stem, except that a stem of one plain lower-case word (`bear`, `left`) names the subject and a truthful text may say it. The calls go through the AI Gateway relay, which counts them against the Objective's cap; `--max-calls` is the script's own cap.
+
+**Same-asset pairs.** Two images are the same asset when they share a pack and differ only by folder (a restyle) or by colour (`playerLife3_green`/`_red`, `character_black_blue`/`_green`, `barrier_red`/`barrier_red_race`). The threshold rests on these pairs.
+
+**By-words P@5.** A query with fewer than five relevant images in the subset divides by its relevant count, so a perfect ranking scores 1; queries with no relevant image are skipped.
+
+**Inventory parsing.** `build-manifest.ts` reads `inventory.csv` with a short fixed-shape parser instead of a CSV library: the file is a dev input with seven known columns, no embedded quotes beyond one optional quoted path, and a library would add a dependency to a script that otherwise has none.

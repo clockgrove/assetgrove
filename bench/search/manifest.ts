@@ -11,6 +11,9 @@ export interface CardText {
   prompt: string;
   /** ISO date the text was written. */
   date: string;
+  /** The route the call went through, and the provider's request id, when it gave one. */
+  route?: string;
+  requestId?: string;
   /** Present when a person spot-checked this text. */
   spotCheck?: { by: string; date: string };
 }
@@ -65,10 +68,15 @@ export const stem = (file: string): string => file.replace(/\.[^./]+$/, "");
 
 const normalise = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ");
 
-/** True when `text` contains the file stem as a whole phrase (separators ignored). */
+/**
+ * True when `text` contains the file stem as a whole phrase (separators ignored). A stem of one
+ * lower-case word is exempt: it names the subject, and a truthful card must be free to say it.
+ */
 export function containsStem(text: string, file: string): boolean {
   const s = normalise(stem(file)).trim();
   if (s === "") return false;
+  // A stem that is one plain word ("bear", "left") is the subject itself: a true description says it.
+  if (/^\p{L}+$/u.test(stem(file)) && stem(file) === stem(file).toLowerCase()) return false;
   return ` ${normalise(text).trim()} `.includes(` ${s} `);
 }
 

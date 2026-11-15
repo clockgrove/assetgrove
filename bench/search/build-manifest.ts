@@ -34,7 +34,7 @@ interface Row {
   width: number;
   height: number;
   pixel: boolean;
-  /** The spike's `r.id`: pack and path, lower case, without extension. */
+  /** The spike's `r.id`: pack and path, lower case, spaces as underscores, without extension. */
   rid: string;
   folder: string;
   /** The spike's `f(r)`: the file name, lower case. */
@@ -56,7 +56,10 @@ export function parseInventory(csv: string): Row[] {
       width: Number(w),
       height: Number(h),
       pixel: px === "1",
-      rid: `${pack}/${path}`.toLowerCase().replace(/\.[^./]+$/, ""),
+      rid: `${pack}/${path}`
+        .toLowerCase()
+        .replace(/\.[^./]+$/, "")
+        .replaceAll(" ", "_"),
       folder: dirname(path!),
       f: basename(path!).toLowerCase(),
     });
@@ -101,6 +104,43 @@ export const QUERY_RULES: [string, (r: Row) => boolean][] = [
   ["wooden crate box", (r) => /box|crate/.test(r.f)],
 ];
 
+const COLOURS = new Set([
+  "black",
+  "blue",
+  "green",
+  "red",
+  "orange",
+  "yellow",
+  "white",
+  "brown",
+  "blonde",
+  "grey",
+  "silver",
+  "gold",
+  "bronze",
+  "purple",
+  "pink",
+]);
+
+/** A file name with its colour variant removed: one trailing colour part, "race", and a camelCase colour. */
+export function assetKey(file: string): string {
+  const parts = file
+    .replace(/\.[^./]+$/, "")
+    .split("_")
+    .filter((p) => p.toLowerCase() !== "race");
+  if (parts.length > 1 && COLOURS.has(parts[parts.length - 1]!.toLowerCase())) parts.pop();
+  return parts
+    .map((p) =>
+      p
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .split(" ")
+        .filter((t) => !COLOURS.has(t.toLowerCase()) || t === p)
+        .join(""),
+    )
+    .join("_")
+    .toLowerCase();
+}
+
 export function buildManifest(rows: Row[], previous?: Manifest): Manifest {
   const old = new Map((previous?.images ?? []).map((i) => [i.id, i]));
   const images: ManifestImage[] = rows.map((r) => ({
@@ -112,10 +152,11 @@ export function buildManifest(rows: Row[], previous?: Manifest): Manifest {
     height: r.height,
     ...(old.get(r.id)?.card ? { card: old.get(r.id)!.card! } : {}),
   }));
-  // Same asset: the same file name in the same pack, in another folder (a variant or restyle).
+  // Same asset: one asset in the same pack that differs only by folder (a restyle) or by colour
+  // (a recolour: playerLife3_green/_red, character_black_blue/_green, barrier_red/_red_race).
   const groups = new Map<string, string[]>();
   for (const r of rows) {
-    const key = `${r.pack}\0${basename(r.path)}`;
+    const key = `${r.pack}\0${assetKey(basename(r.path))}`;
     groups.set(key, [...(groups.get(key) ?? []), r.id]);
   }
   const pairs: [string, string][] = [];

@@ -7,7 +7,7 @@ import { formatReport, runBench } from "./bench.ts";
 import { writeCardTexts, ScriptedVision } from "./card-text.ts";
 import { fetchImages } from "./fetch.ts";
 import { buildFixtureManifest, fixtureSource } from "./fixture.ts";
-import { readManifest } from "./manifest.ts";
+import { checkManifest, readManifest } from "./manifest.ts";
 
 const { values } = parseArgs({
   options: {
@@ -36,6 +36,12 @@ if (values.fixture) {
   await writeCardTexts({ manifest, source, provider: new ScriptedVision() });
 } else {
   manifest = await readManifest(values.manifest as string);
+  // Shipped mode needs a written card text per image: refuse rather than measure without them.
+  const problems = checkManifest(manifest);
+  if (problems.length > 0) {
+    console.error(`the manifest is not ready to measure:\n${problems.slice(0, 10).join("\n")}`);
+    process.exit(1);
+  }
   source = await fetchImages(manifest, values.images as string);
 }
 for (const line of formatReport(await runBench({ manifest, source, embedder, bars, padTo })))
