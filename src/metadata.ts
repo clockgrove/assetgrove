@@ -82,9 +82,19 @@ export function metadataStep(value: DigitalSourceType, pixelHashes: string[]): T
 }
 
 const escapeXml = (text: string): string =>
-  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 const unescapeXml = (text: string): string =>
-  text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  text
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const iptcPrefixes = (xml: string): string[] =>
   [
@@ -246,11 +256,13 @@ function scanJpeg(b: Buffer): JpegScan {
     if (length < 2 || offset + length > b.length) throw new Error("invalid JPEG segment length");
     const data = b.subarray(offset + 2, offset + length);
     if (marker === 0xe1 && data.subarray(0, jpegXmpId.length).equals(jpegXmpId)) {
-      xmp ??= {
+      const found = {
         start,
         end: offset + length,
         xml: data.subarray(jpegXmpId.length).toString("utf8"),
       };
+      // Prefer the first segment that carries a source type, else the first XMP segment.
+      if (!xmp || (readXmp(xmp.xml) === undefined && readXmp(found.xml) !== undefined)) xmp = found;
     }
     if (leading && marker === 0xe0) insertAt = offset + length;
     else leading = false;
