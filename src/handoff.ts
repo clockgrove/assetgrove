@@ -310,6 +310,8 @@ export interface PreparedTargetWrite {
   sidecarRels: string[];
   /** The images carrying C2PA content credentials, relative to the target, and their signer. */
   credentials?: { signer: SignerRecord; rels: string[] };
+  /** The sha256 of the media before its credentials were signed in, when they were. */
+  contentSha256?: string;
 }
 
 /**
@@ -417,7 +419,9 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   };
   const signed: string[] = [];
   const sign = signer && credentialSigner(signer, guard, digitalSourceType, provenance.models);
+  let contentSha256: string | undefined;
   if (sign && canCarryCredentials(output.mediaType)) {
+    contentSha256 = sha256(output.bytes);
     // The path is rendered first to find the file already there, then again with the signed bytes.
     const rel = renderString(profile.layout.media, context);
     output.bytes = await sign(rel, output.bytes, output.mediaType);
@@ -501,6 +505,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     manifestPath,
     ...(provenancePath !== undefined && { provenancePath }),
     mediaBytes: output.bytes,
+    ...(contentSha256 !== undefined && { contentSha256 }),
     ...(write.replaces !== undefined && { replaces: write.replaces }),
   });
   sameFile([...writes.map(([path]) => path), ...libraryFiles(library)]);
@@ -526,6 +531,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     ...(provenanceBytes !== undefined && { provenanceBytes }),
     sidecarRels,
     ...(signer && signed.length > 0 && { credentials: { signer: signer.record, rels: signed } }),
+    ...(contentSha256 !== undefined && { contentSha256 }),
   };
 }
 
@@ -633,6 +639,7 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     mediaBytes: prepared.mediaBytes,
     provenance: prepared.provenance,
     ...(prepared.provenanceBytes !== undefined && { provenanceBytes: prepared.provenanceBytes }),
+    ...(prepared.contentSha256 !== undefined && { contentSha256: prepared.contentSha256 }),
     spec: write.spec,
     run: String(write.run["runId"] ?? ""),
     candidate: String(write.run["candidateId"] ?? ""),

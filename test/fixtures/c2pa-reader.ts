@@ -41,6 +41,18 @@ function boxes(data: Uint8Array): Box[] {
   return out;
 }
 
+/** The data of a WebP's RIFF chunk. */
+function riffChunk(data: Uint8Array, fourcc: string): Uint8Array {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  for (let at = 12; at + 8 <= data.length;) {
+    const size = view.getUint32(at + 4, true);
+    if (Buffer.from(data.subarray(at, at + 4)).toString("latin1") === fourcc)
+      return data.subarray(at + 8, at + 8 + size);
+    at += 8 + size + (size % 2);
+  }
+  throw new Error(`no ${fourcc} chunk`);
+}
+
 interface Superbox {
   label: string;
   /** The superbox's payload (description box and content boxes). */
@@ -93,7 +105,9 @@ export async function readIndependently(
 ): Promise<IndependentRead> {
   const tmp = `${file}.jumbf`;
   await exiftool.extractBinaryTag("JUMBF", file, tmp);
-  const jumbf = new Uint8Array(await readFile(tmp));
+  let jumbf: Uint8Array = new Uint8Array(await readFile(tmp));
+  // exiftool decodes a WebP's C2PA chunk but extracts no JUMBF from it: take the RIFF chunk.
+  if (jumbf.length === 0) jumbf = riffChunk(new Uint8Array(await readFile(file)), "C2PA");
   const store = superbox(boxes(jumbf)[0]!);
   if (store.label !== "c2pa") throw new Error(`not a C2PA store: ${store.label}`);
   // The active manifest is the last one in the store.

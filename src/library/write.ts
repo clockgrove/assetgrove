@@ -248,6 +248,8 @@ export async function prepareLibraryWrite(input: {
   manifestPath: string;
   /** The media bytes the hand-off writes: bytes of an older version exit 2 `version_exists`. */
   mediaBytes?: Uint8Array;
+  /** The sha256 of the media before C2PA credentials were signed in; an older version's too. */
+  contentSha256?: string;
   /**
    * The version the pick confirmed replacing (its sha256, or null for a first pick): another
    * current version exits 2 `version_changed`. Left out, nothing is compared.
@@ -292,7 +294,7 @@ export async function prepareLibraryWrite(input: {
   const versions = review?.versions ?? [];
   const current = versions.at(-1)?.sha256;
   const sha256 = input.mediaBytes && sha256Hex(input.mediaBytes);
-  if (sha256 !== undefined) olderVersionCheck(versions, sha256, assetId);
+  if (sha256 !== undefined) olderVersionCheck(versions, sha256, assetId, input.contentSha256);
   if (input.replaces !== undefined && sha256 !== current && (current ?? null) !== input.replaces) {
     throw new AssetIdError(
       "version_changed",
@@ -315,8 +317,17 @@ export async function prepareLibraryWrite(input: {
 }
 
 /** Bytes identical to a version other than the current one exit 2 `version_exists`. */
-function olderVersionCheck(versions: ReviewRecord["versions"], sha256: string, assetId: string) {
-  const index = versions.findIndex((v) => v.sha256 === sha256);
+function olderVersionCheck(
+  versions: ReviewRecord["versions"],
+  sha256: string,
+  assetId: string,
+  contentSha256?: string,
+) {
+  // A signed image is new bytes each time it is signed: its content is what it was signed over.
+  const index = versions.findIndex(
+    (v) =>
+      v.sha256 === sha256 || (contentSha256 !== undefined && v.contentSha256 === contentSha256),
+  );
   if (index !== -1 && index !== versions.length - 1) {
     throw new AssetIdError(
       "version_exists",
@@ -531,6 +542,8 @@ export interface LibraryVersionInput {
   provenance: Pick<Provenance, "route" | "bibleVersion" | "license" | "finishedAt">;
   /** The provenance file's bytes, when it is a file of its own. */
   provenanceBytes?: Uint8Array | string;
+  /** The sha256 of the media before C2PA credentials were signed in, when they were. */
+  contentSha256?: string;
   spec: AssetSpec;
   run: string;
   candidate: string;
@@ -577,7 +590,7 @@ export async function commitLibraryWrite(
   if (input.candidateReview) {
     record = await carryAnnotations(record, input.candidateReview, plan, resource, sha256, copies);
   }
-  olderVersionCheck(record.versions, sha256, assetId);
+  olderVersionCheck(record.versions, sha256, assetId, input.contentSha256);
   const appended = !record.versions.some((v) => v.sha256 === sha256);
   if (appended) {
     const first = record.versions.length === 0;
@@ -593,6 +606,7 @@ export async function commitLibraryWrite(
       ...(input.provenanceBytes !== undefined && {
         provenanceSha256: sha256Hex(input.provenanceBytes),
       }),
+      ...(input.contentSha256 !== undefined && { contentSha256: input.contentSha256 }),
       run: input.run,
       candidate: input.candidate,
       at,

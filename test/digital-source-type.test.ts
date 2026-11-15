@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
+import { readCredentials } from "../src/credentials.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { pick } from "../src/handoff.ts";
@@ -173,7 +174,13 @@ test("generated Fern strip and model-edited human prop disclose origin through s
     assert.equal(candidate.sha256, sha256(staged));
     const picked = await pick({ runDir, candidateId: candidate.id, targetDir: world.targetDir });
     assert.equal(picked.validator?.accepted, true);
-    assert.deepEqual(await readFile(picked.mediaPath), staged);
+    // The handed-off file is the staged bytes with signed C2PA credentials over exactly them.
+    const handed = await readFile(picked.mediaPath);
+    const credentials = await readCredentials(handed, "image/png");
+    assert.equal(credentials?.inputSha256, sha256(staged));
+    assert.deepEqual(credentials?.failures, []);
+    assert.equal(readDigitalSourceType(handed, "image/png"), expected);
+    assert.deepEqual(decodeImage(handed).data, decodeImage(staged).data);
   }
 });
 

@@ -13,6 +13,8 @@ import { failureOutcome } from "../src/commands/result.ts";
 import { pick, writeToTarget } from "../src/handoff.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { PRESETS } from "../src/handoff/presets/index.ts";
+import { canCarryCredentials, readCredentials } from "../src/credentials.ts";
+import { markableMediaType } from "../src/handoff/mark-check.ts";
 import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { writeRun } from "../src/loop.ts";
@@ -195,14 +197,40 @@ const BASE: Record<string, Record<string, string>> = {
   },
 };
 
+/**
+ * Each written file's sha256, with the C2PA content credentials (#251) taken out, so the hashes
+ * stay those of the files before signing: a signed image counts as the bytes its manifest was
+ * signed over, and a JSON file has each signed image's sha256 read as that one and its
+ * `contentCredentials` records removed. Signing is new bytes each time; everything else is not.
+ */
 async function filesUnder(dir: string): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    // The library's card, review record, indexes and log are covered by library-handoff.test.ts.
-    if (entry.name.endsWith(".md") || entry.name.endsWith(".review.json")) continue;
+  const signed = new Map<string, string>();
+  const entries = (await readdir(dir, { recursive: true, withFileTypes: true })).filter(
+    (entry) =>
+      entry.isFile() &&
+      // The library's card, review record, indexes and log are covered by library-handoff.test.ts.
+      !entry.name.endsWith(".md") &&
+      !entry.name.endsWith(".review.json"),
+  );
+  for (const entry of entries) {
     const full = join(entry.parentPath, entry.name);
-    out[relative(dir, full).replaceAll("\\", "/")] = sha256(await readFile(full));
+    const bytes = await readFile(full);
+    const type = markableMediaType(entry.name);
+    const read = type && canCarryCredentials(type) ? await readCredentials(bytes, type) : undefined;
+    if (read?.inputSha256 !== undefined) signed.set(sha256(bytes), read.inputSha256);
+    out[relative(dir, full).replaceAll("\\", "/")] = read?.inputSha256 ?? sha256(bytes);
+  }
+  for (const entry of entries.filter((e) => e.name.endsWith(".json"))) {
+    const full = join(entry.parentPath, entry.name);
+    let text = await readFile(full, "utf8");
+    for (const [from, to] of signed) text = text.replaceAll(from, to);
+    const json = JSON.stringify(
+      JSON.parse(text, (key, value: unknown) => (key === "contentCredentials" ? undefined : value)),
+      null,
+      2,
+    );
+    out[relative(dir, full).replaceAll("\\", "/")] = sha256(Buffer.from(`${json}\n`));
   }
   return out;
 }
