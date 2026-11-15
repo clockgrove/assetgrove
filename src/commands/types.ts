@@ -75,8 +75,8 @@ export interface Failure {
   reason?: string;
   /** For exit 8: what a person must confirm, and how (design section 7). */
   confirmation?: Confirmation;
-  /** For `handoff_check_failed`: each problem a hand-off preset's check found (design section 14). */
-  problems?: Array<{ preset: string; problem: string }>;
+  /** For `handoff_check_failed` (preset, problem) and `library_check_failed` (file, code): each problem a hand-off preset's check found (design section 14). */
+  problems?: Array<{ preset?: string; problem?: string; file?: string; code?: string }>;
   /** For `prompt_refused`: the policy check that refused the prompt. */
   policy?: PromptPolicyRecord;
   limit?: {

@@ -266,6 +266,46 @@ Adds the format line of `--kind` (`target-profile`, `style-bible`, `style-preset
 
 MCP tool: `migrate`, arguments `file`, `kind`.
 
+### `library check`
+
+```text
+library check [--target <dir>] [--profile <profile.json>] [--json]
+```
+
+Checks the library under the profile's `library.root` (default profile `<target>/.assetgrove/profile.json`): every pick has a card and a review record, each card's machine fields match the records, and media is mapped to Git LFS (`git check-attr filter`; skipped outside a Git repository). Indexes, logs and review records are compared after normalising order and duplicate headings, so a union merge passes; a file that differs only in layout is listed under `needsRebuild`. Exit 6 `library_check_failed` with `error.problems` `[{file, code}]` (codes `card_missing`, `card_invalid`, `review_missing`, `review_invalid`, `media_missing`, `media_not_lfs`, `machine_field_mismatch`, `index_*` and `log_*` with `missing`, `mismatch` or `invalid`). Read-only.
+
+MCP tool: `library_check`, arguments `target`, `profile`.
+
+### `library rebuild`
+
+```text
+library rebuild [--target <dir>] [--profile <profile.json>] [--json]
+```
+
+Rewrites every card's machine fields, every `index.md` and `log.md` and the canonical layout of review records from the records, under the library write lock; the root log keeps its style bible lines. A second run changes nothing. `rebuilt` lists the files written; problems the records cannot fix still exit 6 `library_check_failed`.
+
+MCP tool: `library_rebuild`, arguments `target`, `profile`.
+
+### `library stats`
+
+```text
+library stats [--target <dir>] [--profile <profile.json>] [--json]
+```
+
+Counts assets by `kind` and `state`, and reports `changeRequests` `{total, approvedWithinTwoVersions, share}`: a change request counts when one of the next two versions after the one it targets is approved. Read-only.
+
+MCP tool: `library_stats`, arguments `target`, `profile`.
+
+### `library drift`
+
+```text
+library drift [--target <dir>] [--profile <profile.json>] [--bible <bible>] [--json]
+```
+
+Lists `stale` assets (the card's bible is older than the style bible's version; default bible `<target>/.assetgrove/art-direction/BIBLE.md`) and `modified` ones (the file's sha256, or a Git LFS pointer's oid, differs from the card's `lock.sha256`; a matching pointer is not modified). Computed from the cards; nothing is stored or logged. Read-only.
+
+MCP tool: `library_drift`, arguments `target`, `profile`, `bible`.
+
 ### `settings`
 
 ```text

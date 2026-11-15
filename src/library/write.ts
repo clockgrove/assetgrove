@@ -110,7 +110,7 @@ export function gameSlug(name: string): string {
   return slug === "" ? "game" : slug;
 }
 
-function within(root: string, path: string): boolean {
+export function within(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
@@ -375,7 +375,7 @@ export async function currentVersion(
   };
 }
 
-async function readText(path: string): Promise<string | undefined> {
+export async function readText(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8");
   } catch (error) {
@@ -499,7 +499,7 @@ function unescapeText(text: string): string {
 }
 
 /** The `bible` lines of a log, oldest first. */
-function bibleLines(text: string | undefined): Extract<LogEntry, { action: "bible" }>[] {
+export function bibleLines(text: string | undefined): Extract<LogEntry, { action: "bible" }>[] {
   const lines: Extract<LogEntry, { action: "bible" }>[] = [];
   let date: string | undefined;
   for (const raw of (text ?? "").split(/\r?\n/)) {
@@ -521,7 +521,7 @@ function bibleLines(text: string | undefined): Extract<LogEntry, { action: "bibl
   return lines.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
-function newer(a: string, b: string): boolean {
+export function newer(a: string, b: string): boolean {
   return a.localeCompare(b, "en", { numeric: true }) > 0;
 }
 
