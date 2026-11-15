@@ -52,6 +52,7 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
     ],
   },
   "promptPolicy": { "allow": ["term"] },
+  "contentCredentials": { "certificate": "/abs/chain.pem", "privateKey": "/abs/signer.key" },
   "confirmedBy": { "caps": { "method": "elicitation", "at": "...", "client": "..." } },
 }
 ```
@@ -72,7 +73,12 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 | `spend`                | `acknowledgedHolds`: the ids (hex) of spend holds a person has looked at; a listed hold no longer refuses paid runs.                                                                                            | none                                                                                          |
 | `commands.approved`    | Approved commands, matched by `hash` (the `commandHash`); `kind`, `argv`, `cwd`, `note` are for the reader. The only approvals headless settings honour.                                                        | none                                                                                          |
 | `promptPolicy.allow`   | Prompt-policy allow terms.                                                                                                                                                                                      | none                                                                                          |
+| `contentCredentials`   | `certificate` (a PEM chain, signer first) and `privateKey` (a PEM PKCS#8 key: ECDSA P-256 or P-384, Ed25519 or RSA), absolute paths outside every project, that sign the C2PA manifests hand-off writes. See [Content credentials](#content-credentials). | the local development certificate                                                             |
 | `confirmedBy.<path>`   | Who confirmed a field: `method`, `at`, `client`.                                                                                                                                                                | none                                                                                          |
+
+## Content credentials
+
+Hand-off signs a C2PA manifest into every PNG, JPEG and WebP it writes ([handoff.md](handoff.md#content-credentials)). The signing key and certificate come only from `contentCredentials` here: never from a shared file, the target profile or the repository, and a path inside any project is refused. With no `contentCredentials`, Assetgrove creates a development CA and signer once under `<stateDir>/content-credentials/` (`chain.pem`, `signer.key`, `ca.pem`) and signs with it; the hand-off result, its provenance and the disclosure summary then say the development certificate signed. No C2PA trust list holds it, so readers report the signature valid but untrusted. A certificate from a C2PA-recognised authority is the owner's step before 1.0.
 
 ## Refusals
 
@@ -85,6 +91,7 @@ Loading throws `SettingsError`, with the code `settings_invalid`, when:
 - any field is unknown, including inside `outputGrant`;
 - any field anywhere is named `apiKey`, `key`, `token` or `secret` (in any case); the keys of `providers`, `roles`, `routes` and `confirmedBy` are ids, not field names, so a provider called `key` is accepted;
 - `stateDir` is relative or inside a project, or, when it is not set, the default one under the state home is inside a project;
+- `contentCredentials.certificate` or `contentCredentials.privateKey` is relative or inside a project;
 - a `baseURL` carries a user name, a password or a query string (the message shows only its origin and path);
 - a `baseURL` is neither https nor http on a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`);
 - `free` is set on a provider without a loopback `baseURL`;
