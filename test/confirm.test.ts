@@ -182,12 +182,28 @@ test("a paid command with attended settings, no TTY and no record exits 8 with c
   // `assetgrove confirm <id>` asks at the terminal (an injected TTY port) and writes the record.
   const noTty = await runCommand(confirmCommand, { id }, context());
   assert.equal(noTty.exitCode, 2);
+  // What the person is shown comes from what the id hashes, not from the saved file's text.
+  const pendingPath = join(stateDir, "pending", `${id}.json`);
+  const pending = JSON.parse(await readFile(pendingPath, "utf8"));
+  const forecastUsd = pending.body.forecastUsd as number;
+  assert.ok(forecastUsd > 0);
+  await writeFile(
+    pendingPath,
+    JSON.stringify({
+      ...pending,
+      summary: "stage would spend nothing",
+      details: { ...pending.details, forecastUsd: 0, jobs: [] },
+    }),
+  );
   const asked: ConfirmRequest[] = [];
   const confirmed = await runCommand(confirmCommand, { id }, context(port(true, asked)));
   assert.equal(confirmed.exitCode, 0, confirmed.error?.message);
   assert.equal(asked.length, 1);
   assert.equal(asked[0]!.kind, "spend");
   assert.equal(asked[0]!.details["digest"], id);
+  assert.equal(asked[0]!.details["forecastUsd"], forecastUsd);
+  assert.deepEqual(asked[0]!.details["jobs"], pending.body.jobs);
+  assert.match(asked[0]!.summary, /^stage would spend up to \$/);
   const record = JSON.parse(await readFile(recordPath(id), "utf8"));
   assert.equal(record.kind, "spend");
   assert.equal(record.digest, id);
@@ -364,35 +380,50 @@ test("plan then apply with unchanged inputs asks once; after a bible change or a
   );
   assert.equal(run.confirmation.digest, saved.requestDigest);
 
-  // The plan's record no longer covers apply: another input hash, or a lower confirmed forecast.
+  // Another round is another paid request: the plan's record does not cover it.
+  const again = await inProcess([...f.applyArgs, "--round", "2"], tty);
+  assert.equal(again.exitCode, 0, again.error?.message);
+  assert.equal(asked.length, 2, "apply --round 2 asks under its own digest");
+  assert.equal(asked[1]!.details["command"], "apply");
+
+  // The plan's record no longer covers the default round's apply (its finished run removed, so
+  // the request runs again): another input hash, or a lower confirmed forecast.
+  const applyDigest = applied.fields["digest"] as string;
+  const fresh = async () => {
+    await rm(applied.fields["runDir"] as string, { recursive: true, force: true });
+    await rm(recordPath(applyDigest), { force: true });
+  };
+  await fresh();
   await writeFile(
     recordPath(saved.requestDigest),
     JSON.stringify({ ...planRecord, inputs: { ...planRecord.inputs, bible: "0".repeat(64) } }),
   );
-  const changedInput = await inProcess([...f.applyArgs, "--round", "2"], tty);
+  const changedInput = await inProcess(f.applyArgs, tty);
   assert.equal(changedInput.exitCode, 0, changedInput.error?.message);
-  assert.equal(asked.length, 2, "an input hash that differs asks again");
-  assert.equal(asked[1]!.details["command"], "apply");
+  assert.equal(asked.length, 3, "an input hash that differs asks again");
+  assert.equal(asked[2]!.details["command"], "apply");
+  await fresh();
   await writeFile(
     recordPath(saved.requestDigest),
     JSON.stringify({ ...planRecord, forecastUsd: 0 }),
   );
-  const rose = await inProcess([...f.applyArgs, "--round", "3"], tty);
+  const rose = await inProcess(f.applyArgs, tty);
   assert.equal(rose.exitCode, 0, rose.error?.message);
-  assert.equal(asked.length, 3, "a forecast above the confirmed one asks again");
+  assert.equal(asked.length, 4, "a forecast above the confirmed one asks again");
+  await writeFile(recordPath(saved.requestDigest), JSON.stringify(planRecord));
 
   // A bible change: the saved plan is stale (exit 2, nothing asked); planning again asks, and
   // apply of the new plan runs under that confirmation.
   await writeFile(f.bible, `${await readFile(f.bible, "utf8")}\nChanged after planning.\n`);
   const stale = await inProcess(f.applyArgs, tty);
   assert.equal(stale.exitCode, 2);
-  assert.equal(asked.length, 3);
+  assert.equal(asked.length, 4);
   const replanned = await inProcess(f.planArgs, tty);
   assert.equal(replanned.exitCode, 0, replanned.error?.message);
-  assert.equal(asked.length, 4, "a bible change asks again");
+  assert.equal(asked.length, 5, "a bible change asks again");
   const reapplied = await inProcess(f.applyArgs, tty);
   assert.equal(reapplied.exitCode, 0, reapplied.error?.message);
-  assert.equal(asked.length, 4);
+  assert.equal(asked.length, 5);
 });
 
 test("with headless settings stage and pick run and record method headless and the operator; pick without --candidate exits 2", async () => {

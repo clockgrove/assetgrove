@@ -5,10 +5,75 @@ import {
   verifiedRequest,
   writeConfirmation,
 } from "../confirm/index.ts";
+import type { KindRequest } from "../confirm/index.ts";
 import { readPending, removePending } from "../confirm/pending.ts";
 import { describeRequest } from "../confirm/prompt.ts";
+import type { ConfirmRequest } from "../confirm/prompt.ts";
+import { spendShown } from "../runs/execute.ts";
+import type { WorkPlan } from "../runs/plan.ts";
+import { pickRequest } from "./pick.ts";
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import { writeRequest } from "./write-families.ts";
+
+/**
+ * A pending spend, pick or write request as a person is shown it, rebuilt from what its id hashes
+ * and never from the saved summary, details or choices: a spend's from its verified body; a
+ * pick's and a write's by making the request again from its body (the run's candidates, the
+ * import and the grouping) and requiring the same id. Undefined when the request does not hold.
+ */
+async function shownRequest(request: ConfirmRequest): Promise<KindRequest | undefined> {
+  if (!verifiedRequest(request)) return undefined;
+  const { body } = request;
+  const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+  try {
+    if (request.kind === "spend") {
+      const command = text(body["command"]);
+      const { jobs, forecastUsd, capUsd } = body;
+      if (
+        command === undefined ||
+        !Array.isArray(jobs) ||
+        typeof forecastUsd !== "number" ||
+        typeof capUsd !== "number"
+      )
+        return undefined;
+      const shown = spendShown(request.id, {
+        command,
+        jobs: jobs as WorkPlan["jobs"],
+        forecastUsd,
+        capUsd,
+      });
+      return { kind: "spend", id: request.id, body, ...shown };
+    }
+    let rebuilt: KindRequest;
+    if (request.kind === "pick") {
+      const run = text(body["run"]);
+      const target = text(body["target"]);
+      const candidate = text(body["candidate"]);
+      if (run === undefined || target === undefined) return undefined;
+      rebuilt = await pickRequest({
+        run,
+        target,
+        ...(candidate !== undefined && { candidate }),
+      });
+    } else {
+      const importDir = text(body["import"]);
+      const targetDir = text(body["target"]);
+      const jitterBoundPx = body["jitterBound"];
+      if (importDir === undefined || targetDir === undefined || typeof jitterBoundPx !== "number")
+        return undefined;
+      rebuilt = await writeRequest({
+        importDir,
+        grouping: request.grouping,
+        targetDir,
+        jitterBoundPx,
+      });
+    }
+    return rebuilt.id === request.id ? rebuilt : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 interface ConfirmArgs {
   id: string;
@@ -21,10 +86,11 @@ export const confirmCommand = defineCommand<ConfirmArgs>({
   details: `Shows the request a command saved to <stateDir>/pending/<id>.json when it exited 8
 confirmation_required, and asks at the terminal. A spend, pick or write request (id its digest)
 writes <configDir>/confirmations/<id>.json (method terminal); a pick that names no candidate asks
-which one (or none). A command a file names (kind command, id its hash) writes
+which one (or none). It shows what the id hashes, rebuilt from the saved body (a spend) or by
+making the pick or write request again from its run, import and grouping. A command a file names (kind command, id its hash) writes
 <configDir>/approvals/<id>.json. The request runs on the next try. CLI only; exits 2 without a TTY
-on stdin and stderr, with no pending request of that id, or when the saved request does not hash
-to that id. Declining exits 8 confirmation_declined.`,
+on stdin and stderr, with no pending request of that id, or when the saved request (or its run,
+import or grouping) no longer makes that id. Declining exits 8 confirmation_declined.`,
   input: {
     type: "object",
     properties: {
@@ -50,31 +116,32 @@ to that id. Declining exits 8 confirmation_declined.`,
       );
     }
     const { stateDir, configDir } = ctx.settings;
-    const request = await readPending(stateDir, args.id);
-    const fields = { id: request.id, kind: request.kind, request: request.details };
-    const decline = () =>
+    const pending = await readPending(stateDir, args.id);
+    const decline = (request: ConfirmRequest, fields: Record<string, unknown>) =>
       refusal(
         "confirmation_declined",
         `confirmation ${request.id} was declined`,
         fields,
         describeRequest(request),
       );
-    if (request.kind !== "command") {
-      if (!verifiedRequest(request)) {
+    if (pending.kind !== "command") {
+      const request = await shownRequest(pending);
+      if (request === undefined) {
         return refusal(
           "invalid_input",
           `pending request ${args.id} does not describe the request its id hashes; rerun the command to save it again`,
-          fields,
+          { id: pending.id, kind: pending.kind },
           "",
         );
       }
+      const fields = { id: request.id, kind: request.kind, request: request.details };
       let choice: string | undefined;
       if (request.kind === "pick" && typeof request.body["candidate"] !== "string") {
         if (!ctx.prompt.choose)
           return refusal("invalid_input", "this terminal cannot choose a candidate", fields, "");
         choice = await ctx.prompt.choose(request);
-        if (choice === undefined || choice === "none") return decline();
-      } else if (!(await ctx.prompt.confirm(request))) return decline();
+        if (choice === undefined || choice === "none") return decline(request, fields);
+      } else if (!(await ctx.prompt.confirm(request))) return decline(request, fields);
       const record = recordOf(request, "terminal", choice === undefined ? {} : { choice });
       const path = await writeConfirmation(configDir, record);
       await removePending(stateDir, request.id);
@@ -90,16 +157,18 @@ to that id. Declining exits 8 confirmation_declined.`,
         human: `confirmed ${request.id}: wrote ${confirmationPath(configDir, request.id)}`,
       };
     }
+    const request = pending;
+    const fields = { id: request.id, kind: request.kind, request: request.details };
     const identity = verifiedIdentity(request.details, request.id);
     if (identity === undefined) {
       return refusal(
         "invalid_input",
         `pending request ${args.id} does not describe the command its id hashes; rerun the command to save it again`,
-        fields,
+        { id: request.id, kind: request.kind },
         "",
       );
     }
-    if (!(await ctx.prompt.confirm(request))) return decline();
+    if (!(await ctx.prompt.confirm(request))) return decline(request, fields);
     const path = await writeApproval(configDir, identity, "terminal");
     await removePending(stateDir, request.id);
     return {

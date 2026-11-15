@@ -107,14 +107,16 @@ test(
     const provider = { provider: gateway.provider, name: gateway.id };
     const first = targets[0];
     assert.ok(first);
-    const flicker = await runAnimationQa({
-      targets: [first],
-      outDir: qaDir,
-      routes: defaultRoutes,
-      capUsd: Math.min(1, rb.runLeftUsd()),
-      provider,
-      ledger: rb.ledger,
-    });
+    const flicker = await rb.cleared("real animation qa", () =>
+      runAnimationQa({
+        targets: [first],
+        outDir: qaDir,
+        routes: defaultRoutes,
+        capUsd: Math.min(1, rb.runLeftUsd()),
+        provider,
+        ledger: rb.ledger,
+      }),
+    );
     const decisions = flicker.results[0]?.decisions ?? [];
     for (const d of decisions) {
       console.log(
@@ -125,16 +127,18 @@ test(
     const report = flicker.results[0]?.report;
     const flagged = report?.reasons.find((r) => !r.passed && r.frames?.length)?.frames;
     const index = flagged?.[flagged.length - 1] ?? 2;
-    const fixed = await runFixFrame({
-      target: first,
-      index,
-      from: { neighbour: index > 1 ? index - 1 : 2 },
-      outDir: join(out, "fix"),
-      routes: defaultRoutes,
-      capUsd: rb.runLeftUsd(),
-      provider,
-      ledger: rb.ledger,
-    });
+    const fixed = await rb.cleared("real fix frame", () =>
+      runFixFrame({
+        target: first,
+        index,
+        from: { neighbour: index > 1 ? index - 1 : 2 },
+        outDir: join(out, "fix"),
+        routes: defaultRoutes,
+        capUsd: rb.runLeftUsd(),
+        provider,
+        ledger: rb.ledger,
+      }),
+    );
     console.log(
       `fixed ${first.family} frame ${index}: ${fixed.stripPath} ($${fixed.spentUsd.toFixed(4)}, ${fixed.fix.requestId})`,
     );

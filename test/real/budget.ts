@@ -24,7 +24,7 @@ import { providerOfAdapter, type ConfiguredProvider } from "../../src/providers/
 import { defaultRoutes, type Routes } from "../../src/routes.ts";
 import { loadSettings, type ProviderSettings, type Settings } from "../../src/settings.ts";
 import { digestOf } from "../../src/confirm/records.ts";
-import { withConfirmedSpend } from "../../src/runs/execute.ts";
+import { withConfirmedSpend } from "../fixtures/clearance.ts";
 import { ledgerFor, SpendLedger } from "../../src/spend.ts";
 
 export const TOTAL_USD = 25;

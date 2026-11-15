@@ -24,6 +24,8 @@ export type RequestKind = ConfirmationRecord["kind"];
 export interface KindRequest extends ConfirmRequest {
   kind: RequestKind;
   body: Record<string, unknown>;
+  /** A write's grouping, whose digest its body holds, so `confirm` can check the families shown. */
+  grouping?: unknown;
 }
 
 /** The `error.confirmation` of a spend, pick or write no one confirmed. */

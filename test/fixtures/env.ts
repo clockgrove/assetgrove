@@ -220,12 +220,12 @@ afterEach(() => {
 });
 
 /**
- * Runs `body` with the clearance of a confirmed spend (src/runs/execute.ts `withConfirmedSpend`),
+ * Runs `body` with the clearance of a confirmed spend (test/fixtures/clearance.ts `withConfirmedSpend`),
  * for a test that drives a paid `Caller` itself. The base settings are headless, so the spend is
  * confirmed headless; under attended settings without a record it exits 8.
  */
 export async function cleared<T>(body: () => Promise<T>, label = "test"): Promise<T> {
-  const { withConfirmedSpend } = await import("../../src/runs/execute.ts");
+  const { withConfirmedSpend } = await import("./clearance.ts");
   const { digestOf } = await import("../../src/confirm/records.ts");
   const { loadSettings } = await import("../../src/settings.ts");
   const request = { command: label, inputs: {}, forecastUsd: 0, capUsd: 0 };

@@ -50,6 +50,7 @@ export async function writeRequest(options: {
     summary: `write ${families.length} famil${families.length === 1 ? "y" : "ies"} into ${body.target}`,
     details: { families, groupingDigest, import: body.import, target: body.target, digest: id },
     body,
+    grouping: options.grouping,
   };
 }
 

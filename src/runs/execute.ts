@@ -30,7 +30,7 @@ import {
 import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcile.ts";
 import { SpendHoldError } from "../spend.ts";
 import { requireConfirmation } from "../confirm/index.ts";
-import type { ConfirmGate, KindRequest } from "../confirm/index.ts";
+import type { KindRequest } from "../confirm/index.ts";
 import type { ConfirmationRecord } from "../types.ts";
 import { DEFAULT_ROUND } from "./plan.ts";
 import type { WorkPlan } from "./plan.ts";
@@ -97,47 +97,49 @@ export function needsSpendConfirmation(plan: WorkPlan): boolean {
   return plan.paid || plan.forecastUsd > 0;
 }
 
-/** The spend request of a WorkPlan: its digest body, and what a person is shown. */
-export function spendRequest(command: string, round: number, plan: WorkPlan): KindRequest {
-  const providers = [...new Set(plan.jobs.map((j) => j.provider).filter(Boolean))];
+/**
+ * What a person is shown for a spend request: its summary and flat fields, from the digest body's
+ * own fields (so `assetgrove confirm` can rebuild them from a verified body) plus, when the
+ * WorkPlan is at hand, its candidate count, which the digest does not cover.
+ */
+export function spendShown(
+  id: string,
+  body: { command: string; jobs: WorkPlan["jobs"]; forecastUsd: number; capUsd: number },
+  candidates?: number,
+): { summary: string; details: Record<string, unknown> } {
+  const providers = [...new Set(body.jobs.map((j) => j.provider).filter(Boolean))];
   return {
-    kind: "spend",
-    id: plan.digest,
-    summary: `${command} would spend up to $${plan.forecastUsd.toFixed(4)} (cap $${plan.capUsd.toFixed(2)})`,
+    summary: `${body.command} would spend up to $${body.forecastUsd.toFixed(4)} (cap $${body.capUsd.toFixed(2)})`,
     details: {
-      command,
-      jobs: plan.jobs,
-      candidates: plan.candidates,
-      forecastUsd: plan.forecastUsd,
-      capUsd: plan.capUsd,
+      command: body.command,
+      jobs: body.jobs,
+      ...(candidates !== undefined && { candidates }),
+      forecastUsd: body.forecastUsd,
+      capUsd: body.capUsd,
       providers,
-      digest: plan.digest,
-    },
-    body: {
-      command,
-      round,
-      inputs: plan.inputs,
-      options: plan.options,
-      jobs: plan.jobs,
-      forecastUsd: plan.forecastUsd,
-      capUsd: plan.capUsd,
-      policyTextSha256: plan.policyTextSha256,
+      digest: id,
     },
   };
 }
 
-/**
- * Runs `body` with the clearance of a confirmed spend outside any run directory, for a library
- * caller that drives `Caller` itself: the request is confirmed exactly as the executor confirms a
- * run (`requireConfirmation`, exit 8 without one), and nothing is journaled.
- */
-export async function withConfirmedSpend<T>(
-  request: KindRequest & { kind: "spend" },
-  gate: ConfirmGate,
-  body: () => Promise<T>,
-): Promise<T> {
-  const record = await requireConfirmation(request, gate);
-  return withRunScope({ clearance: { digest: request.id, record } }, body);
+/** The spend request of a WorkPlan: its digest body, and what a person is shown. */
+export function spendRequest(command: string, round: number, plan: WorkPlan): KindRequest {
+  const body = {
+    command,
+    round,
+    inputs: plan.inputs,
+    options: plan.options,
+    jobs: plan.jobs,
+    forecastUsd: plan.forecastUsd,
+    capUsd: plan.capUsd,
+    policyTextSha256: plan.policyTextSha256,
+  };
+  return {
+    kind: "spend",
+    id: plan.digest,
+    ...spendShown(plan.digest, body, plan.candidates),
+    body,
+  };
 }
 
 /** Adds the confirmation to the run's `run.json`, whoever wrote it. */

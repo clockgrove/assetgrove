@@ -8,7 +8,13 @@ import { readConfirmation } from "../confirm/records.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
 import type { ConfirmationRecord } from "../types.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
-import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, paidBy } from "../runs/plan.ts";
+import {
+  DEFAULT_ROUND,
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  buildWorkPlan,
+  paidBy,
+} from "../runs/plan.ts";
 import { dryRunOutcome, formatRun, formatWork, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext, WorkPlan } from "./types.ts";
@@ -43,15 +49,18 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
 }
 
 /**
- * The plan's confirmation, when it covers this apply (design section 7): the record of the saved
- * plan's request digest, every input hash it holds equal to the saved plan's, and apply's forecast
- * at or under the confirmed one. Otherwise apply asks under its own digest.
+ * The plan's confirmation, when it covers this apply (design section 7): one plan request covers
+ * one apply request, the default round's, while every input hash its record holds equals the saved
+ * plan's and apply's forecast is at or under the confirmed one. Another round is another paid
+ * request, and it, like any apply the record does not cover, asks under its own digest.
  */
 export async function planConfirmation(
   planPath: string,
   work: WorkPlan,
   configDir: string,
+  round: number = DEFAULT_ROUND,
 ): Promise<ConfirmationRecord | undefined> {
+  if (round !== DEFAULT_ROUND) return undefined;
   let saved: SavedPlan;
   try {
     saved = JSON.parse(await readFile(planPath, "utf8")) as SavedPlan;
@@ -80,8 +89,9 @@ export const applyCommand = defineCommand<ApplyArgs>({
   details: `Refuses stale inputs before generation, and exits 2 plan_changed when the routes, estimates,
 output grants or run cap resolved from the developer settings differ from planning time.
 The plan's prompts pass the prompt policy (exit 9 prompt_refused) before any spend.
-The plan's spend confirmation covers apply while every input hash it confirmed still matches and
-apply's forecast is at or under the confirmed one; otherwise apply asks under its own digest (headless
+The plan's spend confirmation covers one apply, the default round, while every input hash it confirmed
+still matches and apply's forecast is at or under the confirmed one; --round n > 1, or any other
+apply, asks under its own digest (headless
 settings, a record, the TTY, or exit 8 confirmation_required and \`assetgrove confirm <id>\`). The
 confirmation authorizes this generation spend; resulting assets remain pending review.`,
   input: {
@@ -118,7 +128,7 @@ confirmation authorizes this generation spend; resulting assets remain pending r
   priorConfirmation: (args, ctx, work) =>
     args.plan === undefined
       ? Promise.resolve(undefined)
-      : planConfirmation(args.plan, work, ctx.settings.configDir),
+      : planConfirmation(args.plan, work, ctx.settings.configDir, args.round),
   async run(args, ctx) {
     if (args.plan === undefined) throw new InputError("apply requires exactly one plan file");
     const { providers, work } = await prepare(args.plan, args, ctx);

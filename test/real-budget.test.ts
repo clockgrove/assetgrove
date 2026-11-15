@@ -6,7 +6,7 @@ import { after, test } from "node:test";
 import ts from "typescript";
 import { BudgetExceededError } from "../src/budget.ts";
 import { digestOf } from "../src/confirm/records.ts";
-import { withConfirmedSpend } from "../src/runs/execute.ts";
+import { withConfirmedSpend } from "./fixtures/clearance.ts";
 import { ScriptedProvider, type Script } from "../src/gateway/scripted.ts";
 import { defaultRoutes, type Routes } from "../src/routes.ts";
 import {
