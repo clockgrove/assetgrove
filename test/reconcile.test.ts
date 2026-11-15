@@ -2,7 +2,7 @@ import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -53,7 +53,8 @@ interface Hold {
  */
 async function paidScript(
   dir: string,
-  usage?: { costUsd?: number; flag?: string },
+  usage?: { costUsd?: number | null; flag?: string },
+  crashFlag?: string,
 ): Promise<string> {
   const path = join(dir, "paid-script.mjs");
   const reader =
@@ -67,12 +68,22 @@ async function paidScript(
   },`;
   await writeFile(
     path,
-    `import { existsSync, readFileSync } from "node:fs";
+    `import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 export default {
   paid: true,
   ${reader}
-  image: (r, i) => base.image(r, i),
+  image: (r, i) => {${
+    crashFlag === undefined
+      ? ""
+      : `
+    if (i === 1 && !existsSync(${JSON.stringify(crashFlag)})) {
+      writeFileSync(${JSON.stringify(crashFlag)}, "");
+      process.exit(9);
+    }`
+  }
+    return base.image(r, i);
+  },
   vision: (r, i) => base.vision(r, i),
 };`,
   );
@@ -170,8 +181,13 @@ test("a gap above the margin writes a hold; paid runs exit 3 spend_hold until se
     reconcile: { marginUsd: 0.01, marginPct: 5 },
     spend: { acknowledgedHolds: [hold.id] },
   });
-  const freed = await cli([...args, "--provider-script", script]);
+  // The request refused above now runs and pays.
+  const freed = await cli([...other.args, "--provider-script", script]);
   assert.equal(freed.code, 0, freed.stderr);
+  assert.equal((JSON.parse(freed.stdout) as { reused: boolean }).reused, false);
+  assert.notEqual(await readFile(join(stateDir, "spend.jsonl"), "utf8"), ledger, "it paid");
+  const [after] = await runReconcile(freed);
+  assert.equal(after?.provider, "scripted");
 });
 
 test("a gap within the margin writes no hold", async () => {
@@ -274,6 +290,68 @@ test("spend reconcile retries a pending lookup", async () => {
   assert.ok((resolved.reconciled[0]?.providerUsd ?? 0) > 0);
 
   // Resolved once: nothing is left to retry.
+  const again = await cli(["spend", "reconcile", "--provider-script", script, "--json"]);
+  assert.deepEqual((JSON.parse(again.stdout) as { reconciled: unknown[] }).reconciled, []);
+});
+
+test("a run none of whose calls can be looked up records failed, not reconciled", async () => {
+  const stateDir = await freshState();
+  settings(stateDir, { reconcile: { marginUsd: 0.01 } });
+  const { args, dir } = await stageArgs();
+  const script = await paidScript(dir, { costUsd: null });
+  const r = await cli([...args, "--provider-script", script]);
+  assert.equal(r.code, 0, r.stderr);
+  const [entry] = (await runReconcile(r)) as Array<ReconcileEntry & { unmatched?: number }>;
+  assert.equal(entry?.status, "failed");
+  assert.ok((entry?.unmatched ?? 0) > 0);
+  assert.equal(entry?.providerUsd, undefined);
+  assert.equal(existsSync(join(stateDir, "reconcile.jsonl")), false, "nothing left pending");
+});
+
+test("a resume reconciles the interrupted attempt's calls too", async () => {
+  const stateDir = await freshState();
+  settings(stateDir, { reconcile: { marginUsd: 100 } });
+  const { args, dir } = await stageArgs(2);
+  const crashFlag = join(dir, "crashed");
+  const script = await paidScript(dir, { costUsd: 1 }, crashFlag);
+
+  const crashed = await cli([...args, "--provider-script", script]);
+  assert.equal(crashed.code, 9, "the first attempt dies before its end");
+  const resumed = await cli([...args, "--provider-script", script]);
+  assert.equal(resumed.code, 0, resumed.stderr);
+  const [entry] = await runReconcile(resumed);
+  assert.equal(entry?.status, "reconciled");
+  // Every journaled call is compared, the first attempt's as well as the resume's; each costs $1.
+  const { runDir } = JSON.parse(resumed.stdout) as { runDir: string };
+  const journaled = (await readdir(join(runDir, "calls"))).filter((f) => f.endsWith(".json"));
+  assert.ok(journaled.length > 1);
+  assert.equal(entry?.providerUsd, journaled.length);
+});
+
+test("a pending lookup unanswered a day after its run resolves as failed", async () => {
+  const stateDir = await freshState();
+  settings(stateDir, { reconcile: { marginUsd: 0.01 } });
+  const { args, dir } = await stageArgs();
+  const flag = join(dir, "reported-cost.txt");
+  const script = await paidScript(dir, { flag });
+  const first = await cli([...args, "--provider-script", script]);
+  assert.equal(first.code, 0, first.stderr);
+  const [entry] = await runReconcile(first);
+  assert.equal(entry?.status, "pending");
+
+  // Age the pending record past a day.
+  const path = join(stateDir, "reconcile.jsonl");
+  const [record] = await readLines<{ at: string }>(path);
+  const old = { ...record, at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() };
+  await writeFile(path, `${JSON.stringify(old)}\n`);
+
+  const r = await cli(["spend", "reconcile", "--provider-script", script, "--json"]);
+  assert.equal(r.code, 0, r.stderr);
+  const result = JSON.parse(r.stdout) as { reconciled: ReconcileEntry[] };
+  assert.deepEqual(
+    result.reconciled.map((e) => [e.status, e.pendingId]),
+    [["failed", entry?.pendingId]],
+  );
   const again = await cli(["spend", "reconcile", "--provider-script", script, "--json"]);
   assert.deepEqual((JSON.parse(again.stdout) as { reconciled: unknown[] }).reconciled, []);
 });

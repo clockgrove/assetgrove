@@ -234,11 +234,11 @@ The ledger is an estimate. Where a provider reports its own usage to an ordinary
 | `openai-compatible` | `unavailable`   | The server reports no usage.                                                                                                                        |
 | `scripted`          | `unavailable`   | Unless its script sets `reconcile` and `callCost` (tests).                                                                                          |
 
-`settings check` reports each provider's `reconcile`. The ledger side is the run's own reservations in `spend.jsonl` from this attempt, so a resume reconciles only the calls it paid for; a per-call-cost call without a provider request ID cannot be looked up and is counted in `unmatched`, on neither side. `status` is `unavailable`, `reconciled`, `held`, `pending` or `failed` (a balance that could not be read).
+`settings check` reports each provider's `reconcile`. The ledger side is the run's reservations in `spend.jsonl` that no earlier attempt's end has reconciled, so a resume also compares the spend of an attempt that stopped before its end; the run directory's `reconcile-state.json` keeps what was reconciled and, for a balance delta, the start reading of an attempt that has not ended (the delta then spans both attempts). A per-call-cost call the provider can never look up (no generation ID, an ID the gateway rejects, or no numeric cost) is counted in `unmatched`, on neither side. `status` is `unavailable`, `reconciled`, `held`, `pending` or `failed`: a balance that could not be read, a run none of whose paid calls could be looked up (nothing was compared), or a lookup still unanswered a day after its run.
 
 A gap, |provider − ledger|, above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger spend) appends a hold `{id, at, provider, runId, ledgerUsd, providerUsd, gapUsd}` to `<stateDir>/holds.jsonl`. From then on every paid run exits 3 `spend_hold` before it spends, until a person lists the hold's `id` in `spend.acknowledgedHolds`. `spend status` lists the holds and whether each is acknowledged.
 
-A lookup the provider cannot answer yet is recorded as pending in `<stateDir>/reconcile.jsonl`. The next paid run retries it at its start, before the hold check, and `spend reconcile` retries it on demand.
+A lookup the provider cannot answer yet is recorded as pending in `<stateDir>/reconcile.jsonl`. The next paid run retries it at its start, before the hold check, and `spend reconcile` retries it on demand. A retry stops at the first call cost still unreported. A lookup still pending a day after its run resolves as `failed` and is not retried again.
 
 ### Provider limits
 

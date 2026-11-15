@@ -245,17 +245,15 @@ export class SpendLedger {
   }
 
   /**
-   * The paid calls of one run reserved at or after `since` (ISO time), each with what the ledger
-   * counts for it: its settled cost, or its estimate while unsettled. Spends nothing.
+   * The paid calls of one run, every attempt's, each with what the ledger counts for it: its settled cost, or its estimate while unsettled. Spends nothing.
    */
-  runCalls(runId: string, since: string): LedgerCall[] {
+  runCalls(runId: string): LedgerCall[] {
     const entries = this.read();
     const settled = new Map<string, number>();
     for (const e of entries) if (e.op === "settle") settled.set(e.id, e.costUsd);
-    const from = Date.parse(since);
     const calls: LedgerCall[] = [];
     for (const e of entries) {
-      if (e.op !== "reserve" || e.runId !== runId || Date.parse(e.at) < from) continue;
+      if (e.op !== "reserve" || e.runId !== runId) continue;
       calls.push({
         id: e.id,
         provider: e.provider ?? "",

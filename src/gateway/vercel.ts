@@ -115,18 +115,22 @@ export class VercelGateway implements GenerationProvider {
 
   /**
    * The gateway's own cost of one generation (`getGenerationInfo`, `totalCost` in USD); spends
-   * nothing. Undefined while the gateway cannot report it yet; null for an ID that is not a
-   * generation ID (a response header or a local ID), which it can never look up.
+   * nothing. Undefined while the answer may still come: the gateway does not know the generation
+   * yet (404), is busy or failing (429, 5xx, no response), or this process has no key to ask with.
+   * Null when it never will: an ID that is not a generation ID (a response header or a local ID),
+   * a request the gateway rejects (400, 401, 403), or an answer with no numeric cost.
    */
   async generationCost(requestId: string): Promise<number | null | undefined> {
     if (!requestId.startsWith("gen_")) return null;
     if (this.#gateway === undefined) return undefined;
+    let info: { totalCost?: unknown };
     try {
-      const info = await this.#gateway.getGenerationInfo({ id: requestId });
-      return toNumber(info.totalCost);
-    } catch {
-      return undefined; // Not reported yet, or the lookup failed: retried later.
+      info = await this.#gateway.getGenerationInfo({ id: requestId });
+    } catch (error) {
+      const status = (error as { statusCode?: unknown }).statusCode;
+      return status === 400 || status === 401 || status === 403 ? null : undefined;
     }
+    return toNumber(info.totalCost) ?? null;
   }
 
   async generateImage(req: ImageRequest): Promise<ImageResult> {

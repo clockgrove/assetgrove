@@ -6,12 +6,17 @@
  * `unavailable`. A gap above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger
  * spend) appends a hold (src/spend.ts), and every paid run is refused until a person acknowledges
  * it. A per-call lookup the provider cannot answer yet is recorded as pending in
- * `<stateDir>/reconcile.jsonl` and retried at the next paid run's start and by `spend reconcile`.
+ * `<stateDir>/reconcile.jsonl` and retried at the next paid run's start and by `spend reconcile`;
+ * one still unanswered a day after the run resolves as `failed`.
+ *
+ * The run directory keeps `reconcile-state.json`: the ledger reservations already reconciled and
+ * the balance readings taken at the start of an attempt not yet reconciled. An attempt that stops
+ * before its end leaves both, so its resume compares that attempt's spend too.
  *
  * Reconciling reads the provider's usage and spends nothing.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Billing } from "./gateway/provider.ts";
@@ -30,6 +35,10 @@ import {
 const EPSILON = 1e-9;
 
 export const RECONCILE_FILE = "reconcile.jsonl";
+/** In the run directory: what the run's attempts have reconciled, and the open attempt's start. */
+export const RUN_RECONCILE_STATE_FILE = "reconcile-state.json";
+/** A pending lookup still unanswered this long after its run resolves as `failed`. */
+export const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export type ReconcileStatus = "unavailable" | "reconciled" | "pending" | "held" | "failed";
 
@@ -88,12 +97,42 @@ interface ResolvedRecord {
 export interface RunReconcile {
   runId: string;
   runDir: string;
-  /** The run's start: ledger reservations from then on are this attempt's. */
-  since: string;
   /** The paid providers the plan names, by settings id. */
   providers: string[];
   /** Balance readings in USD at the start, by provider id, or why there is none. */
   balances: Map<string, number | string>;
+  /** Providers whose start reading is an earlier, interrupted attempt's. */
+  carried?: Set<string>;
+}
+
+interface RunReconcileState {
+  /** Ledger reservation ids an earlier attempt's end already reconciled. */
+  reconciled: string[];
+  /** Start readings of an attempt that has not reached its end yet. */
+  balanceStart: Record<string, number | string>;
+}
+
+function readRunState(runDir: string): RunReconcileState {
+  try {
+    const raw = JSON.parse(readFileSync(join(runDir, RUN_RECONCILE_STATE_FILE), "utf8")) as {
+      reconciled?: unknown;
+      balanceStart?: unknown;
+    };
+    const reconciled = Array.isArray(raw.reconciled)
+      ? raw.reconciled.filter((v): v is string => typeof v === "string")
+      : [];
+    const balanceStart: Record<string, number | string> = {};
+    if (raw.balanceStart !== null && typeof raw.balanceStart === "object")
+      for (const [k, v] of Object.entries(raw.balanceStart))
+        if (typeof v === "number" || typeof v === "string") balanceStart[k] = v;
+    return { reconciled, balanceStart };
+  } catch {
+    return { reconciled: [], balanceStart: {} };
+  }
+}
+
+function writeRunState(runDir: string, state: RunReconcileState): void {
+  writeFileSync(join(runDir, RUN_RECONCILE_STATE_FILE), `${JSON.stringify(state, null, 2)}\n`);
 }
 
 function reconcilePath(stateDir: string): string {
@@ -160,13 +199,26 @@ export async function startRunReconcile(
     const billing = billingOfId(ctx, id)!;
     if (billing.reconcile === "balance-delta") balances.set(id, await readBalance(billing));
   }
-  return {
-    runId: run.runId,
-    runDir: run.runDir,
-    since: nowOf(ctx).toISOString(),
-    providers,
-    balances,
-  };
+  return { runId: run.runId, runDir: run.runDir, providers, balances };
+}
+
+/**
+ * The start of an attempt that will call providers (the run directory is open and locked): an
+ * earlier attempt that never reached its end left its balance readings, and they stay the start,
+ * so the delta covers that attempt's spend too. Otherwise this attempt's readings are kept.
+ */
+export function beginRunReconcile(run: RunReconcile): void {
+  const state = readRunState(run.runDir);
+  const carried = new Set<string>();
+  for (const id of run.balances.keys()) {
+    const stored = state.balanceStart[id];
+    if (stored !== undefined) {
+      run.balances.set(id, stored);
+      carried.add(id);
+    } else state.balanceStart[id] = run.balances.get(id)!;
+  }
+  run.carried = carried;
+  writeRunState(run.runDir, state);
 }
 
 /** The provider's balance in USD, or why it cannot be read. */
@@ -203,7 +255,10 @@ export async function finishRunReconcile(
   run: RunReconcile,
 ): Promise<ReconcileEntry[]> {
   const ledger = SpendLedger.fromSettings(ctx.settings, { env: {} });
-  const calls = ledger.runCalls(run.runId, run.since);
+  const state = readRunState(run.runDir);
+  const done = new Set(state.reconciled);
+  // Every reservation of the run no earlier attempt's end reconciled: an interrupted attempt's too.
+  const calls = ledger.runCalls(run.runId).filter((c) => !done.has(c.id));
   const entries: ReconcileEntry[] = [];
   for (const provider of run.providers) {
     const billing = billingOfId(ctx, provider);
@@ -224,11 +279,17 @@ export async function finishRunReconcile(
         });
       } else {
         const lookups: PendingCall[] = [];
+        const seen = new Set<string>();
         let unmatched = 0;
-        for (const call of mine) {
+        // The journal holds one request ID per call key: a reservation an interrupted attempt made
+        // for a call a later attempt paid again has no request ID of its own.
+        for (const call of mine.toReversed()) {
           const requestId = journaledRequestId(run.runDir, call.callKey);
-          if (requestId === undefined) unmatched++;
-          else lookups.push({ requestId, ledgerUsd: call.costUsd });
+          if (requestId === undefined || seen.has(call.callKey!)) unmatched++;
+          else {
+            seen.add(call.callKey!);
+            lookups.unshift({ requestId, ledgerUsd: call.costUsd });
+          }
         }
         entries.push(await perCall(ctx, provider, run.runId, billing, lookups, unmatched));
       }
@@ -242,6 +303,10 @@ export async function finishRunReconcile(
       });
     }
   }
+  writeRunState(run.runDir, {
+    reconciled: [...state.reconciled, ...calls.map((c) => c.id)],
+    balanceStart: {},
+  });
   return entries;
 }
 
@@ -259,12 +324,25 @@ async function balanceDelta(
     const note = typeof start === "number" ? end : (start ?? "no balance reading at the start");
     return { ...base, status: "failed", ledgerUsd, note: String(note) };
   }
-  return compare(ctx, base, ledgerUsd, start - end);
+  const carried = run.carried?.has(provider) === true;
+  return compare(
+    ctx,
+    {
+      ...base,
+      ...(carried && {
+        note: "the start reading is an interrupted earlier attempt's; the delta spans both",
+      }),
+    },
+    ledgerUsd,
+    start - end,
+  );
 }
 
 /**
  * Looks up each call's cost; with every one reported, compares, else records the lookup as
- * pending. A call the provider can never look up (null) joins the unmatched ones.
+ * pending. A call the provider can never look up (null) joins the unmatched ones. A run none of
+ * whose paid calls could be looked up records `failed`: nothing was compared. A retry stops at the
+ * first call still unreported, so a pending lookup costs one provider call per retry while it waits.
  */
 async function perCall(
   ctx: ReconcileContext,
@@ -275,6 +353,7 @@ async function perCall(
   unmatchedBefore: number,
   pendingId?: string,
 ): Promise<ReconcileEntry> {
+  const retry = pendingId !== undefined;
   let unmatched = unmatchedBefore;
   let ledgerUsd = 0;
   let providerUsd = 0;
@@ -289,6 +368,7 @@ async function perCall(
     looked.push(call);
     if (cost === undefined) {
       waiting.push(call);
+      if (retry) break;
       continue;
     }
     ledgerUsd += call.ledgerUsd;
@@ -319,10 +399,28 @@ async function perCall(
       status: "pending",
       ledgerUsd: looked.reduce((sum, c) => sum + c.ledgerUsd, 0),
       pendingId: id,
-      note: `${waiting.length} of ${looked.length} call cost(s) not reported yet`,
+      note: retry
+        ? "a call cost is not reported yet"
+        : `${waiting.length} of ${looked.length} call cost(s) not reported yet`,
     };
   }
-  return compare(ctx, base, ledgerUsd, providerUsd);
+  if (looked.length === 0 && unmatched > 0)
+    return {
+      ...base,
+      status: "failed",
+      note: `none of the ${unmatched} paid call(s) could be looked up with the provider; nothing was compared`,
+    };
+  return compare(
+    ctx,
+    {
+      ...base,
+      ...(unmatched > 0 && {
+        note: `${unmatched} paid call(s) could not be looked up and are left out of both sides`,
+      }),
+    },
+    ledgerUsd,
+    providerUsd,
+  );
 }
 
 /** The pending lookups not yet resolved, oldest first. */
@@ -345,7 +443,7 @@ export function pendingLookups(stateDir: string): PendingRecord[] {
 /**
  * Retries every pending lookup: one whose calls are all reported now is compared (and may append a
  * hold) and marked resolved; one whose provider is no longer configured or still has a call to
- * report stays pending.
+ * report stays pending, until a day after its run, when it resolves as `failed`.
  */
 export async function retryPending(ctx: ReconcileContext): Promise<ReconcileEntry[]> {
   const results: ReconcileEntry[] = [];
@@ -383,6 +481,13 @@ export async function retryPending(ctx: ReconcileContext): Promise<ReconcileEntr
         note: (error as Error).message,
       };
     }
+    const age = nowOf(ctx).getTime() - Date.parse(pending.at);
+    if (entry.status === "pending" && age > PENDING_MAX_AGE_MS)
+      entry = {
+        ...entry,
+        status: "failed",
+        note: `the provider has not reported every call cost within a day: ${entry.note ?? ""}`.trim(),
+      };
     if (entry.status !== "pending") {
       const resolved: ResolvedRecord = {
         op: "resolved",
