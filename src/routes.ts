@@ -567,3 +567,67 @@ export function resolveRoutes(
     },
   }) as Routes;
 }
+
+const anthropicGrant: OutputGrant = {
+  license: "LicenseRef-anthropic-api",
+  plan: "api",
+  commercial: true,
+  relabel: true,
+};
+const anthropicTerms = "Anthropic Commercial Terms of Service and Usage Policy (as of 2026-11-14)";
+const openaiGrant: OutputGrant = {
+  license: "LicenseRef-openai-api",
+  plan: "api",
+  commercial: true,
+  relabel: true,
+};
+const openaiTerms = "OpenAI Services Agreement and Usage Policies (as of 2026-11-14)";
+
+/**
+ * A direct adapter's default routes: every operation of the core defaults whose role is in
+ * `models`, on that role's model, with the adapter's grant and terms. The estimate and size are the
+ * core default's for the same operation; provider options are the gateway's and are not carried.
+ */
+function directRoutes(
+  models: Readonly<Record<string, string>>,
+  grant: OutputGrant,
+  terms: string,
+): Readonly<Record<string, Route>> {
+  const routes: Record<string, Route> = {};
+  for (const [operation, route] of Object.entries(defaultRoutes)) {
+    const role = roleOf(operation);
+    const model = role !== undefined ? models[role] : undefined;
+    if (model === undefined) continue;
+    routes[operation] = {
+      model,
+      estimatedCostUsd: route.estimatedCostUsd,
+      ...(route.size !== undefined && { size: route.size }),
+      outputGrant: { ...grant },
+      providerTerms: terms,
+    };
+  }
+  return routes;
+}
+
+/**
+ * The anthropic adapter's default routes (design section 12): vision, decisions and planning.
+ * Anthropic has no image models, so image and edit stay with another adapter.
+ */
+export const ANTHROPIC_DEFAULT_ROUTES: Readonly<Record<string, Route>> = directRoutes(
+  { vision: "claude-sonnet-5-5", planning: "claude-sonnet-5-5", decisions: "claude-haiku-5-5" },
+  anthropicGrant,
+  anthropicTerms,
+);
+
+/** The openai adapter's default routes (design section 12): every 2D role. */
+export const OPENAI_DEFAULT_ROUTES: Readonly<Record<string, Route>> = directRoutes(
+  {
+    image: "gpt-image-2",
+    edit: "gpt-image-2",
+    vision: "gpt-6.1-terra",
+    planning: "gpt-6.1-terra",
+    decisions: "gpt-6.1-terra",
+  },
+  openaiGrant,
+  openaiTerms,
+);
