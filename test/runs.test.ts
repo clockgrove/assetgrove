@@ -10,6 +10,7 @@ import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { RunInProgressError, acquireRunLock } from "../src/runs/lock.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
@@ -346,6 +347,48 @@ test("round 2 creates a new run directory; a live lock exits 2 run_in_progress; 
   const taken = await cli([...round3, "--json"]);
   assert.equal(taken.code, 0, taken.stderr);
   assert.equal(doc(taken).runDir, runDir);
+  assert.equal(existsSync(join(runDir, "lock")), false);
+});
+
+test("a dead lock is taken over by exactly one process, and a lock left by this pid's namesake is dead", async () => {
+  const runDir = await tempDir("assetgrove-lock-");
+  const dead = spawn(process.execPath, ["-e", ""]);
+  const deadPid = dead.pid as number;
+  await new Promise((done) => dead.once("exit", done));
+  const other = process.ppid; // a live process other than this one
+
+  // A live takeover guard means another process is claiming the dead lock: refused, untouched.
+  await writeFile(join(runDir, "lock"), `${deadPid}\n`);
+  await writeFile(join(runDir, "lock.takeover"), `${other}\n`);
+  assert.throws(() => acquireRunLock(runDir), RunInProgressError);
+  assert.equal(await readFile(join(runDir, "lock"), "utf8"), `${deadPid}\n`);
+
+  // Its guard gone, the first claimant takes the dead lock over; a second one, with the dead
+  // pid read before, finds the new holder live and is refused rather than overwriting it.
+  await rm(join(runDir, "lock.takeover"));
+  const first = acquireRunLock(runDir, other);
+  assert.equal(first.tookOver, true);
+  assert.equal(await readFile(join(runDir, "lock"), "utf8"), `${other}\n`);
+  assert.throws(() => acquireRunLock(runDir), RunInProgressError);
+  assert.equal(await readFile(join(runDir, "lock"), "utf8"), `${other}\n`);
+  first.release();
+  assert.equal(existsSync(join(runDir, "lock")), false);
+
+  // A guard left by a dead claimant is cleared, and the dead lock is taken over.
+  await writeFile(join(runDir, "lock"), `${deadPid}\n`);
+  await writeFile(join(runDir, "lock.takeover"), `${deadPid}\n`);
+  const cleared = acquireRunLock(runDir);
+  assert.equal(cleared.tookOver, true);
+  assert.deepEqual((await readdir(runDir)).sort(), ["lock"]);
+
+  // This process's own lock is live while it holds it ...
+  assert.throws(() => acquireRunLock(runDir), RunInProgressError);
+  cleared.release();
+  // ... but a lock naming this pid that this process never took was left by a dead namesake.
+  await writeFile(join(runDir, "lock"), `${process.pid}\n`);
+  const namesake = acquireRunLock(runDir);
+  assert.equal(namesake.tookOver, true);
+  namesake.release();
   assert.equal(existsSync(join(runDir, "lock")), false);
 });
 

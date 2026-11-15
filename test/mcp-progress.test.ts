@@ -120,7 +120,10 @@ test("a stage with a progressToken receives at least one notification per job", 
   );
   const total = plan.jobs.reduce((sum, j) => sum + j.count, 0);
   assert.ok(updates.every((u) => u.total === total));
-  assert.equal(Math.max(...updates.map((u) => u.progress)), total);
+  // One update per planned call, each job's calls among them: progress takes every value 1..total.
+  assert.ok(plan.jobs.every((j) => j.count >= 1));
+  const seen = new Set(updates.map((u) => u.progress));
+  for (let k = 1; k <= total; k++) assert.ok(seen.has(k), `no update for call ${k} of ${total}`);
 });
 
 test("after the client closes mid-run, repeating the request in a new server completes with only the missing calls", async () => {

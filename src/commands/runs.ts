@@ -10,7 +10,7 @@ import { RUN_RECORD_FILE, REQUEST_FILE } from "../runs/dir.ts";
 import { STATE_FILE, readRunState } from "../runs/execute.ts";
 import type { RunState } from "../runs/execute.ts";
 import { CALLS_DIR, journalCount } from "../runs/journal.ts";
-import { LOCK_FILE, pidAlive } from "../runs/lock.ts";
+import { runLockLive } from "../runs/lock.ts";
 import { DEFAULT_RUNS } from "../runs/plan.ts";
 import { usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -54,23 +54,13 @@ function readJsonFile(path: string): Record<string, unknown> | undefined {
   }
 }
 
-function lockHolder(runDir: string): number | undefined {
-  try {
-    const pid = Number.parseInt(readFileSync(join(runDir, LOCK_FILE), "utf8").trim(), 10);
-    return Number.isInteger(pid) ? pid : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function summary(runDir: string): RunSummary {
   const state = readRunState(runDir);
   const request = readJsonFile(join(runDir, REQUEST_FILE));
   const record = readJsonFile(join(runDir, RUN_RECORD_FILE));
   let status: Status = state?.status ?? "unknown";
   if (status === "running") {
-    const pid = lockHolder(runDir);
-    if (pid === undefined || !pidAlive(pid)) status = "interrupted";
+    if (!runLockLive(runDir)) status = "interrupted";
   }
   const number = (v: unknown) => (typeof v === "number" ? v : null);
   const text = (v: unknown) => (typeof v === "string" ? v : null);
