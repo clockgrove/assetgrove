@@ -1,6 +1,12 @@
 /** A structured failure of the search package. `code` is stable; `hint` names the fix. */
 export type SearchErrorCode =
-  "model_missing" | "model_unpinned" | "setup_failed" | "hash_mismatch" | "invalid_input";
+  | "model_missing"
+  | "model_unpinned"
+  | "setup_failed"
+  | "hash_mismatch"
+  | "invalid_input"
+  | "extension_unavailable"
+  | "store_locked";
 
 export class SearchError extends Error {
   readonly code: SearchErrorCode;

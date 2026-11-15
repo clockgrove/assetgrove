@@ -56,11 +56,44 @@ export interface BuiltFrom {
   at: string;
 }
 
+/** What a tree's row set was built from: one per indexable file (design section 7.3, `sources`). */
+export interface SourceRow {
+  tree: string;
+  /** The file's path inside the work tree, `/`-separated. */
+  path: string;
+  size: number;
+  mtimeMs: number;
+  /** sha256 of the file's bytes. */
+  sha256: string;
+  /** sha256 of the item's card fields and text, so a card edit alone re-embeds only its text. */
+  meta: string;
+}
+
+/** A cached vector, keyed by content: `view` is the image view, or `#text` for a text's vector. */
+export interface CachedVector {
+  sha256: string;
+  view: string;
+  vec: Float32Array;
+}
+
 export interface Store {
   upsert(rows: Row[]): Promise<void>;
   remove(keys: string[]): Promise<void>;
+  /** Removes every row of these paths in one tree. */
+  removePaths(tree: string, paths: string[]): Promise<void>;
   /** With neither vector nor text, returns filtered rows in key order. */
   query(q: StoreQuery): Promise<Hit[]>;
   recordBuiltFrom(tree: string, built: BuiltFrom): Promise<void>;
   builtFrom(tree: string): Promise<BuiltFrom | undefined>;
+  sources(tree: string): Promise<SourceRow[]>;
+  putSources(rows: SourceRow[]): Promise<void>;
+  removeSources(tree: string, paths: string[]): Promise<void>;
+  /** Cached vectors of one embedder (`<id>@<revision>`), by `sha256` and `view`. */
+  cachedVectors(
+    embedder: string,
+    keys: { sha256: string; view: string }[],
+  ): Promise<CachedVector[]>;
+  cacheVectors(embedder: string, vectors: CachedVector[]): Promise<void>;
+  /** Compacts and indexes after a batch of writes; a writer calls it under the write lock. */
+  optimize(): Promise<void>;
 }
