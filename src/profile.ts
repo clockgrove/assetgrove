@@ -26,6 +26,13 @@ const profileSchema = z.strictObject({
   model3d: section.optional(),
   animation: section.optional(),
   // Each preset's options are checked against its own schema at hand-off (src/handoff/presets).
+  library: z
+    .strictObject({
+      root: z.string().optional(),
+      game: z.string().optional(),
+      log: z.boolean().optional(),
+    })
+    .optional(),
   handoff: z.array(z.strictObject({ preset: z.string(), options: section.optional() })).optional(),
 });
 

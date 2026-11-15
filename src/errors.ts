@@ -32,6 +32,8 @@ export const EXIT = {
   plan_changed: 2,
   run_in_progress: 2,
   command_refused: 2,
+  asset_id_reserved: 2,
+  asset_conflict: 2,
   cap_refused: 3,
   provider_limit_undeclared: 3,
   provider_limit_mismatch: 3,

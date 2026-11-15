@@ -145,6 +145,13 @@ export interface TargetProfile {
   manifest: unknown;
   /** Where the review status sits in the manifest, and the only value Assetgrove writes there. */
   review: { path: string; pending: string };
+  /**
+   * The asset library written at hand-off (docs/library.md). `root`: path inside the target,
+   * defaults to the static directory prefix of `layout.media`, else the target root. `game`: the
+   * game id, the first segment of `asset://` addresses, default a slug of `name`. `log`: `false`
+   * turns `log.md` off, default true.
+   */
+  library?: { root?: string; game?: string; log?: boolean };
   /** Command run in the target directory after hand-off; `{{manifest}}` and `{{media}}` are replaced. */
   validator?: { command: string[] };
   /**

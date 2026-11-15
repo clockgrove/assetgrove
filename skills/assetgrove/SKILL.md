@@ -49,7 +49,7 @@ The target profile's `handoff` lists presets: `manifest` (default), `atlas-json`
 | ---- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0    | success                 |                                                                                                                                                                                                                         |
 | 1    | internal error          | `internal_error`                                                                                                                                                                                                        |
-| 2    | invalid input           | `invalid_input`, `settings_invalid`, `key_tracked`, `format_unsupported`, `extension_unavailable`, `extension_refused`, `extension_conflict`, `route_unavailable`, `plan_changed`, `run_in_progress`, `command_refused` |
+| 2    | invalid input           | `invalid_input`, `settings_invalid`, `key_tracked`, `format_unsupported`, `extension_unavailable`, `extension_refused`, `extension_conflict`, `route_unavailable`, `plan_changed`, `run_in_progress`, `command_refused`, `asset_id_reserved`, `asset_conflict` |
 | 3    | spend refused           | `cap_refused`, `provider_limit_undeclared`, `provider_limit_mismatch`, `spend_hold`                                                                                                                                     |
 | 4    | provider error          | `provider_error`                                                                                                                                                                                                        |
 | 5    | QA found nothing        | `qa_found_nothing`                                                                                                                                                                                                      |
@@ -61,7 +61,7 @@ The target profile's `handoff` lists presets: `manifest` (default), `atlas-json`
 Decide on the exit and `error.code`, never on the message. What the commands return today:
 
 - 1: an unexpected internal error; also `identity-check` when a record disagrees or could not be checked (no `error`).
-- 2: invalid input, including an unknown option.
+- 2: invalid input, including an unknown option. `asset_id_reserved`: the asset id is `index`, `log` or a view name (`by-kind`, `by-subject`, `by-tag`, `stale`, `runs`, `find`, `like`, `where`). `asset_conflict`: the asset id is already carded at another path in the library.
 - 3: the run's cap or a spend limit across runs (also a dry-run forecast over either).
 - 4: no `AI_GATEWAY_API_KEY` where a gateway call is needed, no `TRIPO_API_KEY` for a `character-3d` stage, or every candidate failed to generate.
 - 5: no candidate passed, or a check failed (`animation-qa`, `materials`, `rig`, `lod`, `look-dev`, a generated sheet with the wrong number of figures).

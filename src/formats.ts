@@ -7,7 +7,7 @@ import { InputError } from "./errors.ts";
 
 /** Every kind that carries a format line, with the version this build reads and writes. */
 export const FORMAT_VERSIONS = {
-  "target-profile": 1,
+  "target-profile": 2,
   "style-bible": 1,
   "style-preset": 1,
   recipe: 1,
@@ -48,6 +48,9 @@ export function registerMigration(kind: string, from: number, migrate: Migration
 export function unregisterMigration(kind: string, from: number): void {
   migrations.delete(`${kind}/${from}`);
 }
+
+// A /1 profile is valid as /2: the library block is optional and has defaults.
+registerMigration("target-profile", 1, (value) => value);
 
 /** The format line a current file of `kind` carries. */
 export function formatLine(kind: FormatKind): string {
