@@ -1,9 +1,8 @@
 import { basename, dirname } from "node:path";
-import { imageGenerators } from "../generators/image.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
 import { DEFAULT_CANDIDATES, planStage, stage } from "../loop.ts";
-import { character3dGenerator } from "../model3d/generator.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
@@ -18,9 +17,6 @@ import {
   specReads,
   styleBibleReads,
 } from "../runs/plan.ts";
-
-/** Every generator `stage` runs: the image kinds and 3D characters. */
-const stageGenerators = [...imageGenerators, character3dGenerator];
 
 interface StageArgs {
   spec: string;
@@ -42,6 +38,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const spec = await readJson<AssetSpec>(args.spec);
   const bible = await loadStyleBible(args.bible);
   const profile = await loadProfile(args.profile);
+  // Every asset kind of the registry: core's (still, sprite-strip, character-3d) and the loaded
+  // extensions'.
+  const registry = ctx.extensions ?? CORE_REGISTRY;
+  registry.requireKind(spec.value.kind);
+  const stageGenerators = [...registry.kinds];
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
   const plan = planStage({
@@ -61,7 +62,18 @@ async function prepare(args: StageArgs, ctx: RunContext) {
     paid: paidBy(providers, jobs),
     candidates,
   });
-  return { candidates, capUsd, spec, bible, profile, providers, routes, plan, work };
+  return {
+    candidates,
+    stageGenerators,
+    capUsd,
+    spec,
+    bible,
+    profile,
+    providers,
+    routes,
+    plan,
+    work,
+  };
 }
 
 export const stageCommand = defineCommand<StageArgs>({
@@ -122,8 +134,18 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
   plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     const ledger = spendLedger(ctx, args.workItem);
-    const { candidates, capUsd, spec, bible, profile, providers, routes, plan, work } =
-      await prepare(args, ctx);
+    const {
+      candidates,
+      stageGenerators,
+      capUsd,
+      spec,
+      bible,
+      profile,
+      providers,
+      routes,
+      plan,
+      work,
+    } = await prepare(args, ctx);
 
     if (args.dryRun) {
       return dryRunOutcome(

@@ -14,10 +14,11 @@ export { ProviderSet, suggestRoles } from "./set.ts";
 export type { ServedBy, SuggestedRole } from "./set.ts";
 
 /** What provider setup reads from the run context: the settings and the environment. */
-export type ProviderContext = Pick<RunContext, "settings" | "env" | "prompt">;
+export type ProviderContext = Pick<RunContext, "settings" | "env" | "prompt" | "extensions">;
 
 /**
- * The providers and routes of the developer settings (src/providers/set.ts); `--provider-script`,
+ * The providers and routes of the developer settings (src/providers/set.ts), each made by its
+ * adapter from the registry (core's and the loaded extensions'); `--provider-script`,
  * when given, is the module of every configured scripted provider; when no route names one, the
  * first call is refused (exit 2 `invalid_input`, src/providers/set.ts), so a script is never
  * silently ignored.
@@ -31,6 +32,7 @@ export async function providerSet(
   return ProviderSet.fromSettings(ctx.settings, {
     ...(ctx.env && { env: ctx.env }),
     ...(script && { script }),
+    ...(ctx.extensions && { adapters: ctx.extensions.adapters }),
   });
 }
 

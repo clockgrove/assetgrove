@@ -3,6 +3,7 @@ import { applyCommand } from "./apply.ts";
 import { bibleCommand } from "./bible.ts";
 import { confirmCommand } from "./confirm.ts";
 import { estimateCommand } from "./estimate.ts";
+import { extensionsCommand } from "./extensions.ts";
 import { fixFrameCommand } from "./fix-frame.ts";
 import { generateSheetCommand } from "./generate-sheet.ts";
 import { identityCheckCommand } from "./identity-check.ts";
@@ -49,6 +50,7 @@ export const commands: readonly CommandSpec[] = [
   opsCommand,
   migrateCommand,
   settingsCommand,
+  extensionsCommand,
   spendCommand,
   estimateCommand,
   confirmCommand,

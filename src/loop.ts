@@ -16,6 +16,7 @@ import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { referenceLicenses } from "./bible.ts";
 import { InputError } from "./errors.ts";
+import { extensionOf, unavailableId } from "./extensions/errors.ts";
 import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
@@ -54,6 +55,7 @@ export interface StageOptions {
   providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
+  /** The asset kinds of the registry (src/extensions/registry.ts): core's and the extensions'. */
   generators: Generator[];
   /**
    * Directory runs are staged under; each run gets `<runsDir>/<runId>/`. The stage command gives
@@ -101,7 +103,12 @@ export function planStage(options: {
     throw new InputError(`invalid cost cap: ${capUsd}`);
   }
   const generator = options.generators.find((g) => g.kind === options.spec.kind);
-  if (!generator) throw new InputError(`no generator handles asset kind "${options.spec.kind}"`);
+  if (!generator) {
+    // An `<ext>:<name>` kind comes from an extension the settings do not load.
+    if (extensionOf(options.spec.kind) !== undefined)
+      throw unavailableId(options.spec.kind, "asset kind");
+    throw new InputError(`no generator handles asset kind "${options.spec.kind}"`);
+  }
   const perCandidate = generator.planCandidate(options.spec, options.profile, options.routes);
   const estimateUsd = perCandidate.reduce((sum, c) => sum + c.estimatedCostUsd, 0) * requested;
   return {

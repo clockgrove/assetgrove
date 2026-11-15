@@ -34,19 +34,29 @@ function npm(args: string[], options: { cwd: string }) {
   return exec(file, argv, { ...options, env: npmEnv });
 }
 
-/** The package must hold what a user needs and none of the TypeScript sources or tests. */
+/**
+ * The package must hold what a user needs (the CLI, and the extension API with its declarations)
+ * and none of the TypeScript sources or tests.
+ */
 function assertContents(paths: string[]): void {
   for (const wanted of [
     "package.json",
     "README.md",
     "LICENSE",
     "dist/cli.js",
+    "dist/extension/api.js",
+    "dist/extension/api.d.ts",
     "skills/assetgrove/SKILL.md",
   ]) {
     assert.ok(paths.includes(wanted), `package lacks ${wanted}`);
   }
   assert.deepEqual(
-    paths.filter((p) => p.endsWith(".ts") || p.startsWith("src/") || p.startsWith("test/")),
+    paths.filter(
+      (p) =>
+        (p.endsWith(".ts") && !p.endsWith(".d.ts")) ||
+        p.startsWith("src/") ||
+        p.startsWith("test/"),
+    ),
     [],
   );
 }
@@ -116,6 +126,19 @@ test(
       const help = await run(["--help"]);
       assert.match(help.stdout, /stage/);
       assert.match(help.stdout, /pick/);
+
+      // The extension API resolves through the package's exports, compiled.
+      const api = await exec(
+        process.execPath,
+        [
+          "--no-experimental-strip-types",
+          "--input-type=module",
+          "-e",
+          'const m = await import("@clockgrove/assetgrove/extension"); console.log(m.EXTENSION_API);',
+        ],
+        { cwd: install, env },
+      );
+      assert.equal(api.stdout.trim(), "1");
 
       const world = await syntheticWorld();
       temps.push(world.dir);

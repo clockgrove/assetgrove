@@ -1,0 +1,15 @@
+{
+  "name": "assetgrove-fixture-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A synthetic Assetgrove extension for test/extensions.test.ts: one asset kind, one hand-off preset and one provider adapter.",
+  "license": "MIT",
+  "type": "module",
+  "peerDependencies": {
+    "@clockgrove/assetgrove": "*"
+  },
+  "assetgrove": {
+    "api": 1,
+    "entry": "./index.js"
+  }
+}

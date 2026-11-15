@@ -66,7 +66,7 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 | `providers.<id>.limit` | `kind`: `key-budget`, `team-budget`, `project-hard-limit`, `workspace-limit`, `prepaid` or `unlimited` (needs `acceptUnlimited: true`); `usd`; `period`.                                                        | none                                                                                          |
 | `roles.<role>`         | `provider`, `model`, `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`; all but `attribution` required), `providerTerms`, `estimatedCostUsd`. See [Roles and routes](#roles-and-routes). | the adapters' default routes                                                                  |
 | `routes.<operation>`   | The same fields as a role, for one operation; overrides its role.                                                                                                                                               | the role                                                                                      |
-| `extensions`           | Packages whose extension code may run.                                                                                                                                                                          | none                                                                                          |
+| `extensions`           | Package names whose extension code may run, each resolved from the project at start. Only this field loads code. See [Extensions](extensions.md).                                                               | none                                                                                          |
 | `environment.allow`    | Refused environment variables (below) that are allowed anyway.                                                                                                                                                  | none                                                                                          |
 | `reconcile`            | `marginUsd`, `marginPct`.                                                                                                                                                                                       | none                                                                                          |
 | `spend`                | `acknowledgedHolds`: hex hashes of acknowledged holds.                                                                                                                                                          | none                                                                                          |
@@ -95,7 +95,7 @@ The projects are found from the cwd, `--target` and the directory of each input 
 
 Refusals that depend on the adapter exit 2 with `settings_invalid`, and are checked when the run context is built, for every command:
 
-- an `adapter` that is not a core adapter;
+- an `adapter` that is neither a core adapter nor a `<ext>:<id>` of a loaded extension (an unknown `<ext>:<id>` exits 2 `extension_unavailable`);
 - a `baseURL` on a `tripo` or `scripted` entry. Tripo's endpoint is fixed (api.tripo3d.ai).
 
 Refusals of spend exit 3:

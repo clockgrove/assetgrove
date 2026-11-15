@@ -8,6 +8,7 @@
  */
 import type { Env } from "../env.ts";
 import { SettingsError } from "../env.ts";
+import { extensionOf, unavailableId } from "../extensions/errors.ts";
 import type { Billing, GenerationProvider } from "../gateway/provider.ts";
 import { ANTHROPIC_BASE_URL, AnthropicProvider } from "../gateway/anthropic.ts";
 import { OPENAI_BASE_URL, OpenAIProvider } from "../gateway/openai.ts";
@@ -248,6 +249,9 @@ export function createProvider(
   const where = options.path !== undefined ? `${options.path}: ` : "";
   const adapter = adapterOf(id, entry, adapters);
   if (adapter === undefined) {
+    const name = entry.adapter ?? id;
+    if (extensionOf(name) !== undefined)
+      throw unavailableId(name, `providers.${id} names adapter`, options.path);
     throw new SettingsError(
       `${where}providers.${id} names adapter "${entry.adapter ?? id}", which is not a known adapter (${adapters.map((a) => a.id).join(", ")}).`,
     );
@@ -278,10 +282,13 @@ export function createProvider(
   };
 }
 
-/** Every provider of the settings, in id order, each made by its adapter. */
+/**
+ * Every provider of the settings, in id order, each made by its adapter: core's, or `adapters`
+ * (core's and the loaded extensions', src/extensions/registry.ts).
+ */
 export function createProviders(
   settings: Pick<Settings, "providers" | "path">,
-  options: { env?: Env; script?: Script } = {},
+  options: { env?: Env; script?: Script; adapters?: readonly ProviderAdapter[] } = {},
 ): ConfiguredProvider[] {
   return Object.keys(settings.providers)
     .sort()

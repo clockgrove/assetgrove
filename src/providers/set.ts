@@ -71,7 +71,7 @@ export class ProviderSet implements GenerationProvider {
   /** The providers and routes of the settings; `script` is given to scripted providers. */
   static fromSettings(
     settings: Pick<Settings, "providers" | "roles" | "routes" | "path">,
-    options: { env?: Env; script?: Script } = {},
+    options: { env?: Env; script?: Script; adapters?: readonly ProviderAdapter[] } = {},
   ): ProviderSet {
     const configured = createProviders(settings, options);
     return new ProviderSet(

@@ -245,6 +245,16 @@ Reads the developer settings and changes nothing. `path` gives the settings file
 
 MCP tool: `settings`, argument `action`.
 
+### `extensions`
+
+```text
+extensions [--json]
+```
+
+Lists what loaded: core first, then each extension the developer settings' `extensions` list names, as `{name, package, version, entry, kinds, presets, adapters}` under `extensions`. An extension loads only when the settings list its package, it resolves from the project, its declared `api` matches (checked before import) and the project's Git does not track its entry file; otherwise every command exits 2 with `extension_unavailable`, `extension_refused` or `extension_conflict` (see docs/extensions.md). A shared file naming an `<ext>:<name>` kind or preset of an extension that did not load exits 2 `extension_unavailable`. Local: no model call, no spend.
+
+MCP tool: `extensions`, no arguments.
+
 ### `spend`
 
 ```text
