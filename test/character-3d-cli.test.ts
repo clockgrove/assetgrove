@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { readDigitalSourceType } from "../src/metadata.ts";
+import { defaultRoutes } from "../src/routes.ts";
+import { writeSettings } from "./fixtures/env.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { parseGlb } from "../src/model3d/glb.ts";
 import { clips as clipsOf, measure } from "../src/model3d/scene.ts";
@@ -421,7 +423,6 @@ test("an open loop from the provider is closed for looping families", async () =
 
 test("a grant the target cannot accept is refused with exit 7 before anything is written", async () => {
   const w = await world();
-  const routes = join(w.dir, "routes.json");
   const meshyFree = {
     license: "CC-BY-4.0",
     plan: "free",
@@ -429,17 +430,18 @@ test("a grant the target cannot accept is refused with exit 7 before anything is
     relabel: false,
     attribution: "3D model generated with Meshy (meshy.ai)",
   };
-  await writeFile(
-    routes,
-    JSON.stringify({ model3d: { outputGrant: meshyFree }, rig3d: { outputGrant: meshyFree } }),
-  );
+  // The developer settings declare the grant of the provider and model each 3D role runs on.
+  writeSettings({
+    roles: {
+      model3d: { provider: "scripted", model: defaultRoutes.model3d.model, outputGrant: meshyFree },
+      rig3d: { provider: "scripted", model: defaultRoutes.rig3d.model, outputGrant: meshyFree },
+    },
+  });
   const staged = await cli([
     "stage",
     ...w.base,
     "--runs",
     w.runs,
-    "--routes",
-    routes,
     "--provider-script",
     SCRIPT,
     "--candidates",

@@ -331,16 +331,18 @@ test("--help --json lists exactly the registry's commands, and src/cli.ts is a s
   assert.ok(entry.split("\n").length < 40, "src/cli.ts is under 40 lines");
 });
 
-test("a missing or malformed routes file is invalid_input", async () => {
+test("no command takes a routes file: --routes is invalid_input", async () => {
   const { world, base } = await files();
-  const bad = join(world.dir, "bad-routes.json");
-  await writeFile(bad, "{ not json");
-  const list = join(world.dir, "list-routes.json");
-  await writeFile(list, "[]");
-  for (const routes of [join(world.dir, "nope.json"), bad, list]) {
-    const r = await cli(["stage", ...base, "--routes", routes, "--dry-run", "--json"], noKey());
-    assert.equal(r.code, 2, routes);
+  const routes = join(world.dir, "routes.json");
+  await writeFile(routes, "{}");
+  for (const args of [
+    ["stage", ...base, "--dry-run"],
+    ["identity-check", "--bible", join(world.bibleDir, "bible.json")],
+  ]) {
+    const r = await cli([...args, "--routes", routes, "--json"], noKey());
+    assert.equal(r.code, 2, args[0]);
     assert.equal(doc(r)["error"].code, "invalid_input");
+    assert.match(doc(r)["error"].message, /--routes/);
   }
 });
 
