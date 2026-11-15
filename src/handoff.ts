@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   combineDigitalSourceTypes,
@@ -19,11 +20,18 @@ import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
 import { readRun, writeRun } from "./loop.ts";
 import type { StagedCandidate } from "./loop.ts";
-import { checkWrites, readRecordPath, relativeRecordPath } from "./paths.ts";
+import {
+  checkWrites,
+  embedsProvenance,
+  inGitDir,
+  readRecordPath,
+  relativeRecordPath,
+} from "./paths.ts";
 import { sha256 } from "./request.ts";
+import { isInside } from "./settings.ts";
 import { renderString, setPath } from "./template.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
-import type { PresetRegistry } from "./handoff/presets/index.ts";
+import type { PresetRegistry, ResolvedPreset } from "./handoff/presets/index.ts";
 import type { HandoffProblem, PresetFile } from "./handoff/presets/index.ts";
 import type { AssetSpec, ConfirmationRecord, Provenance, TargetProfile } from "./types.ts";
 
@@ -77,14 +85,90 @@ function inside(root: string, path: string): string {
   return full;
 }
 
-/** Whether the manifest template embeds the whole provenance record as `"{{provenance}}"`. */
-function embedsProvenance(template: unknown): boolean {
-  if (typeof template === "string") return /^\{\{\s*provenance\s*\}\}$/.test(template);
-  if (Array.isArray(template)) return template.some(embedsProvenance);
-  if (template !== null && typeof template === "object") {
-    return Object.values(template).some(embedsProvenance);
+/** The real path of `path`, or of its nearest existing ancestor joined with the rest. */
+function realOf(path: string): string {
+  if (existsSync(path)) return realpathSync.native(path);
+  const parent = dirname(path);
+  return parent === path ? path : join(realOf(parent), basename(path));
+}
+
+/** What every hand-off write is checked against. */
+interface TargetGuard {
+  targetDir: string;
+  /** The target's real path. */
+  realTarget: string;
+  /** The real paths of the settings and state directories. */
+  protectedDirs: string[];
+  /** The real paths of the files the validator's argv names, which its approval hashes. */
+  commandFiles: string[];
+}
+
+/**
+ * The guard of a target. Refuses a target that is, holds or lies in the settings or state
+ * directory: a hand-off never writes the developer's settings, approvals or confirmations.
+ */
+function targetGuard(
+  targetDir: string,
+  settings: { configDir: string; stateDir: string },
+  validator: readonly string[] | undefined,
+): TargetGuard {
+  const realTarget = realOf(targetDir);
+  const protectedDirs = [settings.configDir, settings.stateDir].map((dir) => realOf(resolve(dir)));
+  for (const dir of protectedDirs) {
+    if (isInside(dir, realTarget) || isInside(realTarget, dir)) {
+      throw new InputError(
+        `the target ${targetDir} holds or lies in the Assetgrove settings or state directory ${dir}`,
+      );
+    }
   }
-  return false;
+  const commandFiles = (validator ?? [])
+    .filter((arg) => arg !== "" && !arg.includes("{{"))
+    .map((arg) => realOf(resolve(targetDir, arg)));
+  return { targetDir, realTarget, protectedDirs, commandFiles };
+}
+
+/**
+ * The absolute path of a hand-off write, checked on its real path: inside the target (a link in the
+ * target cannot send it elsewhere), outside the settings and state directories, in no `.git`
+ * directory, and not a file the validator's command names.
+ */
+function targetPath(guard: TargetGuard, rel: string): string {
+  const full = inside(guard.targetDir, rel);
+  if (inGitDir(rel)) throw new InputError(`profile layout path "${rel}" writes into .git`);
+  const real = realOf(full);
+  if (real === guard.realTarget || !isInside(real, guard.realTarget)) {
+    throw new InputError(`profile layout path "${rel}" leaves the target directory through a link`);
+  }
+  if (guard.protectedDirs.some((dir) => isInside(real, dir))) {
+    throw new InputError(`profile layout path "${rel}" reaches the Assetgrove settings or state`);
+  }
+  if (guard.commandFiles.some((file) => isInside(real, file) && isInside(file, real))) {
+    throw new InputError(
+      `profile layout path "${rel}" overwrites a file the validator command names`,
+    );
+  }
+  return full;
+}
+
+/** Refuses two writes that reach one file, through a link or a case-insensitive file system. */
+function sameFile(paths: readonly string[]): void {
+  const seen = new Map<string, string>();
+  for (const path of paths) {
+    const key = realOf(path).toLowerCase();
+    const other = seen.get(key);
+    if (other !== undefined)
+      throw new InputError(`two writes reach one file: ${other} and ${path}`);
+    seen.set(key, path);
+  }
+}
+
+/**
+ * Refuses, before the first of several hand-offs into one target writes anything, any two of their
+ * writes that name or reach one file, so no hand-off replaces another's file.
+ */
+export function checkPreparedWrites(prepared: readonly PreparedTargetWrite[]): void {
+  checkWrites(prepared.flatMap((p) => p.rels));
+  sameFile(prepared.flatMap((p) => p.writes.map(([path]) => path)));
 }
 
 /** What a hand-off writes: one media file with its fields and provenance. */
@@ -127,6 +211,26 @@ export interface TargetWriteResult {
   validator?: ValidatorResult;
 }
 
+/** A hand-off checked and rendered, with nothing written yet (see `prepareTargetWrite`). */
+export interface PreparedTargetWrite {
+  /** Every path the hand-off writes, relative to the target. */
+  rels: string[];
+  write: TargetWrite;
+  targetDir: string;
+  gate: ApprovalGate;
+  guard: TargetGuard;
+  presets: ResolvedPreset[];
+  presetContext: { profile: TargetProfile; context: Record<string, unknown>; manifestRel: string };
+  presetFiles: PresetFile[][];
+  mediaRel: string;
+  manifestRel: string;
+  mediaPath: string;
+  manifestPath: string;
+  provenancePath?: string;
+  writes: Array<[string, Uint8Array | string]>;
+  validatorStep?: CommandStep;
+}
+
 /**
  * Writes one output into the target through the profile's hand-off presets (design section 14;
  * src/handoff/presets): first every preset's options are validated (exit 2), then the media,
@@ -134,13 +238,20 @@ export interface TargetWriteResult {
  * profile's template with the review field set to the profile's pending value), then each preset
  * checks what it wrote. A failed check throws a HandoffCheckError (exit 6 `handoff_check_failed`)
  * and the validator does not run. Then runs the target's validator, when the profile declares one;
- * the validator must be approved (src/approvals.ts) before anything is written, and the provenance
- * records its hash and approval method. Assetgrove never writes any review value other than
- * pending. Refuses with a LicenseError, before writing, an
- * output whose provider grant the target cannot declare (src/license.ts); `{{profile.license}}`
- * renders the licence the output is declared under.
+ * the validator must be approved (src/approvals.ts) before anything is written, no write replaces a
+ * file its command names, and its approval is checked again on the written target before it runs.
+ * The provenance records its hash and approval method. Every write is checked on its real path
+ * before the first one: it stays in the target, outside the settings and state directories and
+ * any `.git` directory. Assetgrove never writes any review value other than pending. Refuses with
+ * a LicenseError, before writing, an output whose provider grant the target cannot declare
+ * (src/license.ts); `{{profile.license}}` renders the licence the output is declared under.
  */
 export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResult> {
+  return commitTargetWrite(await prepareTargetWrite(write));
+}
+
+/** Everything `writeToTarget` checks and renders before its first write; writes nothing. */
+export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTargetWrite> {
   const { profile, spec } = write;
   // First: the profile's hand-off presets and their options.
   const presets = resolveHandoff(profile, write.registry);
@@ -169,6 +280,8 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     provenance.steps = [...(provenance.steps ?? []), metadataStep(digitalSourceType, hashes)];
   }
   const targetDir = resolve(write.targetDir);
+  const gate = write.gate ?? defaultGate();
+  const guard = targetGuard(targetDir, gate.settings, profile.validator?.command);
   // Before anything is written: the validator a profile names runs only with an approval.
   let validatorStep: CommandStep | undefined;
   if (profile.validator) {
@@ -176,7 +289,7 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     if (!template[0]) throw new InputError("the profile's validator command is empty");
     resolveProgram(template[0], targetDir);
     const identity = commandIdentity("validator", template, targetDir);
-    validatorStep = await requireApproval(identity, write.gate ?? defaultGate());
+    validatorStep = await requireApproval(identity, gate);
     provenance.commands = [...(provenance.commands ?? []), validatorStep];
   }
   const context: Record<string, unknown> = {
@@ -226,37 +339,63 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     preset.write(presetContext, options),
   );
 
-  // Before anything is written: no two writes differ only by case, and no segment holds ":".
-  checkWrites([
+  // Before anything is written: no two writes name one file or differ only by case, and Windows
+  // can hold every segment.
+  const rels = [
     mediaRel,
     ...presetFiles.flat().map((file) => file.path),
     ...sidecarRels,
     ...(provenanceRel === undefined ? [] : [provenanceRel]),
-  ]);
-  const mediaPath = inside(targetDir, mediaRel);
-  const manifestPath = inside(targetDir, manifestRel);
-  const provenancePath = provenanceRel === undefined ? undefined : inside(targetDir, provenanceRel);
+  ];
+  checkWrites(rels);
+  const mediaPath = targetPath(guard, mediaRel);
+  const manifestPath = targetPath(guard, manifestRel);
+  const provenancePath = provenanceRel === undefined ? undefined : targetPath(guard, provenanceRel);
   const writes: Array<[string, Uint8Array | string]> = [
     [mediaPath, output.bytes],
     ...presetFiles
       .flat()
-      .map((file): [string, Uint8Array | string] => [inside(targetDir, file.path), file.content]),
+      .map((file): [string, Uint8Array | string] => [targetPath(guard, file.path), file.content]),
   ];
   (write.output.sidecars ?? []).forEach((sidecar, i) => {
-    writes.push([inside(targetDir, sidecarRels[i] as string), sidecar.bytes]);
+    writes.push([targetPath(guard, sidecarRels[i] as string), sidecar.bytes]);
   });
   if (provenancePath) {
     writes.push([provenancePath, `${JSON.stringify(provenance, null, 2)}\n`]);
   }
+  sameFile(writes.map(([path]) => path));
+  return {
+    rels,
+    write,
+    targetDir,
+    gate,
+    guard,
+    presets,
+    presetContext,
+    presetFiles,
+    mediaRel,
+    manifestRel,
+    mediaPath,
+    manifestPath,
+    ...(provenancePath !== undefined && { provenancePath }),
+    writes,
+    ...(validatorStep !== undefined && { validatorStep }),
+  };
+}
+
+/** Writes a prepared hand-off, then runs each preset's check and the approved validator. */
+export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
+  const { targetDir, guard, presets, presetContext, presetFiles, writes } = prepared;
+  const { profile } = prepared.write;
   for (const [path, content] of writes) {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, content);
   }
 
   const result: TargetWriteResult = {
-    mediaPath,
-    manifestPath,
-    ...(provenancePath !== undefined && { provenancePath }),
+    mediaPath: prepared.mediaPath,
+    manifestPath: prepared.manifestPath,
+    ...(prepared.provenancePath !== undefined && { provenancePath: prepared.provenancePath }),
     files: writes.map(([path]) => relativeRecordPath(targetDir, path)),
     handoff: presets.map(({ preset }, i) => ({
       preset: preset.name,
@@ -268,7 +407,7 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
 
   // Each preset checks what it wrote; a failed check stops the hand-off before the validator.
   const read = (rel: string) =>
-    readFile(inside(targetDir, rel)).then(
+    readFile(targetPath(guard, rel)).then(
       (bytes) => new Uint8Array(bytes),
       () => undefined,
     );
@@ -278,13 +417,18 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
     problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
   }
   if (problems.length > 0) throw new HandoffCheckError(problems);
-  if (profile.validator && validatorStep) {
-    const vars = { manifest: manifestRel, media: mediaRel };
+  if (profile.validator && prepared.validatorStep) {
+    // The approval must hold for the command as the written target now has it.
+    const identity = commandIdentity("validator", profile.validator.command, targetDir);
+    const approval =
+      identity.hash === prepared.validatorStep.hash
+        ? prepared.validatorStep
+        : await requireApproval(identity, prepared.gate);
+    const vars = { manifest: prepared.manifestRel, media: prepared.mediaRel };
     const command = profile.validator.command.map((part) => renderString(part, vars));
     const [file, ...args] = command;
     if (!file) throw new InputError("the profile's validator command is empty");
     const program = resolveProgram(file, targetDir);
-    const approval = validatorStep;
     try {
       const { stdout, stderr } = await run(program, args, { cwd: targetDir });
       result.validator = { accepted: true, command, output: `${stdout}${stderr}`.trim(), approval };

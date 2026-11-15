@@ -289,20 +289,45 @@ async function stagedPick(change: (profile: TargetProfile) => void) {
   return { world, runDir, run };
 }
 
-/** A layout whose provenance file lands on the manifest's path, so the manifest reads back wrong. */
-function clobberManifest(profile: TargetProfile): void {
-  profile.layout = { ...profile.layout, provenance: profile.layout.manifest };
+/** Core's presets and a loaded extension's preset whose check always finds a problem. */
+const failingRegistry: PresetRegistry = {
+  presets: new Map([
+    ...PRESETS,
+    [
+      "ext:fail",
+      {
+        name: "ext:fail",
+        optionsSchema: z.strictObject({}),
+        write: () => [{ path: "fail.txt", content: "x\n" }],
+        check: async () => ["fail.txt reads back wrong"],
+      } satisfies HandoffPreset,
+    ],
+  ]),
+};
+
+/** A hand-off list whose second preset's check fails (under `failingRegistry`). */
+function failingCheck(profile: TargetProfile): void {
+  profile.handoff = [{ preset: "manifest" }, { preset: "ext:fail" }];
 }
 
 test("a preset whose check fails exits 6 handoff_check_failed listing problems, and the validator does not run", async () => {
-  const { world, runDir, run } = await stagedPick(clobberManifest);
-  const r = await run();
-  assert.equal(r.code, 6, r.stderr);
-  const d = doc(r);
-  assert.equal(d["error"].code, "handoff_check_failed");
-  assert.ok(d["error"].problems.length > 0);
-  for (const p of d["error"].problems) {
-    assert.equal(p.preset, "manifest");
+  const { world, runDir } = await stagedPick(failingCheck);
+  const outcome = failureOutcome(
+    await pick({
+      runDir,
+      candidateId: "c1",
+      targetDir: world.targetDir,
+      registry: failingRegistry,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    ),
+  );
+  assert.equal(outcome.exitCode, 6);
+  assert.equal(outcome.error?.code, "handoff_check_failed");
+  assert.ok((outcome.error?.problems ?? []).length > 0);
+  for (const p of outcome.error?.problems ?? []) {
+    assert.equal(p.preset, "ext:fail");
     assert.equal(typeof p.problem, "string");
   }
   assert.equal(existsSync(join(world.targetDir, "validator-ran")), false);
@@ -337,7 +362,7 @@ test("invalid preset options exit 2 with nothing written", async () => {
 });
 
 /** A staged character-3d run, picked in process. */
-async function staged3d(change: (profile: TargetProfile) => void) {
+async function staged3d(change: (profile: TargetProfile) => void, registry?: PresetRegistry) {
   const dir = await target();
   const runDir = join(dir, "run");
   const targetDir = join(dir, "target");
@@ -382,7 +407,10 @@ async function staged3d(change: (profile: TargetProfile) => void) {
     errors: [],
   };
   await writeRun(runDir, record);
-  return { targetDir, run: () => pick({ runDir, candidateId: "c1", targetDir }) };
+  return {
+    targetDir,
+    run: () => pick({ runDir, candidateId: "c1", targetDir, ...(registry && { registry }) }),
+  };
 }
 
 /** An imported, confirmed sheet, written in process. */
@@ -510,7 +538,7 @@ test("a character-3d pick and a write-families run go through the same pipeline"
 
   // Both stop at a failed check, before the validator.
   for (const make of [staged3d, confirmedImport]) {
-    const { targetDir, run } = await make(clobberManifest);
+    const { targetDir, run } = await make(failingCheck, failingRegistry);
     const outcome = failureOutcome(
       await run().then(
         () => undefined,

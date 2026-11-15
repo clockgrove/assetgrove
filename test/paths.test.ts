@@ -104,7 +104,8 @@ test("two writes differing only by case exit 2 invalid_input with nothing writte
   const world = await syntheticWorld();
   world.profile.layout = {
     ...world.profile.layout,
-    media: "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.png",
+    // The clash appears only once the output's extension is known, at the pick.
+    media: "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.{{output.extension}}",
     provenance: "assets/source/{{spec.assetId}}/Shelter.png",
   };
   const runDir = await stageOne(world);

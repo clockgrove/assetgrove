@@ -110,7 +110,14 @@ approves it. A human runs pick; agents never do.`,
       );
     }
     const human = lines.join("\n");
-    const fields = { ...result, confirmation };
+    // The candidate by its id and file only: its provenance and QA reasons hold the bible's text,
+    // which a tool result carries only under sharedText (design section 10).
+    const { id, file, mediaType, extension, sha256 } = result.candidate;
+    const fields = {
+      ...result,
+      candidate: { id, file, mediaType, extension, sha256 },
+      confirmation,
+    };
     if (result.validator?.accepted === false) {
       return refusal(
         "validator_rejected",

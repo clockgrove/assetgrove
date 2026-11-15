@@ -22,7 +22,7 @@ import { extensionOf, unavailableId } from "./extensions/errors.ts";
 import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
-import { checkWrites, safeSegment } from "./paths.ts";
+import { checkLayout, checkWrites, safeSegment } from "./paths.ts";
 import type { IdentityAgreement } from "./identity.ts";
 import { applyStability, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
@@ -117,6 +117,8 @@ export function planStage(options: {
       throw unavailableId(options.spec.kind, "asset kind");
     throw new InputError(`no generator handles asset kind "${options.spec.kind}"`);
   }
+  // Before any paid call: the paths the hand-off will write for this spec can be written.
+  checkLayout(options.profile, options.spec);
   const perCandidate = generator.planCandidate(options.spec, options.profile, options.routes);
   const estimateUsd = perCandidate.reduce((sum, c) => sum + c.estimatedCostUsd, 0) * requested;
   return {
