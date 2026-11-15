@@ -177,7 +177,7 @@ The developer settings file is validated with zod, which is a direct dependency 
 
 ## Settings changes are written with jsonc-parser
 
-`settings change` (src/settings-write.ts) edits the developer settings in place with `jsonc-parser` 3.3.1 (MIT, Microsoft; no install script, no dependencies). Its `modify` and `applyEdits` change one JSON path at a time and leave every other byte as it was, which a person confirming a cap needs: the file they wrote by hand keeps its layout and every field they did not confirm. Parsing with `JSON.parse` and writing back with `JSON.stringify` would rewrite the whole file. The `yaml` library already here reads JSON, but it writes JSON back in its own layout.
+`settings change` (src/settings-write.ts) edits the developer settings in place with `jsonc-parser` 3.3.1 (MIT, Microsoft; no install script, no dependencies). Its `modify` and `applyEdits` change one JSON path at a time; the edit is made without `modify`'s own formatting (which re-lays out the whole line an edit starts on) and only the formatter's changes inside the new span are kept, so every other byte stays as it was, which a person confirming a cap needs: the file they wrote by hand keeps its layout and every field they did not confirm. Parsing with `JSON.parse` and writing back with `JSON.stringify` would rewrite the whole file. The `yaml` library already here reads JSON, but it writes JSON back in its own layout.
 
 ## The tracked-key scan is hand-written
 

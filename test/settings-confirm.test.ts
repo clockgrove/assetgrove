@@ -31,6 +31,7 @@ import { parseCommandLine, runCommand } from "../src/commands/runner.ts";
 import type { ConfirmPort } from "../src/confirm/prompt.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { loadSettings } from "../src/settings.ts";
+import { applySettingsChange } from "../src/settings-write.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -214,6 +215,101 @@ test("an accepted form writes the cap, the new gateway limit and their confirmed
   delete after["providers"][GATEWAY];
   delete after["confirmedBy"];
   assert.equal(`${JSON.stringify(after, null, 2)}\n`, before);
+});
+
+/** Each `confirmedBy` time in `text` replaced by a fixed one, so a written file compares as text. */
+const fixedTimes = (text: string): string => text.replace(/"at": ?"[^"]+"/g, '"at": "T"');
+
+test("a change to a hand-laid file inserts its fields and leaves every other byte as it was", async () => {
+  const hand = [
+    "{",
+    `  "format": "assetgrove-settings/1",`,
+    `  "stateDir": ${JSON.stringify(stateDir)},`,
+    `  "caps":   { "dailyUsd": 10 },`,
+    `  "providers": {`,
+    `    "scripted": { "limit": { "kind": "prepaid", "usd": 100 } }`,
+    `  },`,
+    `  "extensions": ["a", "b"],`,
+    `  "reconcile": { "marginUsd": 0.05 }`,
+    "}",
+    "",
+  ].join("\n");
+  await writeFile(settingsPath, hand);
+  await applySettingsChange(
+    loadSettings(),
+    {
+      caps: { runUsd: 7 },
+      limit: { provider: GATEWAY, limit: { kind: "prepaid", usd: 20, period: "monthly" } },
+    },
+    { method: "terminal" },
+  );
+  const expected = [
+    "{",
+    `  "format": "assetgrove-settings/1",`,
+    `  "stateDir": ${JSON.stringify(stateDir)},`,
+    `  "caps":   { "dailyUsd": 10, "runUsd": 7 },`,
+    `  "providers": {`,
+    `    "scripted": { "limit": { "kind": "prepaid", "usd": 100 } },`,
+    `    "${GATEWAY}": {`,
+    `      "limit": {`,
+    `        "kind": "prepaid",`,
+    `        "usd": 20,`,
+    `        "period": "monthly"`,
+    `      }`,
+    `    }`,
+    `  },`,
+    `  "extensions": ["a", "b"],`,
+    `  "reconcile": { "marginUsd": 0.05 },`,
+    `  "confirmedBy": {`,
+    `    "caps.runUsd": {`,
+    `      "method": "terminal",`,
+    `      "at": "T"`,
+    `    },`,
+    `    "providers.${GATEWAY}.limit": {`,
+    `      "method": "terminal",`,
+    `      "at": "T"`,
+    `    }`,
+    `  }`,
+    "}",
+    "",
+  ].join("\n");
+  assert.equal(fixedTimes(read()), expected);
+});
+
+test("a second change with the settings loaded before the first keeps what the first wrote", async () => {
+  useAttended();
+  const holds = ["e1e1e1e1e1e1e1e1", "e2e2e2e2e2e2e2e2"];
+  await mkdir(stateDir, { recursive: true });
+  for (const id of holds) {
+    const hold = { id, at: new Date().toISOString(), provider: "scripted", runId: "r" };
+    await appendFile(
+      join(stateDir, "holds.jsonl"),
+      `${JSON.stringify({ ...hold, ledgerUsd: 1, providerUsd: 2, gapUsd: 1 })}\n`,
+    );
+  }
+  const loadedOnce = loadSettings();
+  const limit = { provider: GATEWAY, limit: { kind: "prepaid" as const, usd: 20 } };
+  await applySettingsChange(
+    loadedOnce,
+    { acknowledgeHolds: [holds[0]!], limit },
+    { method: "terminal" },
+  );
+  // A person adds the key variable by hand between the two changes.
+  const doc = readDoc();
+  doc["providers"][GATEWAY].keyEnv = "AI_GATEWAY_API_KEY";
+  await writeFile(settingsPath, `${JSON.stringify(doc, null, 2)}\n`);
+  await applySettingsChange(
+    loadedOnce,
+    { acknowledgeHolds: [holds[1]!], limit: { ...limit, limit: { kind: "prepaid", usd: 30 } } },
+    { method: "terminal" },
+  );
+  const after = readDoc();
+  await rm(join(stateDir, "holds.jsonl"), { force: true });
+  assert.deepEqual(after["spend"].acknowledgedHolds, holds);
+  assert.deepEqual(after["providers"][GATEWAY], {
+    limit: { kind: "prepaid", usd: 30 },
+    keyEnv: "AI_GATEWAY_API_KEY",
+  });
 });
 
 test("the settings_change input schema names no adapter, route or environment property and requires user interaction", async () => {

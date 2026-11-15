@@ -8,7 +8,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { applyEdits, modify } from "jsonc-parser";
+import { applyEdits, findNodeAtLocation, format, modify, parse, parseTree } from "jsonc-parser";
 import type { FormattingOptions } from "jsonc-parser";
 import { digestOf } from "./confirm/records.ts";
 import type { ConfirmRequest } from "./confirm/prompt.ts";
@@ -244,24 +244,83 @@ function formattingOf(text: string): FormattingOptions {
 }
 
 /**
+ * `text` with the value at `path` set, every byte outside the inserted or replaced span kept.
+ * `jsonc-parser`'s own formatting of an edit re-lays out the whole line the edit starts on (a
+ * one-line neighbour such as `"reconcile": { "marginUsd": 0.05 }` would be spread out), so the
+ * edit is made unformatted and only the formatter's changes inside the new span are taken. The
+ * new span is laid out on lines like its neighbours when the object it goes into spans lines, and
+ * kept on one line when that object is on one line.
+ */
+export function setInPlace(text: string, path: string[], value: unknown): string {
+  const options = formattingOf(text);
+  const tree = parseTree(text);
+  let container = tree;
+  for (let depth = path.length - 1; depth > 0 && tree !== undefined; depth--) {
+    const node = findNodeAtLocation(tree, path.slice(0, depth));
+    if (node !== undefined) {
+      container = node;
+      break;
+    }
+  }
+  const multiline =
+    container !== undefined &&
+    /\n/.test(text.slice(container.offset, container.offset + container.length));
+  for (const made of modify(text, path, value, {})) {
+    // An unformatted insert after a neighbour starts `,"key"`; on one line it reads `, "key"`.
+    const edit =
+      !multiline && /^,\S/.test(made.content)
+        ? { ...made, content: `, ${made.content.slice(1)}` }
+        : made;
+    const next = applyEdits(text, [edit]);
+    const start = edit.offset;
+    const end = edit.offset + edit.content.length;
+    if (!multiline) {
+      text = next;
+      continue;
+    }
+    const inside = format(next, { offset: start, length: end - start }, options).filter(
+      (e) => e.offset >= start && e.offset + e.length <= end && e.offset < end,
+    );
+    text = applyEdits(next, inside);
+  }
+  return text;
+}
+
+/** The parts of the file being edited a change depends on, read from its text, not the context. */
+function current(text: string): Pick<Settings, "providers"> & { acknowledgedHolds: string[] } {
+  const doc = parse(text) as unknown;
+  const object = (v: unknown): Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const holds = object(object(doc)["spend"])["acknowledgedHolds"];
+  return {
+    providers: object(object(doc)["providers"]) as Settings["providers"],
+    acknowledgedHolds: Array.isArray(holds)
+      ? holds.filter((id): id is string => typeof id === "string")
+      : [],
+  };
+}
+
+/**
  * Writes a confirmed change into the settings file: only the changed fields and one
  * `confirmedBy.<field path>` entry each. A limit of kind `unlimited` without `acceptUnlimited`
- * is not written. With no file, it creates one holding the format line and the change. The result
- * is loaded as settings from a trial file beside it before it replaces the file; a change the
- * settings would refuse is not written (exit 2 `settings_invalid`).
+ * is not written. With no file, it creates one holding the format line and the change. Which
+ * provider entries exist and which holds are acknowledged are read from the file as it is now,
+ * not from `settings` (a server loads those once, and an earlier change may have written since).
+ * The result is loaded as settings from a trial file beside it before it replaces the file; a
+ * change the settings would refuse is not written (exit 2 `settings_invalid`).
  */
 export async function applySettingsChange(
   settings: Settings,
   change: SettingsChange,
   confirmation: ChangeConfirmation,
 ): Promise<ChangeResult> {
-  checkChange(change, settings);
   const path = settings.path;
   const exists = existsSync(path);
   let text = exists ? await readFile(path, "utf8") : `{\n  "format": "${FORMAT}"\n}\n`;
-  const formattingOptions = formattingOf(text);
+  const now = current(text);
+  checkChange(change, { providers: now.providers, stateDir: settings.stateDir });
   const set = (at: string[], value: unknown) => {
-    text = applyEdits(text, modify(text, at, value, { formattingOptions }));
+    text = setInPlace(text, at, value);
   };
   const written: string[] = [];
   const notWritten: ChangeResult["notWritten"] = [];
@@ -293,14 +352,14 @@ export async function applySettingsChange(
         ...(limit.period !== undefined && { period: limit.period }),
         ...(limit.kind === "unlimited" && { acceptUnlimited: true }),
       };
-      if (Object.hasOwn(settings.providers, provider)) set(["providers", provider, "limit"], entry);
+      if (Object.hasOwn(now.providers, provider)) set(["providers", provider, "limit"], entry);
       else set(["providers", provider], { limit: entry });
       written.push(field);
     }
   }
   const holds = change.acknowledgeHolds ?? [];
   if (holds.length > 0) {
-    const listed = settings.spend.acknowledgedHolds;
+    const listed = now.acknowledgedHolds;
     const have = new Set(listed.map((id) => id.toLowerCase()));
     set(
       ["spend", "acknowledgedHolds"],
