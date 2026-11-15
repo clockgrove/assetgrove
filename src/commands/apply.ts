@@ -2,9 +2,9 @@ import { InputError } from "../errors.ts";
 import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { loadBible } from "../bible.ts";
-import { applyJobs, applyPlan } from "../planning.ts";
+import { applyJobs, applyPlan, planDigest } from "../planning.ts";
 import type { SavedPlan } from "../planning.ts";
-import { readConfirmation } from "../confirm/records.ts";
+import { bindingAllows, readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
 import type { ConfirmationRecord } from "../types.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
@@ -51,9 +51,11 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
 
 /**
  * The plan's confirmation, when it covers this apply (design section 7): one plan request covers
- * one apply request, the default round's, while every input hash its record holds equals the saved
- * plan's and apply's forecast is at or under the confirmed one. Another round is another paid
- * request, and it, like any apply the record does not cover, asks under its own digest.
+ * one apply run, the default round's, of the plan file that request's run saved (the record holds
+ * its digest), while every input hash its record holds equals the saved plan's and apply's forecast
+ * is at or under the confirmed one. The first apply run it covers binds it to its run directory;
+ * once that run finishes it covers no other. Another round is another paid request, and it, like
+ * any apply the record does not cover, asks under its own digest.
  */
 export async function planConfirmation(
   planPath: string,
@@ -71,7 +73,9 @@ export async function planConfirmation(
   if (typeof saved.requestDigest !== "string" || !/^[0-9a-f]{64}$/.test(saved.requestDigest))
     return undefined;
   const record = await readConfirmation(configDir, "spend", saved.requestDigest);
-  if (record === undefined) return undefined;
+  if (record === undefined || record.command !== "plan") return undefined;
+  if (record.savedPlan !== saved.digest || planDigest(saved) !== saved.digest) return undefined;
+  if (!bindingAllows(record.coveredRun, work.runDir)) return undefined;
   const inputs = saved.inputs ?? {};
   for (const [name, sha256] of Object.entries(record.inputs)) {
     // The plan request hashes its arguments' files and the files they name (`bible/<path>`);
@@ -80,7 +84,10 @@ export async function planConfirmation(
     if (inputs[name] === undefined || inputs[name].sha256 !== sha256) return undefined;
   }
   if (work.forecastUsd > record.forecastUsd + 1e-9) return undefined;
-  return record;
+  if (record.coveredRun !== undefined) return record;
+  const bound = { ...record, coveredRun: { runDir: work.runDir } };
+  await writeConfirmation(configDir, bound);
+  return bound;
 }
 
 export const applyCommand = defineCommand<ApplyArgs>({
@@ -90,9 +97,9 @@ export const applyCommand = defineCommand<ApplyArgs>({
   details: `Refuses stale inputs before generation, and exits 2 plan_changed when the routes, estimates,
 output grants or run cap resolved from the developer settings differ from planning time.
 The plan's prompts pass the prompt policy (exit 9 prompt_refused) before any spend.
-The plan's spend confirmation covers one apply, the default round, while every input hash it confirmed
-still matches and apply's forecast is at or under the confirmed one; --round n > 1, or any other
-apply, asks under its own digest (headless
+The plan's spend confirmation covers one apply run of the plan it saved, the default round, while every
+input hash it confirmed still matches and apply's forecast is at or under the confirmed one; --round n > 1,
+another --out once that run started, or any other apply, asks under its own digest (headless
 settings, a record, an MCP client's form, the TTY, or exit 8 confirmation_required and \`assetgrove confirm <id>\`). The
 confirmation authorizes this generation spend; resulting assets remain pending review.`,
   input: {

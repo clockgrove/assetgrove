@@ -1,15 +1,17 @@
 /**
  * Confirmation records (design section 7): `<configDir>/confirmations/<hex>.json`, one per
  * confirmed spend, pick or write request, named by the request's digest. Every method writes one.
+ * A spend confirmation pays for one run: its first run binds it to that run's directory, and it
+ * is consumed when that run finishes.
  */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { InputError } from "../errors.ts";
 import { canonicalJson } from "../runs/plan.ts";
-import type { ConfirmationRecord } from "../types.ts";
+import type { ConfirmationRecord, RunBinding } from "../types.ts";
 
-export type { ConfirmationMethod, ConfirmationRecord } from "../types.ts";
+export type { ConfirmationMethod, ConfirmationRecord, RunBinding } from "../types.ts";
 
 const HEX = /^[0-9a-f]{64}$/;
 
@@ -53,4 +55,28 @@ export async function readConfirmation(
   if (record.digest !== digest || record.kind !== kind) return undefined;
   if (typeof record.forecastUsd !== "number" || typeof record.method !== "string") return undefined;
   return record as ConfirmationRecord;
+}
+
+/** Whether a run in `runDir` may use a binding's confirmation: unbound, or bound there and unconsumed. */
+export function bindingAllows(binding: RunBinding | undefined, runDir: string): boolean {
+  return binding === undefined || (binding.runDir === runDir && binding.consumedAt === undefined);
+}
+
+/**
+ * Rewrites the stored spend record of `digest` with `field` bound to `runDir`; `consume` marks
+ * that run finished. A record bound to another run, consumed or absent is left as it is.
+ */
+export async function bindConfirmation(
+  configDir: string,
+  digest: string,
+  field: "run" | "coveredRun",
+  runDir: string,
+  consume = false,
+): Promise<void> {
+  const record = await readConfirmation(configDir, "spend", digest);
+  if (record === undefined || !bindingAllows(record[field], runDir)) return;
+  await writeConfirmation(configDir, {
+    ...record,
+    [field]: { runDir, ...(consume && { consumedAt: new Date().toISOString() }) },
+  });
 }

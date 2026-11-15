@@ -10,7 +10,9 @@
  * resume, a request that can spend is confirmed (`requireConfirmation`: headless settings, the
  * record of its digest, a prior confirmation the command names, the TTY, else exit 8), and the
  * run's scope carries the clearance `Caller` requires for every paid call. The record is copied
- * into `run.json`. A request whose forecast is 0 on free providers needs no confirmation.
+ * into `run.json`. A confirmation pays for one run: its first run binds it to the run directory,
+ * and the run finishing consumes it, so the same request in another directory asks again. A
+ * request whose forecast is 0 on free providers needs no confirmation.
  *
  * The run executes in the process that received the request: there is no detached process.
  */
@@ -34,7 +36,7 @@ import { checkPromptModel } from "../policy/model.ts";
 import type { PromptPolicyRecord } from "../policy/text.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { SpendHoldError, ledgerFor } from "../spend.ts";
-import { requireConfirmation } from "../confirm/index.ts";
+import { bindConfirmation, requireConfirmation } from "../confirm/index.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import type { ConfirmationRecord } from "../types.ts";
 import { DEFAULT_ROUND, policyTextOf } from "./plan.ts";
@@ -230,7 +232,7 @@ export async function executeRun(options: {
         confirmation = await requireConfirmation(
           spendRequest(command, options.round ?? DEFAULT_ROUND, plan),
           { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
-          options.prior ? { prior: options.prior } : {},
+          { ...(options.prior && { prior: options.prior }), runDir: plan.runDir },
         );
       } catch (error) {
         return options.toOutcome(error);
@@ -316,6 +318,15 @@ export async function executeRun(options: {
     }
     if (confirmation) await recordConfirmation(plan.runDir, confirmation);
     const ok = outcome.exitCode === 0;
+    // A finished run consumes its confirmation: it pays for no further run.
+    if (ok && confirmation)
+      await bindConfirmation(
+        ctx.settings.configDir,
+        confirmation.digest,
+        confirmation.digest === plan.digest ? "run" : "coveredRun",
+        plan.runDir,
+        true,
+      );
     await writeState(plan.runDir, {
       ...state,
       status: ok ? "finished" : "failed",
