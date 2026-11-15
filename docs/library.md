@@ -18,7 +18,7 @@ Every path Assetgrove reads from a card, a review record or an index or log row 
 
 ## Media and Git LFS
 
-A media file that is a Git LFS pointer (spec v1: `version`, `oid sha256:<64 hex>`, `size`) counts as present. Its oid is the media's sha256 and is compared with the expected one (`lock.sha256`). Its bytes come from `<git dir>/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>` when that object is local and its size and hash match the pointer; the git directory is the nearest `.git` at or above the file, following a `gitdir:` file and a worktree's `commondir`. Otherwise the read reports a pointer with no bytes. Assetgrove never runs `git lfs`, never fetches, and never returns pointer text as media.
+A media file that is a Git LFS pointer (spec v1: `version`, `oid sha256:<64 hex>`, `size`) counts as present. Its oid is the media's sha256 and is compared with the expected one (`lock.sha256`). Its bytes come from `<git dir>/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>` when that object is local and its size and hash match the pointer; the git directory is the nearest `.git` at or above the file, following a `gitdir:` file and a worktree's `commondir`. Otherwise the read reports a pointer with no bytes. A file that looks like a pointer (it starts with the spec's `version` line) but fails the strict parse is refused with exit 2 `invalid_input`. Assetgrove never runs `git lfs`, never fetches, and never returns pointer text as media.
 
 ## Cards
 
