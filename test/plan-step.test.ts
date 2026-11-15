@@ -528,7 +528,8 @@ test("plan's forecast holds the planning call and every job of the later apply",
   assert.ok(Math.abs(forecast["forecastUsd"] - sum) < 1e-9);
   assert.equal(existsSync(events), false);
 
-  // No command makes a prompt-policy call on the base routes, so there is no such job to match.
+  // Plan's own prompt-policy check and the one the later apply runs first.
+  assert.equal(job(jobs, "prompt-policy")?.count, 2, "plan's and apply's prompt-policy checks");
   const saved = await recorder(dir, "saved");
   const made = await cli(["plan", ...f.flags, "--provider-script", saved.script, "--json"]);
   assert.equal(made.code, 0, made.stderr);
@@ -544,14 +545,20 @@ test("plan's forecast holds the planning call and every job of the later apply",
   for (const j of applyJobs) {
     const inPlan = job(jobs, j.operation);
     assert.ok(inPlan, `plan forecasts ${j.operation}`);
+    // Plan makes one prompt-policy call itself beside the apply's.
+    const own = j.operation === "prompt-policy" ? 1 : 0;
     assert.deepEqual(
       [inPlan.model, inPlan.count, inPlan.estimatedCostUsd],
-      [j.model, j.count, j.estimatedCostUsd],
+      [j.model, j.count + own, j.estimatedCostUsd],
       j.operation,
     );
   }
   const compiler = job(jobs, "compiler")!;
-  const expected = apply["forecastUsd"] + compiler.count * compiler.estimatedCostUsd;
+  const policy = job(applyJobs, "prompt-policy")!;
+  const expected =
+    apply["forecastUsd"] +
+    compiler.count * compiler.estimatedCostUsd +
+    policy.count * policy.estimatedCostUsd;
   assert.ok(Math.abs(forecast["forecastUsd"] - expected) < 1e-9, `${forecast["forecastUsd"]}`);
 });
 
