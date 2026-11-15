@@ -18,7 +18,12 @@ import { readFile } from "node:fs/promises";
 import type { Readable, Writable } from "node:stream";
 import { join, resolve } from "node:path";
 import { describeBible, useBiblePreset } from "./bible.ts";
-import { checkContextEnvironment, isPaid } from "./commands/context.ts";
+import {
+  checkContextEnvironment,
+  createRunContext,
+  isPaid,
+  settingsScope,
+} from "./commands/context.ts";
 import { commands } from "./commands/registry.ts";
 import { resultDocument } from "./commands/result.ts";
 import { errorOutcome, runCommand, toolInputSchema } from "./commands/runner.ts";
@@ -206,6 +211,35 @@ async function contactImage(
   }
 }
 
+/**
+ * How long a confirmation form stays answerable: a person who walks away and comes back the next
+ * day still finds it. A request that changed meanwhile is refused on re-entry by its digest.
+ */
+export const FORM_TTL_SECONDS = 24 * 60 * 60;
+
+/** The codec that seals each confirmation form's state for `FORM_TTL_SECONDS`, under `key`. */
+export function formStateCodec(
+  key: Uint8Array = randomBytes(32),
+): RequestStateCodec<SealedRequest> {
+  return createRequestStateCodec<SealedRequest>({ key, ttlSeconds: FORM_TTL_SECONDS });
+}
+
+/**
+ * The context of one tool call: the server's log, environment, provider script and work item, with
+ * the developer settings loaded now (src/commands/context.ts), so a change written by
+ * settings_change or by hand holds from the next call. The settings file is checked against the
+ * call's target and input files too.
+ */
+async function callContext(server: RunContext, args: Arguments): Promise<RunContext> {
+  return createRunContext({
+    log: server.log,
+    ...(server.env && { env: server.env }),
+    ...(server.providerScript !== undefined && { providerScript: server.providerScript }),
+    ...(server.workItem !== undefined && { workItem: server.workItem }),
+    ...settingsScope(args),
+  });
+}
+
 /** The key of the inputRequired form a confirmation is asked under. */
 const FORM_KEY = "confirm";
 
@@ -257,11 +291,18 @@ async function callTool(
         },
       })
     : undefined;
+  const full = commandArgs(spec, args, ctx);
+  let fresh: RunContext;
+  try {
+    fresh = await callContext(ctx, full);
+  } catch (error) {
+    return errorOutcome(error);
+  }
   // The server's process has no terminal to ask: the form is the only channel.
-  const callCtx: RunContext = { ...withProgress(ctx, request) };
+  const callCtx: RunContext = { ...withProgress(fresh, request) };
   delete callCtx.prompt;
   if (port) callCtx.prompt = port;
-  const outcome = await runCommand(spec, commandArgs(spec, args, ctx), callCtx);
+  const outcome = await runCommand(spec, full, callCtx);
   const asked = port?.asked();
   if (asked === undefined || outcome.error?.code !== "confirmation_required") return outcome;
   return inputRequired({
@@ -284,6 +325,8 @@ function createServer(ctx: RunContext, codec: RequestStateCodec<SealedRequest>):
     {
       capabilities: { tools: { listChanged: false } },
       requestState: { verify: codec.verify },
+      // A 2025-era client's form waits as long as a sealed state stays answerable.
+      inputRequired: { roundTimeoutMs: FORM_TTL_SECONDS * 1000 },
     },
   );
   for (const spec of commands) {
@@ -344,7 +387,7 @@ export async function serveMcp(
     input.once("close", done);
   });
   // A per-process key: stdio serves every round of a confirmation form in this one process.
-  const codec = createRequestStateCodec<SealedRequest>({ key: randomBytes(32) });
+  const codec = formStateCodec();
   const handle = serveStdio(() => createServer(ctx, codec), {
     transport: new StdioServerTransport(input, output),
     onerror: (error) => ctx.log(redact(`mcp: ${error.message}`)),

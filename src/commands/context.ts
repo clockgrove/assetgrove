@@ -1,6 +1,6 @@
 /**
- * The one RunContext the CLI and the MCP server build: developer settings loaded once, the log,
- * and the provider options the server was started with.
+ * The one RunContext the CLI and the MCP server build: developer settings loaded fresh for each
+ * CLI command and each tool call, the log, and the provider options the server was started with.
  */
 import { checkEnvironment } from "../env.ts";
 import type { Env } from "../env.ts";
@@ -16,6 +16,10 @@ export interface ContextOptions {
   env?: Env;
   /** The working directory whose Git top level the settings file may not be inside. */
   cwd?: string;
+  /** The command's `--target`, whose project the settings file may not be inside either. */
+  target?: string;
+  /** The command's input files, whose projects the settings file may not be inside either. */
+  inputs?: readonly string[];
   /** The server's --provider-script, given to every tool call that takes one. */
   providerScript?: string;
   /** The server's --work-item, given to every tool call that names none. */
@@ -25,13 +29,69 @@ export interface ContextOptions {
 }
 
 /**
- * Loads the developer settings and the extensions they list once, and builds the context every
- * command of this process runs in.
+ * The arguments that name a directory a command writes into or reads from as a whole: `--target`
+ * (pick, write-families) and init's directory.
+ */
+const TARGET_PROPERTIES: readonly string[] = ["target", "directory"];
+
+/** The arguments that name a file or directory a command reads. */
+const INPUT_PROPERTIES: readonly string[] = [
+  "albedo",
+  "bible",
+  "brief",
+  "cases",
+  "derivation",
+  "file",
+  "grouping",
+  "import",
+  "imports",
+  "inputs",
+  "keyPose",
+  "lockBible",
+  "model",
+  "plan",
+  "profile",
+  "provenance",
+  "providerScript",
+  "recipe",
+  "run",
+  "runOptions",
+  "sheet",
+  "spec",
+  "strip",
+  "template",
+];
+
+/**
+ * The paths of a command's arguments whose projects the settings file may not be inside (design
+ * section 2): its target and every input file.
+ */
+export function settingsScope(
+  args: Record<string, unknown>,
+): Pick<ContextOptions, "target" | "inputs"> {
+  const strings = (name: string): string[] => {
+    const value = args[name];
+    if (typeof value === "string" && value !== "") return [value];
+    if (Array.isArray(value))
+      return value.filter((v): v is string => typeof v === "string" && v !== "");
+    return [];
+  };
+  const target = TARGET_PROPERTIES.flatMap(strings)[0];
+  const inputs = INPUT_PROPERTIES.flatMap(strings);
+  return { ...(target !== undefined && { target }), ...(inputs.length > 0 && { inputs }) };
+}
+
+/**
+ * Loads the developer settings and the extensions they list, and builds the context one command
+ * runs in. The CLI builds it once per command and the MCP server once per tool call, so a change
+ * to the settings file holds from the next call on.
  */
 export async function createRunContext(options: ContextOptions): Promise<RunContext> {
   const settings = loadSettings({
     ...(options.env && { env: options.env }),
     ...(options.cwd && { cwd: options.cwd }),
+    ...(options.target !== undefined && { target: options.target }),
+    ...(options.inputs && { inputs: options.inputs }),
   });
   // Extensions first: a listed package that cannot load refuses (exit 2) before anything else.
   const extensions = await loadExtensions(settings, options.cwd ?? process.cwd());

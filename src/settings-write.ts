@@ -14,7 +14,7 @@ import { digestOf } from "./confirm/records.ts";
 import type { ConfirmRequest } from "./confirm/prompt.ts";
 import { withConfigOverride } from "./env.ts";
 import { InputError } from "./errors.ts";
-import { CORE_ADAPTERS } from "./providers/adapter.ts";
+import { CORE_ADAPTERS, createProvider } from "./providers/adapter.ts";
 import { LIMIT_KINDS, loadSettings } from "./settings.ts";
 import type { ProviderLimit, Settings } from "./settings.ts";
 import { readHolds } from "./spend.ts";
@@ -306,9 +306,10 @@ function current(text: string): Pick<Settings, "providers"> & { acknowledgedHold
  * `confirmedBy.<field path>` entry each. A limit of kind `unlimited` without `acceptUnlimited`
  * is not written. With no file, it creates one holding the format line and the change. Which
  * provider entries exist and which holds are acknowledged are read from the file as it is now,
- * not from `settings` (a server loads those once, and an earlier change may have written since).
- * The result is loaded as settings from a trial file beside it before it replaces the file; a
- * change the settings would refuse is not written (exit 2 `settings_invalid`).
+ * not from `settings` (an earlier change may have written since they were loaded).
+ * The result is loaded as settings from a trial file beside it, and a provider entry the change
+ * creates is made by its core adapter as every run context does, before it replaces the file; a
+ * change the settings or the adapter would refuse is not written (exit 2 `settings_invalid`).
  */
 export async function applySettingsChange(
   settings: Settings,
@@ -324,6 +325,7 @@ export async function applySettingsChange(
     text = setInPlace(text, at, value);
   };
   const written: string[] = [];
+  let created: string | undefined;
   const notWritten: ChangeResult["notWritten"] = [];
   const at = new Date().toISOString();
   const confirmedBy = {
@@ -354,7 +356,10 @@ export async function applySettingsChange(
         ...(limit.kind === "unlimited" && { acceptUnlimited: true }),
       };
       if (Object.hasOwn(now.providers, provider)) set(["providers", provider, "limit"], entry);
-      else set(["providers", provider], { limit: entry });
+      else {
+        set(["providers", provider], { limit: entry });
+        created = provider;
+      }
       written.push(field);
     }
   }
@@ -376,7 +381,9 @@ export async function applySettingsChange(
   const trial = `${path}.${process.pid}.tmp`;
   await writeFile(trial, text);
   try {
-    loadSettings({ env: withConfigOverride(trial) });
+    const env = withConfigOverride(trial);
+    const loaded = loadSettings({ env });
+    if (created !== undefined) createProvider(created, loaded.providers[created]!, { env, path });
   } finally {
     await rm(trial, { force: true });
   }

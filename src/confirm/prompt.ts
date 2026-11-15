@@ -72,6 +72,9 @@ export function ttyPort(
     const rl = createInterface({ input: stdin, output: stderr });
     try {
       return (await rl.question(question)).trim();
+    } catch {
+      // Ctrl+D, Ctrl+C or closed input: an empty answer, which declines.
+      return "";
     } finally {
       rl.close();
     }
