@@ -1,6 +1,6 @@
 # Developer settings
 
-Developer settings are one per-user file outside every project, and the only input that steers money, code or keys. Shared files (target profile, style bible, presets, recipes) and request inputs travel between developers, so they never name an endpoint, a cap above the settings, a route, a grant or a command. `src/settings.ts` loads the file, `src/formats.ts` checks its format line and `src/env.ts` supplies every environment value they use.
+Developer settings are one per-user file outside every project, and the only input that steers money, code or keys. Shared files (target profile, style bible, presets, recipes) and request inputs travel between developers, so they never name an endpoint, a cap above the settings, a route, a grant, or a command they may run unapproved (a profile's validator and material commands run only with a person's approval). `src/settings.ts` loads the file, `src/formats.ts` checks its format line and `src/env.ts` supplies every environment value they use.
 
 Every command reads settings when it builds its run context. `assetgrove settings path|show|check` prints the location, the loaded values and the adapter-aware checks.
 

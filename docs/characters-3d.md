@@ -322,7 +322,7 @@ A model that has been through look-dev carries its groom maps, tint and eye mask
 
 ## Spend
 
-`stage` reserves every call against the cap before the first one: generation, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $1.001 per candidate, so 4 candidates reserve $4.004 against the $5 cap. Each call settles at the cost Tripo reports (its credits × $0.01) or, failing that, at its estimate. Every candidate's provenance carries its own `costUsd`.
+`stage` reserves every call against the cap before the first one: generation, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $1.001 per candidate, so 4 candidates reserve $4.004 against the $5 cap. Each call settles at the cost Tripo reports (its credits × the provider entry's `usdPerCredit`) or, with no rate set, at its estimate. Every candidate's provenance carries its own `costUsd`.
 
 ## Hand-off
 
@@ -447,6 +447,6 @@ A target whose validator sums triangles over every mesh in a file declares `file
 
 ## Providers
 
-3D calls go through the provider contract in `src/gateway/provider.ts` (`generateModel`, `rigModel`, `animateModel`); Tripo's HTTP types stay in `src/gateway/tripo.ts`. The routes, prices and the probed clip library are in [models.md](models.md#3d-routes-tripo-not-the-gateway). Meshy is not wired yet: its API account has no credits.
+3D calls go through the provider contract in `src/gateway/provider.ts` (`generateModel`, `rigModel`, `animateModel`); Tripo's HTTP types stay in `src/gateway/tripo.ts`. The routes, prices and the probed clip library are in [models.md](models.md#3d-routes-tripo-not-the-gateway).
 
 Tests use a scripted provider (`test/fixtures/model3d-script.ts`) that answers with synthetic rigged characters. `pnpm test:real` includes an opt-in Tripo check that reads the credit balance and spends nothing. It skips without `TRIPO_API_KEY`.

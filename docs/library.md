@@ -2,7 +2,7 @@
 
 A game's library is an Open Knowledge Format (OKF 0.2) bundle in its repository. Git is the record: cards, review records, indexes and logs are files beside the media. Provenance and review records are the records; a card's machine fields, `index.md` and `log.md` are projections rebuilt from them.
 
-The modules under `src/library/` read, validate and write these files. No command uses them yet; the library commands, the asset tree and the review tools build on them.
+The modules under `src/library/` read, validate and write these files.
 
 | File                      | Module                  | What it holds                                  |
 | ------------------------- | ----------------------- | ---------------------------------------------- |

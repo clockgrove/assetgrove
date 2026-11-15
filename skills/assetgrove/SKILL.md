@@ -12,7 +12,7 @@ Run it as `npx @clockgrove/assetgrove@<version> <command>`, or as `assetgrove` (
 ## Contract
 
 - Pass `--json` to every command except `mcp`. Stdout is exactly one JSON document with `ok`, `exitCode`, `command` and, on refusal, `error: { code, message }`. A spend-limit refusal also carries `error.limit`.
-- Logs go to stderr. It never prompts.
+- Logs go to stderr. It prompts only when stdin and stderr are a terminal; an agent's shell is not one, so a command that needs a person's confirmation exits 8.
 - `assetgrove --help` lists the commands; `assetgrove <command> --help` prints one command's usage. With `--json`, help is a JSON document whose `usage` field holds the text. `--version` prints the version as plain text.
 
 ## The rule
@@ -30,14 +30,14 @@ Only a person:
 ## Suggested flow
 
 1. `stage --dry-run --json` to check the planned calls and the cost forecast.
-2. `stage --json` to generate and stage candidates.
+2. `stage --json` to generate and stage candidates. A paid run exits 8 `confirmation_required` until a person confirms its spend (`assetgrove confirm <id>` at a terminal); give the person the id and run it again once they have.
 3. Hand the run directory and candidate IDs to the human.
 
 To set up a target repository, run `init`, then walk the person through the steps it returns: the key recipe for their harness, `settings_change` for the caps and the provider limit (the person confirms it), and `spend check`. Draft the bible with them from its `bibleQuestions`, and show them `providers`, where each route sends data. Then `bible describe` the bible before writing a brief, then `plan`, show the plan to the human, and `apply` it once they approve. See [generation knobs](https://github.com/clockgrove/assetgrove/blob/main/docs/generation-knobs.md) for the brief, run settings and target template formats.
 
 ## Commands
 
-Every command, with its options and the MCP tool that serves it, is in [the command reference](references/commands.md). Paid commands reserve every call against their `--cap` (USD) and against the spend ledger (see [Environment](#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `init`, `bible preset`, `pick` and `write-families` write into the target.
+Every command, with its options and the MCP tool that serves it, is in [the command reference](references/commands.md). Paid commands reserve every call against their `--cap` (USD) and against the spend ledger (see [Environment](#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `init`, `bible preset`, `migrate`, `pick` and `write-families` write into the target.
 
 ## Hand-off presets
 
