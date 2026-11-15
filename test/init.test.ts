@@ -248,8 +248,13 @@ test("the settings step needs a person and the key recipe steps follow per harne
       stateDir: settings.stateDir,
     });
     assert.ok(recipe.steps.length > 0);
-    for (const step of recipe.steps)
-      assert.equal(steps.find((s) => s.id === step.id)?.status, "needs-person", step.id);
+    const ids = steps.map((s) => s.id);
+    const keySteps = steps.slice(ids.indexOf("files") + 1, ids.indexOf("settings"));
+    assert.deepEqual(
+      keySteps.map((s) => s.id),
+      recipe.steps.map((s) => s.id),
+    );
+    for (const step of keySteps) assert.equal(step.status, "needs-person", step.id);
     assert.deepEqual(result.json.providers, JSON.parse(JSON.stringify(routeDataFlows(settings))));
   }
 });
