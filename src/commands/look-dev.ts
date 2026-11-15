@@ -3,6 +3,8 @@ import { readJson, readModel, loadProfile, loadStyleBible } from "../inputs.ts";
 import { lookDev, planLookdev } from "../model3d/lookdev/command.ts";
 import { runCap } from "../budget.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
+import { rigReads } from "../model3d/rig/template.ts";
+import { lookdevSettings } from "../model3d/lookdev/settings.ts";
 import type { AssetSpec } from "../types.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
@@ -42,10 +44,17 @@ async function prepare(args: LookDevArgs, ctx: RunContext) {
   const capUsd = runCap(args.cap, ctx.settings, planLookdev(profile.value, routes).capUsd);
   const plan = planLookdev(profile.value, routes, capUsd);
   const jobs = jobsOf(plan.calls, routes);
+  // The groom prompts name each season the profile declares and carry its traits.
+  const { seasons, traits } = lookdevSettings(profile.value);
   const work = await buildWorkPlan(lookDevCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["model", "provenance", "spec", "bible", "profile"],
-    reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
+    reads: {
+      ...styleBibleReads("bible", bible),
+      ...specReads("spec", spec),
+      ...rigReads("profile", profile),
+    },
+    promptText: (seasons ?? []).flatMap((season) => [season, traits[season] ?? ""]),
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

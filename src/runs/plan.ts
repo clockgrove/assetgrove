@@ -227,6 +227,12 @@ export interface WorkPlanParts {
    * reports it when it loads it.
    */
   reads?: Record<string, string>;
+  /**
+   * Prompt text the request carries outside its input files (a free-text option such as a note or
+   * subject, text a shared profile puts in a prompt): checked with the files' text by the
+   * blocklist and the model check.
+   */
+  promptText?: readonly string[];
 }
 
 /** What the plan step reads from a command's provider set: its routes and its providers' billing. */
@@ -320,7 +326,10 @@ export async function buildWorkPlan(
   for (const [name, path] of Object.entries(paths))
     if (path !== undefined) promptFiles[name] = path;
   for (const [name, path] of Object.entries(parts.reads ?? {})) promptFiles[name] ??= path;
-  const promptTexts = await collectPromptText(promptFiles);
+  const promptTexts = [
+    ...(await collectPromptText(promptFiles)),
+    ...(parts.promptText ?? []).filter((text) => text.trim().length > 0),
+  ];
   const promptPolicy = enforcePromptPolicy(promptTexts, parts.promptAllow ?? []);
   const policyText = promptTexts.join("\n");
   // The model check (design section 16): one decide call when there is text to check.

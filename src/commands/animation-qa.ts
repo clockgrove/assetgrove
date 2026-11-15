@@ -84,6 +84,8 @@ async function prepare(args: AnimationQaArgs, ctx: RunContext) {
   const work = await buildWorkPlan(animationQaCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "strip", "profile", "import"],
+    // The flicker and holes prompts name the family and the subject.
+    promptText: jobs.length > 0 ? [args.family, args.subject].filter((t) => t !== undefined) : [],
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

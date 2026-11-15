@@ -70,6 +70,10 @@ async function prepare(args: FixFrameArgs, ctx: RunContext) {
   const work = await buildWorkPlan(fixFrameCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["strip", "profile", "spec", "keyPose", "provenance", "bible"],
+    // Without --provenance the fix reads the strip's sidecar when it exists.
+    reads: { provenance: `${args.strip}.provenance.json` },
+    // The edit prompt names the family and the subject and carries the note.
+    promptText: [args.family, args.subject, args.note].filter((t) => t !== undefined),
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

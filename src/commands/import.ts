@@ -139,6 +139,8 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
           )
         : {}),
     },
+    // The grouping proposal's prompt names the subject and carries the hints.
+    promptText: args.noPropose ? [] : [args.subject, args.hints].filter((t) => t !== undefined),
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

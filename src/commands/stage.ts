@@ -4,6 +4,7 @@ import { runCap } from "../budget.ts";
 import { DEFAULT_CANDIDATES, planStage, stage } from "../loop.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
+import { rigReads } from "../model3d/rig/template.ts";
 import type { AssetSpec } from "../types.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
@@ -58,7 +59,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile"],
-    reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
+    reads: {
+      ...styleBibleReads("bible", bible),
+      ...specReads("spec", spec),
+      ...rigReads("profile", profile),
+    },
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

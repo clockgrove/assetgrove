@@ -4,7 +4,8 @@ import { runCap } from "../budget.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
-import { generateSheet, planSheet, sheetBrief } from "../sheet/generate.ts";
+import { generateSheet, motionLines, planSheet, sheetBrief } from "../sheet/generate.ts";
+import { templateFor, templatesFor } from "../animation/templates.ts";
 import { SliceError } from "../sheet/slice.ts";
 import type { AssetSpec } from "../types.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
@@ -72,6 +73,10 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
       : []),
   ];
   const jobs = jobsOf(perCall, routes);
+  // The sheet prompt states the family's motion template, which the profile can declare.
+  const family = spec.value.animationFamily;
+  const template =
+    typeof family === "string" ? templateFor(family, templatesFor(profile.value)) : undefined;
   const work = await buildWorkPlan(generateSheetCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile", "brief", "lockBible"],
@@ -86,6 +91,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
           )
         : {}),
     },
+    promptText: motionLines(template, undefined),
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
