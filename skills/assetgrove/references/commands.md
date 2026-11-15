@@ -17,22 +17,26 @@ MCP tool: `bible`, arguments `action`, `bible`, `directory`, `world`, `preset`.
 ### `plan`
 
 ```text
-plan --spec <spec.json> --bible <BIBLE.md> --profile <profile.json> --out <plan.json> [--brief <brief.json>] [--settings <settings.json>] [--template <template.md>] [--identity-mode <off|shadow|enforce>] [--work-item <label>] [--provider-script <module>] [--json]
+plan --spec <spec.json> --bible <BIBLE.md> --profile <profile.json> --out <plan.json> [--brief <brief.json>] [--settings <settings.json>] [--template <template.md>] [--identity-mode <off|shadow|enforce>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
-Compiles a reviewable generation plan into `--out` and never generates images. With a provider (`AI_GATEWAY_API_KEY` or `--provider-script`), the configured compiler LLM writes the prompt and negatives from the repository's templates in one model call; without one, a marked deterministic template fallback is recorded. `--identity-mode` overrides the profile's identity mode for a character with an identity lock, and the forecast includes the scoring calls. Show the plan's prompts, clamps and cost forecast to the human. Writes only the plan file.
+Compiles a reviewable generation plan into `--out` and never generates images. With a provider (`AI_GATEWAY_API_KEY` or `--provider-script`), the configured compiler LLM writes the prompt and negatives from the repository's templates in one model call; without one, a marked deterministic template fallback is recorded. `--identity-mode` overrides the profile's identity mode for a character with an identity lock, and the forecast includes the scoring calls. Show the plan's prompts, clamps and cost forecast to the human. Writes only the plan file and its run directory. Its forecast is the planning call plus every generation, QA and identity call the later `apply` runs.
 
-MCP tool: `plan`, arguments `spec`, `bible`, `profile`, `out`, `brief`, `settings`, `template`, `identityMode`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `plan`, arguments `spec`, `bible`, `profile`, `out`, `brief`, `settings`, `template`, `identityMode`, `workItem`, `runs`, `round`.
 
 ### `apply`
 
 ```text
-apply <plan.json> [--auto-approve] [--out <runs directory>] [--work-item <label>] [--provider-script <module>] [--json]
+apply <plan.json> [--auto-approve] [--out <runs directory>] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
 ```
 
 Generates exactly a saved plan. It refuses stale bible, template and identity inputs, and a plan whose `approved` field a human has not set to `true`, unless `--auto-approve` is given for an unattended campaign; the MCP tool has no such option, so a plan must be approved first. Approval authorizes the generation spend only; the outputs stay pending review. Paid gateway calls; needs `AI_GATEWAY_API_KEY` or `--provider-script` (exit 4 without either). Stages the run under `--out` (default `.assetgrove/runs`), never in the target.
 
-MCP tool: `apply`, arguments `plan`, `out`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--out`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `apply`, arguments `plan`, `out`, `workItem`, `round`.
 
 ### `mcp`
 
@@ -45,22 +49,26 @@ Serves one MCP tool per command other than `mcp` over MCP stdio with the officia
 ### `materials`
 
 ```text
-materials --albedo <painted.png> --spec <spec.json> --profile <profile.json> --derivation <derivation.json> --out <directory> [--cap <usd>] [--work-item <label>] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--dry-run] [--json]
+materials --albedo <painted.png> --spec <spec.json> --profile <profile.json> --derivation <derivation.json> --out <directory> [--cap <usd>] [--work-item <label>] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Derives the material channels the profile's `style.materials` requests from a painted albedo, checks alignment and temporal stability, writes native-resolution renditions into `--out`, runs the target's compression and lit previews, and judges the flat and lit images with vision QA. The compression and preview commands run only with an approval tied to each command's hash, exactly as `pick`'s validator does (cwd: the profile's directory); every one is checked before the first model call, exit 8 `confirmation_required` otherwise, and each output's provenance records the command's `hash` and approval `method`. Paid gateway calls (vision QA and any model-assisted channel). Rejected materials exit 5 and stay unapproved. Never writes into the target.
 
-MCP tool: `materials`, arguments `albedo`, `spec`, `profile`, `derivation`, `out`, `cap`, `workItem`, `digitalSourceType`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `materials`, arguments `albedo`, `spec`, `profile`, `derivation`, `out`, `cap`, `workItem`, `digitalSourceType`, `runs`, `round`.
 
 ### `stage`
 
 ```text
-stage --spec <spec.json> --bible <bible.json> --profile <profile.json> [--candidates 4] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--dry-run] [--json]
+stage --spec <spec.json> --bible <bible.json> --profile <profile.json> [--candidates 4] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
 ```
 
 Generates candidates within the cap and stages only those that pass QA, with reasons and provenance, in a run directory under `--runs`. `--dry-run` prints the planned calls, the cost forecast and the spend left under the ledger's limits, writes nothing and needs no key. Image kinds make paid gateway calls. A `character-3d` spec makes rigged, animated `.glb` candidates from the subject's approved turnaround: its 3D calls go to Tripo (`TRIPO_API_KEY`) and its identity call to the gateway. A sprite-strip spec needs an approved `keyPose`. Never writes into the target.
 
-MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `cap`, `runs`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `cap`, `runs`, `workItem`, `round`.
 
 ### `pick`
 
@@ -96,32 +104,38 @@ MCP tool: `lod`, arguments `run`, `candidate`, `model`, `provenance`, `spec`, `p
 ### `look-dev`
 
 ```text
-look-dev --model <model.glb> --provenance <provenance.json> --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--dry-run] [--json]
+look-dev --model <model.glb> --provenance <provenance.json> --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
 ```
 
 Repaints a picked 3D character's base colour on its own UVs in the look the bible's approved references define, writes fur groom maps and tint textures per season the profile declares (`model3d.groom`), gives the eyes a glossy material and mask, and checks them. Stages a one-candidate run with before-and-after renders under `--runs` for a person to pick. Paid gateway calls; the cap defaults to the profile's `model3d.lookdev.capUsd` or $3. Exits 5 when the result fails its checks.
 
-MCP tool: `look_dev`, arguments `model`, `provenance`, `spec`, `bible`, `profile`, `cap`, `runs`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `look_dev`, arguments `model`, `provenance`, `spec`, `bible`, `profile`, `cap`, `runs`, `workItem`, `round`.
 
 ### `import`
 
 ```text
-import --sheet <sheet.png> --profile <profile.json> --asset <id> --tool <name> [--bible <bible.json>] [--subject <name>] [--hints idle,walk-right,...] [--frames <count>] [--grid <columns>] [--components] [--no-propose] [--cap <usd>] [--work-item <label>] [--imports .assetgrove/imports] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--json]
+import --sheet <sheet.png> --profile <profile.json> --asset <id> --tool <name> [--bible <bible.json>] [--subject <name>] [--hints idle,walk-right,...] [--frames <count>] [--grid <columns>] [--components] [--no-propose] [--cap <usd>] [--work-item <label>] [--imports .assetgrove/imports] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Slices a contact sheet from any tool (`--tool` names it) into frames under `--imports`, removes the background to the profile's style, and has a vision model propose animation families in `<import>/grouping.json` with status `proposed`. `--no-propose` skips that paid call. With `--lock-bible`, a locked subject's sheet is also scored against its identity lock, one paid call unless `--identity-mode off`. With `--frames`, a sheet that does not slice into exactly that many figures is refused (exit 2) before any model call. Never writes into the target.
 
-MCP tool: `import`, arguments `sheet`, `profile`, `asset`, `tool`, `digitalSourceType`, `bible`, `subject`, `hints`, `frames`, `grid`, `components`, `noPropose`, `lockBible`, `identityMode`, `cap`, `imports`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `import`, arguments `sheet`, `profile`, `asset`, `tool`, `digitalSourceType`, `bible`, `subject`, `hints`, `frames`, `grid`, `components`, `noPropose`, `lockBible`, `identityMode`, `cap`, `imports`, `workItem`, `runs`, `round`.
 
 ### `generate-sheet`
 
 ```text
-generate-sheet --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--imports .assetgrove/imports] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--brief <brief.json>] [--work-item <label>] [--provider-script <module>] [--dry-run] [--json]
+generate-sheet --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--imports .assetgrove/imports] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--brief <brief.json>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Has the model draw a whole animation cycle as one sheet within the cap, then imports it as `import` does, with a proposed grouping for a person to confirm. A sheet that does not slice into the spec's `frames.count` figures exits 5; the sheet and its record are kept in the import directory. `--brief` adds the author's brief to the prompt; `--lock-bible` and `--identity-mode` score the sheet as `import` does, inside the forecast and the cap. Paid gateway calls. Never writes into the target.
 
-MCP tool: `generate_sheet`, arguments `spec`, `bible`, `profile`, `brief`, `cap`, `imports`, `lockBible`, `identityMode`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `generate_sheet`, arguments `spec`, `bible`, `profile`, `brief`, `cap`, `imports`, `lockBible`, `identityMode`, `workItem`, `runs`, `round`.
 
 ### `write-families`
 
@@ -136,42 +150,50 @@ MCP tool: `write_families`, arguments `import`, `target`, `grouping`, `jitterBou
 ### `identity-eval`
 
 ```text
-identity-eval [--bible <BIBLE.md>] --cases <cases.json> [--profile <profile.json>] [--log <identity-eval.jsonl>] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--json]
+identity-eval [--bible <BIBLE.md>] --cases <cases.json> [--profile <profile.json>] [--log <identity-eval.jsonl>] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
-Scores every case of a local labelled image set against its subject's identity lock and reports accuracy per threshold, the recommended threshold, accuracy at the profile's threshold and agreement with the cases' QA verdicts. Paid gateway calls. Writes one JSON line per case to `--log` and nothing else; never filters or approves. Keep the set and the log local.
+Scores every case of a local labelled image set against its subject's identity lock and reports accuracy per threshold, the recommended threshold, accuracy at the profile's threshold and agreement with the cases' QA verdicts. Paid gateway calls. Writes one JSON line per case to `--log` and nothing else beside its run directory; never filters or approves. Keep the set and the log local.
 
-MCP tool: `identity_eval`, arguments `bible`, `cases`, `profile`, `log`, `cap`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `identity_eval`, arguments `bible`, `cases`, `profile`, `log`, `cap`, `workItem`, `runs`, `round`.
 
 ### `identity-check`
 
 ```text
-identity-check --bible <BIBLE.md> [--subject <name>]... [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--json]
+identity-check --bible <BIBLE.md> [--subject <name>]... [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
-Asks whether each identity record's written features, proportions and palette agree with the record's own approved reference images, for every identity in the bible or each named subject. Paid gateway calls; writes nothing. Exits 1 when any record disagrees or could not be checked; enforce mode does not filter with that record until a person fixes its text or references.
+Asks whether each identity record's written features, proportions and palette agree with the record's own approved reference images, for every identity in the bible or each named subject. Paid gateway calls; writes nothing beside its run directory. Exits 1 when any record disagrees or could not be checked; enforce mode does not filter with that record until a person fixes its text or references.
 
-MCP tool: `identity_check`, arguments `bible`, `subject`, `cap`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `identity_check`, arguments `bible`, `subject`, `cap`, `workItem`, `runs`, `round`.
 
 ### `animation-qa`
 
 ```text
-animation-qa (--strip <strip.png> --family <name> --profile <profile.json> | --import <import directory>) [--out .assetgrove/animation] [--subject <name>] [--spec <spec.json>] [--anchor x,y] [--no-vision] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--dry-run] [--json]
+animation-qa (--strip <strip.png> --family <name> --profile <profile.json> | --import <import directory>) [--out .assetgrove/animation] [--subject <name>] [--spec <spec.json>] [--anchor x,y] [--no-vision] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Checks one strip, or every family `write-families` wrote from an import, against its motion template and for loop and continuity on pixels. Within the cap, vision calls judge identity flicker between consecutive frames and holes inside the figure; `--no-vision` skips both and spends nothing. Writes a QA report, an onion-skin sheet and a looping preview per family into `--out`, never into the target. Exits 5 when any check fails; each failure names its frame.
 
-MCP tool: `animation_qa`, arguments `strip`, `family`, `profile`, `import`, `out`, `subject`, `spec`, `anchor`, `noVision`, `cap`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `animation_qa`, arguments `strip`, `family`, `profile`, `import`, `out`, `subject`, `spec`, `anchor`, `noVision`, `cap`, `workItem`, `runs`, `round`.
 
 ### `fix-frame`
 
 ```text
-fix-frame --strip <strip.png> --family <name> --profile <profile.json> --frame <n> (--from <n> | --key-pose <image>) --out <directory> [--subject <name>] [--spec <spec.json>] [--note <text>] [--provenance <strip>.provenance.json] [--bible <bible.json>] [--anchor x,y] [--cap 2] [--work-item <label>] [--provider-script <module>] [--dry-run] [--json]
+fix-frame --strip <strip.png> --family <name> --profile <profile.json> --frame <n> (--from <n> | --key-pose <image>) --out <directory> [--subject <name>] [--spec <spec.json>] [--note <text>] [--provenance <strip>.provenance.json] [--bible <bible.json>] [--anchor x,y] [--cap 2] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Regenerates one frame (1-based) of a strip with one paid reference-guided edit call, from an approved neighbour frame or the approved key pose. Only that frame changes. Writes the fixed strip, its provenance with a fixes entry, and its QA report and previews into `--out`; never writes into the target or sets a review value. A provenance file that is not the strip's own record is refused (exit 2) before the call.
 
-MCP tool: `fix_frame`, arguments `strip`, `family`, `profile`, `frame`, `from`, `keyPose`, `out`, `subject`, `spec`, `note`, `provenance`, `bible`, `anchor`, `cap`, `workItem`.
+Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, and its `run.json` there. `--round` (default 1) is part of the digest.
+
+MCP tool: `fix_frame`, arguments `strip`, `family`, `profile`, `frame`, `from`, `keyPose`, `out`, `subject`, `spec`, `note`, `provenance`, `bible`, `anchor`, `cap`, `workItem`, `runs`, `round`.
 
 ### `op`
 
@@ -232,6 +254,16 @@ spend <status|check> [--provider <id>] [--work-item <label>] [--provider-script 
 `status` gives the ledger (`<stateDir>/spend.jsonl`), the caps from the settings, the last 24 hours' spend, and the work item (`--work-item` or `ASSETGROVE_WORK_ITEM`) with its spend. `check` reports per configured provider (`--provider` narrows it) `{provider, adapter, paid, declared, limit, verified, reading, mismatch, note}`: whether a limit is declared, the provider's reading where it gives one to an ordinary key (gateway credits balance, Tripo balance), and whether the reading verifies the limit. A reading verifies only a `prepaid` limit with `usd` (balance at or below it); a balance above it exits 3 with `provider_limit_mismatch`. Anthropic and OpenAI limits are declared only. `--provider-script` names the scripted provider's module, whose `limitReading` check reads. No spend, nothing written.
 
 MCP tool: `spend`, arguments `action`, `provider`, `workItem`. The provider script flag is CLI-only.
+
+### `estimate`
+
+```text
+estimate <command> [--args <json>] [--work-item <label>] [--provider-script <module>] [--json]
+```
+
+Runs a paid command's free plan step (`plan`, `apply`, `stage`, `generate-sheet`, `import`, `materials`, `look-dev`, `animation-qa`, `fix-frame`, `identity-eval`, `identity-check`) and returns what that command prints with its dry-run flag and `--json`, its `command` field naming that command: the WorkPlan's `jobs` (operation, provider, model, count and per-call estimate), `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` (sha256 of each input file), `options`, the request `digest` and the `runDir` it would run in, with the spend left under the ledger's limits; exit 3 when the forecast is over the cap or a limit. `--args` is a JSON object of the command's tool arguments (no CLI-only option). The digest is the sha256 of the canonical JSON of the command, round, inputs, options, jobs, forecast and cap: the same request gives the same digest. A free or unknown command exits 2. No provider call, no ledger entry, nothing written.
+
+MCP tool: `estimate`, arguments `command`, `args`, `workItem`.
 
 ### `confirm`
 

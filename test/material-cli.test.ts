@@ -139,6 +139,8 @@ test("materials dry-run forecasts defaults without provider or output writes and
     JSON.stringify({ format: "assetgrove-target-profile/1", frames: { width: 4, height: 4 } }),
   );
   await writeFile(spec, JSON.stringify({ kind: "still", assetId: "synthetic" }));
+  // The plan step hashes the albedo's bytes into the request digest; it never decodes it.
+  await writeFile(join(dir, "unread.png"), "not an image: a dry run never decodes it");
   await writeFile(
     derivation,
     JSON.stringify({

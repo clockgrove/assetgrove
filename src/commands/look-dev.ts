@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { basename, dirname } from "node:path";
 import { readJson, readModel, loadProfile, loadStyleBible } from "../inputs.ts";
 import { lookDev, planLookdev } from "../model3d/lookdev/command.ts";
 import { runCap } from "../budget.ts";
@@ -7,6 +7,16 @@ import type { AssetSpec } from "../types.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  buildWorkPlan,
+  jobsOf,
+  paidBy,
+  specReads,
+  styleBibleReads,
+} from "../runs/plan.ts";
 
 interface LookDevArgs {
   model: string;
@@ -19,6 +29,28 @@ interface LookDevArgs {
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
+  round?: number;
+}
+
+/** Look-dev's plan step: its inputs, providers, look-dev plan and WorkPlan, with no call. */
+async function prepare(args: LookDevArgs, ctx: RunContext) {
+  const spec = await readJson<AssetSpec>(args.spec);
+  const bible = await loadStyleBible(args.bible);
+  const profile = await loadProfile(args.profile);
+  const providers = await providerSet(args.providerScript, ctx);
+  const routes = providers.routes;
+  const capUsd = runCap(args.cap, ctx.settings, planLookdev(profile.value, routes).capUsd);
+  const plan = planLookdev(profile.value, routes, capUsd);
+  const jobs = jobsOf(plan.calls, routes);
+  const work = await buildWorkPlan(lookDevCommand, args, {
+    inputs: ["model", "provenance", "spec", "bible", "profile"],
+    reads: { ...styleBibleReads("bible", bible), ...specReads("spec", spec) },
+    jobs,
+    capUsd,
+    paid: paidBy(providers, jobs),
+    candidates: 1,
+  });
+  return { spec, bible, profile, providers, routes, capUsd, plan, work };
 }
 
 export const lookDevCommand = defineCommand<LookDevArgs>({
@@ -66,30 +98,36 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
-      dryRun: { type: "boolean", description: "print the plan and forecast; spend nothing" },
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["model", "provenance", "spec", "bible", "profile"],
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     const ledger = spendLedger(ctx, args.workItem);
-    const spec = await readJson<AssetSpec>(args.spec);
-    const bible = await loadStyleBible(args.bible);
-    const profile = await loadProfile(args.profile);
-    const providers = await providerSet(args.providerScript, ctx);
-    const routes = providers.routes;
-    const capUsd = runCap(args.cap, ctx.settings, planLookdev(profile.value, routes).capUsd);
-    const plan = planLookdev(profile.value, routes, capUsd);
+    const { spec, bible, profile, providers, routes, capUsd, plan, work } = await prepare(
+      args,
+      ctx,
+    );
     if (args.dryRun) {
       const human = [
         `look-dev: ${plan.calls.length} call(s), forecast ${usd(plan.estimateUsd)} against the $${plan.capUsd.toFixed(2)} cap`,
         ...plan.calls.map((c) => `  ${c.operation}  ${c.model}  ${usd(c.estimatedCostUsd)}`),
         `  seasons: ${plan.seasons.join(", ")}`,
       ].join("\n");
-      return dryRunOutcome(plan, human, ledger.forProfile(profile.value), providers.billing);
+      return dryRunOutcome(
+        work,
+        human,
+        ledger.forProfile(profile.value),
+        plan as unknown as Record<string, unknown>,
+      );
     }
+    // The runner opened the request's run directory `<runs>/r-<16 hex>/`; look-dev runs in it.
+    const dir = ctx.run?.dir ?? work.runDir;
     const model = await readModel(args.model);
     const { run, runDir, passed } = await lookDev({
       model,
@@ -103,7 +141,8 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
       routes,
       provider: providers,
       ledger,
-      runsDir: resolve(args.runs ?? ".assetgrove/runs"),
+      runsDir: dirname(dir),
+      runId: basename(dir),
       capUsd,
       log: ctx.log,
     });

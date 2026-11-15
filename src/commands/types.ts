@@ -3,6 +3,9 @@ import type { ErrorCode } from "../errors.ts";
 import type { CommandConfirmation } from "../approvals.ts";
 import type { ConfirmPort } from "../confirm/prompt.ts";
 import type { Settings } from "../settings.ts";
+import type { WorkPlan } from "../runs/plan.ts";
+
+export type { PlanJob, WorkPlan } from "../runs/plan.ts";
 
 /** What running a command can do: whether it only reads, whether it spends, and where it writes. */
 export interface Effect {
@@ -13,7 +16,7 @@ export interface Effect {
 
 /** A JSON Schema for one property of a command's input. */
 export interface JsonSchemaProperty {
-  type: "string" | "number" | "integer" | "boolean" | "array";
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
   description: string;
   items?: { type: "string" };
   /** The value the command uses when the option is absent; shown in help, applied by the command. */
@@ -45,6 +48,11 @@ export interface RunContext {
   workItem?: string;
   /** A channel to ask a person (the CLI's inline TTY prompt); absent when no one can be asked. */
   prompt?: ConfirmPort;
+  /**
+   * The run of a paid command's real run: its directory `<runs>/r-<16 hex>/`, where the runner has
+   * written `request.json`, and the WorkPlan its plan step returned.
+   */
+  run?: { dir: string; plan: WorkPlan };
 }
 
 /** A refusal's code and message; a spend-limit refusal also names the limit and its numbers. */
@@ -73,14 +81,8 @@ export interface Outcome {
   fields: Record<string, unknown>;
   human: string;
   error?: Failure;
-}
-
-/** The calls a paid command would make and what they would cost, against its cap. */
-export interface WorkPlan {
-  estimateUsd: number;
-  capUsd: number;
-  withinCap: boolean;
-  [field: string]: unknown;
+  /** The command that answered, when not the one that ran: estimate answers as the paid command. */
+  command?: string;
 }
 
 /** One command, declared once: its input schema and effect, and how it runs. */
@@ -96,7 +98,7 @@ export interface CommandSpec<A = Record<string, unknown>> {
   confirm?: "spend" | "pick" | "write" | "settings";
   /** False when the command prints no JSON document (it takes no --json). Defaults to true. */
   json?: false;
-  /** The free plan step of a paid command. */
+  /** The free plan step of a paid command: no provider call, no ledger entry (design section 6). */
   plan?(args: A, ctx: RunContext): Promise<WorkPlan>;
   run(args: A, ctx: RunContext): Promise<Outcome>;
 }

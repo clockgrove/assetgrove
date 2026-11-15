@@ -1,9 +1,21 @@
-import { evaluateIdentity } from "../identity-eval.ts";
+import { evaluateIdentity, planEvaluation } from "../identity-eval.ts";
 import type { Breakdown, MediumReport } from "../identity-eval.ts";
 import { loadProfile } from "../inputs.ts";
 import { runCap } from "../budget.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
+import { IDENTITY_CHECK_OPERATION } from "../routes.ts";
+import type { Route } from "../routes.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  jobOf,
+  paidBy,
+} from "../runs/plan.ts";
+import { dryRunOutcome, formatWork } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
 
 function formatMedium(medium: string, m: MediumReport, threshold: number): string[] {
   const pct = (n: number) => `${Number((n * 100).toFixed(1))}%`;
@@ -31,6 +43,37 @@ interface IdentityEvalArgs {
   cap?: number;
   workItem?: string;
   providerScript?: string;
+  dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** The plan step: the same inputs and routes the run uses, and its WorkPlan, with no call. */
+async function prepare(args: IdentityEvalArgs, ctx: RunContext) {
+  const profile = args.profile ? (await loadProfile(args.profile)).value : {};
+  const provider = await providerSet(args.providerScript, ctx);
+  const set = await planEvaluation({
+    ...(args.bible !== undefined && { biblePath: args.bible }),
+    casesPath: args.cases,
+    profile,
+  });
+  const jobs = [
+    jobOf(set.operation, provider.routes[set.operation] as Route, set.cases),
+    jobOf(
+      IDENTITY_CHECK_OPERATION,
+      provider.routes[IDENTITY_CHECK_OPERATION] as Route,
+      set.identities,
+    ),
+  ];
+  const work = await buildWorkPlan(identityEvalCommand, args, {
+    inputs: ["cases", "bible", "profile"],
+    reads: set.reads,
+    jobs,
+    capUsd: runCap(args.cap, ctx.settings),
+    paid: paidBy(provider, jobs),
+    candidates: 0,
+  });
+  return { profile, provider, work };
 }
 
 export const identityEvalCommand = defineCommand<IdentityEvalArgs>({
@@ -78,22 +121,31 @@ hold a game's private art. See docs/generation-knobs.md.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
+      runs: RUNS_PROPERTY,
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["cases"],
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "always", writes: "out" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
-    const profile = args.profile ? (await loadProfile(args.profile)).value : {};
-    const provider = await providerSet(args.providerScript, ctx);
+    const { profile, provider, work } = await prepare(args, ctx);
+    if (args.dryRun)
+      return dryRunOutcome(
+        work,
+        formatWork("identity-eval", work),
+        spendLedger(ctx, args.workItem).forProfile(profile),
+      );
     const report = await evaluateIdentity({
       ...(args.bible !== undefined && { biblePath: args.bible }),
       casesPath: args.cases,
       profile,
       routes: provider.routes,
       provider,
-      capUsd: runCap(args.cap, ctx.settings),
+      capUsd: work.capUsd,
       ledger: spendLedger(ctx, args.workItem),
       ...(args.log !== undefined && { logPath: args.log }),
       log: ctx.log,

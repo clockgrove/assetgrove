@@ -406,7 +406,8 @@ test("free scripted runs over the caps are not refused and write nothing to the 
   const env = process.env;
   // Each run's $0.32 forecast alone is over both limits.
   for (let run = 1; run <= 2; run++) {
-    const r = await cli(args, env);
+    // Each round is its own request, so its own run directory.
+    const r = await cli([...args, "--round", String(run)], env);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(await callCount(), 7 * run);
   }

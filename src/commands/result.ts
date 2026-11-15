@@ -5,10 +5,9 @@ import type { ErrorCode } from "../errors.ts";
 import { LicenseError } from "../license.ts";
 import { redact } from "../redact.ts";
 import type { RunRecord, StagePlan } from "../loop.ts";
-import type { Billing } from "../gateway/provider.ts";
 import { WORK_ITEM_ENV, SpendLimitError, limitLabel } from "../spend.ts";
 import type { SpendLedger, SpendStatus } from "../spend.ts";
-import type { Failure, Outcome } from "./types.ts";
+import type { Failure, Outcome, WorkPlan } from "./types.ts";
 
 /**
  * The one result document of a command: its fields, then the contract fields no field shadows.
@@ -20,7 +19,7 @@ export function resultDocument(command: string | null, outcome: Outcome): Record
     ...fields,
     ok: exitCode === 0,
     exitCode,
-    command,
+    command: outcome.command ?? command,
     ...(error && { error: { ...error, message: redact(error.message) } }),
   };
 }
@@ -97,39 +96,63 @@ function formatSpend(spend: SpendStatus, counted: boolean): string[] {
 }
 
 /**
- * The outcome of a dry run: the plan, the spend left under each ledger limit, and a refusal (exit
- * 3) when the forecast is over the run's cap or, for a paid provider, over what is left under a
- * limit. A free provider's calls are not counted (`spend.counted` false), so the limits never
- * refuse it. Whether the provider is paid is its billing, from its adapter.
+ * The outcome of a dry run: the WorkPlan's fields (design section 6), the command's own plan
+ * detail as `plan` when it has one, the spend left under each ledger limit, and a refusal (exit 3)
+ * when the forecast is over the run's cap or, for a paid request, over what is left under a limit.
+ * An unpaid request's calls are not counted (`spend.counted` false), so the limits never refuse it.
  */
 export function dryRunOutcome(
-  plan: { estimateUsd: number; capUsd: number; withinCap: boolean },
+  work: WorkPlan,
   human: string,
   ledger: SpendLedger,
-  billing: Billing,
+  detail?: Record<string, unknown>,
 ): Outcome {
-  const counted = billing.paid;
+  const counted = work.paid;
   const spend = { ...ledger.status(), counted };
   const over = counted
-    ? spend.limits.find((l) => plan.estimateUsd > l.remainingUsd + 1e-9)
+    ? spend.limits.find((l) => work.forecastUsd > l.remainingUsd + 1e-9)
     : undefined;
-  const fields = { dryRun: true, plan, spend, withinLimits: over === undefined };
-  const text = [human, ...formatSpend(spend, counted)].join("\n");
-  if (!plan.withinCap)
+  const fields = {
+    dryRun: true,
+    ...(detail && { plan: detail }),
+    ...work,
+    spend,
+    withinLimits: over === undefined,
+  };
+  const text = [
+    human,
+    `request ${work.digest}`,
+    `run directory ${work.runDir}`,
+    ...formatSpend(spend, counted),
+  ].join("\n");
+  if (work.forecastUsd > work.capUsd + 1e-9)
     return refusal(
       "cap_refused",
-      `forecast ${usd(plan.estimateUsd)} exceeds the $${plan.capUsd.toFixed(2)} cap`,
+      `forecast ${usd(work.forecastUsd)} exceeds the $${work.capUsd.toFixed(2)} cap`,
       fields,
       text,
     );
   if (over)
     return refusal(
       "cap_refused",
-      `forecast ${usd(plan.estimateUsd)} exceeds the ${usd(over.remainingUsd)} left under the ${limitLabel(over)}`,
+      `forecast ${usd(work.forecastUsd)} exceeds the ${usd(over.remainingUsd)} left under the ${limitLabel(over)}`,
       fields,
       text,
     );
   return { exitCode: 0, fields, human: text };
+}
+
+/** A WorkPlan's jobs as dry-run text, for a command with no plan text of its own. */
+export function formatWork(command: string, work: WorkPlan): string {
+  const calls = work.jobs.reduce((n, j) => n + j.count, 0);
+  return [
+    `dry run: ${command}, ${calls} planned call(s), nothing spent`,
+    ...work.jobs.map(
+      (j) => `  ${j.operation}  ${j.model}  ${j.count} x ~${usd(j.estimatedCostUsd)}`,
+    ),
+    `forecast ${usd(work.forecastUsd)} against a $${work.capUsd.toFixed(2)} cap` +
+      (work.forecastUsd <= work.capUsd + 1e-9 ? "" : " (over the cap)"),
+  ].join("\n");
 }
 
 /** A stage plan as dry-run text. */

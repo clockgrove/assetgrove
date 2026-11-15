@@ -61,6 +61,8 @@ import { filteringState, mergeFiltering, STYLE_SCORE_CHECK } from "./qa/stabilit
 import type { StabilityEntry } from "./qa/stability.ts";
 import type { RunRecord } from "./loop.ts";
 import { writeRun } from "./loop.ts";
+import { jobOf } from "./runs/plan.ts";
+import type { PlanJob } from "./runs/plan.ts";
 
 export interface GenerationBrief {
   purpose?: string;
@@ -686,9 +688,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
     // Enforce mode first checks the record against its references, once per run.
     (identityCheck?.checkRoute?.estimatedCostUsd ?? 0);
   // The compiler runs when its route's provider can be called; otherwise the template applies.
-  const compiles =
-    options.provider !== undefined &&
-    (!(options.provider instanceof ProviderSet) || options.provider.callable(settings.llmRoute));
+  const compiles = compilerCallable(options, settings.llmRoute);
   const compilerEstimate = compiles ? settings.llmRoute.estimatedCostUsd : 0;
   const budget = new Budget(
     settings.capUsd,
@@ -851,6 +851,129 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
   return { ...plan, digest: planDigest(plan) };
 }
 
+/** What a plan or apply would call and spend, computed without a provider call. */
+export interface JobForecast {
+  jobs: PlanJob[];
+  candidates: number;
+  capUsd: number;
+  /** Files the plan reads that no argument names: the default prompt template. */
+  reads?: Record<string, string>;
+}
+
+/** Whether the compiler runs: its route's provider can be called; otherwise the template applies. */
+function compilerCallable(options: CreatePlanOptions, llmRoute: Route): boolean {
+  return (
+    options.provider !== undefined &&
+    (!(options.provider instanceof ProviderSet) || options.provider.callable(llmRoute))
+  );
+}
+
+/**
+ * Every call `createPlan` and the `applyPlan` after it can make, from the routes alone: the
+ * compiler call when its route is callable, as `createPlan` decides (else the template fallback
+ * makes none), generation, QA and identity
+ * calls for each candidate. Validates the inputs as `createPlan` does and calls no provider.
+ */
+export async function planJobs(options: CreatePlanOptions): Promise<JobForecast> {
+  const doc = await loadBible(options.biblePath);
+  if (
+    !options.spec ||
+    typeof options.spec.assetId !== "string" ||
+    !options.spec.assetId.trim() ||
+    typeof options.spec.kind !== "string"
+  )
+    throw new InputError("plan needs an asset spec with kind and assetId");
+  for (const key of ROUTE_SETTINGS) {
+    if (options.settings !== undefined && Object.hasOwn(options.settings, key))
+      throw new InputError(
+        `run settings cannot set ${key}: routes come only from the developer settings (routes and roles)`,
+      );
+  }
+  const settings = settingsOf(options);
+  if (!["still", "sprite-strip"].includes(options.spec.kind))
+    throw new InputError(`no planned generator handles asset kind ${options.spec.kind}`);
+  if (
+    options.spec.kind === "sprite-strip" &&
+    (!options.spec.keyPose || !options.spec.animationFamily)
+  )
+    throw new InputError("sprite-strip requires an approved keyPose and animationFamily");
+  const frameCount = options.spec.kind === "sprite-strip" ? (options.spec.frames?.count ?? 1) : 1;
+  if (!Number.isInteger(frameCount) || frameCount < 1)
+    throw new InputError("invalid planned frame dimensions or count");
+  const templatePath = resolve(options.templatePath ?? join(doc.dir, "../prompts/default.md"));
+  try {
+    await readFile(templatePath);
+  } catch (error) {
+    throw new InputError(`repository prompt template is missing: ${templatePath}`, {
+      cause: error,
+    });
+  }
+  const profile = options.profile ?? DEFAULT_PROFILE;
+  const routes = routesOf(options);
+  const count = settings.candidates;
+  const jobs: PlanJob[] = [
+    ...(compilerCallable(options, settings.llmRoute) ? [jobOf("compiler", settings.llmRoute)] : []),
+    jobOf(
+      options.spec.kind === "sprite-strip" ? "edit" : "still",
+      settings.modelRoute,
+      count * frameCount,
+    ),
+    jobOf("vision", settings.qaRoute, count),
+  ];
+  const mode = identitySettings(profile, options.identityMode);
+  if (doc.data.identities[subjectOf(options.spec)] && mode.mode !== "off") {
+    const operation = mode.question === "cast" ? IDENTITY_CAST_OPERATION : "identity";
+    jobs.push(jobOf(operation, route(routes[operation] as Route, operation), count));
+    if (mode.mode === "enforce")
+      jobs.push(
+        jobOf(
+          IDENTITY_CHECK_OPERATION,
+          route(routes[IDENTITY_CHECK_OPERATION] as Route, IDENTITY_CHECK_OPERATION),
+        ),
+      );
+  }
+  return {
+    jobs,
+    candidates: count,
+    capUsd: settings.capUsd,
+    ...(options.templatePath === undefined && { reads: { template: templatePath } }),
+  };
+}
+
+/**
+ * The calls `applyPlan` would make for a saved plan, routed as it routes them. Checks the plan as
+ * apply does (format, digest, staleness) but needs no approval and calls no provider.
+ */
+export async function applyJobs(
+  input: GenerationPlan | string,
+  provider: GenerationProvider,
+  runCapUsd?: number,
+): Promise<JobForecast> {
+  const { plan } = await checkedPlan(input);
+  const routes = applyRoutes(plan, provider);
+  const check = plan.identityCheck;
+  const count = plan.settings.candidates;
+  const jobs: PlanJob[] = [
+    jobOf(
+      plan.spec.kind === "sprite-strip" ? "edit" : "still",
+      routes["planned"] as Route,
+      count * plan.postprocess.frameCount,
+    ),
+    jobOf("vision", routes["planned-qa"] as Route, count),
+  ];
+  if (check) {
+    const operation = check.question === "cast" ? IDENTITY_CAST_OPERATION : "identity";
+    jobs.push(jobOf(operation, routes[operation] as Route, count));
+    if (check.checkRoute)
+      jobs.push(jobOf(IDENTITY_CHECK_OPERATION, routes[IDENTITY_CHECK_OPERATION] as Route));
+  }
+  const capUsd =
+    runCapUsd === undefined
+      ? plan.settings.capUsd
+      : runCap(plan.settings.capUsd, { caps: { runUsd: runCapUsd } });
+  return { jobs, candidates: count, capUsd };
+}
+
 export async function savePlan(plan: GenerationPlan, path: string): Promise<void> {
   await mkdir(dirname(resolve(path)), { recursive: true });
   await writeFile(path, `${JSON.stringify(plan, null, 2)}\n`);
@@ -863,6 +986,8 @@ export interface ApplyPlanOptions {
   ledger?: SpendLedger;
   autoApprove?: boolean;
   outDir?: string;
+  /** The run's directory name under `outDir`, when the caller already opened it. */
+  runId?: string;
   /** Receives one line per provider decision call. */
   log?: (message: string) => void;
   /** The developer settings' run cap (`caps.runUsd`): the run settings' `capUsd` may lower it, never raise it. */
@@ -959,7 +1084,9 @@ export async function applyPlan(
   // The compilation was spent (and recorded in any ledger) when the plan was made.
   budget.addPrior(plan.compiler.spentUsd, "prior prompt compilation");
   budget.check(plan.forecast.generationUsd, "planned generation");
-  const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
+  const runId =
+    options.runId ??
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   const runDir = resolve(options.outDir ?? ".assetgrove/runs", runId);
   await mkdir(runDir, { recursive: true });
   const check = plan.identityCheck;
@@ -972,6 +1099,7 @@ export async function applyPlan(
   const pairs: Array<{ qa: boolean; identity: boolean }> = [];
   const run: RunRecord = {
     runId,
+    ...(options.runId !== undefined && { runDir }),
     createdAt: new Date().toISOString(),
     spec: plan.spec,
     specDir: plan.specDir,

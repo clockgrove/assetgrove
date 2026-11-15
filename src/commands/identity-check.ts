@@ -8,7 +8,18 @@ import { providerSet, spendLedger } from "../providers/index.ts";
 import { IDENTITY_CHECK_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { ledgerFor } from "../spend.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  bibleReads,
+  buildWorkPlan,
+  jobOf,
+  paidBy,
+} from "../runs/plan.ts";
+import { dryRunOutcome, formatWork } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
 
 interface IdentityCheckArgs {
   bible: string;
@@ -16,6 +27,41 @@ interface IdentityCheckArgs {
   cap?: number;
   workItem?: string;
   providerScript?: string;
+  dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** The plan step: the identities to check, loaded as the run loads them, and its WorkPlan. */
+async function prepare(args: IdentityCheckArgs, ctx: RunContext) {
+  const doc = await loadBible(args.bible);
+  const named = args.subject ?? [];
+  const subjects = named.length > 0 ? named : Object.keys(doc.data.identities).sort();
+  const loaded = await Promise.all(
+    subjects.map(async (subject) => {
+      const identity = await loadIdentity(doc, subject);
+      if (!identity) throw new InputError(`"${subject}" has no identity lock in ${doc.path}`);
+      return identity;
+    }),
+  );
+  if (loaded.length === 0) throw new InputError(`${doc.path} has no identity locks`);
+  const provider = await providerSet(args.providerScript, ctx);
+  const jobs = [
+    jobOf(
+      IDENTITY_CHECK_OPERATION,
+      provider.routes[IDENTITY_CHECK_OPERATION] as Route,
+      loaded.length,
+    ),
+  ];
+  const work = await buildWorkPlan(identityCheckCommand, args, {
+    inputs: ["bible"],
+    reads: await bibleReads("bible", args.bible, subjects),
+    jobs,
+    capUsd: runCap(args.cap, ctx.settings),
+    paid: paidBy(provider, jobs),
+    candidates: 0,
+  });
+  return { loaded, provider, work };
 }
 
 export const identityCheckCommand = defineCommand<IdentityCheckArgs>({
@@ -57,28 +103,27 @@ fixes its text or its references. See docs/generation-knobs.md.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
+      runs: RUNS_PROPERTY,
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["bible"],
     additionalProperties: false,
   },
-  effect: { readOnly: false, spends: "always", writes: "none" },
+  effect: { readOnly: false, spends: "always", writes: "runs" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
-    const doc = await loadBible(args.bible);
-    const named = args.subject ?? [];
-    const subjects = named.length > 0 ? named : Object.keys(doc.data.identities).sort();
-    const loaded = await Promise.all(
-      subjects.map(async (subject) => {
-        const identity = await loadIdentity(doc, subject);
-        if (!identity) throw new InputError(`"${subject}" has no identity lock in ${doc.path}`);
-        return identity;
-      }),
-    );
-    if (loaded.length === 0) throw new InputError(`${doc.path} has no identity locks`);
-    const provider = await providerSet(args.providerScript, ctx);
+    const { loaded, provider, work } = await prepare(args, ctx);
+    if (args.dryRun)
+      return dryRunOutcome(
+        work,
+        formatWork("identity-check", work),
+        spendLedger(ctx, args.workItem),
+      );
     const routes = provider.routes;
     const budget = new Budget(
-      runCap(args.cap, ctx.settings),
+      work.capUsd,
       ledgerFor(spendLedger(ctx, args.workItem), provider, {}),
     );
     budget.check(
