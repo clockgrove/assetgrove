@@ -3,7 +3,12 @@
  * the model for a whole cycle as one contact sheet, which keeps identity consistent across frames,
  * and the sheet then goes through the same import path as a sheet made anywhere else.
  */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { keyIndexes, writeContactRows } from "../contact.ts";
 import { InputError } from "../errors.ts";
+import { decodeImage } from "../image/raster.ts";
+import type { Raster } from "../image/raster.ts";
 import type { PlannedCall } from "../generators/generator.ts";
 import { Budget } from "../budget.ts";
 import { ledgerFor } from "../spend.ts";
@@ -50,6 +55,8 @@ export interface GenerateSheetOptions {
   importsDir: string;
   capUsd?: number;
   importId?: string;
+  /** The run directory that gets the numbered contact sheet (`contact.png`) of the sheet's frames. */
+  runDir?: string;
   slice?: SliceOptions;
   /**
    * Scores the generated sheet against a character's identity lock (see `ImportOptions`), through
@@ -183,9 +190,13 @@ export function planSheet(spec: AssetSpec, profile: TargetProfile, routes: Route
  * Generates one sheet and imports it. The run reserves the sheet call and the grouping call
  * against the cap before any provider call, and refuses when they would exceed it.
  */
-export async function generateSheet(
-  options: GenerateSheetOptions,
-): Promise<{ record: ImportRecord; importDir: string; grouping: Grouping; spentUsd: number }> {
+export async function generateSheet(options: GenerateSheetOptions): Promise<{
+  record: ImportRecord;
+  importDir: string;
+  grouping: Grouping;
+  spentUsd: number;
+  contactSheet?: string;
+}> {
   const { spec, bible, profile, routes } = options;
   // planSheet refuses a spec without an animationFamily, so it is set below.
   const plan = planSheet(spec, profile, routes);
@@ -274,5 +285,19 @@ export async function generateSheet(
     if (error instanceof SliceError) error.spentUsd = budget.spentUsd;
     throw error;
   }
-  return { ...imported, spentUsd: budget.spentUsd };
+  let contactSheet: string | undefined;
+  if (options.runDir !== undefined) {
+    // One candidate, the sheet: a row of its key frames beside the key pose it was made from.
+    const frames = await Promise.all(
+      imported.record.frames.map(async (f) =>
+        decodeImage(new Uint8Array(await readFile(join(imported.importDir, f.file)))),
+      ),
+    );
+    const shown = keyIndexes(frames.length).map((i) => frames[i] as Raster);
+    const references = keyPose.map((k) => decodeImage(k.bytes));
+    contactSheet = (
+      await writeContactRows(options.runDir, [{ number: 1, images: shown }], references)
+    )?.file;
+  }
+  return { ...imported, spentUsd: budget.spentUsd, ...(contactSheet && { contactSheet }) };
 }

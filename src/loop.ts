@@ -25,7 +25,8 @@ import { applyStability, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import type { Generator, PlannedCall } from "./generators/generator.ts";
-import { sha256, sniffMediaType } from "./request.ts";
+import { loadBibleInputs, sha256, sniffMediaType } from "./request.ts";
+import { writeContact } from "./contact.ts";
 import type { Routes } from "./routes.ts";
 import type {
   AssetSpec,
@@ -194,6 +195,8 @@ export interface RunRecord {
    * the cause. Absent when no model-backed check ran.
    */
   filtering?: FilteringState[];
+  /** The numbered contact sheet in the run directory (`contact.png`), when a candidate has an image. */
+  contactSheet?: string;
   /** Why candidate generation stopped early, when it did (for example the cost cap). */
   stopped?: string;
   picked?: { candidateId: string; at: string; target: string; files: string[] };
@@ -398,6 +401,16 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
     }
   }
 
+  const references: Uint8Array[] = [];
+  try {
+    references.push(
+      ...(await loadBibleInputs(spec, bible, options.bibleDir)).subject.map((r) => r.bytes),
+    );
+  } catch {
+    // A spec with no bible references (a 3D character from its turnaround) has none to show.
+  }
+  const contact = await writeContact(runDir, spec, run.candidates, references);
+  if (contact !== undefined) run.contactSheet = contact;
   await writeRun(runDir, run);
   return { run, runDir };
 }

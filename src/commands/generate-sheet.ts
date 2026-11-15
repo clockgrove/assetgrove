@@ -7,6 +7,7 @@ import type { Route } from "../routes.ts";
 import { generateSheet, planSheet, sheetBrief } from "../sheet/generate.ts";
 import { SliceError } from "../sheet/slice.ts";
 import type { AssetSpec } from "../types.ts";
+import { sharedTexts, withSharedText } from "../request.ts";
 import { formatImport } from "./import.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -191,6 +192,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         routes,
         provider: providers,
         importsDir: resolve(args.imports ?? ".assetgrove/imports"),
+        ...(ctx.run && { runDir: ctx.run.dir }),
         capUsd,
         ledger,
         ...(lock && {
@@ -214,10 +216,20 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
       };
       return refusal("qa_found_nothing", error.message, fields, "");
     }
-    const { record, importDir, grouping, spentUsd } = generated;
+    const { record, importDir, grouping, spentUsd, contactSheet } = generated;
     return {
       exitCode: 0,
-      fields: { importDir, spentUsd, ...record, grouping },
+      fields: withSharedText(
+        {
+          importDir,
+          spentUsd,
+          ...(ctx.run && { runDir: ctx.run.dir }),
+          ...(contactSheet && { contactSheet }),
+          ...record,
+          grouping,
+        },
+        sharedTexts(bible.value),
+      ),
       human: `$${spentUsd.toFixed(4)} spent\n${formatImport(record, importDir, grouping)}`,
     };
   },

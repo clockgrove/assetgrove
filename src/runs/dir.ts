@@ -38,6 +38,8 @@ export interface CommandRunRecord {
   exitCode: number;
   error?: string;
   spentUsd?: number;
+  /** The numbered contact sheet in the run directory, when the command wrote one. */
+  contactSheet?: string;
 }
 
 /** Writes a command's run record to `run.json` in its run directory. */

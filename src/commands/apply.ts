@@ -86,7 +86,10 @@ Approval authorizes this generation spend; resulting assets remain pending revie
       outDir: dirname(dir),
       runId: basename(dir),
     });
-    const fields = { ...result };
+    const fields = {
+      ...result,
+      ...(result.run.contactSheet && { contactSheet: result.run.contactSheet }),
+    };
     const human = formatRun(result.run, result.runDir);
     if (result.run.candidates.length === 0)
       return refusal("qa_found_nothing", "no candidate passed QA", fields, human);

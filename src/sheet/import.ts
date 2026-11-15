@@ -209,7 +209,7 @@ function visibleBox(r: Raster, threshold: number, within: Box): Box | undefined 
   };
 }
 
-function blit(dst: Raster, src: Raster, ox: number, oy: number): void {
+export function blit(dst: Raster, src: Raster, ox: number, oy: number): void {
   for (let y = 0; y < src.height; y++) {
     for (let x = 0; x < src.width; x++) {
       const px = getPixel(src, x, y);
