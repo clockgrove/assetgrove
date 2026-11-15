@@ -186,10 +186,10 @@ const BASE: Record<string, Record<string, string>> = {
   },
   "3d with sidecars and a provenance path": {
     "characters/fox/fox.eyes.png":
-      "ce6f58b91dbe5ee416715d238409268356e76f7369f9c820bc5b6266e8056f29",
+      "b06551dbce90566cd1945fa5f7d319a1328991c79bbf9fe131f50410a45df9d1",
     "characters/fox/fox.glb": "4f524509ec3e645b96647542848e4ccf6f863a3ec42289f6845a12fd26e8a714",
     "characters/fox/manifest.json":
-      "61c68a867d1db1c8945b0cd48fa018a1b12ab6bdfe14516341520d5058946566",
+      "a6eff2d5f65981309c97212105a3c9d25adadd0905de99d427fd97553f3a362a",
     "characters/fox/provenance.json":
       "c079a6364f9a15eaf50a2da1fca7f6df319f722b31a329c9f607a1d953e601fb",
   },

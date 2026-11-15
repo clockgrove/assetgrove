@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { pick } from "../src/handoff.ts";
 import { RUN_FILE, writeRun } from "../src/loop.ts";
 import type { RunRecord, StagedCandidate } from "../src/loop.ts";
-import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
+import { DIGITAL_SOURCE_TYPES, readDigitalSourceType } from "../src/metadata.ts";
 import { GLB_MEDIA_TYPE, parseGlb, writeGlb } from "../src/model3d/glb.ts";
 import { validatorCheck } from "../src/model3d/qa.ts";
 import { encodePng, createRaster } from "../src/image/raster.ts";
@@ -17,7 +17,7 @@ import { syntheticCharacter } from "./fixtures/glb.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 
 const PNG = encodePng(createRaster(4, 4));
-const MAP = new Uint8Array([1, 2, 3, 4]);
+const MAP = encodePng(createRaster(2, 2));
 
 const provenance: Provenance = {
   digitalSourceType: DIGITAL_SOURCE_TYPES.generated,
@@ -114,20 +114,20 @@ test("pick writes sidecars beside the media and exposes {path, sha256} to the ma
   const { runDir, targetDir } = await stagedRun();
   const result = await pick({ runDir, candidateId: "c1", targetDir });
   const lengthPath = join(targetDir, "characters/fox/fox.winter.length.png");
-  assert.deepEqual(new Uint8Array(await readFile(lengthPath)), MAP);
-  assert.deepEqual(
-    new Uint8Array(await readFile(join(targetDir, "characters/fox/fox.eyes.png"))),
-    PNG,
-  );
+  // Sidecars in a markable format are marked, so their written bytes differ from the staged ones.
+  const length = new Uint8Array(await readFile(lengthPath));
+  const eyes = new Uint8Array(await readFile(join(targetDir, "characters/fox/fox.eyes.png")));
+  for (const bytes of [length, eyes])
+    assert.ok(readDigitalSourceType(bytes, "image/png") !== undefined);
   const manifest = JSON.parse(await readFile(result.manifestPath, "utf8"));
   assert.deepEqual(manifest.length, {
     path: "characters/fox/fox.winter.length.png",
-    sha256: sha256(MAP),
+    sha256: sha256(length),
   });
   assert.deepEqual(manifest.eyes, {
     material: "eyes",
     path: "characters/fox/fox.eyes.png",
-    sha256: sha256(PNG),
+    sha256: sha256(eyes),
   });
   const run = JSON.parse(await readFile(join(runDir, RUN_FILE), "utf8"));
   assert.ok(run.picked.files.includes("characters/fox/fox.eyes.png"));

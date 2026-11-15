@@ -102,6 +102,36 @@ test("a preset's file in a markable format without the mark fails the check with
   });
 });
 
+for (const [preset, options] of [
+  ["atlas-json", { shape: "array" }],
+  ["aseprite-json", undefined],
+] as const) {
+  test(`the ${preset} hand-off writes the marked image and passes its check`, async () => {
+    const target = await mkdtemp(join(tmpdir(), "assetgrove-marks-"));
+    await writeToTarget(stripWrite(target, [{ preset, ...(options && { options }) }]));
+    const bytes = new Uint8Array(await readFile(join(target, "assets/source/fern/shelter.png")));
+    assert.equal(readDigitalSourceType(bytes, "image/png"), types.generated);
+    assert.equal(readMarkedModels(bytes, "image/png"), "model-a; model-b");
+  });
+}
+
+test("a PNG sidecar is marked like the media", async () => {
+  const target = await mkdtemp(join(tmpdir(), "assetgrove-marks-"));
+  const base = stripWrite(target, [{ preset: "atlas-json", options: { shape: "array" } }]);
+  await writeToTarget({
+    ...base,
+    output: {
+      ...base.output,
+      sidecars: [
+        { name: "shelter.side.png", bytes: unmarked, mediaType: "image/png", field: "side" },
+      ],
+    },
+  });
+  const bytes = new Uint8Array(await readFile(join(target, "assets/source/fern/shelter.side.png")));
+  assert.equal(readDigitalSourceType(bytes, "image/png"), types.generated);
+  assert.equal(readMarkedModels(bytes, "image/png"), "model-a; model-b");
+});
+
 test("a GLB and a glTF carry KHR_xmp_json_ld the Khronos validator accepts", async () => {
   const glb = embedDigitalSourceType(syntheticCharacter(), "model/gltf-binary", types.generated, {
     models: ["model-a"],
@@ -118,6 +148,8 @@ test("a GLB and a glTF carry KHR_xmp_json_ld the Khronos validator accepts", asy
     types.generated,
     { models: ["model-a"] },
   );
+  const gltfReport = await validateBytes(new Uint8Array(gltf), { format: "gltf" });
+  assert.equal(gltfReport.issues.numErrors, 0, JSON.stringify(gltfReport.issues.messages));
   assert.equal(readDigitalSourceType(gltf, "model/gltf+json"), types.generated);
   assert.equal(readMarkedModels(gltf, "model/gltf+json"), "model-a");
   const again = embedDigitalSourceType(glb, "model/gltf-binary", types.generated, {

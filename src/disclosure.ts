@@ -72,6 +72,7 @@ export function disclose(root: string): Disclosure {
   const providers = new Map<string, number>();
   const terms = new Map<string, number>();
   const withoutProvenance: string[] = [];
+  let approvedAi = 0;
   const cards = scanCards(root).sort((a, b) => compare(join(a.dir, a.id), join(b.dir, b.id)));
   const bump = (map: Map<string, number>, key: string): void => {
     map.set(key, (map.get(key) ?? 0) + 1);
@@ -80,9 +81,11 @@ export function disclose(root: string): Disclosure {
     const path = join(found.dir, `${found.id}.md`);
     let kind = "unknown";
     let provenance: Record<string, unknown> | undefined;
+    let state: unknown;
     try {
       const data = parseCard(readFileSync(path, "utf8"), path).data as Record<string, unknown>;
       if (typeof data["kind"] === "string") kind = data["kind"];
+      state = data["state"];
       const entry = (Array.isArray(data["sources"]) ? data["sources"] : []).find(
         (s: unknown) => (s as { id?: unknown } | null)?.id === "provenance",
       ) as { resource?: unknown } | undefined;
@@ -124,6 +127,7 @@ export function disclose(root: string): Disclosure {
     const row = (byKind[kind] ??= {});
     row[source] = (row[source] ?? 0) + 1;
     bump(sources, source);
+    if (AI_TYPES.has(source) && state === "approved") approvedAi += 1;
     for (const model of new Set(
       provenance ? strings(provenance["models"]) : (marked?.models ?? []),
     ))
@@ -154,11 +158,15 @@ export function disclose(root: string): Disclosure {
   const modelNames = list(models).map((m) => m.name);
   const kinds = Object.keys(byKind).sort();
   const made = modelNames.length > 0 ? ` with ${modelNames.join(", ")}` : "";
+  const approvedText =
+    approvedAi === 0
+      ? "none of them is recorded as approved by the developer yet"
+      : `${approvedAi} of them recorded as approved by the developer`;
   const steam =
     aiAssets === 0
       ? `Pre-generated AI content: none recorded in ${generated} library assets.`
       : `Pre-generated AI content: ${aiAssets} of ${generated} assets (${kinds.join(", ")}) were made${made}, ` +
-        `reviewed and approved by the developer before shipping. Live-generated AI content: none.`;
+        `${approvedText}. Live-generated AI content: [developer to fill in].`;
   const itchTags = aiAssets === 0 ? [] : ["ai-generated-assets"];
   const itchText =
     aiAssets === 0

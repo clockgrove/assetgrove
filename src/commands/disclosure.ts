@@ -32,7 +32,7 @@ Spends nothing; nothing is written without --out.`,
     additionalProperties: false,
   },
   positionals: [{ name: "root" }],
-  effect: { readOnly: true, spends: "never", writes: "none" },
+  effect: { readOnly: false, spends: "never", writes: "out" },
   async run(args) {
     const root = resolve(args.root ?? ".");
     const summary = disclose(root);

@@ -12,7 +12,7 @@ Each handed-off file carries the IPTC digital source type, and, where IPTC defin
 | glTF, GLB       | the `KHR_xmp_json_ld` extension                    |
 | KTX2            | the key-value entry `XMP`, holding the same packet |
 
-Other formats cannot carry the mark. Engines and packers can also strip a mark, so the provenance record and the asset's card always hold the source type too ([docs/library.md](library.md)).
+Other formats cannot carry the mark. Engines and packers can also strip a mark, so the provenance record always holds the source type too ([docs/library.md](library.md)).
 
 ## The check
 

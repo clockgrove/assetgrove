@@ -14,7 +14,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pick } from "../src/handoff.ts";
 import { InputError } from "../src/errors.ts";
-import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
+import { DIGITAL_SOURCE_TYPES, readDigitalSourceType } from "../src/metadata.ts";
 import { parseGlb } from "../src/model3d/glb.ts";
 import { lodChain } from "../src/model3d/lod/command.ts";
 import type { LodOptions } from "../src/model3d/lod/command.ts";
@@ -213,7 +213,6 @@ test("a static model gets its chain embedded, a phone tier beside, renders, and 
   assert.equal(manifest.output.triangles, full);
   const tier = manifest.output.tiers.phone.model;
   assert.equal(tier.path, "assets/kit/kit.phone.glb");
-  assert.equal(tier.sha256, phone.sha256);
   assert.equal(tier.sha256, sha256(await readFile(join(target, tier.path))));
   assert.equal(manifest.output.sha256, sha256(await readFile(join(target, "assets/kit/kit.glb"))));
 });
@@ -335,7 +334,8 @@ test("files packaging: a file per level, tier files per level, each valid; the m
 
   for (const side of candidate(run).sidecars!) {
     const written = new Uint8Array(await readFile(join(folder, side.name)));
-    assert.equal(sha256(written), side.sha256);
+    // The hand-off marks the sidecar, so its bytes differ from the staged ones.
+    assert.ok(readDigitalSourceType(written, "model/gltf-binary") !== undefined);
     const verdict = await validatorCheck(written);
     assert.equal(verdict.passed, true, `${side.name}: ${verdict.reason}`);
     const facts = measure(parseGlb(written));

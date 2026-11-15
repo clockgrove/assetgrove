@@ -283,6 +283,8 @@ export interface PreparedTargetWrite {
   mediaBytes: Uint8Array;
   provenance: Provenance;
   provenanceBytes?: string;
+  /** Where each sidecar is written, relative to the target. */
+  sidecarRels: string[];
 }
 
 /**
@@ -324,6 +326,21 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
       models: write.provenance.models,
     }),
   };
+  // A sidecar in a format that can carry the mark is marked like the media.
+  const sidecars = (write.output.sidecars ?? []).map((sidecar) => {
+    if (sidecar.name === "" || /[\\/]/.test(sidecar.name) || sidecar.name.includes("..")) {
+      throw new InputError(`sidecar name "${sidecar.name}" must be a bare file name`);
+    }
+    const type = markableMediaType(sidecar.name);
+    return type === undefined
+      ? sidecar
+      : {
+          ...sidecar,
+          bytes: embedDigitalSourceType(sidecar.bytes, type, digitalSourceType, {
+            models: write.provenance.models,
+          }),
+        };
+  });
   const provenance = { ...licensed, digitalSourceType };
   const last = provenance.steps?.at(-1);
   if (
@@ -376,7 +393,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
         ? undefined
         : `${mediaRel}.provenance.json`;
   (context["output"] as Record<string, unknown>)["path"] = mediaRel;
-  const sidecarRels = (write.output.sidecars ?? []).map((sidecar) => {
+  const sidecarRels = sidecars.map((sidecar) => {
     if (sidecar.name === "" || /[\\/]/.test(sidecar.name) || sidecar.name.includes("..")) {
       throw new InputError(`sidecar name "${sidecar.name}" must be a bare file name`);
     }
@@ -413,7 +430,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
       .flat()
       .map((file): [string, Uint8Array | string] => [targetPath(guard, file.path), file.content]),
   ];
-  (write.output.sidecars ?? []).forEach((sidecar, i) => {
+  sidecars.forEach((sidecar, i) => {
     writes.push([targetPath(guard, sidecarRels[i] as string), sidecar.bytes]);
   });
   const provenanceBytes = provenancePath ? `${JSON.stringify(provenance, null, 2)}\n` : undefined;
@@ -451,6 +468,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     mediaBytes: output.bytes,
     provenance,
     ...(provenanceBytes !== undefined && { provenanceBytes }),
+    sidecarRels,
   };
 }
 
@@ -513,6 +531,17 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
       const missing = markProblems(path, await read(path), type, expected);
       problems.push(...missing.map((problem) => ({ preset: preset.name, problem })));
     }
+  }
+  // Sidecars are read back whatever the presets are.
+  for (const rel of prepared.sidecarRels) {
+    const type = markableMediaType(rel);
+    if (type === undefined) continue;
+    const expected = {
+      digitalSourceType: prepared.provenance.digitalSourceType ?? "undeclared",
+      models: prepared.provenance.models,
+    };
+    const missing = markProblems(rel, await read(rel), type, expected);
+    problems.push(...missing.map((problem) => ({ preset: "sidecar", problem })));
   }
   if (problems.length > 0) throw new HandoffCheckError(problems);
   // Every preset check passed: the version goes into the library.
