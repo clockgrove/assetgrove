@@ -3,6 +3,7 @@ import { applyCommand } from "./apply.ts";
 import { bibleCommand } from "./bible.ts";
 import { compareCommand } from "./compare.ts";
 import { confirmCommand } from "./confirm.ts";
+import { disclosureCommand } from "./disclosure.ts";
 import { estimateCommand } from "./estimate.ts";
 import { extensionsCommand } from "./extensions.ts";
 import { fixFrameCommand } from "./fix-frame.ts";
@@ -74,6 +75,7 @@ export const commands: readonly CommandSpec[] = [
   runsListCommand,
   runsShowCommand,
   estimateCommand,
+  disclosureCommand,
   confirmCommand,
 ];
 

@@ -1238,9 +1238,11 @@ export async function applyPlan(
         readDigitalSourceType(keyPose.bytes, keyPose.mediaType) !== DIGITAL_SOURCE_TYPES.generated
           ? DIGITAL_SOURCE_TYPES.composite
           : DIGITAL_SOURCE_TYPES.generated;
-      const bytes = embedDigitalSourceType(image.bytes, image.mediaType, digitalSourceType);
-      await writeFile(join(runDir, file), bytes);
       const calls = caller.records;
+      const bytes = embedDigitalSourceType(image.bytes, image.mediaType, digitalSourceType, {
+        models: [...new Set(calls.map((c) => c.model))],
+      });
+      await writeFile(join(runDir, file), bytes);
       const provenance = {
         digitalSourceType,
         steps: [metadataStep(digitalSourceType, [pixelHash(decodeImage(bytes))])],

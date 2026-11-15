@@ -1,3 +1,4 @@
+import { canCarryMark, markableMediaType, markProblems } from "./handoff/mark-check.ts";
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -282,6 +283,8 @@ export interface PreparedTargetWrite {
   mediaBytes: Uint8Array;
   provenance: Provenance;
   provenanceBytes?: string;
+  /** Where each sidecar is written, relative to the target. */
+  sidecarRels: string[];
 }
 
 /**
@@ -319,8 +322,25 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   requireDeclared(digitalSourceType);
   const output = {
     ...write.output,
-    bytes: embedDigitalSourceType(write.output.bytes, write.output.mediaType, digitalSourceType),
+    bytes: embedDigitalSourceType(write.output.bytes, write.output.mediaType, digitalSourceType, {
+      models: write.provenance.models,
+    }),
   };
+  // A sidecar in a format that can carry the mark is marked like the media.
+  const sidecars = (write.output.sidecars ?? []).map((sidecar) => {
+    if (sidecar.name === "" || /[\\/]/.test(sidecar.name) || sidecar.name.includes("..")) {
+      throw new InputError(`sidecar name "${sidecar.name}" must be a bare file name`);
+    }
+    const type = markableMediaType(sidecar.name);
+    return type === undefined
+      ? sidecar
+      : {
+          ...sidecar,
+          bytes: embedDigitalSourceType(sidecar.bytes, type, digitalSourceType, {
+            models: write.provenance.models,
+          }),
+        };
+  });
   const provenance = { ...licensed, digitalSourceType };
   const last = provenance.steps?.at(-1);
   if (
@@ -373,7 +393,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
         ? undefined
         : `${mediaRel}.provenance.json`;
   (context["output"] as Record<string, unknown>)["path"] = mediaRel;
-  const sidecarRels = (write.output.sidecars ?? []).map((sidecar) => {
+  const sidecarRels = sidecars.map((sidecar) => {
     if (sidecar.name === "" || /[\\/]/.test(sidecar.name) || sidecar.name.includes("..")) {
       throw new InputError(`sidecar name "${sidecar.name}" must be a bare file name`);
     }
@@ -410,7 +430,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
       .flat()
       .map((file): [string, Uint8Array | string] => [targetPath(guard, file.path), file.content]),
   ];
-  (write.output.sidecars ?? []).forEach((sidecar, i) => {
+  sidecars.forEach((sidecar, i) => {
     writes.push([targetPath(guard, sidecarRels[i] as string), sidecar.bytes]);
   });
   const provenanceBytes = provenancePath ? `${JSON.stringify(provenance, null, 2)}\n` : undefined;
@@ -448,6 +468,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     mediaBytes: output.bytes,
     provenance,
     ...(provenanceBytes !== undefined && { provenanceBytes }),
+    sidecarRels,
   };
 }
 
@@ -490,13 +511,40 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
       () => undefined,
     );
   const problems: HandoffProblem[] = [];
+  const { write } = prepared;
   for (const [i, { preset, options }] of presets.entries()) {
     const found = await preset.check(presetContext, options, presetFiles[i] ?? [], read);
     problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
+    // The mark is read back from the media and from every file this preset wrote that can carry it.
+    const expected = {
+      digitalSourceType: prepared.provenance.digitalSourceType ?? "undeclared",
+      models: prepared.provenance.models,
+    };
+    const marked: Array<[string, string]> = [];
+    if (canCarryMark(write.output.mediaType))
+      marked.push([prepared.mediaRel, write.output.mediaType]);
+    for (const file of presetFiles[i] ?? []) {
+      const type = markableMediaType(file.path);
+      if (type !== undefined) marked.push([file.path, type]);
+    }
+    for (const [path, type] of marked) {
+      const missing = markProblems(path, await read(path), type, expected);
+      problems.push(...missing.map((problem) => ({ preset: preset.name, problem })));
+    }
+  }
+  // Sidecars are read back whatever the presets are.
+  for (const rel of prepared.sidecarRels) {
+    const type = markableMediaType(rel);
+    if (type === undefined) continue;
+    const expected = {
+      digitalSourceType: prepared.provenance.digitalSourceType ?? "undeclared",
+      models: prepared.provenance.models,
+    };
+    const missing = markProblems(rel, await read(rel), type, expected);
+    problems.push(...missing.map((problem) => ({ preset: "sidecar", problem })));
   }
   if (problems.length > 0) throw new HandoffCheckError(problems);
   // Every preset check passed: the version goes into the library.
-  const { write } = prepared;
   const library = await commitLibraryWrite(prepared.library, {
     mediaBytes: prepared.mediaBytes,
     provenance: prepared.provenance,

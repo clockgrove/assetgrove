@@ -863,6 +863,7 @@ export default {
   { tool: "extensions", prepare: async () => ({}) },
   { tool: "spend", prepare: async () => ({ action: "status", workItem: "mcp-row" }) },
   { tool: "spend_reconcile", prepare: async () => ({}) },
+  { tool: "disclosure", prepare: async () => ({ root: work }) },
   {
     tool: "migrate",
     prepare: async () => {

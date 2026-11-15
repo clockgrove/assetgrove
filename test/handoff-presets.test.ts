@@ -166,29 +166,30 @@ function cases(): Record<string, () => Omit<TargetWrite, "targetDir">> {
 
 /**
  * The sha256 of every file each case writes, recorded from the base commit's `writeToTarget`
- * before hand-off went through presets.
+ * before hand-off went through presets; the media hashes changed once, when hand-off began to
+ * write the provenance's models into the mark (issue #241).
  */
 const BASE: Record<string, Record<string, string>> = {
   "embedded provenance": {
     "assets/source/fern/shelter.png":
-      "f4655614107fdc4e3f50d1dd7a029af54b0e37c11cb781e09686d293247a2776",
+      "d13314cd84bbb1aaf2e66ae7f60ec5a250f27ea1d2c4acac5fdee66b0bcb4eb3",
     "assets/manifests/fern/shelter.json":
-      "3047c8bfc2e3486c3c6af6b9784dd302143c4d31d5621ab01ffa52a645c8b2af",
+      "e2665eca8c5fac9e48ef4bf6cf46caf76d03bbce412c0ce79c8ea9d89e7b2f88",
   },
   "provenance beside the media": {
     "assets/source/fern/shelter.png":
-      "f4655614107fdc4e3f50d1dd7a029af54b0e37c11cb781e09686d293247a2776",
+      "d13314cd84bbb1aaf2e66ae7f60ec5a250f27ea1d2c4acac5fdee66b0bcb4eb3",
     "assets/source/fern/shelter.png.provenance.json":
       "69ba466f7b597a2e4b4e9bbafeec1e89e7c8843ba6408438d5898a1a50d2699b",
     "assets/manifests/fern/shelter.json":
-      "82a4c33d5e7e95825bb753491746b8d53ae783a1d2647cd192629389485b5df8",
+      "7faf32076ec85eb307e209ab20192529c82a2e019249413f8b2712795f4b9b5f",
   },
   "3d with sidecars and a provenance path": {
     "characters/fox/fox.eyes.png":
-      "ce6f58b91dbe5ee416715d238409268356e76f7369f9c820bc5b6266e8056f29",
-    "characters/fox/fox.glb": "dd5e045c438db73cc15d71f8e8b1452fbf8543e415d6d9794f0bc4904d890738",
+      "b06551dbce90566cd1945fa5f7d319a1328991c79bbf9fe131f50410a45df9d1",
+    "characters/fox/fox.glb": "4f524509ec3e645b96647542848e4ccf6f863a3ec42289f6845a12fd26e8a714",
     "characters/fox/manifest.json":
-      "61c68a867d1db1c8945b0cd48fa018a1b12ab6bdfe14516341520d5058946566",
+      "a6eff2d5f65981309c97212105a3c9d25adadd0905de99d427fd97553f3a362a",
     "characters/fox/provenance.json":
       "c079a6364f9a15eaf50a2da1fca7f6df319f722b31a329c9f607a1d953e601fb",
   },

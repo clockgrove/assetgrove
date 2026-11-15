@@ -378,6 +378,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         generated.output.bytes,
         generated.output.mediaType,
         digitalSourceType,
+        { models: [...new Set(call.records.map((r) => r.model))] },
       );
       const provenance = provenanceOf(
         generator,

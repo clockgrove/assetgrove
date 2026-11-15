@@ -393,3 +393,13 @@ confirm <hex> [--json]
 ```
 
 Confirms a pending spend, pick, write, command or settings request at a terminal. A settings change (from `settings change`) writes its fields and their `confirmedBy` entries into the settings file it names (method `terminal`). A spend, pick or write request (id its digest) writes `<configDir>/confirmations/<hex>.json` (method `terminal`); a pick that names no candidate asks which one, and `none` declines. What it shows is rebuilt from what the id hashes, never from the saved file's text: a spend's command, jobs, forecast, cap, providers and digest from its digest body, and a pick's run, contact sheet and candidates or a write's families from the run or the import and grouping, which must make the same id (exit 2 when they no longer do). A command that exits 8 `confirmation_required` because a command a file names (a profile's validator, a profile style's material compression or preview command, or the CLI's provider script module) has no approval saves the request to `<stateDir>/pending/<hex>.json`; `confirm <hex>` shows its kind, argv, cwd and file hashes and asks. An accept writes `<configDir>/approvals/<hex>.json` (method `terminal`) and the command runs on the next try; a decline exits 8 `confirmation_declined`. Without a TTY on stdin and stderr, with no pending request of that id, or with one whose kind, argv, cwd and files do not hash to that id (an edited or corrupted file), it exits 2 before asking. Headless settings ignore these records: list the hash in `commands.approved` instead. Local: no model call, no spend. CLI only; no MCP tool serves it.
+
+### `disclosure`
+
+```text
+disclosure [<root>] [--out <file>] [--json]
+```
+
+Reads the cards under `<root>` (the current directory by default) and the provenance each names, and reports assets by kind and source type, models, providers, and provider terms with their dates, then text for Steam's AI content survey and itch.io's AI tags. No prompt text is read or shown. `--out` also writes the summary there as Markdown, to a path inside the current directory. The marks and the summary help users and stores; they make no claim of compliance with any law. Spends nothing; read-only.
+
+MCP tool: `disclosure`, arguments `root`, `out`.
