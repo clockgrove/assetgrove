@@ -7,7 +7,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { initBible, loadBible } from "../src/bible.ts";
+import { loadBible } from "../src/bible.ts";
+import { writeProjectFiles } from "../src/init.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { loadProfile, loadStyleBible } from "../src/inputs.ts";
 import { parseGait, parseTemplate } from "../src/model3d/rig/template.ts";
@@ -172,11 +173,14 @@ test("each shared kind without a format line exits 2 format_unsupported, reason 
   );
   // style-bible, BIBLE.md front matter
   const init = join(dir, "init");
-  const { biblePath } = await initBible({
-    directory: init,
-    world: "Synthetic",
-    preset: "cozy-storybook",
-  });
+  const biblePath = (
+    await writeProjectFiles({
+      directory: init,
+      profilePreset: "sprite-32",
+      stylePreset: "cozy-storybook",
+      world: "Synthetic",
+    })
+  ).find((f) => f.role === "bible")?.path as string;
   assert.equal((await cli("bible", "describe", "--bible", biblePath)).code, 0);
   const versioned = await readFile(biblePath, "utf8");
   await writeFile(biblePath, unversionedMarkdown(versioned));

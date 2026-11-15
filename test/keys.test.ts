@@ -63,6 +63,13 @@ test("docs/testing-hosts.md marks the steps of the four hosted harnesses", async
   assert.deepEqual(markers(await readFile("docs/testing-hosts.md", "utf8")), ids(hosted));
 });
 
+test("docs/quick-start.md's key section marks the claude-code steps", async () => {
+  const text = await readFile("docs/quick-start.md", "utf8");
+  const section = /^## [^\n]*Keys[^\n]*\n([\s\S]*?)(?=^## )/m.exec(text)?.[1];
+  assert.ok(section, "docs/quick-start.md has a key section");
+  assert.deepEqual(markers(section), ids(["claude-code"]));
+});
+
 test("an unknown harness throws", () => {
   assert.throws(() => keyRecipe("nope"), /Unknown harness/);
 });

@@ -12,7 +12,6 @@ import {
   biblePalette,
   describeBible,
   doDontSection,
-  initBible,
   loadBible,
   loadDesignColors,
   parseBible,
@@ -23,6 +22,7 @@ import {
   validateTokens,
   useBiblePreset,
 } from "../src/bible.ts";
+import { writeProjectFiles, type InitFile } from "../src/init.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { stage } from "../src/loop.ts";
 import { defaultRoutes } from "../src/routes.ts";
@@ -35,13 +35,31 @@ function base() {
   return data;
 }
 
+function initFiles(options: { directory: string; world: string; stylePreset: string }) {
+  return writeProjectFiles({ ...options, profilePreset: "sprite-32" });
+}
+
+function pathsOf(files: InitFile[]) {
+  const of = (role: InitFile["role"]) => files.filter((f) => f.role === role).map((f) => f.path);
+  return {
+    biblePath: of("bible")[0] as string,
+    templatePath: of("template")[0] as string,
+    skillPaths: of("skill"),
+  };
+}
+
 test("bible initializes all three repository-owned preset constitutions and skill links", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bible-"));
   try {
     const renderings = new Set<string>();
     for (const preset of Object.keys(BIBLE_PRESETS)) {
       const root = join(directory, preset);
-      const paths = await initBible({ directory: root, world: "Synthetic world", preset });
+      const files = await initFiles({
+        directory: root,
+        world: "Synthetic world",
+        stylePreset: preset,
+      });
+      const paths = pathsOf(files);
       const document = await loadBible(paths.biblePath);
       renderings.add(document.data.axes.rendering);
       assert.equal(document.data.preset, preset);
@@ -65,7 +83,10 @@ test("bible initializes all three repository-owned preset constitutions and skil
       const described = await describeBible(paths.biblePath);
       assert.deepEqual(described.presets, Object.keys(BIBLE_PRESETS));
       assert.match(described.doDont, /positive anchors/);
-      await assert.rejects(initBible({ directory: root, world: "Other", preset }), /overwrite/);
+      await assert.rejects(
+        initFiles({ directory: root, world: "Other", stylePreset: preset }),
+        /overwrite/,
+      );
       assert.equal((await loadBible(paths.biblePath)).data.world, "Synthetic world");
     }
     assert.equal(renderings.size, 3);
@@ -251,11 +272,13 @@ test("outline and ranges use DTCG tokens and brief bounds cannot exceed the cons
 test("switch target-owned presets preserves world palette, locks, anchors and unknown prose", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bible-switch-"));
   try {
-    const paths = await initBible({
-      directory,
-      world: "Synthetic world",
-      preset: "cozy-storybook",
-    });
+    const paths = pathsOf(
+      await initFiles({
+        directory,
+        world: "Synthetic world",
+        stylePreset: "cozy-storybook",
+      }),
+    );
     const document = await loadBible(paths.biblePath);
     document.data.identities["synthetic"] = {
       version: "2",

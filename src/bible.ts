@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse, stringify } from "yaml";
 import { homeDir } from "./env.ts";
@@ -661,61 +661,8 @@ export function doDontSection(prose: string): string {
       ?.trim() ?? ""
   );
 }
-/** The name, and folder, of the art-direction skill `initBible` writes. */
+/** The name, and folder, of the art-direction skill init writes (src/init.ts). */
 export const ART_DIRECTION_SKILL = "art-direction";
-
-export async function initBible(options: { directory: string; world: string; preset: string }) {
-  const chosen = BIBLE_PRESETS[options.preset];
-  if (!chosen) throw new InputError(`unknown preset ${options.preset}`);
-  text(options.world, "world");
-  const directory = resolve(options.directory);
-  const biblePath = join(directory, ".assetgrove/art-direction/BIBLE.md");
-  // The art-direction skill goes where harnesses read skills: Claude Code reads .claude/skills/,
-  // Codex .agents/skills/, Copilot both. A skill's name must match its folder (Agent Skills).
-  const skillPaths = [".claude/skills", ".agents/skills"].map((root) =>
-    join(directory, root, ART_DIRECTION_SKILL, "SKILL.md"),
-  );
-  const templatePath = join(directory, ".assetgrove/prompts/default.md");
-  const data = structuredClone(chosen);
-  data.world = options.world;
-  const prose = `# ${options.world} art direction\n\nGenerate original work using the axes and tokens above. Add rationale and reference images here.\n\n## Do's and Don'ts\n\nDo follow the positive anchors. Don't reproduce the negative anchors or violate content limits.\n`;
-  const destinations = [
-    biblePath,
-    ...skillPaths,
-    templatePath,
-    ...Object.keys(BIBLE_PRESETS).map((name) => join(dirname(biblePath), "presets", `${name}.md`)),
-  ];
-  for (const path of destinations) {
-    try {
-      await access(path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
-    }
-    throw new InputError(`refusing to overwrite ${path}`);
-  }
-  await mkdir(dirname(biblePath), { recursive: true });
-  await mkdir(dirname(templatePath), { recursive: true });
-  await writeFile(biblePath, serializeBible(data, prose), { flag: "wx" });
-  const skill = `---\n${stringify({ name: ART_DIRECTION_SKILL, description: `Load when generating or reviewing art for ${options.world}.` })}---\n# Art direction\n\nRead [the style bible](../../../.assetgrove/art-direction/BIBLE.md), including its positive and negative anchor paths and Do's and Don'ts.\nSee [starting presets](../../../.assetgrove/art-direction/presets/) for visual alternatives. The bible is a constitution; briefs cannot override it.\n`;
-  for (const skillPath of skillPaths) {
-    await mkdir(dirname(skillPath), { recursive: true });
-    await writeFile(skillPath, skill, { flag: "wx" });
-  }
-  await writeFile(
-    templatePath,
-    await readFile(new URL("../skills/art-direction/default.md", import.meta.url), "utf8"),
-    { flag: "wx" },
-  );
-  await mkdir(join(dirname(biblePath), "presets"), { recursive: true });
-  for (const [name, value] of Object.entries(BIBLE_PRESETS))
-    await writeFile(
-      join(dirname(biblePath), "presets", `${name}.md`),
-      serializeBible(value, prose, "style-preset"),
-      { flag: "wx" },
-    );
-  return { biblePath, skillPaths, templatePath };
-}
 
 export async function loadDesignColors(
   directory: string,

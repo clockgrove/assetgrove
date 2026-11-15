@@ -33,11 +33,11 @@ Only a person:
 2. `stage --json` to generate and stage candidates.
 3. Hand the run directory and candidate IDs to the human.
 
-For repository-owned art direction, `bible init` the target's constitution, `bible describe` it before writing a brief, then `plan`, show the plan to the human, and `apply` it once they approve. See [generation knobs](https://github.com/clockgrove/assetgrove/blob/main/docs/generation-knobs.md) for the brief, run settings and target template formats.
+To set up a target repository, run `init`, then walk the person through the steps it returns: the key recipe for their harness, `settings_change` for the caps and the provider limit (the person confirms it), and `spend check`. Draft the bible with them from its `bibleQuestions`, and show them `providers`, where each route sends data. Then `bible describe` the bible before writing a brief, then `plan`, show the plan to the human, and `apply` it once they approve. See [generation knobs](https://github.com/clockgrove/assetgrove/blob/main/docs/generation-knobs.md) for the brief, run settings and target template formats.
 
 ## Commands
 
-Every command, with its options and the MCP tool that serves it, is in [the command reference](references/commands.md). Paid commands reserve every call against their `--cap` (USD) and against the spend ledger (see [Environment](#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `bible init`, `bible preset`, `pick` and `write-families` write into the target.
+Every command, with its options and the MCP tool that serves it, is in [the command reference](references/commands.md). Paid commands reserve every call against their `--cap` (USD) and against the spend ledger (see [Environment](#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `init`, `bible preset`, `pick` and `write-families` write into the target.
 
 ## Hand-off presets
 

@@ -1,18 +1,29 @@
 # Assetgrove commands
 
-One section per command: its usage, its flags, and the MCP tool that serves it and that tool's arguments. Every command takes `--help`; every command except `mcp` takes `--json`. Paid commands reserve every call against their `--cap` (USD) and against the spend ledger; `--cap` may only lower the settings' `caps.runUsd` (see [Environment](../SKILL.md#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `bible init`, `bible preset`, `pick` and `write-families` write into the target.
+One section per command: its usage, its flags, and the MCP tool that serves it and that tool's arguments. Every command takes `--help`; every command except `mcp` takes `--json`. Paid commands reserve every call against their `--cap` (USD) and against the spend ledger; `--cap` may only lower the settings' `caps.runUsd` (see [Environment](../SKILL.md#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `init`, `bible preset`, `pick` and `write-families` write into the target.
+
+### `init`
+
+```text
+init --directory <target> --profile-preset <id> --style-preset <id> --world <name> [--harness claude-code] [--providers <adapterId,...>] [--overwrite] [--json]
+```
+
+Sets up a target repository and returns the steps a person takes next. Never interactive. Writes the target profile (`.assetgrove/profile.json`, from profile preset `sprite-32` or `sprite-64`), the style bible (`.assetgrove/art-direction/BIBLE.md`, from style preset `cozy-storybook`, `flat-cartoon-kids` or `dark-gritty-isometric`, with `referenceLicense: NOASSERTION`) and its presets, the prompt template (`.assetgrove/prompts/default.md`), the `art-direction` skill in `.claude/skills/` and `.agents/skills/`, and `.gitignore` rules for `.assetgrove/runs/`, `.assetgrove/imports/` and `.assetgrove/animation/`. Idempotent: an identical file is left alone, `.gitignore` gains only the rules it lacks, and a differing file exits 2 `invalid_input` with `conflicts` and nothing written, unless `--overwrite`. First the tracked-key guard runs on the target: a tracked key exits 2 `key_tracked` with the refused `guard` step and nothing written. Never writes a key, the settings file or a project-scope harness config.
+
+Returns `{steps: [{id, status, detail}], bibleQuestions, providers, files}`. `status` is `done`, `refused`, `needs-person`, `to-run` or `notice`. The steps: `guard`; `files`; each step of the key recipe for `--harness` (`claude-code`, `claude-code-cloud`, `copilot-cli`, `codex` or `other`; default `claude-code`), under the recipe's own id with its `rules`; `settings` (`needs-person`, `tool` `settings_change`: the agent calls it so the person declares the caps and the provider limit; endpoints and roles are hand edits, and with `--providers` it carries `suggestedRoles`); `spend-check` (`to-run`, `spend check`); and the notices `notice.auto-answer` (a harness can answer prompts automatically) and `notice.retention` (providers may retain what they receive). `bibleQuestions` are `{field, question}` to draft the bible with the developer; `providers` is each route's data flow (`{operation, providerId, host, upstream, providerTerms, retention}`); `files` are `{path, role, status}` with `status` `written`, `unchanged` or `overwritten`. Calls no model and spends nothing.
+
+MCP tool: `init`, arguments `directory`, `profilePreset`, `stylePreset`, `world`, `harness`, `providers`, `overwrite`.
 
 ### `bible`
 
 ```text
 bible describe --bible <BIBLE.md> [--json]
-bible init --directory <target repository> --world <name> --preset <preset> [--json]
 bible preset --bible <BIBLE.md> --preset <preset> [--json]
 ```
 
-`describe` reads a world's art constitution (art direction, bounds, anchors, presets, identity locks) as JSON. `init` writes into the target repository a bible at `.assetgrove/art-direction/BIBLE.md` with its presets, an `art-direction` skill under `.claude/skills/` and `.agents/skills/`, and a prompt template at `.assetgrove/prompts/default.md`; it refuses to overwrite any of them. `preset` rewrites the bible's look and tone from one of its presets and keeps the world's palette, anchors and identity locks; `apply` then refuses plans made from the earlier bible. The presets are `cozy-storybook`, `flat-cartoon-kids` and `dark-gritty-isometric`. Calls no model and spends nothing. The MCP tool is one tool whose `action` argument (`describe`, `init` or `preset`) picks the subcommand.
+`describe` reads a world's art constitution (art direction, bounds, anchors, presets, identity locks) as JSON. `preset` rewrites the bible's look and tone from one of its presets and keeps the world's palette, anchors and identity locks; `apply` then refuses plans made from the earlier bible. The presets are `cozy-storybook`, `flat-cartoon-kids` and `dark-gritty-isometric`. `init` writes the bible; there is no `bible init`, and any other action exits 2. Calls no model and spends nothing. The MCP tool is one tool whose `action` argument (`describe` or `preset`) picks the subcommand.
 
-MCP tool: `bible`, arguments `action`, `bible`, `directory`, `world`, `preset`.
+MCP tool: `bible`, arguments `action`, `bible`, `preset`.
 
 ### `plan`
 

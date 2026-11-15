@@ -265,13 +265,14 @@ async function materialFiles(dir: string) {
 /** A plan request over the synthetic world's bible with a still spec; saves its plan at `out`. */
 async function planFiles(dir: string, candidates: number) {
   const init = await cli([
-    ...["bible", "init", "--directory", join(dir, "bible"), "--world", "Synthetic Grove"],
-    ...["--preset", "flat-cartoon-kids", "--json"],
+    ...["init", "--directory", join(dir, "bible"), "--world", "Synthetic Grove"],
+    ...["--profile-preset", "sprite-32", "--style-preset", "flat-cartoon-kids", "--json"],
   ]);
   assert.equal(init.code, 0, init.stderr);
   const files = {
     spec: join(dir, "still-spec.json"),
-    bible: doc(init)["biblePath"] as string,
+    bible: (doc(init)["files"] as { path: string; role: string }[]).find((f) => f.role === "bible")
+      ?.path as string,
     profile: join(dir, "plan-profile.json"),
     runOptions: join(dir, "run-options.json"),
     out: join(dir, "plan.json"),

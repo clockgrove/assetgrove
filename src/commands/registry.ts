@@ -9,6 +9,7 @@ import { generateSheetCommand } from "./generate-sheet.ts";
 import { identityCheckCommand } from "./identity-check.ts";
 import { identityEvalCommand } from "./identity-eval.ts";
 import { importCommand } from "./import.ts";
+import { initCommand } from "./init.ts";
 import { lodCommand } from "./lod.ts";
 import { lookDevCommand } from "./look-dev.ts";
 import { materialsCommand } from "./materials.ts";
@@ -29,6 +30,7 @@ import { writeFamiliesCommand } from "./write-families.ts";
 
 /** Every command, declared once, in the order help lists them. */
 export const commands: readonly CommandSpec[] = [
+  initCommand,
   bibleCommand,
   planCommand,
   applyCommand,
