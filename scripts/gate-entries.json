@@ -1,0 +1,109 @@
+{
+  "format": "assetgrove-gate/1",
+  "entries": [
+    {
+      "id": "check",
+      "kind": "automated",
+      "title": "Format, lint and types pass",
+      "command": ["pnpm", "check"]
+    },
+    {
+      "id": "test",
+      "kind": "automated",
+      "title": "The offline suite passes (skills reference, names, environment allow-list, package)",
+      "command": ["pnpm", "test"]
+    },
+    {
+      "id": "package",
+      "kind": "automated",
+      "title": "package.json is the 0.1.0 release candidate and ships dist, skills and policy",
+      "check": "package"
+    },
+    {
+      "id": "skill-install",
+      "kind": "automated",
+      "title": "`npx skills add` from the repository installs SKILL.md and its references",
+      "check": "skill-install"
+    },
+    {
+      "id": "ci-main",
+      "kind": "automated",
+      "title": "CI is green on main for the commit, with the test job on Linux, macOS and Windows",
+      "check": "ci-main",
+      "workflow": "ci.yml",
+      "jobs": [
+        "check",
+        "test (ubuntu-26.04, 1/1)",
+        "test (macos-26, 1/1)",
+        "test (windows-2025, 1/1)",
+        "ci"
+      ]
+    },
+    {
+      "id": "real-checks",
+      "kind": "dispatch",
+      "title": "The real checks pass within their budget",
+      "workflow": "real-checks.yml"
+    },
+    {
+      "id": "release-verify",
+      "kind": "dispatch",
+      "title": "The release workflow packs, attests and verifies the tarball on three systems",
+      "workflow": "release.yml"
+    },
+    {
+      "id": "confirm-claude-code-local",
+      "kind": "manual-owner",
+      "title": "Confirmation proven in Claude Code on the developer's machine",
+      "evidence": "A spend confirmation and a pick confirmed in a local Claude Code session on this commit: the run directory's confirmation records, each saying how it was confirmed."
+    },
+    {
+      "id": "confirm-claude-code-remote",
+      "kind": "manual-owner",
+      "title": "Confirmation proven in a remote Claude Code session",
+      "evidence": "A spend confirmation and a pick confirmed in a remote Claude Code session on this commit: the confirmation records and the session's environment setup (key as a secret)."
+    },
+    {
+      "id": "confirm-second-harness",
+      "kind": "manual-owner",
+      "title": "Confirmation proven in one more harness (default Copilot CLI)",
+      "evidence": "A spend confirmation and a pick confirmed in the second harness on this commit: the harness and version, and the confirmation records."
+    },
+    {
+      "id": "unattended-session",
+      "kind": "manual-owner",
+      "title": "An unattended session runs under headless settings set outside the repository",
+      "evidence": "A run with headless developer settings and no person present: its records show spend inside the caps, and a gated command not in commands.approved exits 8 confirmation_required."
+    },
+    {
+      "id": "key-recipes",
+      "kind": "manual-owner",
+      "title": "The key recipe per harness keeps the key out of the agent's shell",
+      "evidence": "For each proven harness, the docs/keys.md recipe followed in the quick start, and the agent's shell shown not to hold the provider key."
+    },
+    {
+      "id": "real-check-skips",
+      "kind": "manual-owner",
+      "title": "Every real-check skip is the accepted one",
+      "evidence": "The real-checks run's summary: the only skips are OpenAI image and edit for a key without image access, with the provider's reason, and docs/quick-start.md then lists them as unverified."
+    },
+    {
+      "id": "trademark",
+      "kind": "manual-owner",
+      "title": "The trademark check on the name is done",
+      "evidence": "The owner's record of the trademark search on \"Assetgrove\" and its result, before the first npm release."
+    },
+    {
+      "id": "data-bars",
+      "kind": "manual-owner",
+      "title": "The data-dependent 1.0 bars are proposed to the owner",
+      "evidence": "The owner's decision on the QA precision and recall bars, the set-consistency spread and the change-request bar, recorded in docs/decisions.md."
+    },
+    {
+      "id": "existing-user",
+      "kind": "manual-owner",
+      "title": "A project already using Assetgrove passes its own checks against the release candidate",
+      "evidence": "That project's owner reports its checks run against this commit's tarball after migrate, settings and approvals; nothing is filed in its repository from here."
+    }
+  ]
+}
