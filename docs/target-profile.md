@@ -119,6 +119,8 @@ An optional `identity` object configures identity lock scoring: `mode` (`shadow`
 
 The paths are illustrative.
 
+`validator.command` is an argv array run in the target directory without a shell after `pick` or `write-families` writes. It is code a shared file names, so it runs only with an approval tied to its exact hash; see [decisions.md](decisions.md#command-approvals-are-hashed-relative-to-the-git-top-level-shims-are-refused). An unapproved validator exits 8 `confirmation_required` before anything is written, unless a person at a TTY accepts it; `assetgrove confirm <hex>` approves a pending one. The provenance's `commands` records its hash and approval method.
+
 - **Validation.** The profile's top-level fields are validated: `format`, `name`, `license`, `acceptedLicenses`, `style`, `values`, `frames`, `layout`, `manifest`, `review`, `validator`, `identity`, `spend`, `model3d` and `animation`. An unknown top-level field or a value of the wrong type is invalid input (exit 2).
 - **Style.** `style` is the world's style profile: alpha mode (`soft` or `binary`, with a `threshold`), colour rule (`full` or `palette`) and edges (`antialiased` or `crisp`). The sheet import path follows it ([sheet-import.md](sheet-import.md#style-profile)). It is optional, and templates can read it as `{{profile.style}}`.
 - **Templates.** `"{{a.b}}"` as a whole string inserts the value of any JSON type; `"{{a.b?}}"` drops the key when the value is undefined; `{{a.b}}` inside a longer string interpolates text. An undefined required value is an error.
