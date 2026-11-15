@@ -47,6 +47,7 @@ function assertContents(paths: string[]): void {
     "dist/extension/api.js",
     "dist/extension/api.d.ts",
     "skills/assetgrove/SKILL.md",
+    "policy/blocklist.json",
   ]) {
     assert.ok(paths.includes(wanted), `package lacks ${wanted}`);
   }
@@ -60,6 +61,39 @@ function assertContents(paths: string[]): void {
     [],
   );
 }
+
+/** The tarball holds the manifest, the README, the licence and the three shipped directories, nothing else. */
+const SHIPPED_FILES = ["package.json", "README.md", "LICENSE"];
+const SHIPPED_DIRS = ["dist/", "skills/", "policy/"];
+
+test(
+  "npm pack lists only package.json, README.md, LICENSE, dist/, skills/ and policy/",
+  { timeout: FIVE_MINUTES },
+  async () => {
+    try {
+      await rm(join(root, "dist"), { recursive: true, force: true });
+      const { stdout } = await npm(["pack", "--dry-run", "--json"], { cwd: root });
+      const [packed] = JSON.parse(stdout) as Array<{ files: { path: string }[] }>;
+      assert.ok(packed);
+      const paths = packed.files.map((f) => f.path);
+      assert.deepEqual(
+        paths.filter(
+          (p) => !SHIPPED_FILES.includes(p) && !SHIPPED_DIRS.some((d) => p.startsWith(d)),
+        ),
+        [],
+      );
+      for (const dir of SHIPPED_DIRS) {
+        assert.ok(
+          paths.some((p) => p.startsWith(dir)),
+          `package lacks ${dir}`,
+        );
+      }
+      assertContents(paths);
+    } finally {
+      await rm(join(root, "dist"), { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "the packed tarball installs and its bin runs without TypeScript stripping",
@@ -126,6 +160,14 @@ test(
       const help = await run(["--help"]);
       assert.match(help.stdout, /stage/);
       assert.match(help.stdout, /pick/);
+
+      // The installed bin answers the structured help agents read.
+      const helpJson = JSON.parse((await run(["--help", "--json"])).stdout) as {
+        ok: boolean;
+        usage: string;
+      };
+      assert.equal(helpJson.ok, true);
+      assert.match(helpJson.usage, /stage/);
 
       // The extension API resolves through the package's exports, compiled.
       const api = await exec(

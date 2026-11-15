@@ -1,8 +1,21 @@
 {
   "name": "@clockgrove/assetgrove",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Generates game assets through generation models and hands them to a game's own asset pipeline with full provenance.",
+  "keywords": [
+    "game-assets",
+    "gamedev",
+    "asset-generation",
+    "provenance",
+    "cli",
+    "mcp",
+    "agent-skills"
+  ],
   "license": "MIT",
+  "homepage": "https://github.com/clockgrove/assetgrove#readme",
+  "bugs": {
+    "url": "https://github.com/clockgrove/assetgrove/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clockgrove/assetgrove.git"
@@ -20,8 +33,8 @@
   },
   "files": [
     "dist",
-    "policy",
-    "skills"
+    "skills",
+    "policy"
   ],
   "publishConfig": {
     "access": "public"
