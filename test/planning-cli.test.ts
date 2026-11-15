@@ -119,7 +119,7 @@ test("CLI initializes a skill, describes axes and compiles a plan without image 
   const output = JSON.parse(result.stdout) as { plan: unknown; planPath: string };
   assert.deepEqual(output.plan, saved);
   assert.equal(output.planPath, f.plan);
-  assert.equal(saved["approved"], false);
+  assert.equal("approved" in saved, false, "a saved plan has no approved field");
   assert.match(JSON.stringify(saved), /friendly round icon/);
   assert.doesNotMatch(await readFile(f.events, "utf8"), /"kind":"image"/);
 });
@@ -149,16 +149,17 @@ test("CLI without an available LLM records a usable template fallback without ge
   await assert.rejects(readFile(f.events), { code: "ENOENT" });
 });
 
-test("CLI apply requires explicit approval, auto-approve generates, stale template refuses", async () => {
+test("CLI apply has no --auto-approve, generates under its confirmation, stale template refuses", async () => {
   const f = await setup();
   const planned = await cli(["plan", ...f.args]);
   assert.equal(planned.code, 0, planned.stderr);
   const out = join(f.dir, "runs");
   const apply = ["apply", f.plan, "--provider-script", f.script, "--out", out, "--json"];
-  const refused = await cli(apply);
+  const refused = await cli([...apply, "--auto-approve"]);
   assert.equal(refused.code, 2, refused.stderr);
+  assert.equal(JSON.parse(refused.stdout).error.code, "invalid_input");
   assert.doesNotMatch(await readFile(f.events, "utf8"), /"kind":"image"/);
-  const applied = await cli([...apply, "--auto-approve"]);
+  const applied = await cli(apply);
   assert.equal(applied.code, 0, applied.stderr);
   assert.match(await readFile(f.events, "utf8"), /"kind":"image"/);
   assert.ok((await readdir(out)).length > 0);
@@ -186,7 +187,7 @@ test("CLI apply requires explicit approval, auto-approve generates, stale templa
     `${await readFile(f.templatePath, "utf8")}\nChanged after planning.\n`,
   );
   const before = await readFile(f.events, "utf8");
-  const stale = await cli([...apply, "--auto-approve"]);
+  const stale = await cli(apply);
   assert.equal(stale.code, 2, stale.stderr);
   assert.match(stale.stderr, /stale|changed/i);
   assert.equal(await readFile(f.events, "utf8"), before);
@@ -223,7 +224,6 @@ test("apply re-resolves the cap from the settings: a cap changed since planning 
     f.script,
     "--out",
     join(f.dir, "runs"),
-    "--auto-approve",
     "--json",
   ]);
   assert.equal(apply.code, 2, apply.stderr);
@@ -266,7 +266,6 @@ test("apply re-resolves routes from the settings: a settings route changed since
     f.script,
     "--out",
     join(f.dir, "runs"),
-    "--auto-approve",
     "--json",
   ]);
   assert.equal(apply.code, 2, apply.stderr);
@@ -293,14 +292,7 @@ test("CLI preset switching changes subsequent plans and makes the prior plan sta
   assert.equal(switched.code, 0, switched.stderr);
   const next = JSON.parse(switched.stdout) as { preset: string };
   assert.equal(next.preset, "cozy-storybook");
-  const refused = await cli([
-    "apply",
-    f.plan,
-    "--auto-approve",
-    "--provider-script",
-    f.script,
-    "--json",
-  ]);
+  const refused = await cli(["apply", f.plan, "--provider-script", f.script, "--json"]);
   assert.equal(refused.code, 2, refused.stderr);
   assert.match(refused.stderr, /stale|changed/i);
   assert.doesNotMatch(await readFile(f.events, "utf8"), /"kind":"image"/);
@@ -362,15 +354,13 @@ test("MCP exposes and runs the same plan/apply flow over stdio", async () => {
       },
     });
     assert.equal(planned.isError, false, planned.content?.[0]?.text);
-    // No tool approves spend: autoApprove is refused, and a person approves the saved plan.
+    // No tool approves spend: autoApprove is refused; headless settings confirm the spend.
     const unapproved = await call("tools/call", {
       name: "apply",
       arguments: { plan: f.plan, autoApprove: true, out: join(f.dir, "mcp-runs") },
     });
     assert.equal(unapproved.isError, true);
     assert.match(unapproved.content![0]!.text, /invalid_input/);
-    const saved = JSON.parse(await readFile(f.plan, "utf8")) as Record<string, unknown>;
-    await writeFile(f.plan, JSON.stringify({ ...saved, approved: true }));
     const applied = await call("tools/call", {
       name: "apply",
       arguments: { plan: f.plan, out: join(f.dir, "mcp-runs") },

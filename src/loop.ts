@@ -164,6 +164,8 @@ export interface RunRecord {
   runDir?: string;
   /** The prompt policy's check of the request's prompt text (planned runs). */
   promptPolicy?: PromptPolicyRecord;
+  /** The person's confirmation of the request's spend (design section 7), when it needed one. */
+  confirmation?: import("./types.ts").ConfirmationRecord;
   createdAt: string;
   spec: AssetSpec;
   /** Absolute directory the spec's relative paths resolved against. */

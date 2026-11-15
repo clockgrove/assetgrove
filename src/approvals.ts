@@ -14,6 +14,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } fr
 import type { Env } from "./env.ts";
 import { savePending } from "./confirm/pending.ts";
 import type { ConfirmPort, ConfirmRequest } from "./confirm/prompt.ts";
+import type { RequestConfirmation } from "./confirm/index.ts";
 import { loadSettings } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 
@@ -75,14 +76,20 @@ export interface CommandConfirmation {
   command: Omit<CommandIdentity, "hash"> & { hash: string };
 }
 
-/** Exit 8: the command needs a person's approval (`confirmation_required` or `_declined`). */
+/** What exit 8 asks a person to confirm: a command, or a spend, pick or write request. */
+export type Confirmation = CommandConfirmation | RequestConfirmation;
+
+/**
+ * Exit 8: a person must confirm (`confirmation_required` or `_declined`). A paid call outside any
+ * run has no request to name, so its confirmation is absent.
+ */
 export class ConfirmationError extends Error {
   readonly code: "confirmation_required" | "confirmation_declined";
-  readonly confirmation: CommandConfirmation;
+  readonly confirmation: Confirmation | undefined;
   constructor(
     code: "confirmation_required" | "confirmation_declined",
     message: string,
-    confirmation: CommandConfirmation,
+    confirmation?: Confirmation,
   ) {
     super(message);
     this.name = "ConfirmationError";

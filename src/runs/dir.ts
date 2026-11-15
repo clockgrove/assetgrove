@@ -43,6 +43,8 @@ export interface CommandRunRecord {
   contactSheet?: string;
   /** The prompt policy's check of the request's prompt text. */
   promptPolicy?: PromptPolicyRecord;
+  /** The person's confirmation of the request's spend (design section 7), when it needed one. */
+  confirmation?: import("../types.ts").ConfirmationRecord;
 }
 
 /** Writes a command's run record to `run.json` in its run directory. */

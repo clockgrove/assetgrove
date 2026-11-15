@@ -1,4 +1,5 @@
 import type { Budget } from "./budget.ts";
+import { ConfirmationError } from "./approvals.ts";
 import { ProviderError } from "./errors.ts";
 import { BudgetExceededError } from "./budget.ts";
 import { assertLimitDeclared, billingOf } from "./limits.ts";
@@ -25,6 +26,9 @@ import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
  * Inside a paid command's run (src/runs/execute.ts) each call first checks the run's journal
  * (`calls/<callKey>.json`): a hit reserves nothing, counts its recorded cost against the run's
  * cap and returns the stored result; an answered call is journaled before it is returned.
+ *
+ * A paid call (its adapter's `billing.paid`) that is not a journal hit needs the run's clearance,
+ * which only the executor builds from a verified confirmation; without one it exits 8.
  */
 export class Caller {
   readonly records: CallRecord[] = [];
@@ -90,7 +94,8 @@ export class Caller {
     const served = this.serve(route, operation);
     const name = `${served.id}:${operation}:${route.model}`;
     const scope = currentRunScope();
-    const callKey = scope?.journal.key({
+    const journal = scope?.journal;
+    const callKey = journal?.key({
       operation,
       provider: served.id,
       model: route.model,
@@ -99,7 +104,7 @@ export class Caller {
       ...(seed !== undefined && { seed }),
       ...(this.index !== undefined && { index: this.index }),
     });
-    const journaled = callKey === undefined ? undefined : scope?.journal.read(callKey);
+    const journaled = callKey === undefined ? undefined : journal?.read(callKey);
     if (journaled !== undefined) {
       // Answered before in this run: nothing is reserved or paid again.
       this.budget.addPrior(journaled.record.costUsd, `the journaled ${operation} call`);
@@ -110,13 +115,19 @@ export class Caller {
     // Paid-ness is the adapter's: only a paid call needs a declared limit and reaches the ledger.
     const billing = billingOf(served.provider, kind);
     assertLimitDeclared(billing);
+    // Checked where money is spent: a paid call needs the clearance the executor built (exit 8).
+    if (billing.paid && scope?.clearance === undefined)
+      throw new ConfirmationError(
+        "confirmation_required",
+        `refused: the paid ${operation} call has no confirmed spend; run it through its command, which asks a person or reads their confirmation`,
+      );
     const reservation = this.budget.reserve(
       route.estimatedCostUsd,
       `the ${operation} call`,
       billing.paid ? name : undefined,
       {
         provider: served.id,
-        ...(scope !== undefined && { runId: scope.journal.runId }),
+        ...(journal !== undefined && { runId: journal.runId }),
         ...(callKey !== undefined && { callKey }),
       },
     );
@@ -152,8 +163,8 @@ export class Caller {
       ...(route.outputGrant !== undefined && { outputGrant: structuredClone(route.outputGrant) }),
     };
     this.records.push(record);
-    if (scope !== undefined && callKey !== undefined) {
-      scope.journal.write({
+    if (journal !== undefined && callKey !== undefined) {
+      journal.write({
         callKey,
         operation,
         provider: served.id,
@@ -161,7 +172,7 @@ export class Caller {
         record,
         result,
       });
-      scope.onCall?.({ operation, reused: false });
+      scope?.onCall?.({ operation, reused: false });
     }
     return result;
   }

@@ -254,16 +254,7 @@ export default {
   assert.deepEqual(saved.operations.slice(-2), ["identity", "identity-check"]);
   const applied = await exec(
     process.execPath,
-    [
-      CLI,
-      "apply",
-      plan,
-      "--auto-approve",
-      "--out",
-      join(f.root, "runs"),
-      "--provider-script",
-      script,
-    ],
+    [CLI, "apply", plan, "--out", join(f.root, "runs"), "--provider-script", script],
     { env: env("") },
   );
   assert.match(

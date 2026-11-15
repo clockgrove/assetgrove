@@ -284,7 +284,6 @@ test("apply and generate-sheet also write contact.png", async () => {
   });
   const applied = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(dir, "runs"),
   });
   assert.equal(applied.run.candidates.length, 2);

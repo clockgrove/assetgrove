@@ -6,10 +6,16 @@
  * answered from `calls/` and only missing calls are paid for. It writes `state.json` as the run
  * moves and `run.json` when it ends, and reports progress to a connected client.
  *
+ * Checked where money is spent (design section 7): before the first reservation and on every
+ * resume, a request that can spend is confirmed (`requireConfirmation`: headless settings, the
+ * record of its digest, a prior confirmation the command names, the TTY, else exit 8), and the
+ * run's scope carries the clearance `Caller` requires for every paid call. The record is copied
+ * into `run.json`. A request whose forecast is 0 on free providers needs no confirmation.
+ *
  * The run executes in the process that received the request: there is no detached process.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CONTACT_SHEET_FILE } from "../contact.ts";
 import type { Outcome, RunContext } from "../commands/types.ts";
@@ -23,6 +29,10 @@ import {
 } from "../reconcile.ts";
 import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcile.ts";
 import { SpendHoldError } from "../spend.ts";
+import { requireConfirmation } from "../confirm/index.ts";
+import type { KindRequest } from "../confirm/index.ts";
+import type { ConfirmationRecord } from "../types.ts";
+import { DEFAULT_ROUND } from "./plan.ts";
 import type { WorkPlan } from "./plan.ts";
 import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "./dir.ts";
 import { Journal, withRunScope } from "./journal.ts";
@@ -82,9 +92,72 @@ function runFields(plan: WorkPlan, reused: boolean): Record<string, unknown> {
   return { runId: runIdOfDir(plan.runDir), runDir: plan.runDir, digest: plan.digest, reused };
 }
 
+/** Whether a request needs a spend confirmation: all but a forecast of 0 on free providers. */
+export function needsSpendConfirmation(plan: WorkPlan): boolean {
+  return plan.paid || plan.forecastUsd > 0;
+}
+
+/**
+ * What a person is shown for a spend request: its summary and flat fields, from the digest body's
+ * own fields (so `assetgrove confirm` can rebuild them from a verified body) plus, when the
+ * WorkPlan is at hand, its candidate count, which the digest does not cover.
+ */
+export function spendShown(
+  id: string,
+  body: { command: string; jobs: WorkPlan["jobs"]; forecastUsd: number; capUsd: number },
+  candidates?: number,
+): { summary: string; details: Record<string, unknown> } {
+  const providers = [...new Set(body.jobs.map((j) => j.provider).filter(Boolean))];
+  return {
+    summary: `${body.command} would spend up to $${body.forecastUsd.toFixed(4)} (cap $${body.capUsd.toFixed(2)})`,
+    details: {
+      command: body.command,
+      jobs: body.jobs,
+      ...(candidates !== undefined && { candidates }),
+      forecastUsd: body.forecastUsd,
+      capUsd: body.capUsd,
+      providers,
+      digest: id,
+    },
+  };
+}
+
+/** The spend request of a WorkPlan: its digest body, and what a person is shown. */
+export function spendRequest(command: string, round: number, plan: WorkPlan): KindRequest {
+  const body = {
+    command,
+    round,
+    inputs: plan.inputs,
+    options: plan.options,
+    jobs: plan.jobs,
+    forecastUsd: plan.forecastUsd,
+    capUsd: plan.capUsd,
+    policyTextSha256: plan.policyTextSha256,
+  };
+  return {
+    kind: "spend",
+    id: plan.digest,
+    ...spendShown(plan.digest, body, plan.candidates),
+    body,
+  };
+}
+
+/** Adds the confirmation to the run's `run.json`, whoever wrote it. */
+async function recordConfirmation(runDir: string, record: ConfirmationRecord): Promise<void> {
+  const path = join(runDir, RUN_RECORD_FILE);
+  let run: Record<string, unknown>;
+  try {
+    run = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  await writeFile(path, `${JSON.stringify({ ...run, confirmation: record }, null, 2)}\n`);
+}
+
 /**
  * Executes a paid command's request: `plan` is its free plan step, `run` its real run. A thrown
- * error becomes an outcome through `toOutcome`.
+ * error becomes an outcome through `toOutcome`. `prior` names an earlier confirmation that covers
+ * this request (apply's plan); `round` is the request's round, part of its digest.
  */
 export async function executeRun(options: {
   command: string;
@@ -94,6 +167,8 @@ export async function executeRun(options: {
   toOutcome: (error: unknown) => Outcome;
   /** The `--provider-script` module, which reconciling gives the scripted providers it makes. */
   providerScript?: string;
+  round?: number;
+  prior?: () => Promise<ConfirmationRecord | undefined>;
 }): Promise<Outcome> {
   const { command, plan, ctx } = options;
   if (plan.forecastUsd > plan.capUsd + 1e-9)
@@ -140,6 +215,19 @@ export async function executeRun(options: {
         human: stored.human,
       };
     }
+    // Before the first reservation and on every resume: no confirmation, no run (exit 8).
+    let confirmation: ConfirmationRecord | undefined;
+    if (needsSpendConfirmation(plan)) {
+      try {
+        confirmation = await requireConfirmation(
+          spendRequest(command, options.round ?? DEFAULT_ROUND, plan),
+          { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
+          options.prior ? { prior: options.prior } : {},
+        );
+      } catch (error) {
+        return options.toOutcome(error);
+      }
+    }
     const state: RunState = {
       runId,
       command,
@@ -160,8 +248,13 @@ export async function executeRun(options: {
     const journal = new Journal(plan.runDir, runId);
     let outcome: Outcome;
     try {
-      outcome = await withRunScope({ journal, onCall: progress.onCall }, () =>
-        options.run({ ...ctx, run: { dir: plan.runDir, plan } }),
+      outcome = await withRunScope(
+        {
+          journal,
+          onCall: progress.onCall,
+          ...(confirmation && { clearance: { digest: plan.digest, record: confirmation } }),
+        },
+        () => options.run({ ...ctx, run: { dir: plan.runDir, plan } }),
       );
     } catch (error) {
       outcome = options.toOutcome(error);
@@ -197,6 +290,7 @@ export async function executeRun(options: {
             `spend hold ${e.holdId}: provider "${e.provider}" reports $${e.providerUsd?.toFixed(4)} against $${e.ledgerUsd?.toFixed(4)} in the ledger; paid runs are refused until it is acknowledged`,
           );
     }
+    if (confirmation) await recordConfirmation(plan.runDir, confirmation);
     const ok = outcome.exitCode === 0;
     await writeState(plan.runDir, {
       ...state,

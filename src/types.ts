@@ -314,6 +314,38 @@ export interface Provenance {
   identity?: import("./identity.ts").IdentityScore;
   /** Each command a developer wrote that ran for this output: its hash and approval method. */
   commands?: import("./approvals.ts").CommandStep[];
+  /** The person's confirmation of the pick that wrote this output (design section 7). */
+  confirmation?: ConfirmationRecord;
+}
+
+/** How a confirmation was given (design section 7). */
+export type ConfirmationMethod = "headless" | "tty" | "terminal" | "elicitation";
+
+/**
+ * A person's confirmation of a spend, pick or write, as written to
+ * `<configDir>/confirmations/<hex>.json` and copied into `run.json` and the pick's provenance.
+ */
+export interface ConfirmationRecord {
+  kind: "spend" | "pick" | "write";
+  /** The request digest the confirmation covers; the record's file is named by it. */
+  digest: string;
+  method: ConfirmationMethod;
+  at: string;
+  /** The confirmed forecast in USD; 0 for a pick or write. */
+  forecastUsd: number;
+  capUsd: number;
+  /** The confirmed request's input hashes, by name. */
+  inputs: Record<string, string>;
+  /** A pick's chosen candidate. */
+  choice?: string;
+  client?: string;
+  protocolVersion?: string;
+  /** Whether the tool asked was marked as requiring a user; false on the CLI. */
+  toolMarkedRequiresUser: boolean;
+  /** The headless operator, for method `headless`. */
+  operator?: string;
+  /** The method is what the channel reported; Assetgrove cannot prove a person answered. */
+  selfReported: true;
 }
 
 /** A file a generator produced. Each output declares its own media type and extension. */

@@ -277,16 +277,15 @@ test("fallback is deterministic and marked, while malformed or unsafe compiler o
   );
 });
 
-test("apply requires explicit plan approval or autoApprove, sends exact planned inputs and preserves provenance", async () => {
+test("apply sends exact planned inputs and preserves provenance; a plan has no approved field", async () => {
   const f = await fixture();
   const provider = scripted();
   const { plan, forecast } = await create(f, {}, { provider });
   const path = join(f.root, "plan.json");
   await savePlan(plan, path);
-  await assert.rejects(applyPlan(path, { provider, outDir: join(f.root, "runs") }), /not approved/);
+  assert.equal("approved" in plan, false);
   const result = await applyPlan(path, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   assert.equal(result.run.requested, 1);
@@ -307,9 +306,14 @@ test("apply requires explicit plan approval or autoApprove, sends exact planned 
     64,
   );
   assert.ok(Math.abs(result.run.spentUsd - forecast.generationUsd) < 1e-9);
-  plan.approved = true;
-  const approved = await applyPlan(plan, { provider, outDir: join(f.root, "approved") });
-  assert.equal(approved.run.candidates.length, 1);
+  // A plan that carries an approved field is refused: approval is a person's confirmation.
+  await assert.rejects(
+    applyPlan({ ...plan, approved: true } as typeof plan, {
+      provider,
+      outDir: join(f.root, "approved"),
+    }),
+    { code: "plan_changed" },
+  );
 });
 
 test("apply refuses changed bible, templates, identity locks, references and tampered plans before generation", async () => {
@@ -350,7 +354,7 @@ test("apply refuses changed bible, templates, identity locks, references and tam
       await writeFile(join(f.dir, "turn.png"), encodePng(createRaster(3, 3)));
     if (change === "plan") plan.prompts.generation = "edited";
     await assert.rejects(
-      applyPlan(plan, { provider, autoApprove: true, outDir: join(f.root, "runs") }),
+      applyPlan(plan, { provider, outDir: join(f.root, "runs") }),
       /stale plan|edited plan/,
     );
     assert.equal(provider.calls.filter((c) => c.kind === "image").length, 0);
@@ -368,7 +372,6 @@ test("plan reserves compiler plus candidate QA cost before calls and filters by 
   const { plan } = await create(f, {}, { provider });
   const { run } = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
     stability: stableStyle(),
   });
@@ -378,7 +381,6 @@ test("plan reserves compiler plus candidate QA cost before calls and filters by 
   // Without a qualifying entry the style verdict is advisory: the candidate is kept, marked shadow.
   const advisory = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   assert.equal(advisory.run.filtered, 0);
@@ -410,7 +412,6 @@ test("sprite-strip compiles and applies each exact frame prompt with approved ke
   assert.ok(Object.values(plan.inputs).some((input) => input.path === join(f.root, "key.png")));
   const { run, runDir } = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   assert.equal(run.candidates.length, 1);
@@ -455,7 +456,7 @@ test("UI DESIGN colors are subordinate context and explicit reference roles reac
   assert.ok(
     plan.prompts.qa.includes("2: positive:composition; 3: negative:unwanted-outline; 4: palette"),
   );
-  await applyPlan(plan, { provider, autoApprove: true, outDir: join(f.root, "qa-runs") });
+  await applyPlan(plan, { provider, outDir: join(f.root, "qa-runs") });
   const qa = provider.calls.filter((c) => c.kind === "vision").at(-1)!;
   assert.equal(qa.request.prompt, plan.prompts.qa);
   assert.equal(qa.request.images.length, 4);
@@ -531,7 +532,6 @@ test("malformed compiler and QA JSON refuse safely before staging a candidate", 
   });
   const { run } = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
     stability: stableStyle(),
   });
@@ -553,7 +553,6 @@ test("apply fits the visible subject and honors the spec anchor", async () => {
   );
   const { run, runDir } = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   const candidate = run.candidates[0]!;
@@ -582,7 +581,6 @@ test("recorded model routes, seed sequence and exploration settings reach the ex
   const { run } = await applyPlan(plan, {
     provider,
     routes,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   assert.equal(run.candidates.length, 2);
@@ -671,7 +669,6 @@ test("planning reconciles profile palette constraints and mattes opaque backgrou
   });
   const { run, runDir } = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   const postprocess = run.candidates[0]!.provenance.parameters["postprocess"] as {
@@ -716,7 +713,7 @@ test("a plan edited to lower an estimate, add an outputGrant or change a route, 
     const before = provider.calls.length;
     const edited = redigested(plan, edit);
     await assert.rejects(
-      applyPlan(edited, { provider, autoApprove: true, outDir: join(f.root, "runs") }),
+      applyPlan(edited, { provider, outDir: join(f.root, "runs") }),
       (error) => {
         assert.equal((error as { code?: string }).code, "plan_changed", name);
         const outcome = failureOutcome(error);
@@ -731,7 +728,6 @@ test("a plan edited to lower an estimate, add an outputGrant or change a route, 
   // A plan left alone still applies.
   const { run } = await applyPlan(plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   assert.equal(run.candidates.length, 1);
@@ -759,7 +755,7 @@ test("changing a settings route or the run cap between plan and apply exits 2 pl
   for (const [name, change] of Object.entries(forApply)) {
     const before = provider.calls.length;
     await assert.rejects(
-      applyPlan(plan, { provider, autoApprove: true, outDir: join(f.root, "runs"), ...change }),
+      applyPlan(plan, { provider, outDir: join(f.root, "runs"), ...change }),
       { code: "plan_changed" },
       name,
     );
@@ -769,7 +765,6 @@ test("changing a settings route or the run cap between plan and apply exits 2 pl
   const { run } = await applyPlan(plan, {
     provider,
     routes: routesWith({ model: "a" }),
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   assert.equal(run.candidates.length, 1);
@@ -803,7 +798,6 @@ test("the saved plan JSON has no capUsd, route, estimate or grant field", async 
     [],
   );
   assert.deepEqual(Object.keys(saved).sort(), [
-    "approved",
     "digest",
     "format",
     "inputs",
@@ -823,14 +817,11 @@ test("a plan in the assetgrove-plan-v1 format exits 2 format_unsupported", async
   await writeFile(path, JSON.stringify(old));
   const provider = scripted();
   for (const input of [path, old as unknown as SavedPlan]) {
-    await assert.rejects(
-      applyPlan(input, { provider, autoApprove: true, outDir: join(f.root, "runs") }),
-      (error) => {
-        assert.equal((error as { code?: string }).code, "format_unsupported");
-        assert.equal(failureOutcome(error).exitCode, 2);
-        return true;
-      },
-    );
+    await assert.rejects(applyPlan(input, { provider, outDir: join(f.root, "runs") }), (error) => {
+      assert.equal((error as { code?: string }).code, "format_unsupported");
+      assert.equal(failureOutcome(error).exitCode, 2);
+      return true;
+    });
   }
   assert.equal(provider.calls.length, 0);
 });
@@ -842,7 +833,6 @@ test("apply's run record and candidate provenance carry the allowed prompt polic
   assert.equal(created.promptPolicy.verdict, "allowed");
   const { run } = await applyPlan(created.plan, {
     provider,
-    autoApprove: true,
     outDir: join(f.root, "runs"),
   });
   assert.equal(run.promptPolicy?.verdict, "allowed");
@@ -863,7 +853,7 @@ test("apply refuses a saved plan whose prompts name a blocklisted term before ap
   const before = provider.calls.length;
   await assert.rejects(applyPlan(edited, { provider, outDir: join(f.root, "runs") }), refused);
   await assert.rejects(
-    applyPlan(edited, { provider, autoApprove: true, outDir: join(f.root, "runs") }),
+    applyPlan(edited, { provider, outDir: join(f.root, "runs") }),
     (error) => failureOutcome(error).exitCode === 9,
   );
   assert.equal(provider.calls.length, before);

@@ -1,9 +1,9 @@
 import "./fixtures/env.ts";
-import { approve, approveProfile } from "./fixtures/env.ts";
+import { approve, approveProfile, settingsPath } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { after, before, test } from "node:test";
@@ -161,6 +161,8 @@ export default {
 let work: string;
 let script: string;
 let server: Client;
+
+const settingsText = () => readFileSync(settingsPath, "utf8");
 
 before(async () => {
   work = await tempDir("assetgrove-mcp-");
@@ -493,8 +495,6 @@ const rows: Row[] = [
     tool: "apply",
     prepare: async () => {
       const plan = join(paths.repo(), "plan.json");
-      const saved = JSON.parse(await readFile(plan, "utf8")) as Doc;
-      await writeFile(plan, JSON.stringify({ ...saved, approved: true }));
       return { plan, out: join(paths.repo(), "runs") };
     },
   },
@@ -834,7 +834,12 @@ test("every tool's structuredContent deep-equals the CLI --json document", async
     const provider = row.script ? await row.script() : script;
     if (!servers.has(provider))
       servers.set(provider, await connect(["--provider-script", provider]));
+    const listed = settingsText();
     const args = await row.prepare(previous);
+    // The server loads the settings once: a command the row approved (headless settings list it)
+    // reaches the tool through a fresh server.
+    if (settingsText() !== listed)
+      servers.set(provider, await connect(["--provider-script", provider]));
     // A paid row runs under the work directory, which is restored between the command and the
     // tool, so neither returns a finished run another test left in the default runs directory.
     const command = spec(row.tool);

@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { cleared } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -99,51 +100,52 @@ test("a paid call to a provider with no declared limit exits 3 provider_limit_un
   assert.equal(existsSync(script.calls), false, "no call made");
 });
 
-test("a provider declaring unlimited without acceptUnlimited exits 3 before any call", async () => {
-  let calls = 0;
-  const provider = new ScriptedProvider(
-    {
-      paid: true,
-      image: () => {
-        calls++;
-        return { images: [{ mediaType: "image/png", bytes: new Uint8Array([1]) }] };
+test("a provider declaring unlimited without acceptUnlimited exits 3 before any call", () =>
+  cleared(async () => {
+    let calls = 0;
+    const provider = new ScriptedProvider(
+      {
+        paid: true,
+        image: () => {
+          calls++;
+          return { images: [{ mediaType: "image/png", bytes: new Uint8Array([1]) }] };
+        },
+        vision: () => ({ text: "ok" }),
       },
-      vision: () => ({ text: "ok" }),
-    },
-    { limit: { kind: "unlimited" } },
-  );
-  const call = new Caller({
-    provider,
-    providerName: "scripted",
-    budget: new Budget(5),
-    routes: defaultRoutes,
-  });
-  const error = await call.image("still", "a fox", []).then(
-    () => assert.fail("the call was made"),
-    (e: unknown) => e,
-  );
-  const outcome = failureOutcome(error);
-  assert.equal(outcome.exitCode, 3);
-  assert.equal(outcome.error?.code, "provider_limit_undeclared");
-  assert.match(outcome.error?.message ?? "", /acceptUnlimited/);
-  assert.equal(calls, 0);
+      { limit: { kind: "unlimited" } },
+    );
+    const call = new Caller({
+      provider,
+      providerName: "scripted",
+      budget: new Budget(5),
+      routes: defaultRoutes,
+    });
+    const error = await call.image("still", "a fox", []).then(
+      () => assert.fail("the call was made"),
+      (e: unknown) => e,
+    );
+    const outcome = failureOutcome(error);
+    assert.equal(outcome.exitCode, 3);
+    assert.equal(outcome.error?.code, "provider_limit_undeclared");
+    assert.match(outcome.error?.message ?? "", /acceptUnlimited/);
+    assert.equal(calls, 0);
 
-  // With acceptUnlimited the same provider may spend.
-  const accepted = new ScriptedProvider(
-    {
-      paid: true,
-      image: () => ({ images: [{ mediaType: "image/png", bytes: new Uint8Array([1]) }] }),
-      vision: () => ({ text: "ok" }),
-    },
-    { limit: { kind: "unlimited", acceptUnlimited: true } },
-  );
-  await new Caller({
-    provider: accepted,
-    providerName: "scripted",
-    budget: new Budget(5),
-    routes: defaultRoutes,
-  }).image("still", "a fox", []);
-});
+    // With acceptUnlimited the same provider may spend.
+    const accepted = new ScriptedProvider(
+      {
+        paid: true,
+        image: () => ({ images: [{ mediaType: "image/png", bytes: new Uint8Array([1]) }] }),
+        vision: () => ({ text: "ok" }),
+      },
+      { limit: { kind: "unlimited", acceptUnlimited: true } },
+    );
+    await new Caller({
+      provider: accepted,
+      providerName: "scripted",
+      budget: new Budget(5),
+      routes: defaultRoutes,
+    }).image("still", "a fox", []);
+  }));
 
 test("a contradicting reading exits 3 provider_limit_mismatch; a matching one reports verified true", async () => {
   const dir = await freshState();

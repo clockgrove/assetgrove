@@ -1,12 +1,19 @@
 import "./fixtures/env.ts";
-import { approve, approveCommand, approvalsDir, stateDir, useHeadless } from "./fixtures/env.ts";
+import {
+  approve,
+  approveCommand,
+  approvalsDir,
+  stateDir,
+  useAttended,
+  writeSettings,
+} from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   commandIdentity,
@@ -15,10 +22,17 @@ import {
   type CommandIdentity,
 } from "../src/approvals.ts";
 import { confirmCommand } from "../src/commands/confirm.ts";
+import { pickRequest } from "../src/commands/pick.ts";
+import { recordOf, writeConfirmation } from "../src/confirm/index.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { loadSettings } from "../src/settings.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+
+// These tests ask a person: attended settings, where an approval record counts.
+beforeEach(() => {
+  useAttended();
+});
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -59,6 +73,8 @@ async function stagedWorld(validator: string[]) {
   await writeFile(bible, JSON.stringify(world.bible));
   await writeFile(profile, JSON.stringify(world.profile));
   const base = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
+  // Staged under the base (headless) settings; the pick is asked under attended ones.
+  writeSettings({});
   const staged = await cli([
     "stage",
     ...base,
@@ -69,7 +85,15 @@ async function stagedWorld(validator: string[]) {
     "--json",
   ]);
   assert.equal(staged.code, 0, staged.stderr);
+  useAttended();
   await mkdir(world.targetDir, { recursive: true });
+  // A person confirmed this pick (design section 7); the validator is what these tests ask about.
+  const request = await pickRequest({
+    run: doc(staged)["runDir"],
+    candidate: "c1",
+    target: world.targetDir,
+  });
+  await writeConfirmation(loadSettings().configDir, recordOf(request, "terminal"));
   const pick = () =>
     cli([
       "pick",
@@ -208,7 +232,8 @@ test("--provider-script without an approval exits 8; under headless settings onl
   assert.equal(d["error"].confirmation.id, scriptIdentity(copy).hash);
 
   // Headless: an approval record (here the passing script's) is not enough.
-  useHeadless();
+  // Headless settings that list no command (the fixture's base settings list approve()'d ones).
+  writeSettings({ headless: { operator: "ci:example/repo" }, commands: { approved: [] } });
   const headless = await cli(args(passingScript));
   assert.equal(headless.code, 8, headless.stderr);
   assert.equal(doc(headless)["error"].code, "confirmation_required");

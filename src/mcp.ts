@@ -90,8 +90,6 @@ export async function generationTool(
     return { planPath, ...created };
   }
   if (name === "apply") {
-    if (args["autoApprove"] !== undefined && typeof args["autoApprove"] !== "boolean")
-      throw new InputError("autoApprove must be a boolean");
     if (!context.provider) throw new ProviderError("apply requires a generation provider");
     const result = await applyPlan(stringArg(args, "plan")!, {
       provider: context.provider,
@@ -100,7 +98,6 @@ export async function generationTool(
       ...(context.log && { log: context.log }),
       ...(context.runCapUsd !== undefined && { runCapUsd: context.runCapUsd }),
       ...(context.promptAllow && { promptAllow: context.promptAllow }),
-      autoApprove: args["autoApprove"] === true,
       ...(stringArg(args, "out", false) && { outDir: args["out"] as string }),
     });
     return result;

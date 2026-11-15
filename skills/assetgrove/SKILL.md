@@ -23,7 +23,7 @@ Only a person:
 
 - runs `pick` and `write-families`;
 - sets a grouping's `status` to `confirmed`;
-- sets a plan's `approved` field, or authorizes an unattended campaign that runs `apply --auto-approve`;
+- confirms spend, a pick or a write, or runs `assetgrove confirm` (a person confirms; headless settings are the operator's, never an agent's);
 - fixes an identity record that `identity-check` reports as disagreeing;
 - raises a spend limit. Never raise one yourself; ask the human.
 

@@ -1,6 +1,6 @@
 import type { Env } from "../env.ts";
 import type { ErrorCode } from "../errors.ts";
-import type { CommandConfirmation } from "../approvals.ts";
+import type { Confirmation } from "../approvals.ts";
 import type { ConfirmPort } from "../confirm/prompt.ts";
 import type { ExtensionRegistry } from "../extensions/registry.ts";
 import type { Settings } from "../settings.ts";
@@ -74,7 +74,7 @@ export interface Failure {
   /** For `format_unsupported`: why the format line was refused (`missing`, `too_new`, `unknown`). */
   reason?: string;
   /** For exit 8: what a person must confirm, and how (design section 7). */
-  confirmation?: CommandConfirmation;
+  confirmation?: Confirmation;
   /** For `handoff_check_failed`: each problem a hand-off preset's check found (design section 14). */
   problems?: Array<{ preset: string; problem: string }>;
   /** For `prompt_refused`: the policy check that refused the prompt. */
@@ -114,6 +114,16 @@ export interface CommandSpec<A = Record<string, unknown>> {
   json?: false;
   /** The free plan step of a paid command: no provider call, no ledger entry (design section 6). */
   plan?(args: A, ctx: RunContext): Promise<WorkPlan>;
+  /**
+   * An earlier request's confirmation that covers this one (design section 7: apply uses its
+   * plan's record while every input hash matches and its forecast is at or under the confirmed
+   * one); undefined when none does, and this request asks under its own digest.
+   */
+  priorConfirmation?(
+    args: A,
+    ctx: RunContext,
+    plan: WorkPlan,
+  ): Promise<import("../types.ts").ConfirmationRecord | undefined>;
   run(args: A, ctx: RunContext): Promise<Outcome>;
 }
 

@@ -128,8 +128,6 @@ export const PLAN_FORMAT = "assetgrove-plan/1";
  */
 export interface SavedPlan {
   format: typeof PLAN_FORMAT;
-  /** A person's approval of the spend; outside the digest. */
-  approved: boolean;
   inputs: Record<string, PlanInput>;
   /** The operations apply runs, in order. */
   operations: string[];
@@ -138,14 +136,13 @@ export interface SavedPlan {
   requestDigest: string;
   /** sha256 hex of the canonical JSON of the routes, estimates, grants and cap resolved at planning. */
   resolutionSha256: string;
-  /** sha256 hex of the canonical JSON of every other field but `approved`: detects accidental edits. */
+  /** sha256 hex of the canonical JSON of every other field: detects accidental edits. */
   digest: string;
 }
 
 /** The top-level fields of a saved plan. */
 const PLAN_FIELDS: ReadonlySet<string> = new Set([
   "format",
-  "approved",
   "inputs",
   "operations",
   "prompts",
@@ -210,10 +207,9 @@ function hash(value: unknown): string {
   return sha256(Buffer.from(JSON.stringify(value)));
 }
 
-/** The integrity digest of a saved plan: every field but `approved` and `digest`. */
+/** The integrity digest of a saved plan: every field but `digest`. */
 export function planDigest(plan: Omit<SavedPlan, "digest"> | SavedPlan): string {
-  const { approved: _approved, digest: _digest, ...body } = plan as SavedPlan;
-  void _approved;
+  const { digest: _digest, ...body } = plan as SavedPlan;
   void _digest;
   return sha256(Buffer.from(canonicalJson(body)));
 }
@@ -748,7 +744,6 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
   const spent = budget.spentUsd;
   const body: Omit<SavedPlan, "digest"> = {
     format: PLAN_FORMAT,
-    approved: false,
     inputs: p.inputs,
     operations: p.operations,
     prompts,
@@ -852,7 +847,6 @@ export interface ApplyPlanOptions extends ResolveOptions {
   providerName?: string;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
-  autoApprove?: boolean;
   outDir?: string;
   /** The run's directory name under `outDir`, when the caller already opened it. */
   runId?: string;
@@ -882,7 +876,6 @@ function readSavedPlan(raw: unknown, source: string): SavedPlan {
   const inputs = plan["inputs"];
   const prompts = plan["prompts"];
   if (
-    typeof plan["approved"] !== "boolean" ||
     !isRecord(inputs) ||
     !Array.isArray(plan["operations"]) ||
     plan["operations"].some((op) => typeof op !== "string") ||
@@ -988,7 +981,7 @@ async function checkedPlan(
 
 /**
  * The calls `applyPlan` would make for a saved plan, routed as it routes them. Checks the plan as
- * apply does (format, digest, staleness, resolution) but needs no approval and calls no provider.
+ * apply does (format, digest, staleness, resolution) and calls no provider.
  */
 export async function applyJobs(
   input: SavedPlan | string,
@@ -1021,10 +1014,6 @@ export async function applyPlan(
     options.promptAllow,
     "the saved plan's prompts",
   );
-  if (!options.autoApprove && plan.approved !== true)
-    throw new InputError(
-      "plan is not approved; record human approval in approved or use --auto-approve for unattended generation",
-    );
   const budget = new Budget(
     prepared.capUsd,
     ledgerFor(options.ledger, options.provider, prepared.profile),

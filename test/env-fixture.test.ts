@@ -6,11 +6,12 @@ import { test } from "node:test";
 import { refusedVariables } from "../src/env.ts";
 import { loadSettings } from "../src/settings.ts";
 import {
+  HEADLESS_OPERATOR,
   approveCommand,
   declareLimit,
   settingsPath,
   stateDir,
-  useHeadless,
+  useAttended,
 } from "./fixtures/env.ts";
 
 const onDisk = () => JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
@@ -24,13 +25,13 @@ test("the fixture's settings name a fresh stateDir beside them and no refused va
 });
 
 test("a helper's change lasts for its own test, including its subtests", async (t) => {
-  useHeadless();
+  useAttended();
   approveCommand({ hash: "ab12", kind: "validator", argv: ["node", "v.js"] });
   declareLimit("gateway", { kind: "prepaid", usd: 5 });
   await t.test("a subtest sees the parent's settings", () => {
-    assert.ok(onDisk()["headless"]);
+    assert.equal(onDisk()["headless"], undefined);
   });
-  assert.ok(onDisk()["headless"]);
+  assert.equal(onDisk()["headless"], undefined);
   assert.ok(onDisk()["commands"]);
   assert.ok(onDisk()["providers"]);
 });
@@ -39,6 +40,7 @@ test("the next test starts from the base settings", () => {
   assert.deepEqual(onDisk(), {
     format: "assetgrove-settings/1",
     stateDir,
+    headless: { operator: HEADLESS_OPERATOR },
     providers: { scripted: { limit: { kind: "prepaid", usd: 100 } } },
   });
 });
