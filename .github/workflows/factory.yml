@@ -29,7 +29,7 @@ env:
   FACTORY_SUBAGENT_MODEL: claude-sonnet-5-5
   FACTORY_REVIEWER_MODEL: claude-fable-5-2
   FACTORY_CREDENTIAL: plan # api; plan only for your own repository
-  FACTORY_MAX_CONCURRENT: 5
+  FACTORY_MAX_CONCURRENT: 8
   FACTORY_DAILY_USD: 500
   FACTORY_MAX_USD: 25
   FACTORY_TIMEOUT_MINUTES: 240 # under 360 on hosted runners; mirrored in timeout-minutes below
@@ -42,7 +42,7 @@ env:
   FACTORY_PROTECTED_PATHS: ""
   FACTORY_CI_CHECKS: ci
   FACTORY_NODE_VERSION: 24.21.0 # the Node.js your CI uses
-  FACTORY_LOCAL_MAX_CONCURRENT: 5 # local runs on the 24-thread box
+  FACTORY_LOCAL_MAX_CONCURRENT: 8 # local runs on the 24-thread box
   FACTORY_WORKER_SECRETS: AI_GATEWAY_API_KEY=WORKER_AI_GATEWAY_API_KEY # the worker's own capped gateway key (assetforge-worker, $25/month); values in the FACTORY_WORKER_SECRET_VALUES secret, or the local shell
 permissions: # the job token reads code and Actions; every write goes through the App's token
   contents: read
@@ -134,7 +134,7 @@ jobs:
     if: needs.dispatch.outputs.count != '' && needs.dispatch.outputs.count != '0'
     runs-on: ubuntu-26.04
     timeout-minutes: 240
-    strategy: { max-parallel: 5, fail-fast: false, matrix: { issue: "${{ fromJSON(needs.dispatch.outputs.issues) }}" } }
+    strategy: { max-parallel: 8, fail-fast: false, matrix: { issue: "${{ fromJSON(needs.dispatch.outputs.issues) }}" } }
     permissions: { contents: read, issues: write, actions: write } # actions: write for the tick at the end and triage's rerun of failed CI jobs
     concurrency: { group: "factory-${{ matrix.issue }}", cancel-in-progress: false } # one job per issue; a repeat waits, siblings keep running
     steps:
