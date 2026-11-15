@@ -117,15 +117,15 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   const providers = await providerSet(args.providerScript, ctx);
   const jobs =
     operations.length > 0
-    ? jobsOf(
-        operations.map((operation) => ({
-          operation,
-          model: (providers.routes[operation] as Route).model,
-          estimatedCostUsd: (providers.routes[operation] as Route).estimatedCostUsd,
-        })),
-        providers.routes,
-      )
-    : [];
+      ? jobsOf(
+          operations.map((operation) => ({
+            operation,
+            model: (providers.routes[operation] as Route).model,
+            estimatedCostUsd: (providers.routes[operation] as Route).estimatedCostUsd,
+          })),
+          providers.routes,
+        )
+      : [];
   const work = await buildWorkPlan(importCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["sheet", "profile", "bible", "lockBible"],

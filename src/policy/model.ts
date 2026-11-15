@@ -53,7 +53,10 @@ export interface PromptModelVerdict {
  * One Boolean decide call on `prompt-policy` about `text`. A call that fails or answers out of
  * type throws (a provider failure is exit 4); a refused route or budget keeps its own error.
  */
-export async function decidePromptPolicy(caller: Caller, text: string): Promise<PromptModelVerdict> {
+export async function decidePromptPolicy(
+  caller: Caller,
+  text: string,
+): Promise<PromptModelVerdict> {
   let result;
   try {
     result = await caller.decide(

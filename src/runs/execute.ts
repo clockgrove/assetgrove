@@ -347,10 +347,7 @@ async function promptPolicyCheck(
   record: PromptPolicyRecord,
 ): Promise<PromptPolicyRecord> {
   const providers = await providerSet(options.providerScript, ctx);
-  const budget = new Budget(
-    plan.capUsd,
-    ledgerFor(spendLedger(ctx, options.workItem), providers),
-  );
+  const budget = new Budget(plan.capUsd, ledgerFor(spendLedger(ctx, options.workItem), providers));
   // The whole request's forecast must fit the ledger before its first call, this one.
   budget.check(plan.forecastUsd, `the ${plan.jobs.length > 1 ? "run" : "prompt-policy check"}`);
   const caller = new Caller({
