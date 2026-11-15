@@ -261,9 +261,19 @@ MCP tool: `extensions`, no arguments.
 spend <status|check> [--provider <id>] [--work-item <label>] [--provider-script <module>] [--json]
 ```
 
-`status` gives the ledger (`<stateDir>/spend.jsonl`), the caps from the settings, the last 24 hours' spend, and the work item (`--work-item` or `ASSETGROVE_WORK_ITEM`) with its spend. `check` reports per configured provider (`--provider` narrows it) `{provider, adapter, paid, declared, limit, verified, reading, mismatch, note}`: whether a limit is declared, the provider's reading where it gives one to an ordinary key (gateway credits balance, Tripo balance), and whether the reading verifies the limit. A reading verifies only a `prepaid` limit with `usd` (balance at or below it); a balance above it exits 3 with `provider_limit_mismatch`. Anthropic and OpenAI limits are declared only. `--provider-script` names the scripted provider's module, whose `limitReading` check reads. No spend, nothing written.
+`status` gives the ledger (`<stateDir>/spend.jsonl`), the caps from the settings, the last 24 hours' spend, the work item (`--work-item` or `ASSETGROVE_WORK_ITEM`) with its spend, and `holds`, each spend hold (`<stateDir>/holds.jsonl`) with whether the settings' `spend.acknowledgedHolds` lists it. `check` reports per configured provider (`--provider` narrows it) `{provider, adapter, paid, declared, limit, verified, reading, mismatch, note}`: whether a limit is declared, the provider's reading where it gives one to an ordinary key (gateway credits balance, Tripo balance), and whether the reading verifies the limit. A reading verifies only a `prepaid` limit with `usd` (balance at or below it); a balance above it exits 3 with `provider_limit_mismatch`. Anthropic and OpenAI limits are declared only. `--provider-script` names the scripted provider's module, whose `limitReading` check reads. No spend, nothing written.
 
 MCP tool: `spend`, arguments `action`, `provider`, `workItem`. The provider script flag is CLI-only.
+
+### `spend reconcile`
+
+```text
+spend reconcile [--provider-script <module>] [--json]
+```
+
+Retries each pending reconcile lookup (`<stateDir>/reconcile.jsonl`): a paid run whose per-call costs the provider had not reported when the run ended. Returns `reconciled`, one `{provider, status, method, runId, ledgerUsd, providerUsd, gapUsd, marginUsd, holdId, pendingId, unmatched, note}` per lookup, with `status` `pending` (not reported yet), `reconciled` or `held`. A gap above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger spend) appends a hold, and every paid command then exits 3 `spend_hold` until the hold's id is in the settings' `spend.acknowledgedHolds`. A paid run also retries pending lookups at its start. `--provider-script` names the scripted provider's module, whose `callCost` the lookups read. Reads the providers' usage; no spend; writes only under the state directory.
+
+MCP tool: `spend_reconcile`, no arguments. The provider script flag is CLI-only.
 
 ### `runs list`
 

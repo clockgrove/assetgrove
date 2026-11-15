@@ -68,8 +68,8 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 | `routes.<operation>`   | The same fields as a role, for one operation; overrides its role.                                                                                                                                               | the role                                                                                      |
 | `extensions`           | Package names whose extension code may run, each resolved from the project at start. Only this field loads code. See [Extensions](extensions.md).                                                               | none                                                                                          |
 | `environment.allow`    | Refused environment variables (below) that are allowed anyway.                                                                                                                                                  | none                                                                                          |
-| `reconcile`            | `marginUsd`, `marginPct`.                                                                                                                                                                                       | none                                                                                          |
-| `spend`                | `acknowledgedHolds`: hex hashes of acknowledged holds.                                                                                                                                                          | none                                                                                          |
+| `reconcile`            | `marginUsd`, `marginPct`: a gap between the ledger and the provider's usage holds paid runs only above max(`marginUsd`, `marginPct`% of the ledger spend). See [Reconcile](#reconcile).                         | 0 / 0                                                                                         |
+| `spend`                | `acknowledgedHolds`: the ids (hex) of spend holds a person has looked at; a listed hold no longer refuses paid runs.                                                                                            | none                                                                                          |
 | `commands.approved`    | Approved commands, matched by `hash` (the `commandHash`); `kind`, `argv`, `cwd`, `note` are for the reader. The only approvals headless settings honour.                                                        | none                                                                                          |
 | `promptPolicy.allow`   | Prompt-policy allow terms.                                                                                                                                                                                      | none                                                                                          |
 | `confirmedBy.<path>`   | Who confirmed a field: `method`, `at`, `client`.                                                                                                                                                                | none                                                                                          |
@@ -103,7 +103,8 @@ Refusals of spend exit 3:
 - a paid call to a provider with no declared `limit` is `provider_limit_undeclared`, before any spend;
 - a gateway HTTP 402, or an HTTP 429 with the code `insufficient_quota`, is `cap_refused`;
 - a `--cap` above `caps.runUsd` is `cap_refused`, before anything is written;
-- a prepaid limit with `usd` that the provider's balance exceeds is `provider_limit_mismatch` (`spend check`).
+- a prepaid limit with `usd` that the provider's balance exceeds is `provider_limit_mismatch` (`spend check`);
+- a paid run while a spend hold is not acknowledged is `spend_hold` (see [Reconcile](#reconcile)).
 
 Adapter errors carry only the provider's message, the HTTP status and the provider's error code, never the response body. A command's result document keeps a thrown error's own code when it is in the exit table, so `SettingsError` reports `settings_invalid` and `FormatError` reports `format_unsupported`, both with exit 2.
 
@@ -111,14 +112,14 @@ Adapter errors carry only the provider's message, the HTTP status and the provid
 
 Each provider instance is made by an adapter from `providers.<id>`. The adapter is the entry's `adapter` field, else its id. Paid-ness comes from the adapter's billing, never from the name. The key is read from the variable named by `keyEnv` and passed to the SDK together with the `baseURL`, so `*_BASE_URL` variables never apply.
 
-| Adapter             | Key variable (default)                          | `baseURL`                                                                                 | Cost                                                                                              |
-| ------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `vercel-ai-gateway` | `AI_GATEWAY_API_KEY`                            | Allowed: https, or http on a loopback host. Default `https://ai-gateway.vercel.sh/v4/ai`. | Paid. A relay is set here.                                                                        |
-| `anthropic`         | `ANTHROPIC_API_KEY`                             | Refused. The endpoint is api.anthropic.com.                                               | Paid. No usage reading: a call costs the route estimate.                                          |
-| `openai`            | `OPENAI_API_KEY`                                | Refused. The endpoint is api.openai.com.                                                  | Paid. No usage reading: a call costs the route estimate.                                          |
-| `tripo`             | `TRIPO_API_KEY`                                 | Refused. The endpoint is api.tripo3d.ai.                                                  | Paid. `usdPerCredit` prices its credits; without it a call costs the route estimate.              |
-| `openai-compatible` | none (set `keyEnv` when the server takes a key) | Required: https, or http on a loopback host.                                              | Paid, unless `free` (loopback only). The server reports no cost: a call costs the route estimate. |
-| `scripted`          | none                                            | Refused.                                                                                  | Free, unless its script sets `paid: true`. It may export `limitReading()`. Used by tests.         |
+| Adapter             | Key variable (default)                          | `baseURL`                                                                                 | Cost                                                                                                                             |
+| ------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `vercel-ai-gateway` | `AI_GATEWAY_API_KEY`                            | Allowed: https, or http on a loopback host. Default `https://ai-gateway.vercel.sh/v4/ai`. | Paid. A relay is set here.                                                                                                       |
+| `anthropic`         | `ANTHROPIC_API_KEY`                             | Refused. The endpoint is api.anthropic.com.                                               | Paid. No usage reading: a call costs the route estimate.                                                                         |
+| `openai`            | `OPENAI_API_KEY`                                | Refused. The endpoint is api.openai.com.                                                  | Paid. No usage reading: a call costs the route estimate.                                                                         |
+| `tripo`             | `TRIPO_API_KEY`                                 | Refused. The endpoint is api.tripo3d.ai.                                                  | Paid. `usdPerCredit` prices its credits; without it a call costs the route estimate.                                             |
+| `openai-compatible` | none (set `keyEnv` when the server takes a key) | Required: https, or http on a loopback host.                                              | Paid, unless `free` (loopback only). The server reports no cost: a call costs the route estimate.                                |
+| `scripted`          | none                                            | Refused.                                                                                  | Free, unless its script sets `paid: true`. It may export `limitReading()`, `reconcile` and `callCost(requestId)`. Used by tests. |
 
 `keyEnv` overrides the key variable of any adapter.
 
@@ -219,6 +220,25 @@ Every paid call is recorded in the spend ledger `<stateDir>/spend.jsonl`. A call
 A target profile's `spend.dailyLimitUsd` and `spend.workItemLimitUsd` lower the daily and work-item caps, never raise them. The limit status reports its `source` as `settings` or `profile`. A paid call to a provider with no declared `limit` is refused with `provider_limit_undeclared`; `kind: "unlimited"` needs `acceptUnlimited: true`. Dry runs report `spend.counted` from the provider's billing.
 
 `assetgrove spend status` shows the ledger against the caps. `assetgrove spend check` reports, per provider, `{provider, adapter, paid, declared, limit, verified, reading, mismatch, note}`. A reading verifies only a `prepaid` limit with `usd` (balance at or below `usd`); a balance above it contradicts the limit and exits 3 with `provider_limit_mismatch`.
+
+### Reconcile
+
+The ledger is an estimate. Where a provider reports its own usage to an ordinary key, a paid run compares the two when it ends and adds `reconcile` to its `run.json`: one `{provider, status, method, ledgerUsd, providerUsd, gapUsd, marginUsd, holdId, pendingId, unmatched, note}` per paid provider its plan names.
+
+| Adapter             | Reconcile       | How                                                                                                                                                 |
+| ------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vercel-ai-gateway` | `per-call-cost` | Each call's cost by its generation ID, through the gateway SDK's `getGenerationInfo` (`totalCost`). A cost not reported yet leaves the run pending. |
+| `tripo`             | `balance-delta` | The balance read at the run's start and end (`GET /user/balance`), priced with `usdPerCredit`; without it, `failed`.                                |
+| `anthropic`         | `unavailable`   | An ordinary key reads no usage.                                                                                                                     |
+| `openai`            | `unavailable`   | An ordinary key reads no usage.                                                                                                                     |
+| `openai-compatible` | `unavailable`   | The server reports no usage.                                                                                                                        |
+| `scripted`          | `unavailable`   | Unless its script sets `reconcile` and `callCost` (tests).                                                                                          |
+
+`settings check` reports each provider's `reconcile`. The ledger side is the run's own reservations in `spend.jsonl` from this attempt, so a resume reconciles only the calls it paid for; a per-call-cost call without a provider request ID cannot be looked up and is counted in `unmatched`, on neither side. `status` is `unavailable`, `reconciled`, `held`, `pending` or `failed` (a balance that could not be read).
+
+A gap, |provider − ledger|, above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger spend) appends a hold `{id, at, provider, runId, ledgerUsd, providerUsd, gapUsd}` to `<stateDir>/holds.jsonl`. From then on every paid run exits 3 `spend_hold` before it spends, until a person lists the hold's `id` in `spend.acknowledgedHolds`. `spend status` lists the holds and whether each is acknowledged.
+
+A lookup the provider cannot answer yet is recorded as pending in `<stateDir>/reconcile.jsonl`. The next paid run retries it at its start, before the hold check, and `spend reconcile` retries it on demand.
 
 ### Provider limits
 

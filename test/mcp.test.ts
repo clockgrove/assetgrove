@@ -813,6 +813,7 @@ export default {
   { tool: "settings", prepare: async () => ({ action: "path" }) },
   { tool: "extensions", prepare: async () => ({}) },
   { tool: "spend", prepare: async () => ({ action: "status", workItem: "mcp-row" }) },
+  { tool: "spend_reconcile", prepare: async () => ({}) },
   {
     tool: "migrate",
     prepare: async () => {
