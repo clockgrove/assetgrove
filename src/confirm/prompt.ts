@@ -6,19 +6,19 @@
 import { createInterface } from "node:readline/promises";
 
 /** The kinds of confirmation a person gives (design section 7). */
-export type ConfirmKind = "spend" | "pick" | "write" | "command";
+export type ConfirmKind = "spend" | "pick" | "write" | "command" | "settings";
 
 /** What a person is asked to confirm (design section 7). */
 export interface ConfirmRequest {
   kind: ConfirmKind;
-  /** The request's id: a command's hash, or a spend, pick or write request's digest. */
+  /** The request's id: a command's hash, or a spend, pick, write or settings request's digest. */
   id: string;
   /** One line naming what is asked. */
   summary: string;
   /** The flat fields the person is shown, in order. */
   details: Record<string, unknown>;
   /**
-   * For spend, pick and write: the request body whose sha256 of canonical JSON is `id`, so
+   * For spend, pick, write and settings: the request body whose sha256 of canonical JSON is `id`, so
    * `assetgrove confirm` can check a pending request names what its id hashes.
    */
   body?: Record<string, unknown>;
@@ -43,6 +43,11 @@ export interface ConfirmPort {
   confirm(request: ConfirmRequest): Promise<boolean>;
   /** The choice a person names among `request.choices`; `none` or undefined declines. */
   choose?(request: ConfirmRequest): Promise<string | undefined>;
+  /**
+   * For a settings request: the values the person accepted in a form that showed the proposed
+   * ones; undefined declines.
+   */
+  edit?(request: ConfirmRequest): Promise<Record<string, unknown> | undefined>;
 }
 
 /** The request as the lines a person reads. */

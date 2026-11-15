@@ -21,7 +21,7 @@ import { planCommand } from "./plan.ts";
 import { recipeCommand } from "./recipe.ts";
 import { rigCommand } from "./rig.ts";
 import { runsListCommand, runsShowCommand } from "./runs.ts";
-import { settingsCommand } from "./settings.ts";
+import { settingsChangeCommand, settingsCommand } from "./settings.ts";
 import { spendCommand, spendReconcileCommand } from "./spend.ts";
 import { stageCommand } from "./stage.ts";
 import type { CommandSpec } from "./types.ts";
@@ -51,6 +51,7 @@ export const commands: readonly CommandSpec[] = [
   opsCommand,
   migrateCommand,
   settingsCommand,
+  settingsChangeCommand,
   extensionsCommand,
   spendCommand,
   spendReconcileCommand,

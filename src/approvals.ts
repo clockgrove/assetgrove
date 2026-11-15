@@ -76,8 +76,16 @@ export interface CommandConfirmation {
   command: Omit<CommandIdentity, "hash"> & { hash: string };
 }
 
-/** What exit 8 asks a person to confirm: a command, or a spend, pick or write request. */
-export type Confirmation = CommandConfirmation | RequestConfirmation;
+/** The `error.confirmation` of a settings change no one confirmed (src/settings-write.ts). */
+export interface SettingsConfirmation {
+  kind: "settings";
+  id: string;
+  summary: string;
+  confirmCommand: string;
+}
+
+/** What exit 8 asks a person to confirm: a command, or a spend, pick, write or settings request. */
+export type Confirmation = CommandConfirmation | RequestConfirmation | SettingsConfirmation;
 
 /**
  * Exit 8: a person must confirm (`confirmation_required` or `_declined`). A paid call outside any

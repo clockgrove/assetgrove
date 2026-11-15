@@ -15,6 +15,8 @@ import {
 import type { ClientCapabilities, ElicitRequestFormParams } from "@modelcontextprotocol/server";
 import { ConfirmationError } from "../approvals.ts";
 import { PlanChangedError } from "../planning.ts";
+import { LIMIT_KINDS } from "../settings.ts";
+import type { SettingsChange } from "../settings-write.ts";
 import { describeRequest } from "./prompt.ts";
 import type { ChannelFields, ConfirmKind, ConfirmPort, ConfirmRequest } from "./prompt.ts";
 
@@ -93,12 +95,79 @@ function pickChoices(request: ConfirmRequest): string[] {
   return [...(typeof named === "string" ? [named] : (request.choices ?? [])), "none"];
 }
 
+type FormProperties = ElicitRequestFormParams["requestedSchema"]["properties"];
+
+/**
+ * The settings form's fields: each proposed value filled in as its default, the limit's kind an
+ * enum and `acceptUnlimited` its own Boolean, and the holds to acknowledge as comma-separated ids.
+ */
+function settingsFields(change: SettingsChange): FormProperties {
+  const properties: FormProperties = {};
+  for (const [field, value] of Object.entries(change.caps ?? {})) {
+    properties[field] = {
+      type: "number",
+      title: `caps.${field}`,
+      description: `the ${field} cap in USD`,
+      minimum: 0,
+      default: value,
+    };
+  }
+  if (change.limit !== undefined) {
+    const { provider, limit } = change.limit;
+    properties["limitKind"] = {
+      type: "string",
+      title: `providers.${provider}.limit.kind`,
+      description: `the kind of limit the ${provider} key carries`,
+      enum: [...LIMIT_KINDS],
+      default: limit.kind,
+    };
+    if (limit.usd !== undefined)
+      properties["limitUsd"] = {
+        type: "number",
+        title: `providers.${provider}.limit.usd`,
+        description: "the limit in USD",
+        minimum: 0,
+        default: limit.usd,
+      };
+    if (limit.period !== undefined)
+      properties["limitPeriod"] = {
+        type: "string",
+        title: `providers.${provider}.limit.period`,
+        description: "the period the limit resets on",
+        default: limit.period,
+      };
+    properties["acceptUnlimited"] = {
+      type: "boolean",
+      title: `providers.${provider}.limit.acceptUnlimited`,
+      description: 'accept a key with no limit; kind "unlimited" is written only when true',
+      default: limit.acceptUnlimited === true,
+    };
+  }
+  if (change.acknowledgeHolds !== undefined)
+    properties["acknowledgeHolds"] = {
+      type: "string",
+      title: "spend.acknowledgedHolds",
+      description: "the spend holds to acknowledge, comma-separated; remove one to leave it open",
+      default: change.acknowledgeHolds.join(", "),
+    };
+  return properties;
+}
+
 /**
  * The flat form of a request. The message shows the request's fields, one per line. A pick asks
- * `{candidate: enum(ids + "none"), note?}`; spend, write and command ask a Boolean `approve`.
+ * `{candidate: enum(ids + "none"), note?}`; a settings change shows its proposed values filled in;
+ * spend, write and command ask a Boolean `approve`.
  */
 export function confirmForm(request: ConfirmRequest): ElicitRequestFormParams {
   const message = describeRequest(request);
+  if (request.kind === "settings") {
+    const change = (request.body?.["change"] ?? {}) as SettingsChange;
+    return {
+      mode: "form",
+      message,
+      requestedSchema: { type: "object", properties: settingsFields(change) },
+    };
+  }
   if (request.kind === "pick") {
     return {
       mode: "form",
@@ -185,6 +254,10 @@ export function elicitationPort(options: {
       return candidate === "none" || (request.choices ?? []).includes(candidate)
         ? candidate
         : undefined;
+    },
+    async edit(request) {
+      const answer = answerFor(request);
+      return answer.action === "accept" ? (answer.content ?? {}) : undefined;
     },
     recordFields: () => options.fields,
   };
