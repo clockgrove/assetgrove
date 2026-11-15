@@ -232,22 +232,47 @@ function evaluate(ctx: Ctx, entry: GateEntry): Outcome {
   }
 }
 
+/** Built-in checks that read GitHub for the commit rather than the working tree. */
+const COMMIT_CHECKS = new Set(["ci-main"]);
+
+/** True when the entry runs against the working tree, so a dirty tree is not the commit. */
+function readsTree(entry: GateEntry): boolean {
+  return entry.kind === "automated" && !(entry.check && COMMIT_CHECKS.has(entry.check));
+}
+
+/** `git status --porcelain` lines: tracked changes and untracked files; empty when clean. */
+function treeChanges(run: Runner, root: string): string[] {
+  const out = run(["git", "status", "--porcelain"], root);
+  if (out.status !== 0) return [`git status failed: ${tail(out.stderr, 3)}`];
+  return out.stdout.split(/\r?\n/).filter((line) => line.trim() !== "");
+}
+
 export function runGate(options: {
   entries?: GateEntry[];
   root?: string;
   run?: Runner;
   commit?: string;
+  /** Require a clean working tree for entries run against it; defaults to true when `commit` is not given. */
+  requireClean?: boolean;
 }): GateReport {
   const root = options.root ?? ROOT;
   const run = options.run ?? defaultRunner;
   const commit = options.commit ?? run(["git", "rev-parse", "HEAD"], root).stdout.trim();
   const ctx: Ctx = { root, commit, run };
+  const changes =
+    (options.requireClean ?? options.commit === undefined) ? treeChanges(run, root) : [];
   const entries = (options.entries ?? readEntries()).map((entry): EntryResult => {
     let outcome: Outcome;
     try {
       outcome = evaluate(ctx, entry);
     } catch (error) {
       outcome = { status: "fail", detail: error instanceof Error ? error.message : String(error) };
+    }
+    if (changes.length > 0 && readsTree(entry)) {
+      outcome = {
+        status: "fail",
+        detail: `ran on a working tree that differs from ${commit} (${changes.length} uncommitted changes: ${changes.slice(0, 5).join("; ")}); commit or stash them and run the gate again\n${outcome.status}: ${outcome.detail}`,
+      };
     }
     return {
       id: entry.id,

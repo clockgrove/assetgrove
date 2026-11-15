@@ -147,3 +147,21 @@ test("the package entry checks the release candidate's manifest", () => {
   const report = runGate({ entries: [pkg], run: passing, commit: COMMIT });
   assert.equal(report.entries[0]!.status, "pass", report.entries[0]!.detail);
 });
+
+test("an uncommitted change fails every entry run against the working tree, not the commit's CI entry", () => {
+  const dirty: Runner = (argv, cwd) =>
+    argv[0] === "git" && argv[1] === "status"
+      ? { status: 0, stdout: " M src/cli.ts\n?? scratch.txt\n", stderr: "" }
+      : passing(argv, cwd);
+  const entries = readEntries().filter(
+    (e) => e.kind !== "automated" || e.command || e.check === "ci-main",
+  );
+  const report = runGate({ entries, run: dirty, commit: COMMIT, requireClean: true });
+  assert.equal(report.ok, false);
+  for (const e of report.entries) {
+    const tree = e.kind === "automated" && e.id !== "ci-main";
+    assert.equal(e.status === "fail", tree, `${e.id}: ${e.status}`);
+    if (tree) assert.match(e.detail, /differs from 0{40}.*2 uncommitted/);
+  }
+  assert.equal(runGate({ entries, run: passing, commit: COMMIT, requireClean: true }).ok, true);
+});
