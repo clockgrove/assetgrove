@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -150,8 +151,11 @@ test("animation-qa: --dry-run forecasts the flicker calls and refuses over the c
   assert.equal(over.code, 3);
   assert.equal(doc(over).error.code, "cap_refused");
   // Without --dry-run the same cap refuses before any call, and without a key nothing is called.
+  declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   const refused = await cli([...args.filter((a) => a !== "--dry-run"), "--cap", "0.1"]);
-  assert.equal(refused.code, 4, "no key: provider error before any spend");
+  // A missing key fails only at the call, so the cap refuses first.
+  assert.equal(refused.code, 3, refused.stderr);
+  assert.equal(doc(refused).error.code, "cap_refused");
 });
 
 test("fix-frame: regenerates only that frame and records it in provenance", async () => {
@@ -190,6 +194,7 @@ test("fix-frame: regenerates only that frame and records it in provenance", asyn
   assert.equal(dry.code, 0, dry.stderr);
   assert.equal(doc(dry).plan.calls, 1);
   assert.equal((await cli([...base, "--dry-run", "--cap", "0.01", "--json"])).code, 3);
+  declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   assert.equal((await cli([...base, "--json"])).code, 4, "no key and no script: provider error");
   const bad = await cli([...base, "--key-pose", join(root, "walk-right.png"), "--json"]);
   assert.equal(bad.code, 2);

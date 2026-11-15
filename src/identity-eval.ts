@@ -305,7 +305,7 @@ export async function evaluateIdentity(options: {
 
   const budget = new Budget(
     options.capUsd,
-    ledgerFor(options.ledger, options.providerName, options.profile),
+    ledgerFor(options.ledger, options.provider, options.profile),
   );
   budget.check(
     cases.length * options.routes[operation]!.estimatedCostUsd +

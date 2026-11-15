@@ -1,111 +1,121 @@
-import { VercelGateway } from "../gateway/vercel.ts";
-import { ScriptedProvider } from "../gateway/scripted.ts";
+/**
+ * The providers a command calls, each made by its adapter from the developer settings
+ * (src/providers/adapter.ts), and the spend ledger of the invocation.
+ */
+import type { RunContext } from "../commands/types.ts";
+import type { Billing, GenerationProvider } from "../gateway/provider.ts";
 import type { Script } from "../gateway/scripted.ts";
-import type { GenerationProvider } from "../gateway/provider.ts";
 import { RoutedProvider } from "../gateway/routed.ts";
-import { TripoProvider } from "../gateway/tripo.ts";
-import { ProviderError } from "../errors.ts";
 import type { ToolContext } from "../mcp.ts";
 import { CHARACTER_3D_KIND } from "../model3d/profile.ts";
-import { SpendLedger, UNPAID_PROVIDER } from "../spend.ts";
+import { SpendLedger } from "../spend.ts";
 import type { AssetSpec } from "../types.ts";
+import { providerOfAdapter } from "./adapter.ts";
 import { loadScript } from "./script.ts";
 
 export { loadScript } from "./script.ts";
 
-/** A provider and the name its calls are recorded under. */
+/** What provider setup reads from the run context: the settings and the environment. */
+export type ProviderContext = Pick<RunContext, "settings" | "env">;
+
+/** A provider and the name its calls are recorded under: its settings id. */
 export interface NamedProvider {
   provider: GenerationProvider;
   name: string;
 }
 
-/** The Vercel AI Gateway from AI_GATEWAY_API_KEY; without a key, a ProviderError (exit 4). */
-export function gatewayProvider(): GenerationProvider {
-  try {
-    return VercelGateway.fromEnv();
-  } catch (error) {
-    throw new ProviderError((error as Error).message, { cause: error });
-  }
+function options(ctx: ProviderContext, script?: Script) {
+  return { ...(ctx.env && { env: ctx.env }), ...(script && { script }) };
 }
 
-/**
- * The scripted provider of --provider-script, under its unpaid name; a script that declares
- * `paid: true` (tests only) runs as `scripted-paid`, whose calls the spend ledger counts.
- */
-export function scriptedProvider(script: Script): NamedProvider {
-  return {
-    provider: new ScriptedProvider(script),
-    name: script.paid === true ? `${UNPAID_PROVIDER}-paid` : UNPAID_PROVIDER,
-  };
+/** The Vercel AI Gateway provider of the settings (src/providers/adapter.ts). */
+export function gatewayProvider(ctx: ProviderContext): NamedProvider {
+  const configured = providerOfAdapter(ctx.settings, "vercel-ai-gateway", options(ctx));
+  return { provider: configured.provider, name: configured.id };
+}
+
+/** The scripted provider of the settings, answering from the module's script. */
+export function scriptedProvider(script: Script, ctx: ProviderContext): NamedProvider {
+  const configured = providerOfAdapter(ctx.settings, "scripted", options(ctx, script));
+  return { provider: configured.provider, name: configured.id };
 }
 
 /** The scripted provider of --provider-script when given, else undefined. */
 export async function scriptedFrom(
   providerScript: string | undefined,
+  ctx: ProviderContext,
 ): Promise<NamedProvider | undefined> {
-  return providerScript ? scriptedProvider(await loadScript(providerScript)) : undefined;
+  return providerScript ? scriptedProvider(await loadScript(providerScript), ctx) : undefined;
 }
 
 /** The provider of a run: the --provider-script module when given, else the gateway. */
-export async function providerFor(providerScript: string | undefined): Promise<NamedProvider> {
-  return (
-    (await scriptedFrom(providerScript)) ?? {
-      provider: gatewayProvider(),
-      name: "vercel-ai-gateway",
-    }
-  );
+export async function providerFor(
+  providerScript: string | undefined,
+  ctx: ProviderContext,
+): Promise<NamedProvider> {
+  return (await scriptedFrom(providerScript, ctx)) ?? gatewayProvider(ctx);
 }
 
 /**
- * The provider name a dry run would use, loading (and so checking) --provider-script when given:
- * undefined, a real paid provider, without one.
+ * The billing of the provider a dry run would use, loading (and so checking) --provider-script
+ * when given; the gateway's otherwise. Makes no call.
  */
 export async function dryRunProvider(
   providerScript: string | undefined,
-): Promise<string | undefined> {
-  return (await scriptedFrom(providerScript))?.name;
+  ctx: ProviderContext,
+): Promise<Billing> {
+  return (await providerFor(providerScript, ctx)).provider.billing;
 }
 
 /**
- * The real provider of a stage run: 3D characters make their 3D calls on Tripo (TRIPO_API_KEY)
- * and their identity calls on the gateway; other kinds use the gateway alone.
+ * The real provider of a stage run: 3D characters make their 3D calls on Tripo and their identity
+ * calls on the gateway; other kinds use the gateway alone.
  */
-export function stageProvider(spec: AssetSpec): {
-  provider: GenerationProvider;
-  providerName: string;
-} {
+export function stageProvider(
+  spec: AssetSpec,
+  ctx: ProviderContext,
+): { provider: GenerationProvider; providerName: string } {
+  const gateway = gatewayProvider(ctx);
   if (spec.kind !== CHARACTER_3D_KIND) {
-    return { provider: gatewayProvider(), providerName: "vercel-ai-gateway" };
+    return { provider: gateway.provider, providerName: gateway.name };
   }
+  const tripo = providerOfAdapter(ctx.settings, "tripo", options(ctx));
   return {
     provider: new RoutedProvider({
-      gateway: () => VercelGateway.fromEnv(),
-      models: () => TripoProvider.fromEnv(),
+      gateway: gateway.provider,
+      models: tripo.provider,
     }),
-    providerName: "tripo+vercel-ai-gateway",
+    providerName: `${tripo.id}+${gateway.name}`,
   };
 }
 
 /**
- * The cross-run spend ledger of this invocation (src/spend.ts): its path and limits from the
- * environment, the work item from --work-item or ASSETGROVE_WORK_ITEM.
+ * The cross-run spend ledger of this invocation (src/spend.ts): `<stateDir>/spend.jsonl` with the
+ * settings' caps, the work item from --work-item or ASSETGROVE_WORK_ITEM.
  */
-export function spendLedger(workItem: string | undefined): SpendLedger {
-  return SpendLedger.fromEnv(process.env, workItem !== undefined ? { workItem } : {});
+export function spendLedger(ctx: ProviderContext, workItem: string | undefined): SpendLedger {
+  return SpendLedger.fromSettings(ctx.settings, {
+    ...(workItem !== undefined && { workItem }),
+    ...(ctx.env && { env: ctx.env }),
+  });
 }
 
 /**
  * The context of the planning tools (plan, apply, mcp): the scripted provider, else the gateway
- * when AI_GATEWAY_API_KEY is set, else no provider.
+ * when its key is set, else no provider.
  */
 export async function planningContext(
   providerScript: string | undefined,
   workItem: string | undefined,
+  ctx: ProviderContext,
 ): Promise<ToolContext> {
-  const ledger = spendLedger(workItem);
-  const scripted = await scriptedFrom(providerScript);
-  if (scripted) return { provider: scripted.provider, providerName: scripted.name, ledger };
-  if (process.env["AI_GATEWAY_API_KEY"])
-    return { provider: gatewayProvider(), providerName: "vercel-ai-gateway", ledger };
-  return { ledger };
+  const ledger = spendLedger(ctx, workItem);
+  const runCapUsd = ctx.settings.caps.runUsd;
+  const scripted = await scriptedFrom(providerScript, ctx);
+  if (scripted)
+    return { provider: scripted.provider, providerName: scripted.name, ledger, runCapUsd };
+  const configured = providerOfAdapter(ctx.settings, "vercel-ai-gateway", options(ctx));
+  if (configured.keyPresent)
+    return { provider: configured.provider, providerName: configured.id, ledger, runCapUsd };
+  return { ledger, runCapUsd };
 }

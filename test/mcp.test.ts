@@ -120,7 +120,7 @@ function normalise(value: unknown): unknown {
     JSON.stringify(value)
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "<time>")
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]+/g, "<run>")
-      .replace(/"(durationMs|elapsedMs|seed)":\d+(\.\d+)?/g, '"$1":0')
+      .replace(/"(durationMs|elapsedMs|latencyMs|seed)":\d+(\.\d+)?/g, '"$1":0')
       // A plan's digest covers its creation time.
       .replace(/"digest":"[0-9a-f]{64}"/g, '"digest":"<digest>"'),
   );
@@ -774,6 +774,8 @@ export default {
       };
     },
   },
+  { tool: "settings", prepare: async () => ({ action: "path" }) },
+  { tool: "spend", prepare: async () => ({ action: "status", workItem: "mcp-row" }) },
   {
     tool: "migrate",
     prepare: async () => {

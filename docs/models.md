@@ -1,6 +1,6 @@
 # Gateway models
 
-A snapshot of the Vercel AI Gateway's public model list (`GET https://ai-gateway.vercel.sh/v1/models`, no key needed). The list changes often; rerun the query before changing a default route. Prices are as the list reported them; Assetgrove records each call's actual cost when the gateway reports one.
+A snapshot of the Vercel AI Gateway's public model list (`GET https://ai-gateway.vercel.sh/v1/models`, no key needed). Calls use the key in the variable the gateway entry's `keyEnv` names (`AI_GATEWAY_API_KEY` by default); a relay is the entry's `baseURL`. The list changes often; rerun the query before changing a default route. Prices are as the list reported them; Assetgrove records each call's actual cost when the gateway reports one.
 
 The snapshot lists 498 models: 320 language, 39 image, 37 video, 28 embedding, 24 speech, 16 transcription, 15 evaluation, 10 realtime and 9 reranking.
 
@@ -41,7 +41,7 @@ A character with an identity lock adds one `identity` call per candidate (see [g
 
 ## 3D routes (Tripo, not the gateway)
 
-3D characters (`character-3d`, [characters-3d.md](characters-3d.md)) call Tripo's API directly with `TRIPO_API_KEY`. Their identity call still goes through the gateway. The account is on paid credits, so Tripo's output is owned: the routes' `outputGrant` is `LicenseRef-tripo-paid`, plan `paid`, commercial, `relabel: true`. Each call's cost is the task's reported `consumed_credit` × `usdPerCredit` ($0.01).
+3D characters (`character-3d`, [characters-3d.md](characters-3d.md)) call Tripo's API directly with the key in the variable the tripo provider entry's `keyEnv` names (`TRIPO_API_KEY` by default). Their identity call still goes through the gateway. The account is on paid credits, so Tripo's output is owned: the routes' `outputGrant` is `LicenseRef-tripo-paid`, plan `paid`, commercial, `relabel: true`. Each call's cost is the task's reported `consumed_credit` × the `usdPerCredit` of the tripo provider entry in the developer settings ([settings.md](settings.md)); without it, the route estimate.
 
 | Operation | Model                             | What it calls                                                                                        | Estimate per call |
 | --------- | --------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------- |

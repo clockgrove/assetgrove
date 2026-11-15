@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Budget, BudgetExceededError } from "../src/budget.ts";
@@ -12,13 +12,9 @@ import { Caller } from "../src/calls.ts";
 import { InputError, ProviderError } from "../src/errors.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { defaultRoutes } from "../src/routes.ts";
-import {
-  DEFAULT_DAILY_LIMIT_USD,
-  DEFAULT_WORK_ITEM_LIMIT_USD,
-  SpendLedger,
-  SpendLimitError,
-  isPaidProvider,
-} from "../src/spend.ts";
+import { DEFAULT_CAPS } from "../src/settings.ts";
+import { SpendLedger, SpendLimitError } from "../src/spend.ts";
+import { ledgerPath as fixtureLedger, stateDir, writeSettings } from "./fixtures/env.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -29,10 +25,28 @@ async function ledgerPath(): Promise<string> {
   return join(await mkdtemp(join(tmpdir(), "assetgrove-spend-test-")), "spend.jsonl");
 }
 
-function ledger(path: string, env: NodeJS.ProcessEnv = {}, now?: () => Date): SpendLedger {
-  return SpendLedger.fromEnv(
-    { ASSETGROVE_SPEND_LEDGER: path, ...env },
-    now !== undefined ? { now } : {},
+interface Caps {
+  workItem?: string;
+  dailyUsd?: number;
+  workItemUsd?: number;
+}
+
+/** The ledger of settings whose stateDir holds `path`, with these caps. */
+function ledger(path: string, caps: Caps = {}, now?: () => Date): SpendLedger {
+  return SpendLedger.fromSettings(
+    {
+      stateDir: dirname(path),
+      caps: {
+        ...DEFAULT_CAPS,
+        ...(caps.dailyUsd !== undefined && { dailyUsd: caps.dailyUsd }),
+        ...(caps.workItemUsd !== undefined && { workItemUsd: caps.workItemUsd }),
+      },
+    },
+    {
+      env: {},
+      ...(caps.workItem !== undefined && { workItem: caps.workItem }),
+      ...(now && { now }),
+    },
   );
 }
 
@@ -40,86 +54,86 @@ function limit(l: SpendLedger, name: string) {
   return l.status().limits.find((s) => s.limit === name);
 }
 
-test("with nothing set, the daily default applies and no work item means no work-item limit", async () => {
+test("with default settings, the daily cap applies and no work item means no work-item cap", async () => {
   const l = ledger(await ledgerPath());
   const status = l.status();
   assert.equal(status.workItem, null);
+  assert.deepEqual(status.caps, DEFAULT_CAPS);
   assert.deepEqual(status.limits, [
     {
       limit: "daily",
-      limitUsd: DEFAULT_DAILY_LIMIT_USD,
-      source: "default",
+      limitUsd: DEFAULT_CAPS.dailyUsd,
+      source: "settings",
       spentUsd: 0,
-      remainingUsd: DEFAULT_DAILY_LIMIT_USD,
+      remainingUsd: DEFAULT_CAPS.dailyUsd,
     },
   ]);
-  const named = ledger(await ledgerPath(), { ASSETGROVE_WORK_ITEM: "obj-72" });
+  const named = ledger(await ledgerPath(), { workItem: "obj-72" });
   assert.deepEqual(limit(named, "work-item"), {
     limit: "work-item",
     workItem: "obj-72",
-    limitUsd: DEFAULT_WORK_ITEM_LIMIT_USD,
-    source: "default",
+    limitUsd: DEFAULT_CAPS.workItemUsd,
+    source: "settings",
     spentUsd: 0,
-    remainingUsd: DEFAULT_WORK_ITEM_LIMIT_USD,
+    remainingUsd: DEFAULT_CAPS.workItemUsd,
   });
 });
 
-test("the default ledger is under XDG_STATE_HOME, else ~/.local/state", () => {
-  assert.equal(
-    SpendLedger.fromEnv({ XDG_STATE_HOME: "/state" }).path,
-    join("/state", "assetgrove", "spend.jsonl"),
-  );
-  assert.match(
-    SpendLedger.fromEnv({}).path,
-    /[/\\]\.local[/\\]state[/\\]assetgrove[/\\]spend\.jsonl$/,
-  );
+test("the work item is --work-item, else ASSETGROVE_WORK_ITEM, and no other variable is read", () => {
+  const settings = { stateDir, caps: { ...DEFAULT_CAPS } };
+  const item = (env: Record<string, string>, workItem?: string) =>
+    SpendLedger.fromSettings(settings, {
+      env,
+      ...(workItem !== undefined && { workItem }),
+    }).status();
+  assert.equal(item({ ASSETGROVE_WORK_ITEM: "campaign-a" }).workItem, "campaign-a");
+  assert.equal(item({ ASSETGROVE_WORK_ITEM: "campaign-a" }, "obj-1").workItem, "obj-1");
+  const ignored = item({
+    FACTORY_ISSUE: "72",
+    ASSETGROVE_SPEND_LEDGER: "/elsewhere/ledger.jsonl",
+    ASSETGROVE_DAILY_LIMIT_USD: "0.01",
+    ASSETGROVE_WORK_ITEM_LIMIT_USD: "0.01",
+  });
+  assert.equal(ignored.workItem, null);
+  assert.equal(ignored.ledger, join(stateDir, "spend.jsonl"));
+  assert.equal(ignored.limits[0]?.limitUsd, DEFAULT_CAPS.dailyUsd);
 });
 
-test("a Factory worker's default ledger is in its stage's TMPDIR, which persists across its commands", () => {
-  const worker = { FACTORY_ISSUE: "108", XDG_STATE_HOME: "/state" };
-  assert.equal(
-    SpendLedger.fromEnv({ ...worker, TMPDIR: "/run/stage-tmp" }).path,
-    join("/run/stage-tmp", "assetgrove-spend.jsonl"),
-  );
-  assert.equal(SpendLedger.fromEnv(worker).path, join(tmpdir(), "assetgrove-spend.jsonl"));
-  // Factory's stage-persistent state directory, when it gives one, is preferred.
-  assert.equal(
-    SpendLedger.fromEnv({ ...worker, TMPDIR: "/run/stage-tmp", FACTORY_STATE_DIR: "/run/state" })
-      .path,
-    join("/run/state", "assetgrove-spend.jsonl"),
-  );
-  // An explicit ledger still wins.
-  assert.equal(
-    SpendLedger.fromEnv({ ...worker, ASSETGROVE_SPEND_LEDGER: "/shared/ledger.jsonl" }).path,
-    resolve("/shared/ledger.jsonl"),
-  );
-});
+test("the ledger is <stateDir>/spend.jsonl from the fixture settings; a profile limit below the settings cap lowers it and one above changes nothing", async () => {
+  const caps = { runUsd: 4, dailyUsd: 6, workItemUsd: 3 };
+  writeSettings({ caps });
+  const status = await cliJson(["spend", "status", "--work-item", "w", "--json"]);
+  assert.equal(status.ledger, fixtureLedger);
+  assert.equal(status.ledger, join(stateDir, "spend.jsonl"));
+  assert.deepEqual(status.caps, caps);
 
-test("environment and profile limits: the stricter applies; bad values are invalid input", async () => {
   const path = await ledgerPath();
-  const env = { ASSETGROVE_WORK_ITEM: "w", ASSETGROVE_DAILY_LIMIT_USD: "3" };
-  const l = ledger(path, env).forProfile({ spend: { dailyLimitUsd: 8, workItemLimitUsd: 2 } });
+  const base = ledger(path, { workItem: "w", dailyUsd: 6, workItemUsd: 3 });
+  const lowered = base.forProfile({ spend: { dailyLimitUsd: 2, workItemLimitUsd: 1 } });
   assert.deepEqual(
-    l.status().limits.map((s) => [s.limit, s.limitUsd, s.source]),
+    lowered.status().limits.map((s) => [s.limit, s.limitUsd, s.source]),
     [
-      ["daily", 3, "environment"],
-      ["work-item", 2, "profile"],
+      ["daily", 2, "profile"],
+      ["work-item", 1, "profile"],
     ],
   );
-  const raised = ledger(path).forProfile({ spend: { dailyLimitUsd: 50 } });
-  assert.equal(limit(raised, "daily")?.limitUsd, 50);
-  assert.throws(() => ledger(path, { ASSETGROVE_DAILY_LIMIT_USD: "lots" }), InputError);
-  assert.throws(() => ledger(path, { ASSETGROVE_WORK_ITEM_LIMIT_USD: "-1" }), InputError);
-  assert.throws(() => ledger(path, { ASSETGROVE_DAILY_LIMIT_USD: "Infinity" }), InputError);
+  const above = base.forProfile({ spend: { dailyLimitUsd: 50, workItemLimitUsd: 40 } });
+  assert.deepEqual(
+    above.status().limits.map((s) => [s.limit, s.limitUsd, s.source]),
+    [
+      ["daily", 6, "settings"],
+      ["work-item", 3, "settings"],
+    ],
+  );
   assert.throws(
-    () => ledger(path).forProfile({ spend: { workItemLimitUsd: "5" as unknown as number } }),
+    () => base.forProfile({ spend: { workItemLimitUsd: "5" as unknown as number } }),
     InputError,
   );
 });
 
 test("reservations count at their estimate until settled, then at their cost; a refused one is cancelled", async () => {
   const path = await ledgerPath();
-  const l = ledger(path, { ASSETGROVE_WORK_ITEM: "w", ASSETGROVE_WORK_ITEM_LIMIT_USD: "1" });
+  const l = ledger(path, { workItem: "w", workItemUsd: 1 });
   const a = l.reserve(0.6, "the still call", "scripted:still:m");
   assert.equal(limit(l, "work-item")?.spentUsd, 0.6);
   assert.throws(
@@ -138,11 +152,11 @@ test("reservations count at their estimate until settled, then at their cost; a 
   l.check(0.8, "the run");
   assert.throws(() => l.check(0.81, "the run"), SpendLimitError);
   // Another work item has its own limit but shares the daily one.
-  const other = ledger(path, { ASSETGROVE_WORK_ITEM: "v", ASSETGROVE_DAILY_LIMIT_USD: "0.5" });
+  const other = ledger(path, { workItem: "v", dailyUsd: 0.5 });
   assert.equal(limit(other, "work-item")?.spentUsd, 0);
   assert.throws(() => other.check(0.31, "the run"), /\$0\.50 daily limit/);
   // A run that spends nothing is never refused, even past a limit.
-  ledger(path, { ASSETGROVE_DAILY_LIMIT_USD: "0.1" }).check(0, "a run with no paid calls");
+  ledger(path, { dailyUsd: 0.1 }).check(0, "a run with no paid calls");
 
   const lines = (await readFile(path, "utf8"))
     .trim()
@@ -163,25 +177,21 @@ test("reservations count at their estimate until settled, then at their cost; a 
 test("the daily limit counts the last 24 hours; the work-item limit counts all time", async () => {
   const path = await ledgerPath();
   const t0 = Date.parse("2026-11-10T08:00:00Z");
-  const env = { ASSETGROVE_WORK_ITEM: "w", ASSETGROVE_WORK_ITEM_LIMIT_USD: "20" };
-  const then = ledger(path, env, () => new Date(t0));
+  const caps = { workItem: "w", workItemUsd: 20 };
+  const then = ledger(path, caps, () => new Date(t0));
   then.settle(then.reserve(4, "a call", "r"), 4);
-  const later = ledger(path, env, () => new Date(t0 + 25 * 60 * 60 * 1000));
+  const later = ledger(path, caps, () => new Date(t0 + 25 * 60 * 60 * 1000));
   assert.equal(limit(later, "daily")?.spentUsd, 0);
   assert.equal(limit(later, "work-item")?.spentUsd, 4);
 });
 
 test("concurrent runs never reserve past a limit: exactly as many as fit succeed", async () => {
   const path = await ledgerPath();
+  const settings = { stateDir: dirname(path), caps: { ...DEFAULT_CAPS, workItemUsd: 3 } };
   const code = `import { SpendLedger } from ${JSON.stringify(spendModule)};
-try { SpendLedger.fromEnv().reserve(1, "a call", "r"); console.log("ok"); }
+const l = SpendLedger.fromSettings(${JSON.stringify(settings)}, { workItem: "w" });
+try { l.reserve(1, "a call", "r"); console.log("ok"); }
 catch (e) { if (e.name !== "SpendLimitError") throw e; console.log("refused"); }`;
-  const env = {
-    ...process.env,
-    ASSETGROVE_SPEND_LEDGER: path,
-    ASSETGROVE_WORK_ITEM: "w",
-    ASSETGROVE_WORK_ITEM_LIMIT_USD: "3",
-  };
   const results = await Promise.all(
     Array.from(
       { length: 8 },
@@ -190,7 +200,7 @@ catch (e) { if (e.name !== "SpendLimitError") throw e; console.log("refused"); }
           execFile(
             process.execPath,
             ["--input-type=module", "-e", code],
-            { env },
+            { env: process.env },
             (error, stdout, stderr) => (error ? reject(new Error(stderr)) : resolve(stdout.trim())),
           ),
         ),
@@ -198,33 +208,31 @@ catch (e) { if (e.name !== "SpendLimitError") throw e; console.log("refused"); }
   );
   assert.equal(results.filter((r) => r === "ok").length, 3);
   assert.equal(results.filter((r) => r === "refused").length, 5);
-  assert.equal(limit(ledger(path, { ASSETGROVE_WORK_ITEM: "w" }), "work-item")?.spentUsd, 3);
+  assert.equal(limit(ledger(path, { workItem: "w" }), "work-item")?.spentUsd, 3);
 });
 
-test("paid providers are told apart from the scripted one by name alone", () => {
-  assert.equal(isPaidProvider("scripted"), false);
-  for (const name of ["vercel-ai-gateway", "tripo+vercel-ai-gateway", "scripted-paid", undefined])
-    assert.equal(isPaidProvider(name), true);
-});
-
-function countingProvider(counts: { image: number }) {
-  return new ScriptedProvider({
-    image: () => {
-      counts.image++;
-      return { images: [{ mediaType: "image/png", bytes: new Uint8Array([1]) }], costUsd: 0.1 };
+function countingProvider(counts: { image: number }, paid: boolean) {
+  return new ScriptedProvider(
+    {
+      ...(paid && { paid: true }),
+      image: () => {
+        counts.image++;
+        return { images: [{ mediaType: "image/png", bytes: new Uint8Array([1]) }], costUsd: 0.1 };
+      },
+      vision: () => {
+        throw new Error("down");
+      },
     },
-    vision: () => {
-      throw new Error("down");
-    },
-  });
+    { providerId: "paid-test", limit: { kind: "prepaid", usd: 100 } },
+  );
 }
 
 test("every paid Caller call reserves in the budget's ledger with its route and settles at its cost", async () => {
   const path = await ledgerPath();
-  const l = ledger(path, { ASSETGROVE_DAILY_LIMIT_USD: "0.3" });
+  const l = ledger(path, { dailyUsd: 0.3 });
   const counts = { image: 0 };
   const call = new Caller({
-    provider: countingProvider(counts),
+    provider: countingProvider(counts, true),
     providerName: "paid-test",
     budget: new Budget(5, l),
     routes: defaultRoutes,
@@ -250,14 +258,14 @@ test("every paid Caller call reserves in the budget's ledger with its route and 
   ]);
 });
 
-test("scripted Caller calls never reach the ledger; the run's cap still applies", async () => {
+test("free Caller calls never reach the ledger, whatever the provider is named; the run's cap still applies", async () => {
   const path = await ledgerPath();
-  const l = ledger(path, { ASSETGROVE_DAILY_LIMIT_USD: "0" });
+  const l = ledger(path, { dailyUsd: 0 });
   const counts = { image: 0 };
   const budget = new Budget(0.6, l);
   const call = new Caller({
-    provider: countingProvider(counts),
-    providerName: "scripted",
+    provider: countingProvider(counts, false),
+    providerName: "vercel-ai-gateway",
     budget,
     routes: defaultRoutes,
   });
@@ -270,6 +278,20 @@ test("scripted Caller calls never reach the ledger; the run's cap still applies"
   await assert.rejects(call.image("still", "a fox", []), BudgetExceededError);
   assert.equal(counts.image, 2);
 });
+
+/** Settings with their own new stateDir, so the test starts from an empty ledger; returns its path. */
+async function freshLedger(settings: Record<string, unknown> = {}): Promise<string> {
+  const path = await ledgerPath();
+  writeSettings({ stateDir: dirname(path), ...settings });
+  return path;
+}
+
+/** Runs the CLI with the fixture's settings and returns its JSON document. */
+async function cliJson(args: string[]): Promise<Record<string, unknown>> {
+  const r = await cli(args, process.env);
+  assert.equal(r.code, 0, r.stderr);
+  return JSON.parse(r.stdout) as Record<string, unknown>;
+}
 
 interface Result {
   code: number;
@@ -292,8 +314,8 @@ function cli(args: string[], env: NodeJS.ProcessEnv): Promise<Result> {
 
 /**
  * A synthetic world and a passing provider script that counts every call it answers. `paid`
- * makes the CLI run it under the test-only paid name `scripted-paid`, standing in for a real
- * provider.
+ * makes the scripted adapter bill it as paid, standing in for a real provider; the fixture
+ * settings declare its limit.
  */
 async function stageWorld(paid: boolean) {
   const world = await syntheticWorld();
@@ -328,17 +350,13 @@ export default {
 
 test("two paid runs whose combined forecast crosses the work-item limit: the second is refused before any call", async () => {
   const { world, args, callCount } = await stageWorld(true);
-  const path = await ledgerPath();
-  const env = {
-    ...process.env,
-    ASSETGROVE_SPEND_LEDGER: path,
-    ASSETGROVE_WORK_ITEM_LIMIT_USD: "0.5",
-  };
+  const path = await freshLedger({ caps: { workItemUsd: 0.5 } });
+  const env = process.env;
   const first = await cli(args, env);
   assert.equal(first.code, 0, first.stderr);
   assert.equal(await callCount(), 7);
   const ledgerAfterFirst = await readFile(path, "utf8");
-  assert.match(ledgerAfterFirst, /"route":"scripted-paid:edit:/);
+  assert.match(ledgerAfterFirst, /"route":"scripted:edit:/);
 
   // The dry run shows what is left under each limit, and that the run would not fit.
   const dry = await cli([...args, "--dry-run"], env);
@@ -349,11 +367,11 @@ test("two paid runs whose combined forecast crosses the work-item limit: the sec
   assert.equal(plan.spend.counted, true);
   const [daily, item] = plan.spend.limits;
   assert.equal(daily.limit, "daily");
-  assert.equal(daily.source, "default");
-  assert.ok(Math.abs(daily.remainingUsd - (DEFAULT_DAILY_LIMIT_USD - 0.32)) < 1e-9);
+  assert.equal(daily.source, "settings");
+  assert.ok(Math.abs(daily.remainingUsd - (DEFAULT_CAPS.dailyUsd - 0.32)) < 1e-9);
   assert.equal(item.limit, "work-item");
   assert.equal(item.workItem, "obj-72");
-  assert.equal(item.source, "environment");
+  assert.equal(item.source, "settings");
   assert.ok(Math.abs(item.spentUsd - 0.32) < 1e-9);
   assert.ok(Math.abs(item.remainingUsd - 0.18) < 1e-9);
 
@@ -380,15 +398,10 @@ test("two paid runs whose combined forecast crosses the work-item limit: the sec
   assert.equal(other.code, 0, other.stderr);
 });
 
-test("scripted runs over the limits are not refused and write nothing to the ledger", async () => {
+test("free scripted runs over the caps are not refused and write nothing to the ledger", async () => {
   const { world, args, callCount } = await stageWorld(false);
-  const path = await ledgerPath();
-  const env = {
-    ...process.env,
-    ASSETGROVE_SPEND_LEDGER: path,
-    ASSETGROVE_DAILY_LIMIT_USD: "0.1",
-    ASSETGROVE_WORK_ITEM_LIMIT_USD: "0.1",
-  };
+  const path = await freshLedger({ caps: { dailyUsd: 0.1, workItemUsd: 0.1 } });
+  const env = process.env;
   // Each run's $0.32 forecast alone is over both limits.
   for (let run = 1; run <= 2; run++) {
     const r = await cli(args, env);
@@ -412,7 +425,7 @@ test("scripted runs over the limits are not refused and write nothing to the led
   );
   const human = await cli([...args.filter((a) => a !== "--json"), "--dry-run"], env);
   assert.equal(human.code, 0);
-  assert.match(human.stdout, /scripted provider: not counted/);
+  assert.match(human.stdout, /free provider: not counted/);
 
   // The run's own cap still refuses a scripted run.
   const capped = await cli([...args, "--cap", "0.1"], env);
@@ -421,19 +434,19 @@ test("scripted runs over the limits are not refused and write nothing to the led
   assert.equal(existsSync(path), false);
 });
 
-test("a Factory worker's Objective is the work item when none is named", () => {
-  const item = (env: NodeJS.ProcessEnv, workItem?: string) =>
-    SpendLedger.fromEnv(env, workItem !== undefined ? { workItem } : {}).status().workItem;
-  assert.equal(
-    item({ FACTORY_ISSUE: "72", GITHUB_REPOSITORY: "clockgrove/assetgrove" }),
-    "clockgrove/assetgrove#72",
-  );
-  assert.equal(item({ FACTORY_ISSUE: "72" }), "factory#72");
-  // Named explicitly, the name wins.
-  assert.equal(item({ FACTORY_ISSUE: "72", ASSETGROVE_WORK_ITEM: "campaign-a" }), "campaign-a");
-  assert.equal(item({ FACTORY_ISSUE: "72" }, "obj-1"), "obj-1");
-  // Only a plain issue number counts; anything else names no work item.
-  assert.equal(item({ FACTORY_ISSUE: "72; rm" }), null);
-  assert.equal(item({ FACTORY_ISSUE: "" }), null);
-  assert.equal(item({}), null);
+test("--cap above caps.runUsd exits 3 cap_refused with no ledger entry", async () => {
+  const { world, args, callCount } = await stageWorld(true);
+  const path = await freshLedger({ caps: { runUsd: 1 } });
+  const r = await cli([...args, "--cap", "2"], process.env);
+  assert.equal(r.code, 3, r.stderr);
+  const document = JSON.parse(r.stdout);
+  assert.equal(document.error.code, "cap_refused");
+  assert.match(document.error.message, /caps\.runUsd/);
+  assert.equal(existsSync(path), false);
+  assert.equal(existsSync(join(world.dir, "calls.txt")), false);
+  void callCount;
+  // At or under the settings' cap, the run goes ahead.
+  const fits = await cli([...args, "--cap", "1"], process.env);
+  assert.equal(fits.code, 0, fits.stderr);
+  assert.ok(existsSync(path));
 });

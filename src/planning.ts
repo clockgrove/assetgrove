@@ -8,7 +8,7 @@ import { pixelHash } from "./transform/run.ts";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { Budget } from "./budget.ts";
+import { Budget, runCap } from "./budget.ts";
 import { ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
@@ -166,6 +166,8 @@ export interface CreatePlanOptions {
   specDir?: string;
   /** Overrides the profile's identity mode: off, shadow or enforce. */
   identityMode?: string;
+  /** The developer settings' run cap (`caps.runUsd`): the run settings' `capUsd` may lower it, never raise it. */
+  runCapUsd?: number;
 }
 
 function hash(value: unknown): string {
@@ -198,7 +200,10 @@ function settingsOf(options: CreatePlanOptions): RunSettings {
   const routes = options.routes ?? defaultRoutes;
   const settings: RunSettings = {
     candidates: values.candidates ?? 4,
-    capUsd: values.capUsd ?? 5,
+    capUsd:
+      options.runCapUsd === undefined
+        ? (values.capUsd ?? 5)
+        : runCap(values.capUsd, { caps: { runUsd: options.runCapUsd } }),
     modelRoute: route(
       values.modelRoute ?? (options.spec.kind === "sprite-strip" ? routes.edit : routes.still),
       "generation",
@@ -642,7 +647,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<Generation
   const compilerEstimate = options.provider ? settings.llmRoute.estimatedCostUsd : 0;
   const budget = new Budget(
     settings.capUsd,
-    ledgerFor(options.ledger, options.providerName, options.profile),
+    ledgerFor(options.ledger, options.provider, options.profile),
   );
   budget.check(generationUsd + compilerEstimate, "planned compiler and generation calls");
   const caller = options.provider
@@ -814,6 +819,8 @@ export interface ApplyPlanOptions {
   outDir?: string;
   /** Receives one line per provider decision call. */
   log?: (message: string) => void;
+  /** The developer settings' run cap (`caps.runUsd`): the run settings' `capUsd` may lower it, never raise it. */
+  runCapUsd?: number;
 }
 
 async function checkedPlan(
@@ -869,10 +876,11 @@ export async function applyPlan(
     throw new InputError(
       "plan is not approved; record human approval in approved or use --auto-approve for unattended generation",
     );
-  const budget = new Budget(
-    plan.settings.capUsd,
-    ledgerFor(options.ledger, options.providerName, plan.profile),
-  );
+  const capUsd =
+    options.runCapUsd === undefined
+      ? plan.settings.capUsd
+      : runCap(plan.settings.capUsd, { caps: { runUsd: options.runCapUsd } });
+  const budget = new Budget(capUsd, ledgerFor(options.ledger, options.provider, plan.profile));
   // The compilation was spent (and recorded in any ledger) when the plan was made.
   budget.addPrior(plan.compiler.spentUsd, "prior prompt compilation");
   budget.check(plan.forecast.generationUsd, "planned generation");

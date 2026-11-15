@@ -1,10 +1,9 @@
-import { Budget } from "../budget.ts";
+import { Budget, runCap } from "../budget.ts";
 import { loadBible } from "../bible.ts";
 import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
 import { checkIdentityRecord, loadIdentity } from "../identity.ts";
 import type { IdentityRecordCheck } from "../identity.ts";
-import { DEFAULT_CAP_USD } from "../loop.ts";
 import { providerFor, spendLedger } from "../providers/index.ts";
 import { IDENTITY_CHECK_OPERATION, loadRoutes } from "../routes.ts";
 import type { Route } from "../routes.ts";
@@ -44,7 +43,12 @@ fixes its text or its references. See docs/generation-knobs.md.`,
         placeholder: "<name>",
       },
       routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
-      cap: { type: "number", description: "the run's cost cap in USD", default: DEFAULT_CAP_USD },
+      cap: {
+        type: "number",
+        description:
+          "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
+        placeholder: "<usd>",
+      },
       workItem: {
         type: "string",
         description: "the work item the spend ledger counts against",
@@ -74,10 +78,10 @@ fixes its text or its references. See docs/generation-knobs.md.`,
     );
     if (loaded.length === 0) throw new InputError(`${doc.path} has no identity locks`);
     const routes = await loadRoutes(args.routes);
-    const { provider, name } = await providerFor(args.providerScript);
+    const { provider, name } = await providerFor(args.providerScript, ctx);
     const budget = new Budget(
-      args.cap ?? DEFAULT_CAP_USD,
-      ledgerFor(spendLedger(args.workItem), name, {}),
+      runCap(args.cap, ctx.settings),
+      ledgerFor(spendLedger(ctx, args.workItem), provider, {}),
     );
     budget.check(
       loaded.length * (routes[IDENTITY_CHECK_OPERATION] as Route).estimatedCostUsd,

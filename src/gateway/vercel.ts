@@ -1,5 +1,9 @@
 import { createGateway, experimental_decide, generateImage, generateText } from "ai";
+import { ProviderError } from "../errors.ts";
+import { providerFailure } from "./failure.ts";
 import type {
+  Billing,
+  LimitReading,
   DecisionAnswer,
   DecisionRequest,
   DecisionResult,
@@ -9,6 +13,9 @@ import type {
   VisionRequest,
   VisionResult,
 } from "./provider.ts";
+
+/** The gateway's fixed endpoint, at the gateway SDK's own path. */
+const GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v4/ai";
 
 type Gateway = ReturnType<typeof createGateway>;
 type Metadata = Record<string, Record<string, unknown> | undefined> | undefined;
@@ -45,45 +52,81 @@ function requestId(...candidates: unknown[]): {
  * `cost` (USD) from provider metadata, left unset when the gateway does not report one.
  */
 export class VercelGateway implements GenerationProvider {
-  readonly #gateway: Gateway;
+  readonly billing: Billing;
+  readonly #gateway: Gateway | undefined;
+  readonly #keyEnv: string;
 
-  constructor(options: { apiKey: string; baseURL?: string }) {
-    this.#gateway = createGateway({
-      apiKey: options.apiKey,
-      ...(options.baseURL !== undefined && { baseURL: options.baseURL }),
-    });
+  /**
+   * `apiKey` and `baseURL` are always passed to the SDK, so no `*_BASE_URL` or key variable of the
+   * environment ever applies. Without a key every call fails with a provider error naming
+   * `keyEnv`.
+   */
+  constructor(options: {
+    apiKey: string | undefined;
+    keyEnv?: string;
+    baseURL?: string;
+    billing?: Omit<Billing, "hosts" | "readLimit">;
+  }) {
+    const baseURL = options.baseURL ?? GATEWAY_BASE_URL;
+    this.#keyEnv = options.keyEnv ?? "AI_GATEWAY_API_KEY";
+    this.#gateway =
+      options.apiKey !== undefined && options.apiKey !== ""
+        ? createGateway({ apiKey: options.apiKey, baseURL })
+        : undefined;
+    this.billing = {
+      adapter: "vercel-ai-gateway",
+      providerId: "vercel-ai-gateway",
+      paid: true,
+      reconcile: "per-call-cost",
+      ...options.billing,
+      hosts: [new URL(baseURL).host],
+      readLimit: () => this.credits(),
+    };
   }
 
-  static fromEnv(env: Record<string, string | undefined> = process.env): VercelGateway {
-    const apiKey = env["AI_GATEWAY_API_KEY"];
-    if (apiKey === undefined || apiKey === "") {
-      throw new Error(
-        "AI_GATEWAY_API_KEY is not set; the gateway key must come from the environment",
+  /** The base URL the SDK is given when settings name none. */
+  static readonly defaultBaseURL = GATEWAY_BASE_URL;
+
+  #client(label: string): Gateway {
+    if (this.#gateway === undefined)
+      throw new ProviderError(
+        `gateway ${label}: ${this.#keyEnv} is not set; the gateway key must come from the environment`,
       );
+    return this.#gateway;
+  }
+
+  async #guard<T>(label: string, call: (gateway: Gateway) => Promise<T>): Promise<T> {
+    const gateway = this.#client(label);
+    try {
+      return await call(gateway);
+    } catch (error) {
+      throw providerFailure("gateway", label, error);
     }
-    // Inside a Factory stage the key is a relay token: calls go through Factory's metering relay,
-    // which counts them against the Objective's caps (clockgrove/factory#97). `/v4/ai` is the
-    // gateway SDK's own path, so the relay sees the requests the gateway would.
-    const relay = env["FACTORY_GATEWAY_URL"];
-    return new VercelGateway({
-      apiKey,
-      ...(relay && { baseURL: `${relay.replace(/\/$/, "")}/v4/ai` }),
-    });
+  }
+
+  /** The gateway's credit balance, in USD; spends nothing. */
+  async credits(): Promise<LimitReading> {
+    const credits = await this.#guard("credits", (g) => g.getCredits());
+    const balanceUsd = toNumber((credits as { balance?: unknown }).balance);
+    if (balanceUsd === undefined) throw new ProviderError("gateway credits: no balance returned");
+    return { balanceUsd, source: "gateway credits" };
   }
 
   async generateImage(req: ImageRequest): Promise<ImageResult> {
-    const result = await generateImage({
-      model: this.#gateway.imageModel(req.model),
-      prompt:
-        req.references.length === 0
-          ? req.prompt
-          : { text: req.prompt, images: req.references.map((r) => r.bytes) },
-      ...(req.size !== undefined && { size: req.size as `${number}x${number}` }),
-      ...(req.seed !== undefined && { seed: req.seed }),
-      ...(req.providerOptions !== undefined && {
-        providerOptions: req.providerOptions as Record<string, never>,
+    const result = await this.#guard("image", (gateway) =>
+      generateImage({
+        model: gateway.imageModel(req.model),
+        prompt:
+          req.references.length === 0
+            ? req.prompt
+            : { text: req.prompt, images: req.references.map((r) => r.bytes) },
+        ...(req.size !== undefined && { size: req.size as `${number}x${number}` }),
+        ...(req.seed !== undefined && { seed: req.seed }),
+        ...(req.providerOptions !== undefined && {
+          providerOptions: req.providerOptions as Record<string, never>,
+        }),
       }),
-    });
+    );
     const meta = result.providerMetadata as Metadata;
     const gw = gatewayMeta(meta);
     const seed =
@@ -101,25 +144,27 @@ export class VercelGateway implements GenerationProvider {
   }
 
   async analyzeImages(req: VisionRequest): Promise<VisionResult> {
-    const result = await generateText({
-      model: this.#gateway.languageModel(req.model),
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: req.prompt },
-            ...req.images.map((i) => ({
-              type: "image" as const,
-              image: i.bytes,
-              mediaType: i.mediaType,
-            })),
-          ],
-        },
-      ],
-      ...(req.providerOptions !== undefined && {
-        providerOptions: req.providerOptions as Record<string, never>,
+    const result = await this.#guard("vision", (gateway) =>
+      generateText({
+        model: gateway.languageModel(req.model),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: req.prompt },
+              ...req.images.map((i) => ({
+                type: "image" as const,
+                image: i.bytes,
+                mediaType: i.mediaType,
+              })),
+            ],
+          },
+        ],
+        ...(req.providerOptions !== undefined && {
+          providerOptions: req.providerOptions as Record<string, never>,
+        }),
       }),
-    });
+    );
     const gw = gatewayMeta(result.providerMetadata as Metadata);
     const cost = toNumber(gw["cost"]);
     return {
@@ -147,20 +192,22 @@ export class VercelGateway implements GenerationProvider {
               ...(q.whenFalse !== undefined && { false: q.whenFalse }),
             },
           };
-    const result = await experimental_decide({
-      model: this.#gateway.decisionModel(req.model),
-      state: [
-        { type: "text", text: req.prompt },
-        ...req.images.map((i) => ({
-          type: "file" as const,
-          mediaType: i.mediaType,
-          data: i.bytes,
-        })),
-      ],
-      questions: { answer: question },
-      // Decision providers rate-limit tightly (#27); back off and retry rather than fail.
-      maxRetries: 4,
-    });
+    const result = await this.#guard("decide", (gateway) =>
+      experimental_decide({
+        model: gateway.decisionModel(req.model),
+        state: [
+          { type: "text", text: req.prompt },
+          ...req.images.map((i) => ({
+            type: "file" as const,
+            mediaType: i.mediaType,
+            data: i.bytes,
+          })),
+        ],
+        questions: { answer: question },
+        // Decision providers rate-limit tightly (#27); back off and retry rather than fail.
+        maxRetries: 4,
+      }),
+    );
     const raw = result.answers.answer as
       | { type: "score"; score: number; probabilities?: Record<string, number> }
       | { type: "boolean"; probability: number };

@@ -28,6 +28,8 @@ export interface ToolContext {
   ledger?: SpendLedger;
   /** Receives one line per provider decision call during apply. */
   log?: (message: string) => void;
+  /** The developer settings' run cap (`caps.runUsd`), which bounds plan and apply. */
+  runCapUsd?: number;
 }
 
 type Arguments = Record<string, unknown>;
@@ -102,6 +104,7 @@ export async function generationTool(
       providerName: context.providerName,
       ...(context.ledger && { ledger: context.ledger }),
       ...(context.log && { log: context.log }),
+      ...(context.runCapUsd !== undefined && { runCapUsd: context.runCapUsd }),
       autoApprove: args["autoApprove"] === true,
       ...(stringArg(args, "out", false) && { outDir: args["out"] as string }),
     });

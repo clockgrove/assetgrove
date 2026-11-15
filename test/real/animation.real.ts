@@ -102,7 +102,10 @@ test(
     assert.equal(offline.spentUsd, 0);
     if (!real) return;
 
-    const provider = { provider: VercelGateway.fromEnv(), name: "vercel-ai-gateway" };
+    const provider = {
+      provider: new VercelGateway({ apiKey: process.env["AI_GATEWAY_API_KEY"] }),
+      name: "vercel-ai-gateway",
+    };
     const first = targets[0];
     assert.ok(first);
     const flicker = await runAnimationQa({

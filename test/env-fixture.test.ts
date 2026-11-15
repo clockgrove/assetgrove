@@ -36,5 +36,9 @@ test("a helper's change lasts for its own test, including its subtests", async (
 });
 
 test("the next test starts from the base settings", () => {
-  assert.deepEqual(onDisk(), { format: "assetgrove-settings/1", stateDir });
+  assert.deepEqual(onDisk(), {
+    format: "assetgrove-settings/1",
+    stateDir,
+    providers: { scripted: { limit: { kind: "prepaid", usd: 100 } } },
+  });
 });

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProviderError } from "../src/errors.ts";
+import type { ProviderSettings } from "../src/settings.ts";
 import { TripoProvider } from "../src/gateway/tripo.ts";
+import { createProvider } from "../src/providers/adapter.ts";
 
 const KEY = "tsk_secret_key_123";
 const GLB = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
@@ -63,9 +65,15 @@ function fake(options: {
   return { calls, fetch: impl as typeof fetch };
 }
 
-function provider(f: { fetch: typeof fetch }, sleeps: number[] = [], timeoutMs?: number) {
+function provider(
+  f: { fetch: typeof fetch },
+  sleeps: number[] = [],
+  timeoutMs?: number,
+  settings: ProviderSettings = {},
+) {
   return new TripoProvider({
     apiKey: KEY,
+    ...(settings.usdPerCredit !== undefined && { usdPerCredit: settings.usdPerCredit }),
     fetch: f.fetch,
     sleep: async (ms) => void sleeps.push(ms),
     pollIntervalMs: 10,
@@ -75,15 +83,15 @@ function provider(f: { fetch: typeof fetch }, sleeps: number[] = [], timeoutMs?:
 
 const png = (view: string) => ({ view, mediaType: "image/png", bytes: new Uint8Array([1, 2, 3]) });
 
-test("multiview orders front, left, back, right with {} for a missing view; the budget is the face limit", async () => {
+test("multiview orders front, left, back, right with {} for a missing view; the budget is the face limit; credits are priced at the settings' usdPerCredit", async () => {
   const f = fake({});
-  const result = await provider(f).generateModel({
+  const result = await provider(f, [], undefined, { usdPerCredit: 0.01 }).generateModel({
     model: "tripo",
     views: [png("back"), png("front"), png("left")],
     seed: 7,
     maxTriangles: 40000,
     providerOptions: {
-      tripo: { modelVersion: "v3", texture: true, pbr: true, usdPerCredit: 0.01 },
+      tripo: { modelVersion: "v3", texture: true, pbr: true },
     },
   });
   const create = f.calls.find((c) => c.url.endsWith("/task") && c.method === "POST");
@@ -181,7 +189,7 @@ test("failures become ProviderError without the key", async () => {
     [fake({ statuses: ["banned"] }), /banned/],
     [
       fake({ createReply: { code: 1004, message: "invalid animation name: preset:bogus" } }),
-      /invalid animation name: preset:bogus \(code 1004\)/,
+      /invalid animation name: preset:bogus \(HTTP \d+, code 1004\)/,
     ],
     [fake({ glb: new Uint8Array([1, 2, 3, 4]) }), /not a binary glTF/],
     [fake({ output: {} }), /no model output/],
@@ -204,7 +212,36 @@ test("balance reads the balance", async () => {
   assert.equal(await provider(fake({})).balance(), 12.5);
 });
 
-test("fromEnv without a key throws", () => {
-  assert.throws(() => TripoProvider.fromEnv({}), { message: "TRIPO_API_KEY is not set" });
-  assert.ok(TripoProvider.fromEnv({ TRIPO_API_KEY: KEY }) instanceof TripoProvider);
+test("without a key a call fails with a provider error naming the key variable", async () => {
+  await assert.rejects(new TripoProvider({ apiKey: undefined }).balance(), {
+    name: "ProviderError",
+    message: /TRIPO_API_KEY is not set/,
+  });
+});
+
+test("the tripo adapter prices credits with the settings' usdPerCredit in its balance reading", async () => {
+  const f = fake({});
+  // The adapter's provider fetches through the global fetch it captures when it is made.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = f.fetch;
+  let tripo: TripoProvider;
+  try {
+    const configured = createProvider(
+      "tripo",
+      { keyEnv: "ASSETGROVE_TEST_TRIPO_KEY", usdPerCredit: 0.01 },
+      { env: { ASSETGROVE_TEST_TRIPO_KEY: KEY } },
+    );
+    assert.ok(configured.provider instanceof TripoProvider);
+    tripo = configured.provider;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(await tripo.limitReading(), {
+    balance: 12.5,
+    unit: "credits",
+    balanceUsd: 0.125,
+    source: "tripo balance",
+  });
+  assert.equal(tripo.billing.paid, true);
+  assert.deepEqual(tripo.billing.hosts, ["api.tripo3d.ai"]);
 });

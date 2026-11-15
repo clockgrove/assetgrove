@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { Budget } from "../budget.ts";
+import { Budget, runCap } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import {
   declarationOption,
@@ -9,7 +9,6 @@ import {
   loadProfile,
   loadStyleBible,
 } from "../inputs.ts";
-import { DEFAULT_CAP_USD } from "../loop.ts";
 import { providerFor, spendLedger } from "../providers/index.ts";
 import { loadBibleInputs } from "../request.ts";
 import { loadRoutes } from "../routes.ts";
@@ -144,7 +143,12 @@ below the threshold, off skips scoring.`,
         description: "override the profile's identity mode",
         placeholder: "<off|shadow|enforce>",
       },
-      cap: { type: "number", description: "the run's cost cap in USD", default: DEFAULT_CAP_USD },
+      cap: {
+        type: "number",
+        description:
+          "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
+        placeholder: "<usd>",
+      },
       routes: { type: "string", description: "model routes", placeholder: "<routes.json>" },
       imports: {
         type: "string",
@@ -168,7 +172,7 @@ below the threshold, off skips scoring.`,
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
   async run(args, ctx) {
-    const capUsd = args.cap ?? DEFAULT_CAP_USD;
+    const capUsd = runCap(args.cap, ctx.settings);
     const slice = sliceOptions(args.grid, args.components, args.frames);
     const profile = await loadProfile(args.profile);
     const bible = args.bible ? await loadStyleBible(args.bible) : undefined;
@@ -180,11 +184,14 @@ below the threshold, off skips scoring.`,
     const caller = async (): Promise<Caller> => {
       if (!shared) {
         const routes = await loadRoutes(args.routes);
-        const { provider, name } = await providerFor(args.providerScript);
+        const { provider, name } = await providerFor(args.providerScript, ctx);
         shared = new Caller({
           provider,
           providerName: name,
-          budget: new Budget(capUsd, ledgerFor(spendLedger(args.workItem), name, profile.value)),
+          budget: new Budget(
+            capUsd,
+            ledgerFor(spendLedger(ctx, args.workItem), provider, profile.value),
+          ),
           routes,
           log: ctx.log,
         });
