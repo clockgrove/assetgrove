@@ -132,6 +132,7 @@ async function prepare(args: MaterialsArgs, ctx: RunContext) {
     jobs,
     capUsd,
     paid: paidBy(provider, jobs),
+    providers: provider,
     candidates: 1,
   });
   return { spec, profile, derivation, provider, routes, config, capUsd, perCall, work };

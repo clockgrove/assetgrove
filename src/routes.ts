@@ -13,6 +13,8 @@ export const LOOKDEV_LOCATE_OPERATION = "lookdev-locate";
 export const LOOKDEV_GROOM_OPERATION = "lookdev-groom";
 export const LOOKDEV_MARKINGS_OPERATION = "lookdev-markings";
 export const IDENTITY_CHECK_OPERATION = "identity-check";
+/** The prompt policy's model check: one Boolean decision on a request's prompt text. */
+export const PROMPT_POLICY_OPERATION = "prompt-policy";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -164,6 +166,19 @@ export const defaultRoutes: Routes = {
       relabel: true,
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-08)",
+  },
+  // The prompt policy's model check (#185): one Boolean decision on a request's prompt text,
+  // text only, on the same typed decision model and upper bound as identity.
+  [PROMPT_POLICY_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
   },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
@@ -370,7 +385,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [IDENTITY_CHECK_OPERATION]: "vision",
   "material-qa": "vision",
   identity: "decisions",
-  "prompt-policy": "decisions",
+  [PROMPT_POLICY_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

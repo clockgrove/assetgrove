@@ -436,7 +436,8 @@ test("two paid runs whose combined forecast crosses the work-item limit: the sec
   assert.equal(refused.error.limit.workItem, "obj-72");
   assert.equal(refused.error.limit.limitUsd, 0.5);
   assert.ok(Math.abs(refused.error.limit.spentUsd - 0.32) < 1e-9);
-  assert.ok(Math.abs(refused.error.limit.requestedUsd - 0.32) < 1e-9);
+  // The whole forecast, the prompt policy's model check ($0.001) included.
+  assert.ok(Math.abs(refused.error.limit.requestedUsd - 0.321) < 1e-9);
   // Refused before any call: the script answered nothing more, the ledger is unchanged and the
   // second run's directory journaled no call.
   assert.equal(await callCount(), 7);

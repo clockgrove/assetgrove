@@ -22,7 +22,7 @@ test("every configured operation appears once with its host, and gateway routes 
   assert.deepEqual(
     [...operations].sort(),
     Object.keys(OPERATION_ROLES)
-      .filter((op) => op !== "fix" && op !== "prompt-policy")
+      .filter((op) => op !== "fix")
       .sort(),
   );
 

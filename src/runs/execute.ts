@@ -28,14 +28,20 @@ import {
   startRunReconcile,
 } from "../reconcile.ts";
 import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcile.ts";
-import { SpendHoldError } from "../spend.ts";
+import { Budget } from "../budget.ts";
+import { Caller } from "../calls.ts";
+import { checkPromptModel } from "../policy/model.ts";
+import type { PromptPolicyRecord } from "../policy/text.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
+import { SpendHoldError, ledgerFor } from "../spend.ts";
 import { requireConfirmation } from "../confirm/index.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import type { ConfirmationRecord } from "../types.ts";
-import { DEFAULT_ROUND } from "./plan.ts";
+import { DEFAULT_ROUND, policyTextOf } from "./plan.ts";
 import type { WorkPlan } from "./plan.ts";
 import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "./dir.ts";
 import { Journal, withRunScope } from "./journal.ts";
+import type { RunScope } from "./journal.ts";
 import { RunInProgressError, acquireRunLock } from "./lock.ts";
 
 export const STATE_FILE = "state.json";
@@ -168,6 +174,8 @@ export async function executeRun(options: {
   /** The `--provider-script` module, which reconciling gives the scripted providers it makes. */
   providerScript?: string;
   round?: number;
+  /** The work item the spend ledger counts the run's own prompt-policy call against. */
+  workItem?: string;
   prior?: () => Promise<ConfirmationRecord | undefined>;
 }): Promise<Outcome> {
   const { command, plan, ctx } = options;
@@ -246,16 +254,36 @@ export async function executeRun(options: {
 
     const progress = progressReporter(plan, ctx);
     const journal = new Journal(plan.runDir, runId);
+    const scope: RunScope = {
+      journal,
+      onCall: progress.onCall,
+      ...(confirmation && { clearance: { digest: plan.digest, record: confirmation } }),
+    };
+    let promptPolicy = plan.promptPolicy;
     let outcome: Outcome;
     try {
-      outcome = await withRunScope(
-        {
-          journal,
-          onCall: progress.onCall,
-          ...(confirmation && { clearance: { digest: plan.digest, record: confirmation } }),
-        },
-        () => options.run({ ...ctx, run: { dir: plan.runDir, plan } }),
-      );
+      outcome = await withRunScope(scope, async () => {
+        // The run's first job (design section 16): the prompt policy's model check, before any
+        // other call. A refusal exits 9; a check that cannot run exits 4 (fails closed).
+        const text = policyTextOf(plan);
+        if (text !== undefined && plan.promptPolicy !== undefined) {
+          try {
+            scope.promptPolicy = await promptPolicyCheck(
+              ctx,
+              options,
+              plan,
+              text,
+              plan.promptPolicy,
+            );
+          } catch (error) {
+            const refusedRecord = (error as { policy?: PromptPolicyRecord }).policy;
+            if (refusedRecord !== undefined) promptPolicy = refusedRecord;
+            throw error;
+          }
+          promptPolicy = scope.promptPolicy;
+        }
+        return options.run({ ...ctx, run: { dir: plan.runDir, plan } });
+      });
     } catch (error) {
       outcome = options.toOutcome(error);
     }
@@ -275,7 +303,7 @@ export async function executeRun(options: {
         exitCode: outcome.exitCode,
         ...(outcome.error && { error: outcome.error.code }),
         ...(typeof spent === "number" && { spentUsd: spent }),
-        ...(plan.promptPolicy && { promptPolicy: plan.promptPolicy }),
+        ...(promptPolicy && { promptPolicy }),
         ...(existsSync(join(plan.runDir, CONTACT_SHEET_FILE)) && {
           contactSheet: CONTACT_SHEET_FILE,
         }),
@@ -305,6 +333,33 @@ export async function executeRun(options: {
   } finally {
     lock.release();
   }
+}
+
+/**
+ * The prompt policy's model check, on the providers and routes of the settings, under the run's
+ * cap and the spend ledger of the run's work item; journaled in the run like any other call.
+ */
+async function promptPolicyCheck(
+  ctx: RunContext,
+  options: { providerScript?: string; workItem?: string },
+  plan: WorkPlan,
+  text: string,
+  record: PromptPolicyRecord,
+): Promise<PromptPolicyRecord> {
+  const providers = await providerSet(options.providerScript, ctx);
+  const budget = new Budget(
+    plan.capUsd,
+    ledgerFor(spendLedger(ctx, options.workItem), providers),
+  );
+  // The whole request's forecast must fit the ledger before its first call, this one.
+  budget.check(plan.forecastUsd, `the ${plan.jobs.length > 1 ? "run" : "prompt-policy check"}`);
+  const caller = new Caller({
+    provider: providers,
+    budget,
+    routes: providers.routes,
+    log: ctx.log,
+  });
+  return checkPromptModel(caller, text, record);
 }
 
 /** The settings and the providers they make, for reconciling; makes no call. */

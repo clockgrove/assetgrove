@@ -49,6 +49,7 @@ async function prepare(args: LookDevArgs, ctx: RunContext) {
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
+    providers,
     candidates: 1,
   });
   return { spec, bible, profile, providers, routes, capUsd, plan, work };

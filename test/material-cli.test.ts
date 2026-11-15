@@ -178,7 +178,8 @@ test("materials dry-run forecasts defaults without provider or output writes and
   assert.deepEqual(doc.plan.channels, ["normal", "height", "emissive", "roughness", "wind"]);
   assert.deepEqual(doc.plan.scales, [1, 2]);
   assert.equal(doc.plan.calls, 1);
-  assert.equal(doc.plan.estimateUsd, 0.02);
+  // The QA call and the prompt policy's model check on the spec's text.
+  assert.equal(doc.plan.estimateUsd, 0.021);
   await assert.rejects(readFile(join(out, "materials.json")), { code: "ENOENT" });
   const refused = await cli(...args, "--cap", "0");
   assert.equal(refused.code, 3);

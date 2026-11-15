@@ -29,6 +29,10 @@ export interface PromptPolicyRecord {
   match?: PolicyMatch;
   /** The settings allow terms (`promptPolicy.allow`) that cleared a hit. */
   allowedBy: string[];
+  /** The model check's route, `<provider>:prompt-policy:<model>`, once it has run. */
+  model?: string;
+  /** The model check's probability that the text breaks the policy, once it has run. */
+  probability?: number;
 }
 
 /** A prompt the policy refuses: exit 9 `prompt_refused`, with `error.policy`. */
@@ -37,7 +41,9 @@ export class PromptRefusedError extends Error {
   readonly policy: PromptPolicyRecord;
   constructor(policy: PromptPolicyRecord, where = "the prompt") {
     super(
-      `${where} names "${policy.match?.term ?? ""}" (${policy.match?.kind ?? "term"}), which the prompt policy refuses: describe the look in plain visual words and anchor it with reference images${policy.match?.kind === "phrase" ? "" : `, or add the term to promptPolicy.allow in the developer settings if it is not a name`}`,
+      policy.match === undefined && policy.probability !== undefined
+        ? `${where} reads as a request for a protected style, work, character or real person (the prompt-policy model check gives ${policy.probability.toFixed(2)}, refused at 0.5 or more): describe the look in plain visual words and anchor it with reference images`
+        : `${where} names "${policy.match?.term ?? ""}" (${policy.match?.kind ?? "term"}), which the prompt policy refuses: describe the look in plain visual words and anchor it with reference images${policy.match?.kind === "phrase" ? "" : `, or add the term to promptPolicy.allow in the developer settings if it is not a name`}`,
     );
     this.name = "PromptRefusedError";
     this.policy = policy;

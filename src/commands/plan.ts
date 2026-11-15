@@ -64,6 +64,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     jobs: forecast.jobs,
     capUsd: forecast.capUsd,
     paid: paidBy(providers, forecast.jobs),
+    providers,
     candidates: forecast.candidates,
     promptAllow: ctx.settings.promptPolicy.allow,
   });

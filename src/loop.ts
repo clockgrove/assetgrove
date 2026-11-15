@@ -15,6 +15,7 @@ import { Budget, BudgetExceededError } from "./budget.ts";
 import { ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
+import { currentRunScope } from "./runs/journal.ts";
 import { referenceLicenses } from "./bible.ts";
 import { InputError } from "./errors.ts";
 import { extensionOf, unavailableId } from "./extensions/errors.ts";
@@ -281,11 +282,13 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
     `${now().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   const runDir = resolve(options.runsDir, runId);
   await mkdir(runDir, { recursive: true });
+  // The run's model-checked record (model and probability) over the plan step's blocklist record.
+  const promptPolicy = currentRunScope()?.promptPolicy ?? options.promptPolicy;
 
   const run: RunRecord = {
     runId,
     runDir,
-    ...(options.promptPolicy && { promptPolicy: options.promptPolicy }),
+    ...(promptPolicy && { promptPolicy }),
     createdAt: now().toISOString(),
     spec,
     specDir: resolve(options.specDir),
@@ -381,7 +384,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         call.records.some((r) => r.seed !== undefined) ? seed : undefined,
       );
       provenance.digitalSourceType = digitalSourceType;
-      if (options.promptPolicy) provenance.promptPolicy = options.promptPolicy;
+      if (promptPolicy) provenance.promptPolicy = promptPolicy;
       const pixelHashes = ["image/png", "image/jpeg"].includes(generated.output.mediaType)
         ? [pixelHash(decodeImage(generated.output.bytes))]
         : [];
