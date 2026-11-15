@@ -1,6 +1,8 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
+const BANNED = "lancedb|huggingface|onnxruntime-|assetgrove-search"; // no "/" inside an esquery regex
+
 export default tseslint.config(
   {
     ignores: ["node_modules/", "coverage/", "dist/", ".assetgrove/", "packages/"],
@@ -27,6 +29,14 @@ export default tseslint.config(
             },
           ],
         },
+      ],
+      // Dynamic `import()` expressions and type-only `import("…")` types are checked the same way.
+      "no-restricted-syntax": [
+        "error",
+        ...["ImportExpression > Literal", "TSImportType Literal"].map((selector) => ({
+          selector: `${selector}[value=/${BANNED}/]`,
+          message: "Core never imports the search package, LanceDB or Transformers.js.",
+        })),
       ],
     },
   },

@@ -14,6 +14,10 @@ export interface Row {
   subject?: string;
   tags?: string[];
   state?: string;
+  bible?: string;
+  license?: string;
+  /** The game id, kept for display. */
+  game?: string;
   title?: string;
   description?: string;
   /** Full-text searched. */

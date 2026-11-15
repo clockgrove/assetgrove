@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { Embedder } from "./embedder.ts";
 import { normalize } from "./embedder.ts";
 import { SearchError } from "./errors.ts";
-import { flattenPng, type RgbImage } from "./flatten.ts";
+import { flattenRgba, type RgbImage } from "./flatten.ts";
 import { MODEL_MANIFEST, type ModelManifest } from "./model-manifest.ts";
 import { exists, modelFolder } from "./setup.ts";
 
@@ -69,19 +69,18 @@ export async function loadSiglip2(
     async embedImages(images) {
       const prepared = [];
       for (const bytes of images) {
-        // Transparent PNGs are flattened onto the fixed background first.
-        const img = isPng(bytes)
-          ? toTensorImage(flattenPng(bytes), tjs)
-          : (await tjs.RawImage.fromBlob(new Blob([bytes]))).rgb();
-        prepared.push(img);
+        // Every format decodes the same way; anything with an alpha channel is flattened onto the
+        // fixed background (Transformers.js's own rgb() would drop alpha without compositing).
+        const raw = await tjs.RawImage.fromBlob(new Blob([bytes]));
+        prepared.push(
+          raw.channels === 4
+            ? toTensorImage(flattenRgba(raw.width, raw.height, raw.data), tjs)
+            : raw.rgb(),
+        );
       }
       const inputs = await processor(prepared);
       const out = await visionModel(inputs);
       return rows(out.pooler_output ?? out.image_embeds);
     },
   };
-}
-
-function isPng(b: Uint8Array): boolean {
-  return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
 }

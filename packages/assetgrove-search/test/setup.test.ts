@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { MODEL_MANIFEST, isPinned } from "../src/model-manifest.ts";
 import type { ModelManifest } from "../src/model-manifest.ts";
 import { SearchError } from "../src/errors.ts";
-import { assertModelFiles } from "../src/siglip2.ts";
-import { modelIsInstalled, setupModel } from "../src/setup.ts";
+import { loadSiglip2 } from "../src/siglip2.ts";
+import { modelFolder, modelIsInstalled, setupModel } from "../src/setup.ts";
 
 const REV = "a".repeat(40);
 const contents: Record<string, string> = {
@@ -126,6 +126,28 @@ describe("the shipped manifest", () => {
   });
 });
 
+describe("stale staging folders", () => {
+  it("removes partial folders left by an interrupted setup", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ag-search-"));
+    const stale = join(dir, `.${MODEL_MANIFEST.id}.partial-deadbeef`);
+    await mkdir(stale, { recursive: true });
+    await assert.rejects(
+      setupModel({
+        modelsDir: dir,
+        manifest: {
+          ...MODEL_MANIFEST,
+          files: [{ path: "config.json", sha256: "0".repeat(64) }],
+          primaryBase: "http://127.0.0.1:1",
+          mirrorBase: "http://127.0.0.1:1",
+        },
+        fetch: (() => Promise.reject(new Error("down"))) as typeof fetch,
+      }),
+    );
+    assert.deepEqual(await readdir(dir), []);
+    await rm(dir, { recursive: true });
+  });
+});
+
 describe("offline loading", () => {
   it("fails with an error naming search setup and makes no network call", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ag-search-"));
@@ -136,7 +158,12 @@ describe("offline loading", () => {
       throw new Error("network");
     }) as typeof fetch;
     try {
-      await assert.rejects(assertModelFiles(dir), (e: unknown) => {
+      const folder = modelFolder(dir);
+      for (const f of MODEL_MANIFEST.files.slice(1)) {
+        await mkdir(dirname(join(folder, f.path)), { recursive: true });
+        await writeFile(join(folder, f.path), "x");
+      }
+      await assert.rejects(loadSiglip2(dir), (e: unknown) => {
         assert.ok(e instanceof SearchError);
         assert.equal(e.code, "model_missing");
         assert.match(e.message, /search setup/);

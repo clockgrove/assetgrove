@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SearchError } from "./errors.ts";
 import {
@@ -73,6 +73,12 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
   if (await modelIsInstalled(options.modelsDir, manifest)) return { dir: final };
 
   await mkdir(options.modelsDir, { recursive: true });
+  // A killed or interrupted setup cannot run its `finally`: sweep what earlier runs left behind.
+  for (const name of await readdir(options.modelsDir)) {
+    if (name.startsWith(`.${manifest.id}.partial-`)) {
+      await rm(join(options.modelsDir, name), { recursive: true, force: true });
+    }
+  }
   const stage = join(
     options.modelsDir,
     `.${manifest.id}.partial-${randomBytes(6).toString("hex")}`,
