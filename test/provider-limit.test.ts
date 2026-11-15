@@ -1,6 +1,7 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -245,7 +246,8 @@ test("a scripted gateway 402 quota error exits 3 cap_refused", async () => {
     const { args } = await stageArgs();
     const r = await cli(args, {
       ...process.env,
-      ASSETGROVE_TEST_GATEWAY_KEY: "quota-test-key-0123456789",
+      // Made at run time: a literal value in this tracked file would trip the tracked-key guard.
+      ASSETGROVE_TEST_GATEWAY_KEY: `quota-test-${randomUUID()}`,
     });
     assert.equal(r.code, 3, r.stderr);
     const document = JSON.parse(r.stdout) as { error: { code: string; message: string } };
