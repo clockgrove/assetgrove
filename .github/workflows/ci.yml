@@ -16,8 +16,13 @@ concurrency:
 permissions:
   contents: read
 
-# check: format, lint and types, on Linux. test: the offline suite, on Linux for pull requests and the merge
-# queue, and on Linux, macOS and Windows on main. The roll-up `ci`, the one required check, needs both.
+# check: format, lint and types, on Linux. test: the offline suite. A pull request runs it on Linux in four
+# shards, so a push gets its answer in about a third of the time. The merge queue and main run it whole on
+# Linux, macOS and Windows, so nothing reaches main that fails on any of them. The roll-up `ci`, the one
+# required check, needs both jobs.
+#
+# The pnpm store is cached per system and lockfile. Only a push to main saves it; pull requests and the
+# merge queue restore it read-only, so a pull request can't plant a cache that main would use.
 jobs:
   check:
     runs-on: ubuntu-26.04
@@ -37,6 +42,19 @@ jobs:
       - name: Enable pnpm from packageManager
         run: corepack enable
 
+      - name: Find the pnpm store
+        id: store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pnpm store
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
       - name: Install the locked dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
@@ -47,8 +65,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests and the merge queue run Linux only; macOS and Windows run on main after merge.
-        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-26.04","macos-26","windows-2025"]') || fromJSON('["ubuntu-26.04"]') }}
+        include: ${{ github.event_name == 'pull_request' && fromJSON('[{"os":"ubuntu-26.04","shard":"1/4"},{"os":"ubuntu-26.04","shard":"2/4"},{"os":"ubuntu-26.04","shard":"3/4"},{"os":"ubuntu-26.04","shard":"4/4"}]') || fromJSON('[{"os":"ubuntu-26.04","shard":"1/1"},{"os":"macos-26","shard":"1/1"},{"os":"windows-2025","shard":"1/1"}]') }}
+    name: test (${{ matrix.os }}, ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
     # Decision: the offline suite is expected to take minutes; 20 bounds a hung run.
     timeout-minutes: 20
@@ -70,11 +88,33 @@ jobs:
       - name: Enable pnpm from packageManager
         run: corepack enable
 
+      - name: Find the pnpm store
+        id: store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pnpm store
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
       - name: Install the locked dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      # The same command as `pnpm test`, with the shard this leg runs (1/1 is the whole suite).
       - name: Test
-        run: pnpm test
+        shell: bash
+        run: node --test --test-shard=${{ matrix.shard }} "test/**/*.test.ts"
+
+      - name: Save the pnpm store
+        if: github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
   ci:
     needs: [check, test]
@@ -82,7 +122,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - name: Require check and the test legs
+      - name: Require check and every test leg
         env:
           CHECK: ${{ needs.check.result }}
           TEST: ${{ needs.test.result }}
