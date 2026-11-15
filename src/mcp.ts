@@ -242,6 +242,12 @@ async function callContext(server: RunContext, args: Arguments): Promise<RunCont
   });
 }
 
+/** `ls` and `cat` read the tree the server serves unless the call names another project. */
+function browseArgs(spec: CommandSpec, args: Arguments, tree: TreeServer): Arguments {
+  if ((spec.tool !== "ls" && spec.tool !== "cat") || args["target"] !== undefined) return args;
+  return { ...args, target: tree.dir };
+}
+
 /** The context with each progress update also checking the tree for changes the call made. */
 function withTreeProgress(ctx: RunContext, check: () => void): RunContext {
   const report = ctx.progress;
@@ -382,7 +388,16 @@ function createServer(
           : await tree.around(
               spec.tool!,
               (progress) =>
-                callTool(spec, args ?? {}, ctx, request, server, codec, marked, progress),
+                callTool(
+                  spec,
+                  browseArgs(spec, args ?? {}, tree),
+                  ctx,
+                  request,
+                  server,
+                  codec,
+                  marked,
+                  progress,
+                ),
               (result) => !isInputRequiredResult(result) && result.exitCode === 0,
             );
         if (isInputRequiredResult(outcome)) return outcome;

@@ -3,7 +3,7 @@ import { approve, approveProfile, settingsPath } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { after, before, test } from "node:test";
@@ -17,6 +17,7 @@ import type { CommandSpec } from "../src/commands/types.ts";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import type { TargetProfile } from "../src/types.ts";
+import { GAME, fixtureLibrary } from "./fixtures/library.ts";
 import { lodModel } from "./fixtures/lod.ts";
 import { quadrupedTemplate, syntheticQuadruped, walkGait } from "./fixtures/quadruped.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
@@ -223,6 +224,16 @@ async function world() {
   await writeFile(join(dir, "spec.json"), JSON.stringify(shelterSpec));
   await writeFile(join(dir, "bible", "bible.json"), JSON.stringify(w.bible));
   await writeFile(join(dir, "profile.json"), JSON.stringify(w.profile));
+}
+
+/** The fixture library (test/fixtures/library.ts) in the work directory, built once. */
+async function library(): Promise<string> {
+  const dir = join(work, "library");
+  if (existsSync(dir)) return dir;
+  const built = fixtureLibrary();
+  await cp(built.dir, dir, { recursive: true });
+  await rm(built.dir, { recursive: true, force: true });
+  return dir;
 }
 
 /** A scripted provider module written into the work directory under `name`. */
@@ -586,6 +597,14 @@ const rows: Row[] = [
       const [run] = await readdir(runs);
       return { run: run!, runs };
     },
+  },
+  {
+    tool: "ls",
+    prepare: async () => ({ address: `asset://${GAME}/by-tag/prop/`, target: await library() }),
+  },
+  {
+    tool: "cat",
+    prepare: async () => ({ address: `asset://${GAME}/lantern/image`, target: await library() }),
   },
   {
     tool: "op",

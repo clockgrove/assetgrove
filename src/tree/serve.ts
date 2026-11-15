@@ -40,7 +40,8 @@ function readError(error: unknown, uri: string): ProtocolError {
 const ASSET_FILES = ["card", "provenance", "review", "log", "image", "image/full"];
 
 export class TreeServer {
-  private readonly dir: string;
+  /** The project directory served. */
+  readonly dir: string;
   private readonly stateDir: string;
   private readonly subscribed = new Set<string>();
   private server?: McpServer;

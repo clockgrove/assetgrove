@@ -52,10 +52,12 @@ MCP tool: `apply`, arguments `plan`, `out`, `note`, `workItem`, `round`.
 ### `mcp`
 
 ```text
-mcp [--work-item <label>] [--provider-script <module>]
+mcp [--target <dir>] [--work-item <label>] [--provider-script <module>]
 ```
 
 Serves one MCP tool per command other than `mcp` over MCP stdio with the official MCP SDK; each tool takes its command's arguments and returns the same result document as the command's JSON output (as `structuredContent`, with `isError` set when the result is not ok), and file paths are local to the server. A paid tool call runs in the server's process; while its client is connected, a call that carries a `progressToken` gets `notifications/progress` at least once per job. If the client drops, the run goes on until it ends or the server stops; repeating the request resumes it from its journal. Stdout carries the protocol, so it prints no JSON document; logs go to stderr. Spends and writes as the commands it serves do. Like every paid command, it exits 2 `settings_invalid` when a TLS or proxy variable is set that the settings' `environment.allow` does not list.
+
+It also serves the library of the project at `--target` (default: the working directory's Git top level) as `asset://<game>/` resources, the tree `ls` and `cat` read: `resources/list` (the game root, every folder and card address, 200 per cursor page), `resources/templates/list`, `resources/read` and `resources/subscribe`. After each of its own tool calls it sends `notifications/resources/updated` for a subscribed asset or run folder that changed (a new version or annotation, a staged candidate) and `notifications/resources/list_changed` after a pick or write it served. A refused read answers JSON-RPC `-32602` with `data.code` `invalid_input`. Other changes show at the next read.
 
 ### `materials`
 
@@ -375,6 +377,26 @@ runs show <r-16hex> [--runs <dir>] [--json]
 Shows one run: the fields `runs list` gives, its `request` (`request.json`, the WorkPlan), `state` (`state.json`), `record` (`run.json`) and `journal`, each journaled call's `{callKey, operation, provider, model, costUsd, costSource, requestId}`. An unknown run id exits 2. Local: no model call, no spend, nothing written.
 
 MCP tool: `runs_show`, arguments `run`, `runs`.
+
+### `ls`
+
+```text
+ls <address> [--target <dir>] [--json]
+```
+
+Lists a folder of the library's `asset://<game>/` tree (the project at `--target`, default the working directory's Git top level, whose `.assetgrove/profile.json` names the game and library root): the game root, `by-kind/<kind>/`, `by-subject/<subject>/`, `by-tag/<tag>/`, `stale/`, `runs/`, `runs/<run>/`, `<asset>/` or `<asset>/versions/`. Returns the folder's JSON document `{address, kind: "folder", children: [{address, name, kind, state?}], next?}`, the same one `resources/read` returns: at most 200 children per read, `next` the address of the next page. Card text appears only under `sharedText`. A file address, an unknown address or a card naming a path outside the library root exits 2 `invalid_input`. Local: no model call, no spend, nothing written.
+
+MCP tool: `ls`, arguments `address`, `target` (default: the server's project).
+
+### `cat`
+
+```text
+cat <address> [--target <dir>] [--out <file>] [--json]
+```
+
+Reads any address of the tree and returns `{address, contents}`, the contents `resources/read` returns (each `{uri, mimeType, text}` or `{uri, mimeType, blob}`): a folder's JSON document (and the root's `index.md`); `<asset>/card` and `log` as Markdown; `provenance` and `review` as JSON; `image` a PNG thumbnail of at most 512 px (a strip's key-frame row; a 3D asset's path and turntable frames); `image/full` the file; `versions/<n>` the version record with its image while the bytes are in the working file, a run folder or the local LFS store; `runs/<run>/<candidate>` the candidate's QA reasons and cost. No read's encoded content exceeds 64 KB: what would is replaced by a pointer `{path, mediaType, bytes, tooLarge: true}`. `--out` writes the file the address names (the whole file for `image/full`). Thumbnails are cached in `<stateDir>/thumbs/`. No model call, no spend.
+
+MCP tool: `cat`, arguments `address`, `target` (default: the server's project), `out`.
 
 ### `estimate`
 

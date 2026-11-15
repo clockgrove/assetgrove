@@ -38,9 +38,25 @@ export const RUN_ID = "r-0123456789abcdef";
 export const sha256 = (bytes: Uint8Array | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-/** The profile of the fixture project: the synthetic profile with a library block. */
+/**
+ * The profile of the fixture project: the synthetic profile with a library block, a still's media
+ * at `assets/<id>.<ext>` (the lantern's own path) and no validator, so a pick into it needs none.
+ */
 export function libraryProfile(): TargetProfile {
-  return syntheticProfile({ library: { root: LIBRARY_ROOT, game: GAME } });
+  const profile = syntheticProfile({
+    layout: {
+      media: `${LIBRARY_ROOT}/{{spec.assetId}}.{{output.extension}}`,
+      manifest: "manifests/{{spec.assetId}}.json",
+    },
+    manifest: {
+      assetId: "{{spec.assetId}}",
+      review: { status: "pending" },
+      contentHash: "{{output.sha256}}",
+    },
+    library: { root: LIBRARY_ROOT, game: GAME },
+  });
+  delete profile.validator;
+  return profile;
 }
 
 export interface FixtureLibrary {
