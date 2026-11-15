@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { parse as parseYaml } from "yaml";
 import { InputError } from "../src/errors.ts";
 import {
   checkIndexPaths,
@@ -66,7 +67,7 @@ test("an index renders identically from every input order", () => {
       "---",
       "okf_version: 0.2",
       "type: Asset Library",
-      'game: "my game"',
+      "game: my game",
       "---",
       "",
       "# my game",
@@ -253,6 +254,12 @@ test("union-merged indexes and logs collapse their duplicates", () => {
     "i",
   );
   assert.deepEqual(root.root, { okfVersion: "0.2", game: "g" });
+  for (const game of ["true", "123", "null", "1.0", "my: game", "#g"]) {
+    const rendered = renderIndex({ name: game, root: { game }, folders: [], assets: [] });
+    const front = rendered.split("---\n")[1]!;
+    assert.equal((parseYaml(front) as { game: unknown }).game, game);
+    assert.equal(parseIndex(rendered, "i").root?.game, game);
+  }
 
   const a: LogEntry = { at: "2026-11-22T09:00:00Z", action: "pick", asset: ASSET };
   const b: LogEntry = { at: "2026-11-22T10:00:00Z", action: "approve", asset: ASSET };

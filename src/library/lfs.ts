@@ -117,7 +117,8 @@ async function readExisting(path: string): Promise<Uint8Array> {
 /**
  * Reads the media at `path`. A Git LFS pointer resolves to its local object when that object's size
  * and hash match the pointer, else stays a pointer with no bytes. `sha256`, when given, is compared
- * with the media hash (the oid for a pointer).
+ * with the media hash (the oid for a pointer). Bytes that look like a pointer but fail the strict
+ * parse are refused (InputError), so pointer text is never returned as media.
  */
 export async function readMedia(
   path: string,
@@ -130,6 +131,11 @@ export async function readMedia(
     expected === undefined ? read : { ...read, matches: read.sha256 === expected };
 
   const pointer = parseLfsPointer(bytes);
+  if (!pointer && isLfsPointer(bytes)) {
+    throw new InputError(
+      `media file ${path} looks like a Git LFS pointer but is not a valid spec v1 pointer`,
+    );
+  }
   if (!pointer) return withMatch({ kind: "file", bytes, sha256: sha256Of(bytes) });
 
   const gitDir = options.gitDir ?? findGitDir(dirname(abs));

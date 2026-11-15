@@ -98,6 +98,21 @@ test("a plain file reads as a file with its own hash", async () => {
   assert.equal(read.matches, true);
 });
 
+test("a near-miss pointer is refused by readMedia, never returned as media", async () => {
+  const { repo, oid, object, text } = await fixture();
+  await store(repo, oid, object);
+  const nearMisses = [
+    text.trimEnd(),
+    `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\n`,
+    text.replace(`sha256:${oid}`, `sha256:${oid.slice(1)}`),
+  ];
+  for (const [i, nearMiss] of nearMisses.entries()) {
+    const media = join(repo, "lib", `near-${i}.png`);
+    await writeFile(media, nearMiss);
+    await assert.rejects(readMedia(media, { sha256: oid }), InputError);
+  }
+});
+
 test("a missing media file is invalid input", async () => {
   const { repo } = await fixture();
   await assert.rejects(readMedia(join(repo, "lib", "none.png")), InputError);

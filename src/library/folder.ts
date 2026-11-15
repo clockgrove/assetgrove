@@ -6,6 +6,8 @@
  * headings in either file; the readers collapse them, and every path read from an index row or a
  * log line is held to the library path rule.
  */
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { splitFrontMatter } from "../bible.ts";
 import { InputError } from "../errors.ts";
 import { libraryPath } from "./paths.ts";
 import type { ReviewRecord } from "./review.ts";
@@ -64,10 +66,6 @@ export interface IndexInput {
   assets: IndexAsset[];
 }
 
-function yamlScalar(value: string): string {
-  return /^[A-Za-z0-9._-]+$/.test(value) ? value : JSON.stringify(value);
-}
-
 /** The text of an `index.md`. */
 export function renderIndex(input: IndexInput): string {
   const folders = [...new Set(input.folders)].sort(compare);
@@ -88,14 +86,12 @@ export function renderIndex(input: IndexInput): string {
 
   const lines: string[] = [];
   if (input.root) {
-    lines.push(
-      "---",
-      "okf_version: 0.2",
-      "type: Asset Library",
-      `game: ${yamlScalar(input.root.game)}`,
-      "---",
-      "",
-    );
+    const front = stringifyYaml({
+      okf_version: 0.2,
+      type: "Asset Library",
+      game: input.root.game,
+    }).trimEnd();
+    lines.push("---", front, "---", "");
   }
   lines.push(`# ${escapeText(input.name)}`);
   if (folders.length > 0) {
@@ -130,38 +126,29 @@ export interface ParsedIndex {
 
 const ROW = /^- \[((?:\\.|[^\\\]])*)\]\(([^)\s]*)\)(?:: (.*))?$/;
 
-function scalar(value: string): string {
-  if (value.startsWith('"')) {
-    try {
-      const parsed: unknown = JSON.parse(value);
-      if (typeof parsed === "string") return parsed;
-    } catch {
-      // fall through to the raw text
-    }
-  }
-  return value;
+function frontField(value: unknown): string {
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
 /** Reads an `index.md`, collapsing the duplicate headings and rows a union merge leaves. */
 export function parseIndex(text: string, source: string): ParsedIndex {
-  const lines = text.split(/\r?\n/);
+  let lines = text.split(/\r?\n/);
   const result: ParsedIndex = { folders: [], assets: [] };
-  let start = 0;
-  if (lines[0]?.trim() === "---") {
-    const end = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
-    if (end > 0) {
-      const fields = new Map<string, string>();
-      for (const line of lines.slice(1, end)) {
-        const match = /^([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(line);
-        if (match && !fields.has(match[1]!)) fields.set(match[1]!, scalar(match[2]!));
-      }
-      result.root = { okfVersion: fields.get("okf_version") ?? "", game: fields.get("game") ?? "" };
-      start = end + 1;
+  if (lines[0]?.trim() === "---" && lines.some((line, i) => i > 0 && line.trim() === "---")) {
+    const { front, prose } = splitFrontMatter(text);
+    let fields: unknown;
+    try {
+      fields = parseYaml(front, { uniqueKeys: false });
+    } catch (error) {
+      throw new InputError(`${source}: invalid front matter YAML: ${(error as Error).message}`);
     }
+    const map = fields !== null && typeof fields === "object" ? (fields as Record<string, unknown>) : {};
+    result.root = { okfVersion: frontField(map.okf_version), game: frontField(map.game) };
+    lines = prose.split(/\r?\n/);
   }
   const folders = new Set<string>();
   const assets = new Map<string, ParsedIndexAsset>();
-  for (const line of lines.slice(start)) {
+  for (const line of lines) {
     const row = ROW.exec(line);
     if (!row) continue;
     const target = decodeTarget(row[2]!, source);
