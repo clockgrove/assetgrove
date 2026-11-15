@@ -146,6 +146,7 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
       runId: basename(dir),
       capUsd,
       log: ctx.log,
+      ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
     });
     const fields = { runDir, ...run };
     const human = formatRun(run, runDir);

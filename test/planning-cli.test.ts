@@ -232,6 +232,49 @@ test("apply re-resolves the cap from the settings: a cap changed since planning 
   writeSettings({});
 });
 
+test("plan keeps the compiler call's record in its run directory, which the saved plan's requestDigest names", async () => {
+  const f = await setup();
+  const runs = join(f.dir, "plan-runs");
+  const planned = await cli(["plan", ...f.args, "--runs", runs]);
+  assert.equal(planned.code, 0, planned.stderr);
+  const { compiler } = JSON.parse(planned.stdout);
+  const saved = JSON.parse(await readFile(f.plan, "utf8")) as { requestDigest: string };
+  const record = JSON.parse(
+    await readFile(join(runs, `r-${saved.requestDigest.slice(0, 16)}`, "compiler.json"), "utf8"),
+  );
+  assert.deepEqual(record, compiler);
+  assert.ok(Array.isArray(record.calls));
+  assert.equal(typeof record.model, "string");
+});
+
+test("apply re-resolves routes from the settings: a settings route changed since planning exits 2 plan_changed", async () => {
+  const f = await setup();
+  const planned = await cli(["plan", ...f.args]);
+  assert.equal(planned.code, 0, planned.stderr);
+  const saved = JSON.parse(await readFile(f.plan, "utf8")) as { operations: string[] };
+  const operation = saved.operations[0]!;
+  writeSettings({
+    routes: {
+      [operation]: { provider: "scripted", model: "another-model", estimatedCostUsd: 0.05 },
+    },
+  });
+  const before = await readFile(f.events, "utf8");
+  const apply = await cli([
+    "apply",
+    f.plan,
+    "--provider-script",
+    f.script,
+    "--out",
+    join(f.dir, "runs"),
+    "--auto-approve",
+    "--json",
+  ]);
+  assert.equal(apply.code, 2, apply.stderr);
+  assert.equal(JSON.parse(apply.stdout).error.code, "plan_changed");
+  assert.equal(await readFile(f.events, "utf8"), before);
+  writeSettings({});
+});
+
 test("CLI preset switching changes subsequent plans and makes the prior plan stale", async () => {
   const f = await setup();
   const first = await cli(["plan", ...f.args]);

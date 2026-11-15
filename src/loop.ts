@@ -70,6 +70,8 @@ export interface StageOptions {
   now?: () => Date;
   /** Receives one line per candidate outcome and one when the run stops early. */
   log?: (message: string) => void;
+  /** The plan step's prompt-policy record, kept in the run record and each candidate's provenance. */
+  promptPolicy?: PromptPolicyRecord;
   /** The measured stability entries model-backed checks filter by; src/qa/stability.json by default. */
   stability?: readonly StabilityEntry[];
 }
@@ -281,6 +283,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   const run: RunRecord = {
     runId,
     runDir,
+    ...(options.promptPolicy && { promptPolicy: options.promptPolicy }),
     createdAt: now().toISOString(),
     spec,
     specDir: resolve(options.specDir),
@@ -375,6 +378,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         call.records.some((r) => r.seed !== undefined) ? seed : undefined,
       );
       provenance.digitalSourceType = digitalSourceType;
+      if (options.promptPolicy) provenance.promptPolicy = options.promptPolicy;
       const pixelHashes = ["image/png", "image/jpeg"].includes(generated.output.mediaType)
         ? [pixelHash(decodeImage(generated.output.bytes))]
         : [];

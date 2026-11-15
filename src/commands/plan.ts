@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { loadProfile, readJson } from "../inputs.ts";
 import { generationTool } from "../mcp.ts";
 import { planJobs } from "../planning.ts";
@@ -15,6 +17,9 @@ import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, formatWork } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext, WorkPlan } from "./types.ts";
+
+/** The plan command's compiler record in its run directory. */
+export const COMPILER_FILE = "compiler.json";
 
 interface PlanArgs {
   spec: string;
@@ -147,6 +152,13 @@ Review the saved plan before apply; this command never generates images.`,
         ...(ctx.run && { requestDigest: ctx.run.plan.digest }),
       },
     );
+    // The compiler call's record (model, route, request ID, cost) stays in the plan command's run
+    // directory, which the saved plan's requestDigest names; the plan itself holds none of it.
+    if (ctx.run && result["compiler"] !== undefined)
+      await writeFile(
+        join(ctx.run.dir, COMPILER_FILE),
+        `${JSON.stringify(result["compiler"], null, 2)}\n`,
+      );
     return { exitCode: 0, fields: { ...result }, human: JSON.stringify(result, null, 2) };
   },
 });

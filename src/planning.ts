@@ -1341,7 +1341,6 @@ export async function applyPlan(
     await savePlan(plan, join(runDir, "plan.json"));
   }
   return { run, runDir };
-  return { run, runDir };
 }
 
 function assertConstitutionalContext(text: string, bible: ArtBible): void {

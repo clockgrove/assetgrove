@@ -87,6 +87,7 @@ import {
   parseMarkingsReply,
 } from "./markings.ts";
 import type { MarkingMeasure } from "./markings.ts";
+import type { PromptPolicyRecord } from "../../policy/text.ts";
 import { lookdevSettings } from "./settings.ts";
 import type { LookdevSettings, PreviewLightingSettings } from "./settings.ts";
 
@@ -157,6 +158,8 @@ export interface LookdevOptions {
   runId?: string;
   now?: () => Date;
   log?: (message: string) => void;
+  /** The plan step's prompt-policy record, kept in the run record and the model's provenance. */
+  promptPolicy?: PromptPolicyRecord;
 }
 
 export interface LookdevPlan {
@@ -1642,6 +1645,7 @@ export async function lookDev(
     finishedAt: now().toISOString(),
     ...(outputGrant && { outputGrant }),
     ...(identity && { identity }),
+    ...(options.promptPolicy && { promptPolicy: options.promptPolicy }),
     digitalSourceType,
     steps: [...(provenance.steps ?? []), step, metadataStep(digitalSourceType, [])],
   };
@@ -1687,6 +1691,7 @@ export async function lookDev(
   const run: RunRecord = {
     runId,
     runDir,
+    ...(options.promptPolicy && { promptPolicy: options.promptPolicy }),
     createdAt: now().toISOString(),
     spec,
     specDir: resolve(options.specDir),

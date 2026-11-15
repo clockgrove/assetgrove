@@ -176,6 +176,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       capUsd,
       ledger,
       log: ctx.log,
+      ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
     });
     const fields = withSharedText({ runDir, ...run }, sharedTexts(bible.value));
     const human = formatRun(run, runDir);

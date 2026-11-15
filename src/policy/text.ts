@@ -126,9 +126,47 @@ export function enforcePromptPolicy(
   return record;
 }
 
-/** A string that names a file rather than describing anything: no whitespace, and a separator or an extension. */
+/** The extensions of the files a request names: images, models, data, documents and audio. */
+const FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "bmp",
+  "tga",
+  "tif",
+  "tiff",
+  "exr",
+  "hdr",
+  "ktx2",
+  "svg",
+  "glb",
+  "gltf",
+  "fbx",
+  "obj",
+  "bin",
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "md",
+  "txt",
+  "csv",
+  "wav",
+  "ogg",
+  "mp3",
+  "mp4",
+  "webm",
+]);
+
+/**
+ * A string that names a file rather than describing anything: no whitespace and a known file
+ * extension. Anything else, slash- or dot-bearing or not, is prompt text.
+ */
 function pathLike(value: string): boolean {
-  return !/\s/.test(value) && (/[/\\]/.test(value) || /\.[A-Za-z0-9]{1,5}$/.test(value));
+  const extension = /\.([A-Za-z0-9]+)$/.exec(value)?.[1]?.toLowerCase();
+  return !/\s/.test(value) && extension !== undefined && FILE_EXTENSIONS.has(extension);
 }
 
 /** Every string value of a JSON value, keys left out, path-like strings left out. */

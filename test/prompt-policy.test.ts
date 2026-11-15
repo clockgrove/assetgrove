@@ -14,7 +14,13 @@ import { Caller } from "../src/calls.ts";
 import { failureOutcome } from "../src/commands/result.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
-import { checkPromptText, enforcePromptPolicy, PromptRefusedError } from "../src/policy/text.ts";
+import {
+  checkPromptText,
+  enforcePromptPolicy,
+  promptStrings,
+  PromptRefusedError,
+} from "../src/policy/text.ts";
+import { sheetBrief } from "../src/sheet/generate.ts";
 import { ProviderSet } from "../src/providers/set.ts";
 import { planDigest } from "../src/planning.ts";
 import type { SavedPlan } from "../src/planning.ts";
@@ -527,4 +533,42 @@ test("policyTextSha256 is in the WorkPlan and changes the digest with the spec t
   assert.equal(a.promptPolicy.textSha256, a.policyTextSha256);
   assert.notEqual(a.policyTextSha256, b.policyTextSha256);
   assert.notEqual(a.digest, b.digest);
+});
+
+test("only file names are left out of prompt text: slash- and dot-bearing words are checked", () => {
+  const strings = promptStrings({
+    description: `${FIRST}/${LAST}`,
+    mood: `${FIRST}${LAST}.art`,
+    tag: `style:${FIRST}/${LAST}`,
+    reference: "refs/fox-turnaround.png",
+    model: "models/fox.glb",
+  });
+  assert.deepEqual(strings, [`${FIRST}/${LAST}`, `${FIRST}${LAST}.art`, `style:${FIRST}/${LAST}`]);
+  for (const text of strings) assert.equal(checkPromptText(text).match?.term, TERM, text);
+});
+
+test("a sheet brief honours the settings allow terms", () => {
+  const brief = { purpose: `a fox ${STYLE}` };
+  assert.throws(() => sheetBrief(brief), PromptRefusedError);
+  assert.equal(sheetBrief(brief, [TERM]).purpose, brief.purpose);
+});
+
+test("stage keeps the plan step's promptPolicy in its run record and each candidate's provenance", async () => {
+  const dir = await tempDir("assetgrove-policy-stage-");
+  const stage = await stageFiles(STYLE);
+  const script = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+  approve(script);
+  writeSettings({ promptPolicy: { allow: [TERM] } });
+  const run = await cli([
+    ...["stage", "--spec", stage.spec, "--bible", stage.bible, "--profile", stage.profile],
+    ...["--runs", join(dir, "runs"), "--provider-script", script, "--json"],
+  ]);
+  writeSettings({});
+  assert.equal(run.code, 0, run.stdout + run.stderr);
+  const record = JSON.parse(await readFile(join(doc(run).runDir, "run.json"), "utf8")) as Doc;
+  assert.equal(record.promptPolicy.verdict, "allowed");
+  assert.deepEqual(record.promptPolicy.allowedBy, [TERM]);
+  assert.ok(record.candidates.length > 0);
+  for (const candidate of record.candidates)
+    assert.deepEqual(candidate.provenance.promptPolicy, record.promptPolicy);
 });
