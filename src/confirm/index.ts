@@ -1,7 +1,8 @@
 /**
  * Spend, pick and write confirmation (design section 7). Sources, in order: headless settings
  * (method `headless`; a headless pick must name its candidate); the record at
- * `<configDir>/confirmations/<hex>.json` for the request's digest; a prior confirmation the
+ * `<configDir>/confirmations/<hex>.json` for the request's digest (a spend's, while it is unbound
+ * or bound to this run and that run has not finished); a prior confirmation the
  * command names (apply's plan); an MCP client's form (method `elicitation`, src/confirm/mcp.ts) or
  * the inline prompt of a TTY (method `tty`); otherwise the request
  * is saved to `<stateDir>/pending/<id>.json` and exit 8 `confirmation_required` carries it, and
@@ -13,9 +14,16 @@ import type { Settings } from "../settings.ts";
 import type { ConfirmationMethod, ConfirmationRecord } from "../types.ts";
 import { savePending } from "./pending.ts";
 import type { ChannelFields, ConfirmPort, ConfirmRequest } from "./prompt.ts";
-import { digestOf, readConfirmation, writeConfirmation } from "./records.ts";
+import { bindingAllows, digestOf, readConfirmation, writeConfirmation } from "./records.ts";
 
-export { confirmationPath, digestOf, readConfirmation, writeConfirmation } from "./records.ts";
+export {
+  bindConfirmation,
+  bindingAllows,
+  confirmationPath,
+  digestOf,
+  readConfirmation,
+  writeConfirmation,
+} from "./records.ts";
 export type { ConfirmationMethod, ConfirmationRecord } from "../types.ts";
 
 /** The kinds this module confirms. */
@@ -51,6 +59,8 @@ export function recordOf(
     choice?: string;
     operator?: string;
     channel?: ChannelFields;
+    /** A spend's run directory, which the record is bound to. */
+    runDir?: string;
   } = {},
 ): ConfirmationRecord {
   const { body } = request;
@@ -77,6 +87,9 @@ export function recordOf(
     toolMarkedRequiresUser: extra.channel?.toolMarkedRequiresUser ?? false,
     ...(extra.operator !== undefined && { operator: extra.operator }),
     selfReported: true,
+    ...(request.kind === "spend" &&
+      typeof body["command"] === "string" && { command: body["command"] }),
+    ...(extra.runDir !== undefined && { run: { runDir: extra.runDir } }),
   };
 }
 
@@ -108,17 +121,31 @@ export function declined(request: KindRequest): ConfirmationError {
   );
 }
 
+/** Exit 8 `confirmation_declined`, with the request saved for `assetgrove confirm <id>`. */
+async function declinedPending(
+  request: KindRequest,
+  gate: ConfirmGate,
+): Promise<ConfirmationError> {
+  await savePending(gate.settings.stateDir, request);
+  return declined(request);
+}
+
 /**
  * The confirmation of a request, from the first source that has one (see the module comment).
  * `prior` names a confirmation an earlier request gave that covers this one (apply's plan).
- * Throws exit 8 when no one confirmed, exit 2 for a headless pick that names no candidate.
+ * `runDir` is a spend's run directory: a stored record pays only for the run it is bound to (its
+ * first run binds it) until that run finishes, and a new record is bound to `runDir`.
+ * Throws exit 8 when no one confirmed, exit 2 for a headless pick that names no candidate. A
+ * request a person declined is saved as pending, so `assetgrove confirm <id>` can still confirm it.
  */
 export async function requireConfirmation(
   request: KindRequest,
   gate: ConfirmGate,
-  options: { prior?: () => Promise<ConfirmationRecord | undefined> } = {},
+  options: { prior?: () => Promise<ConfirmationRecord | undefined>; runDir?: string } = {},
 ): Promise<ConfirmationRecord> {
   const { settings, prompt } = gate;
+  const { runDir } = options;
+  const bound = runDir !== undefined ? { runDir } : {};
   const named = typeof request.body["candidate"] === "string";
   if (settings.mode === "headless") {
     if (request.kind === "pick" && !named)
@@ -127,24 +154,33 @@ export async function requireConfirmation(
       );
     const record = recordOf(request, "headless", {
       ...(settings.headless && { operator: settings.headless.operator }),
+      ...bound,
     });
     await writeConfirmation(settings.configDir, record);
     return record;
   }
   const stored = await readConfirmation(settings.configDir, request.kind, request.id);
-  if (stored !== undefined) return stored;
+  if (stored !== undefined) {
+    if (runDir === undefined) return stored;
+    if (bindingAllows(stored.run, runDir)) {
+      const record = { ...stored, run: stored.run ?? { runDir } };
+      if (stored.run === undefined) await writeConfirmation(settings.configDir, record);
+      return record;
+    }
+  }
   const prior = await options.prior?.();
   if (prior !== undefined) return prior;
   if (prompt && (named || request.kind !== "pick" || prompt.choose)) {
     let choice: string | undefined;
     if (request.kind === "pick" && !named) {
       choice = await prompt.choose!(request);
-      if (choice === undefined || choice === "none") throw declined(request);
-    } else if (!(await prompt.confirm(request))) throw declined(request);
+      if (choice === undefined || choice === "none") throw await declinedPending(request, gate);
+    } else if (!(await prompt.confirm(request))) throw await declinedPending(request, gate);
     const channel = prompt.recordFields?.(request);
     const record = recordOf(request, prompt.method, {
       ...(choice !== undefined && { choice }),
       ...(channel && { channel }),
+      ...bound,
     });
     await writeConfirmation(settings.configDir, record);
     return record;

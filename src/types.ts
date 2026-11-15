@@ -348,6 +348,20 @@ export interface ConfirmationRecord {
   operator?: string;
   /** The method is what the channel reported; Assetgrove cannot prove a person answered. */
   selfReported: true;
+  /** A spend's command, from the confirmed request. */
+  command?: string;
+  /** The run a spend confirmation pays for: bound by its first run, it pays for no other. */
+  run?: RunBinding;
+  /** A plan's spend confirmation: the `digest` of the plan file its run saved. */
+  savedPlan?: string;
+  /** A plan's spend confirmation: the one apply run of that saved plan it covers. */
+  coveredRun?: RunBinding;
+}
+
+/** The run directory a confirmation is bound to, and when that run finished (then it pays for none). */
+export interface RunBinding {
+  runDir: string;
+  consumedAt?: string;
 }
 
 /** A file a generator produced. Each output declares its own media type and extension. */

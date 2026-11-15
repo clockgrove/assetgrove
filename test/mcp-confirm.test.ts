@@ -8,7 +8,7 @@
  * by the SDK's shim.
  */
 import "./fixtures/env.ts";
-import { approvalsDir, approve, confirmationsDir, useAttended } from "./fixtures/env.ts";
+import { approvalsDir, approve, confirmationsDir, stateDir, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { existsSync, realpathSync } from "node:fs";
 import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -19,7 +19,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import type { ElicitRequest, ElicitResult } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { confirmCommand } from "../src/commands/confirm.ts";
+import { runCommand } from "../src/commands/runner.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
+import { loadSettings } from "../src/settings.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -183,6 +186,29 @@ test("stage over MCP: declining the spend form exits 8 confirmation_declined and
   assert.equal(doc["exitCode"], 8);
   assert.equal(doc["error"].code, "confirmation_declined");
   assert.equal(existsSync(join(confirmationsDir, `${doc["error"].confirmation.id}.json`)), false);
+});
+
+test("stage over MCP: a cancelled spend form leaves the request pending, and its confirmCommand completes it", async () => {
+  useAttended();
+  const { args } = await stageWorld();
+  const { client } = await connect(await paidScript(), () => ({ action: "cancel" }));
+  const doc = await call(client, "stage", args);
+  assert.equal(doc["exitCode"], 8);
+  assert.equal(doc["error"].code, "confirmation_declined");
+  const { id, confirmCommand: command } = doc["error"].confirmation;
+  assert.equal(command, `assetgrove confirm ${id}`);
+  assert.ok(existsSync(join(stateDir, "pending", `${id}.json`)), "the request is pending");
+  const confirmed = await runCommand(
+    confirmCommand,
+    { id },
+    {
+      settings: loadSettings(),
+      log: () => {},
+      prompt: { method: "tty", confirm: async () => true },
+    },
+  );
+  assert.equal(confirmed.exitCode, 0, confirmed.error?.message);
+  assert.equal((await record(id))["method"], "terminal");
 });
 
 test("stage over MCP: a client without form elicitation gets exit 8 confirmation_required", async () => {

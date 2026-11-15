@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { formatReport } from "../animation/run.ts";
 import { digestOf, requireConfirmation } from "../confirm/index.ts";
@@ -19,9 +21,25 @@ interface WriteFamiliesArgs {
   jitterBound?: number;
 }
 
+/** The sha256 of each frame file an import lists, by file; one that cannot be read is left out. */
+async function frameHashes(importDir: string, files: readonly string[]) {
+  const hashes: Record<string, string> = {};
+  for (const file of files) {
+    try {
+      hashes[file] = createHash("sha256")
+        .update(await readFile(join(importDir, file)))
+        .digest("hex");
+    } catch {
+      // writeFamilies reports a frame it cannot read.
+    }
+  }
+  return hashes;
+}
+
 /**
- * The write request (design section 7): its digest covers the import, the grouping's digest, the
- * target and the jitter bound, and it shows the families and the grouping digest.
+ * The write request (design section 7): its digest covers the import, its frame files' bytes, the
+ * grouping's digest, the target and the jitter bound, and it shows the families and the grouping
+ * digest.
  */
 export async function writeRequest(options: {
   importDir: string;
@@ -30,10 +48,16 @@ export async function writeRequest(options: {
   jitterBoundPx: number;
 }): Promise<KindRequest> {
   const groupingDigest = digestOf(options.grouping);
+  const record = await readImport(options.importDir);
+  const files = Array.isArray(record.frames) ? record.frames.map((f) => f.file) : [];
   const body = {
     command: "write-families",
     import: resolve(options.importDir),
-    inputs: { import: digestOf(await readImport(options.importDir)), grouping: groupingDigest },
+    inputs: {
+      import: digestOf(record),
+      frames: digestOf(await frameHashes(options.importDir, files)),
+      grouping: groupingDigest,
+    },
     target: resolve(options.targetDir),
     jitterBound: options.jitterBoundPx,
   };

@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadProfile, readJson } from "../inputs.ts";
+import { readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { generationTool } from "../mcp.ts";
 import { planJobs } from "../planning.ts";
 import { planningContext, providerSet, spendLedger } from "../providers/index.ts";
@@ -167,6 +168,14 @@ Review the saved plan before apply; this command never generates images.`,
         join(ctx.run.dir, COMPILER_FILE),
         `${JSON.stringify(result["compiler"], null, 2)}\n`,
       );
+    // The spend confirmation records the saved plan's digest: it covers an apply of this plan only.
+    if (ctx.run) {
+      const { configDir } = ctx.settings;
+      const record = await readConfirmation(configDir, "spend", ctx.run.plan.digest);
+      const saved = (result["plan"] as { digest?: unknown } | undefined)?.digest;
+      if (record !== undefined && typeof saved === "string")
+        await writeConfirmation(configDir, { ...record, savedPlan: saved });
+    }
     return { exitCode: 0, fields: { ...result }, human: JSON.stringify(result, null, 2) };
   },
 });
