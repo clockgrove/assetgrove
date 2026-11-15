@@ -291,7 +291,7 @@ What stays out of the repository: run costs, decisions about other projects, and
 
 ## Success measures and the 1.0 exit
 
-1.0 ships when developers outside the team get a consistent, picked, committed asset set into Godot on their own, and the measures below hold. Measures come from run records wherever a record exists; two are checked by hand, the timed quick start and the outside developers' success. Bars that depend on data are set at the Phase 1 gate, before Phases 2 and 3 produce what they will judge.
+1.0 ships when developers outside the team get a consistent, picked, committed asset set into Godot on their own, and the measures below hold. Measures come from run records wherever a record exists; two are checked by hand, the timed quick start and the outside developers' success. Bars that depend on data were set at the Phase 1 gate, before Phases 2 and 3 produce what they will judge; [decisions.md](decisions.md#the-data-dependent-10-bars) gives each bar's reason and sample size.
 
 | Measure | 1.0 bar | How it's measured |
 | --- | --- | --- |
@@ -300,14 +300,14 @@ What stays out of the repository: run costs, decisions about other projects, and
 | Engine import without manual steps | Every preset's test project, and every pick in our own games | CI, on a pinned Godot |
 | Picks per request | At least 70%, at or under the cost bar | Run records |
 | Cost per approved asset | A bar per asset kind, set before that kind's first measured runs | Run records and the spend ledger |
-| QA precision and recall | Bars set at the Phase 1 gate. Precision: the share of shown candidates a person finds acceptable. Recall: checked on a sample of what was filtered out | Run records and a sampled review |
-| Consistency of a set | A numeric spread on identity and style scores, set at the Phase 1 gate | The set-level audit |
+| QA precision and recall | Precision at least 0.60: the share of shown candidates a person finds acceptable. Recall at least 0.90: the share of acceptable candidates that were shown, checked on a sample of what was filtered out | Run records and a sampled review |
+| Consistency of a set | On identity and style scores, a standard deviation of at most 0.10 and no asset more than 0.20 below the set's median | The set-level audit |
 | Every way of confirming | Asset sets picked in Claude Code locally, in a remote session, and in one more harness | The record of how each pick was confirmed |
 | Spend | In our own runs, the ledger and the provider's usage agree within a stated margin | The check after each run |
 | Safety | No shared file runs code or redirects a key; the prompt policy holds on a red-team set that includes prompts written outside the team | Tests, plus the red-team set kept in the repository |
 | Platforms | CI passes on Linux, macOS and Windows | CI |
 | Existing users unharmed | A game that already uses Assetgrove passes its own checks against the release candidate | That game's own checks, run from its repository |
-| Change requests land | Set at the Phase 1 gate: the share of change requests approved within two new versions | Review records |
+| Change requests land | At least 70% of change requests approved within two new versions | Review records |
 
 ```mermaid
 flowchart LR
