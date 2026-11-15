@@ -11,9 +11,16 @@ import { fileURLToPath } from "node:url";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { ProviderError } from "../src/errors.ts";
+import { providerFailure } from "../src/gateway/failure.ts";
 import { CORE_ADAPTERS, createProvider } from "../src/providers/adapter.ts";
 import { suggestRoles } from "../src/providers/index.ts";
-import { defaultRoutes, ROLE_CAPABILITY, roleOf } from "../src/routes.ts";
+import {
+  ANTHROPIC_DEFAULT_ROUTES,
+  defaultRoutes,
+  OPENAI_DEFAULT_ROUTES,
+  ROLE_CAPABILITY,
+  roleOf,
+} from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
 import { DEFAULT_CAPS } from "../src/settings.ts";
 import { SpendLedger } from "../src/spend.ts";
@@ -224,4 +231,37 @@ test("openai-compatible is paid unless free on loopback, and its structured-outp
   } finally {
     server.close();
   }
+});
+
+test("each direct route carries its own model's estimate, not another model's", () => {
+  // gpt-image-2 on the gateway is bounded at 0.25 (0.30 for a sheet); an edit on it is the same model.
+  assert.equal(OPENAI_DEFAULT_ROUTES["still"]!.estimatedCostUsd, 0.25);
+  assert.equal(OPENAI_DEFAULT_ROUTES["edit"]!.estimatedCostUsd, 0.25);
+  assert.equal(OPENAI_DEFAULT_ROUTES["lookdev"]!.estimatedCostUsd, 0.25);
+  assert.equal(OPENAI_DEFAULT_ROUTES["sheet"]!.estimatedCostUsd, 0.3);
+  assert.equal(OPENAI_DEFAULT_ROUTES["identity"]!.estimatedCostUsd, 0.02);
+  assert.equal(OPENAI_DEFAULT_ROUTES["compiler"]!.estimatedCostUsd, 0.02);
+  assert.equal(ANTHROPIC_DEFAULT_ROUTES["identity-cast"]!.estimatedCostUsd, 0.1);
+  assert.equal(ANTHROPIC_DEFAULT_ROUTES["identity"]!.estimatedCostUsd, 0.01);
+  for (const routes of [OPENAI_DEFAULT_ROUTES, ANTHROPIC_DEFAULT_ROUTES])
+    for (const [operation, route] of Object.entries(routes)) {
+      const gateway = defaultRoutes[operation]!;
+      if (gateway.model.endsWith(`/${route.model}`))
+        assert.ok(route.estimatedCostUsd >= gateway.estimatedCostUsd, operation);
+    }
+});
+
+test("a provider error keeps the provider's HTTP status and code on the error", () => {
+  const error = providerFailure("openai", "image", {
+    message: "Your organization must be verified",
+    statusCode: 403,
+    data: { error: { code: "model_not_found" } },
+  });
+  assert.ok(error instanceof ProviderError);
+  assert.equal(error.status, 403);
+  assert.equal(error.providerCode, "model_not_found");
+  const bare = providerFailure("openai", "image", new Error("socket hang up"));
+  assert.ok(bare instanceof ProviderError);
+  assert.equal(bare.status, undefined);
+  assert.equal(bare.providerCode, undefined);
 });

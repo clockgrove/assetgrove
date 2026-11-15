@@ -51,7 +51,7 @@ interface Row {
   /** The call; returns what came back, which must be non-empty. */
   call?: (caller: Caller) => Promise<{ nonEmpty: boolean }>;
   /** A provider refusal that skips the check, with its reason, instead of failing it. */
-  skipOn?: RegExp;
+  skipOn?: (error: ProviderError) => boolean;
 }
 
 const red = () => disc("reference", [220, 30, 30]);
@@ -141,8 +141,13 @@ const planningCall = async (c: Caller) => ({
     ).trim().length > 0,
 });
 
-/** An OpenAI key without image access (an unverified organization) is the one accepted skip. */
-const NO_IMAGE_ACCESS = /verif|must be verified|not have access|does not have access|HTTP 403/i;
+/**
+ * An OpenAI key without image access is the one accepted skip (design section 20). It is read from
+ * the provider's structured answer, never its message: HTTP 403 (the key's organization may not use
+ * the image model) or the provider code `model_not_found` (the model is not available to the key).
+ */
+const NO_IMAGE_ACCESS = (error: ProviderError): boolean =>
+  error.status === 403 || error.providerCode === "model_not_found";
 
 /** The direct routes of design section 20. */
 const directRows: Row[] = [
@@ -233,8 +238,9 @@ for (const row of [...gatewayRows, ...directRows]) {
     try {
       out = await call(caller);
     } catch (error) {
-      if (row.skipOn && error instanceof ProviderError && row.skipOn.test(error.message)) {
-        t.skip(`${row.adapter} ${row.name} unverified: ${error.message}`);
+      if (row.skipOn && error instanceof ProviderError && row.skipOn(error)) {
+        const facts = `HTTP ${String(error.status)}, code ${error.providerCode ?? "none"}`;
+        t.skip(`${row.adapter} ${row.name} unverified (${facts}): ${error.message}`);
         return;
       }
       throw error;

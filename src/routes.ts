@@ -583,24 +583,34 @@ const openaiGrant: OutputGrant = {
 };
 const openaiTerms = "OpenAI Services Agreement and Usage Policies (as of 2026-11-14)";
 
+/** A direct adapter's model for one role, with its own per-call estimates. */
+interface DirectModel {
+  model: string;
+  /** The most one call on this model can cost, in USD (a deliberate upper bound). */
+  estimatedCostUsd: number;
+  /** A larger bound for the operations that send or return more (e.g. a 1536x1024 sheet). */
+  byOperation?: Readonly<Record<string, number>>;
+}
+
 /**
  * A direct adapter's default routes: every operation of the core defaults whose role is in
- * `models`, on that role's model, with the adapter's grant and terms. The estimate and size are the
- * core default's for the same operation; provider options are the gateway's and are not carried.
+ * `models`, on that role's model at that model's own estimate, with the adapter's grant and terms.
+ * The size is the core default's for the same operation; provider options are the gateway's and
+ * are not carried.
  */
 function directRoutes(
-  models: Readonly<Record<string, string>>,
+  models: Readonly<Record<string, DirectModel>>,
   grant: OutputGrant,
   terms: string,
 ): Readonly<Record<string, Route>> {
   const routes: Record<string, Route> = {};
   for (const [operation, route] of Object.entries(defaultRoutes)) {
     const role = roleOf(operation);
-    const model = role !== undefined ? models[role] : undefined;
-    if (model === undefined) continue;
+    const direct = role !== undefined ? models[role] : undefined;
+    if (direct === undefined) continue;
     routes[operation] = {
-      model,
-      estimatedCostUsd: route.estimatedCostUsd,
+      model: direct.model,
+      estimatedCostUsd: direct.byOperation?.[operation] ?? direct.estimatedCostUsd,
       ...(route.size !== undefined && { size: route.size }),
       outputGrant: { ...grant },
       providerTerms: terms,
@@ -614,7 +624,13 @@ function directRoutes(
  * Anthropic has no image models, so image and edit stay with another adapter.
  */
 export const ANTHROPIC_DEFAULT_ROUTES: Readonly<Record<string, Route>> = directRoutes(
-  { vision: "claude-sonnet-5-5", planning: "claude-sonnet-5-5", decisions: "claude-haiku-5-5" },
+  {
+    // Up to 16 images a call (identity-cast) at Sonnet's input price, with room for the answer.
+    vision: { model: "claude-sonnet-5-5", estimatedCostUsd: 0.1 },
+    planning: { model: "claude-sonnet-5-5", estimatedCostUsd: 0.1 },
+    // Two images and a short structured answer at Haiku's price.
+    decisions: { model: "claude-haiku-5-5", estimatedCostUsd: 0.01 },
+  },
   anthropicGrant,
   anthropicTerms,
 );
@@ -622,11 +638,13 @@ export const ANTHROPIC_DEFAULT_ROUTES: Readonly<Record<string, Route>> = directR
 /** The openai adapter's default routes (design section 12): every 2D role. */
 export const OPENAI_DEFAULT_ROUTES: Readonly<Record<string, Route>> = directRoutes(
   {
-    image: "gpt-image-2",
-    edit: "gpt-image-2",
-    vision: "gpt-6.1-terra",
-    planning: "gpt-6.1-terra",
-    decisions: "gpt-6.1-terra",
+    // gpt-image-2 with references: the bounds the gateway default sets for the same model.
+    image: { model: "gpt-image-2", estimatedCostUsd: 0.25, byOperation: { sheet: 0.3 } },
+    edit: { model: "gpt-image-2", estimatedCostUsd: 0.25 },
+    // gpt-6.1-terra: the gateway default's bound for the same model, which covers 16 images.
+    vision: { model: "gpt-6.1-terra", estimatedCostUsd: 0.02 },
+    planning: { model: "gpt-6.1-terra", estimatedCostUsd: 0.02 },
+    decisions: { model: "gpt-6.1-terra", estimatedCostUsd: 0.02 },
   },
   openaiGrant,
   openaiTerms,

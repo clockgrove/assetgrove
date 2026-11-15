@@ -81,5 +81,8 @@ export function providerFailure(provider: string, label: string, error: unknown)
       facts.code,
     );
   }
-  return new ProviderError(message);
+  return new ProviderError(message, {
+    ...(facts.status !== undefined && { status: facts.status }),
+    ...(facts.code !== undefined && { providerCode: facts.code }),
+  });
 }
