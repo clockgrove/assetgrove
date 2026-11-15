@@ -1,0 +1,52 @@
+/**
+ * The `aseprite-json` preset (design section 14): the `atlas-json` document with a `duration` on
+ * each frame and `meta.frameTags` covering frames 0 to count-1, in the form Aseprite's own export
+ * writes. Hand-written like `atlas-json`.
+ */
+import type { z } from "zod";
+import type { HandoffPreset } from "./index.ts";
+import {
+  atlasFile,
+  atlasOptions,
+  buildAtlas,
+  checkAtlas,
+  sidecarPath,
+  stripGeometry,
+} from "./atlas-json.ts";
+import type { AtlasShape } from "./atlas-json.ts";
+
+export const asepriteJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
+  name: "aseprite-json",
+  optionsSchema: atlasOptions("array") as z.ZodType<{ shape: AtlasShape }>,
+  write(ctx, { shape }) {
+    const g = stripGeometry(ctx, "aseprite-json");
+    const doc = buildAtlas(g, shape, true);
+    doc.meta["frameTags"] = [{ name: g.animation, from: 0, to: g.count - 1, direction: "forward" }];
+    return [atlasFile(sidecarPath(g.media, ".aseprite.json"), doc)];
+  },
+  async check(ctx, { shape }, files, read) {
+    const g = stripGeometry(ctx, "aseprite-json");
+    const file = files[0]?.path ?? sidecarPath(g.media, ".aseprite.json");
+    return checkAtlas(g, shape, file, read, (doc) => {
+      const meta = doc["meta"] as Record<string, unknown>;
+      const tags = Array.isArray(meta["frameTags"]) ? (meta["frameTags"] as unknown[]) : [];
+      const covered = new Set<number>();
+      for (const t of tags) {
+        const { from, to } = (t ?? {}) as { from?: unknown; to?: unknown };
+        if (Number.isInteger(from) && Number.isInteger(to)) {
+          for (let i = from as number; i <= (to as number); i++) covered.add(i);
+        }
+      }
+      const problems: string[] = [];
+      if (!Array.from({ length: g.count }, (_, i) => covered.has(i)).every(Boolean)) {
+        problems.push(`${file} meta.frameTags do not cover frames 0 to ${g.count - 1}`);
+      }
+      const frames = doc["frames"];
+      const list = Array.isArray(frames) ? frames : Object.values((frames ?? {}) as object);
+      if (list.some((f) => (f as { duration?: unknown })?.duration !== g.durationMs)) {
+        problems.push(`${file} a frame has no duration of ${g.durationMs}`);
+      }
+      return problems;
+    });
+  },
+};

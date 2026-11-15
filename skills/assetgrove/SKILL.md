@@ -39,6 +39,10 @@ For repository-owned art direction, `bible init` the target's constitution, `bib
 
 Every command, with its options and the MCP tool that serves it, is in [the command reference](references/commands.md). Paid commands reserve every call against their `--cap` (USD) and against the spend ledger (see [Environment](#environment)). Commands that stage write under `.assetgrove/` in the working directory by default; only `bible init`, `bible preset`, `pick` and `write-families` write into the target.
 
+## Hand-off presets
+
+The target profile's `handoff` lists presets: `manifest` (default), `atlas-json` and `aseprite-json` (sprite-atlas JSON beside a strip, with `options.shape` `hash` or `array`). See [docs/handoff.md](../../docs/handoff.md).
+
 ## Exit codes
 
 | Exit | Meaning                 | Codes                                                                                                                                                                                                                   |
