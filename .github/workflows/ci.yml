@@ -16,9 +16,8 @@ concurrency:
 permissions:
   contents: read
 
-# check: format, lint and types, on Linux. test: the offline suite on Linux, macOS and Windows; the macOS
-# and Windows legs are finders until the suite is portable, so the roll-up `ci` (the one required check)
-# needs check and the Linux leg only.
+# check: format, lint and types, on Linux. test: the offline suite on Linux, macOS and Windows. The roll-up
+# `ci`, the one required check, needs check and all three test legs.
 jobs:
   check:
     runs-on: ubuntu-26.04
@@ -50,8 +49,6 @@ jobs:
       matrix:
         os: [ubuntu-26.04, macos-26, windows-2025]
     runs-on: ${{ matrix.os }}
-    # The macOS and Windows legs report but don't fail the run until the suite is portable.
-    continue-on-error: ${{ matrix.os != 'ubuntu-26.04' }}
     # Decision: the offline suite is expected to take minutes; 20 bounds a hung run.
     timeout-minutes: 20
     steps:
@@ -84,7 +81,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - name: Require check and the Linux test leg
+      - name: Require check and every test leg
         env:
           CHECK: ${{ needs.check.result }}
           TEST: ${{ needs.test.result }}

@@ -34,9 +34,10 @@ export function refusedVariables(allow: readonly string[] = [], env: Env = proce
   const refused: string[] = [];
   for (const name of REFUSED_VARIABLES) {
     if (allowed.has(name)) continue;
-    for (const variant of new Set([name, name.toLowerCase()])) {
-      if (env[variant]) refused.push(variant);
-    }
+    // One report per variable: on Windows the environment is case-insensitive, so both spellings
+    // read the same value.
+    const set = [name, name.toLowerCase()].find((variant) => env[variant]);
+    if (set !== undefined) refused.push(set);
   }
   return refused;
 }
