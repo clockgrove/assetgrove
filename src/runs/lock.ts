@@ -5,9 +5,17 @@
  * process's lock is taken over.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { uptime } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { findGitDir } from "../library/lfs.ts";
 
 export const LOCK_FILE = "lock";
@@ -275,6 +283,15 @@ export function gitCommonDir(start: string): string | undefined {
   return findGitDir(start);
 }
 
+/** The real path of `path`, or the path resolved when it does not exist yet. */
+function realOrResolved(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 /**
  * Takes the one library write lock: `assetgrove/library.lock` in the repository's common Git
  * directory, or, for a target in no repository, a file in `stateDir` named for the target.
@@ -291,7 +308,7 @@ export function acquireLibraryLock(
       : join(
           stateDir,
           "library-locks",
-          `${createHash("sha256").update(realpathSync(targetDir)).digest("hex").slice(0, 16)}.lock`,
+          `${createHash("sha256").update(realOrResolved(targetDir)).digest("hex").slice(0, 16)}.lock`,
         );
   return acquireLock(path, (p) => new LibraryInProgressError(path, p), pid);
 }

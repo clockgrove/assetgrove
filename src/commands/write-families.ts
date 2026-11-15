@@ -132,6 +132,7 @@ or exit 8 confirmation_required and \`assetgrove confirm <hex>\`. Agents never c
       jitterBoundPx,
       gate: { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
       ...(ctx.extensions && { registry: ctx.extensions }),
+      confirmation,
     });
     const lines: string[] = [];
     for (const f of result.families) {

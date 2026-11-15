@@ -63,7 +63,11 @@ export const pickCommand = defineCommand<PickArgs>({
 must name --candidate (exit 2 without one); otherwise a record at <configDir>/confirmations/<hex>.json
 for the pick's digest, an MCP client's form, the TTY (which asks for the candidate when none is named), or exit 8
 confirmation_required and \`assetgrove confirm <hex>\`. The record goes into the pick's provenance.
-Then writes the chosen candidate and its manifest into the target with review pending, and runs
+Then writes the chosen candidate and its manifest into the target with review pending, and the
+library under one lock (docs/library.md): the version into <assetId>.review.json with the candidate's
+annotations, the card <assetId>.md, index.md from the library root down and a log.md line (unless
+library.log is false). A reserved asset id exits 2 asset_id_reserved and one carded at another path
+exits 2 asset_conflict, before any write; re-running an interrupted pick completes it. Then runs
 the target profile's validator when it declares one. The validator runs only with an approval tied
 to its exact command (settings.commands.approved or <configDir>/approvals/<hash>.json); otherwise
 pick asks in an MCP client's form or on a TTY, or exits 8 confirmation_required before writing, and \`assetgrove confirm <hash>\`
@@ -103,6 +107,11 @@ approves it. A human runs pick; agents never do.`,
     });
     const lines = [`wrote ${result.mediaPath}`, `wrote ${result.manifestPath}`];
     if (result.provenancePath) lines.push(`wrote ${result.provenancePath}`);
+    if (result.library) {
+      const { assetId, version, state, files } = result.library;
+      lines.push(`library: ${assetId} version ${version} (${state})`);
+      for (const file of files) lines.push(`wrote ${file}`);
+    }
     if (result.validator) {
       lines.push(
         `target validator ${result.validator.accepted ? "accepted" : "REJECTED"} the pick` +

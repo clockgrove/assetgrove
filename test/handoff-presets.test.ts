@@ -198,6 +198,8 @@ async function filesUnder(dir: string): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile()) continue;
+    // The library's card, review record, indexes and log are covered by library-handoff.test.ts.
+    if (entry.name.endsWith(".md") || entry.name.endsWith(".review.json")) continue;
     const full = join(entry.parentPath, entry.name);
     out[relative(dir, full).replaceAll("\\", "/")] = sha256(await readFile(full));
   }

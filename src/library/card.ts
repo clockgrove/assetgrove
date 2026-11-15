@@ -154,7 +154,8 @@ export interface MachineInput {
   /** The media file name. */
   resource: string;
   provenance: Pick<Provenance, "route" | "bibleVersion" | "license" | "finishedAt">;
-  provenanceResource: string;
+  /** The provenance record's path from the card; left out of `sources` when absent. */
+  provenanceResource?: string;
   review: ReviewRecord;
   reviewResource: string;
   bibleResource?: string;
@@ -201,7 +202,9 @@ export function machineFields(input: MachineInput): Record<string, unknown> {
     });
   }
   const sources = [
-    { id: "provenance", resource: input.provenanceResource },
+    ...(input.provenanceResource === undefined
+      ? []
+      : [{ id: "provenance", resource: input.provenanceResource }]),
     { id: "review", resource: input.reviewResource },
     ...(input.bibleResource === undefined ? [] : [{ id: "bible", resource: input.bibleResource }]),
   ];
