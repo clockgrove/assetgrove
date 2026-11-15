@@ -135,6 +135,11 @@ approves it. A human runs pick; agents never do.`,
       lines.push(`library: ${assetId} version ${version} (${state})`);
       for (const file of files) lines.push(`wrote ${file}`);
     }
+    if (result.contentCredentials) {
+      const { subject, files, warning } = result.contentCredentials;
+      lines.push(`C2PA content credentials on ${files.join(", ")}, signed by ${subject}`);
+      if (warning) lines.push(`warning: ${warning}`);
+    }
     if (result.validator) {
       lines.push(
         `target validator ${result.validator.accepted ? "accepted" : "REJECTED"} the pick` +

@@ -80,6 +80,8 @@ export interface PickResult {
   provenancePath?: string;
   /** Each hand-off preset that ran, with the files it wrote. */
   handoff?: PresetResult[];
+  /** The C2PA content credentials signed into the images, and which certificate signed. */
+  contentCredentials?: CredentialsResult;
   /** The card, review record, indexes and log the pick wrote. */
   library?: LibraryResult;
   validator?: ValidatorResult;
