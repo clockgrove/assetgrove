@@ -233,3 +233,7 @@ Git LFS pointers are parsed by hand for the same reason as the tracked-key scan:
 An extension is code, so the only input that may name one is the developer settings' `extensions` array. Shared files (target profile, style bible, specs) travel between developers and must never steer code: a `<ext>:<name>` id in one never loads anything, it exits 2 `extension_unavailable` when that extension is not loaded. A package.json dependency alone loads nothing either.
 
 A package whose entry file the working directory's Git tracks is refused (`extension_refused`), because a tracked entry would be code the project supplies, and a project must never make Assetgrove run its code. The manifest (`assetgrove.api`, `entry` inside the package) is checked by reading package.json before any import. Core registers its own kinds, preset and adapters through the same contract, so the contract is the one path by which anything is added.
+
+## Atlas writers are hand-written
+
+The `atlas-json` and `aseprite-json` presets (`src/handoff/presets`) write their JSON themselves. I looked for a maintained library that writes sprite-atlas or Aseprite JSON: the packers (`free-tex-packer`, `texturepacker` wrappers, `spritesmith`) pack images into a new sheet and would repack a strip whose geometry is already fixed, and the Aseprite tooling is the Aseprite program itself or readers of its export. None writes this document from known frame rectangles. The output is a handful of fixed-shape objects, byte-stable, and each preset reads it back and checks it ([handoff.md](handoff.md)).

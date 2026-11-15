@@ -9,6 +9,8 @@ import type { z } from "zod";
 import { InputError } from "../../errors.ts";
 import { extensionOf, unavailableId } from "../../extensions/errors.ts";
 import type { TargetProfile } from "../../types.ts";
+import { asepriteJsonPreset } from "./aseprite-json.ts";
+import { atlasJsonPreset } from "./atlas-json.ts";
 import { manifestPreset } from "./manifest.ts";
 
 /** What a preset reads: the template context and the rendered paths of the hand-off. */
@@ -46,7 +48,10 @@ export interface HandoffPreset<Options = unknown> {
 
 /** Core's presets by name; the registry (src/extensions/registry.ts) adds the extensions'. */
 export const PRESETS: ReadonlyMap<string, HandoffPreset> = new Map<string, HandoffPreset>(
-  [manifestPreset as HandoffPreset].map((preset) => [preset.name, preset]),
+  ([manifestPreset, atlasJsonPreset, asepriteJsonPreset] as HandoffPreset[]).map((preset) => [
+    preset.name,
+    preset,
+  ]),
 );
 
 /** The hand-off a profile declares when it names none. */
