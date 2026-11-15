@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { InputError } from "../src/errors.ts";
+import { scriptedProvider } from "./fixtures/synthetic.ts";
+import type { Generator } from "../src/generators/generator.ts";
+import { imageGenerators } from "../src/generators/image.ts";
+import { stage } from "../src/loop.ts";
+import { defaultRoutes } from "../src/routes.ts";
 import { checkWrites, readRecordPath, recordPath } from "../src/paths.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
@@ -150,4 +155,49 @@ test("a stage run writes no path segment containing ':'", async () => {
   for (const path of written) {
     for (const segment of path.split(/[\\/]/)) assert.ok(!segment.includes(":"), path);
   }
+});
+
+test("staged and rejected candidates record their artifacts with / separators", async () => {
+  const world = await syntheticWorld();
+  const base = imageGenerators.find((g) => g.kind === shelterSpec.kind) as Generator;
+  const withArtifacts: Generator = {
+    ...base,
+    async generate(input) {
+      const generated = await base.generate(input);
+      return {
+        ...generated,
+        // The second candidate fails QA, so its artifacts land in the rejections.
+        qa: input.index === 0 ? generated.qa : { ...generated.qa, passed: false },
+        artifacts: [
+          { name: "sheet.png", bytes: new Uint8Array([1]) },
+          { name: join("qa", "report.json"), bytes: new Uint8Array([2]) },
+        ],
+      };
+    },
+  };
+  const { run, runDir } = await stage({
+    spec: shelterSpec,
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: world.profile,
+    routes: defaultRoutes,
+    provider: scriptedProvider(),
+    providerName: "scripted",
+    generators: [withArtifacts],
+    runsDir: world.runsDir,
+    candidates: 2,
+  });
+  const kind = shelterSpec.kind;
+  const record = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
+  assert.deepEqual(record.candidates[0].artifacts, [
+    `c1-${kind}/sheet.png`,
+    `c1-${kind}/report.json`,
+  ]);
+  assert.deepEqual(record.rejections[0].artifacts, [
+    `c2-${kind}/sheet.png`,
+    `c2-${kind}/report.json`,
+  ]);
+  assert.deepEqual(run.candidates[0]?.artifacts, record.candidates[0].artifacts);
+  await readFile(join(runDir, `c1-${kind}`, "report.json"));
 });
