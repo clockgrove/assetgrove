@@ -8,11 +8,15 @@ on:
   pull_request:
     paths:
       - "packages/assetgrove-search/**"
+      - "bench/search/**"
+      - "docs/decisions.md"
       - ".github/workflows/search-package.yml"
   push:
     branches: [main]
     paths:
       - "packages/assetgrove-search/**"
+      - "bench/search/**"
+      - "docs/decisions.md"
       - ".github/workflows/search-package.yml"
 
 concurrency:
