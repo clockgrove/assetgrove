@@ -57,6 +57,7 @@ Agents never confirm a grouping.`,
       targetDir: args.target,
       jitterBoundPx: args.jitterBound ?? DEFAULT_JITTER_BOUND_PX,
       gate: { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
+      ...(ctx.extensions && { registry: ctx.extensions }),
     });
     const lines: string[] = [];
     for (const f of result.families) {

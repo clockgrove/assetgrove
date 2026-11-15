@@ -21,6 +21,7 @@ import type { Caller } from "../calls.ts";
 import type { ApprovalGate } from "../approvals.ts";
 import { writeToTarget } from "../handoff.ts";
 import type { TargetWriteResult } from "../handoff.ts";
+import type { PresetRegistry } from "../handoff/presets/index.ts";
 import { drawDigits, textWidth } from "../image/digits.ts";
 import {
   createRaster,
@@ -515,6 +516,8 @@ export interface WriteFamiliesOptions {
   now?: () => Date;
   /** How the profile's validator is approved; the developer settings with no prompt when absent. */
   gate?: ApprovalGate;
+  /** The presets the profile's `handoff` list chooses among; core's when absent. */
+  registry?: PresetRegistry;
 }
 
 export interface WrittenFamily {
@@ -812,6 +815,7 @@ export async function writeFamilies(
       run: { runId: record.importId, candidateId: s.family.name, pickedAt: at },
       targetDir: options.targetDir,
       ...(options.gate && { gate: options.gate }),
+      ...(options.registry && { registry: options.registry }),
     });
     const previewFile = `preview/${s.family.name}.png`;
     await writeFile(join(options.importDir, previewFile), bytes);

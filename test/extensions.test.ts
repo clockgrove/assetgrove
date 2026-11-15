@@ -201,6 +201,29 @@ test("two packages registering one extension's ids exit 2 extension_conflict", a
   assert.equal(doc(twice)["error"].code, "extension_conflict");
 });
 
+test("an extension registering one id twice exits 2 extension_conflict", async () => {
+  const { dir, pkg } = await project();
+  // The entry's own kind list names `fixture:tile` twice; names and packages are unique, so only
+  // the registry's id check can refuse it.
+  const entry = join(pkg, "index.js");
+  const source = await readFile(entry, "utf8");
+  await writeFile(
+    entry,
+    source.replace("export default function extension(", "function base(") +
+      `
+export default function extension(context) {
+  const e = base(context);
+  return { ...e, kinds: [...e.kinds, ...e.kinds] };
+}
+`,
+  );
+  settings([PACKAGE]);
+  const r = await cli(["extensions", "--json"], dir);
+  assert.equal(r.code, 2, r.stderr);
+  assert.equal(doc(r)["error"].code, "extension_conflict");
+  assert.match(doc(r)["error"].message, /asset kind "fixture:tile" of extension "fixture"/);
+});
+
 test("an unknown id exits 2 extension_unavailable naming the settings line", async () => {
   const { dir } = await project();
   settings(["assetgrove-no-such-extension"]);

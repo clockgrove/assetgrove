@@ -8,9 +8,12 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import { failureOutcome } from "../src/commands/result.ts";
 import { pick, writeToTarget } from "../src/handoff.ts";
 import type { TargetWrite } from "../src/handoff.ts";
+import { PRESETS } from "../src/handoff/presets/index.ts";
+import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { writeRun } from "../src/loop.ts";
 import type { RunRecord, StagedCandidate } from "../src/loop.ts";
@@ -383,7 +386,10 @@ async function staged3d(change: (profile: TargetProfile) => void) {
 }
 
 /** An imported, confirmed sheet, written in process. */
-async function confirmedImport(change: (profile: TargetProfile) => void) {
+async function confirmedImport(
+  change: (profile: TargetProfile) => void,
+  registry?: PresetRegistry,
+) {
   const dir = await target();
   const targetDir = join(dir, "target");
   await mkdir(targetDir);
@@ -424,9 +430,47 @@ async function confirmedImport(change: (profile: TargetProfile) => void) {
   };
   return {
     targetDir,
-    run: () => writeFamilies({ importDir, grouping: confirmed, targetDir }),
+    run: () =>
+      writeFamilies({ importDir, grouping: confirmed, targetDir, ...(registry && { registry }) }),
   };
 }
+
+test("write-families hands off through a loaded extension's preset", async () => {
+  const listPreset: HandoffPreset = {
+    name: "ext:list",
+    optionsSchema: z.strictObject({}),
+    write: (ctx) => [
+      {
+        path: "list.txt",
+        content: `${String((ctx.context["spec"] as { assetId: string }).assetId)}\n`,
+      },
+    ],
+    check: async () => [],
+  };
+  const registry: PresetRegistry = { presets: new Map([...PRESETS, ["ext:list", listPreset]]) };
+  const useExt = (profile: TargetProfile) => {
+    profile.handoff = [{ preset: "manifest" }, { preset: "ext:list" }];
+  };
+  const families = await confirmedImport(useExt, registry);
+  const written = await families.run();
+  for (const family of written.families) {
+    assert.deepEqual(
+      family.result.handoff.map((h) => h.preset),
+      ["manifest", "ext:list"],
+    );
+  }
+  assert.equal(await readFile(join(families.targetDir, "list.txt"), "utf8"), "fern\n");
+
+  // Without the registry the same profile names a preset no loaded extension provides.
+  const bare = await confirmedImport(useExt);
+  const outcome = failureOutcome(
+    await bare.run().then(
+      () => undefined,
+      (e: unknown) => e,
+    ),
+  );
+  assert.equal(outcome.error?.code, "extension_unavailable");
+});
 
 test("a character-3d pick and a write-families run go through the same pipeline", async () => {
   // Both hand off through the profile's presets and report them.
