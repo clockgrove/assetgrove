@@ -849,6 +849,14 @@ export default {
       };
     },
   },
+  ...["library_check", "library_rebuild", "library_stats", "library_drift"].map((tool) => ({
+    tool,
+    prepare: async (): Promise<Args> => {
+      const profile = join(work, "library-profile.json");
+      await writeFile(profile, JSON.stringify(syntheticProfile()));
+      return { target: join(work, "target"), profile };
+    },
+  })),
   { tool: "settings", prepare: async () => ({ action: "path" }) },
   // Headless settings: the change exits 8 confirmation_required and writes nothing.
   { tool: "settings_change", prepare: async () => ({ runUsd: 4 }), exitCode: 8 },

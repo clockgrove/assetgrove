@@ -169,6 +169,15 @@ Each line is rendered from an annotation carrying `ag:action` (other than `resol
 - **Indexes and log.** Every `index.md` from the root to each card is regenerated from the cards found under the root (dot folders, `node_modules` and `<id>.review` folders are skipped); one whose text is unchanged is not rewritten. The folder's `log.md` is rendered from the review records of the cards in it. The root log keeps its `bible` lines and gains one when the bible version is newer than its latest bible line, or, without one, than the newest bible any card already recorded. `library.log: false` writes no log.
 - **Completing a half-finished hand-off.** Re-running the same pick completes it. If the record lacks the version it is appended; if it has it, nothing is appended and only the card, indexes and log are rewritten. Nothing is counted twice.
 
+## Commands
+
+`library check`, `library rebuild`, `library stats` and `library drift` (`src/library/maintain.ts`, `src/commands/library.ts`) take `--target` and `--profile` (default `<target>/.assetgrove/profile.json`).
+
+- **`library check`** (read-only) reports `problems: [{file, code}]` (files relative to the library root) and exits 6 `library_check_failed` when there are any: `card_missing`, `card_invalid`, `review_missing`, `review_invalid`, `media_missing`, `media_not_lfs` (`git check-attr filter` is not `lfs`; skipped outside a Git repository), `machine_field_mismatch`, and `index_*` or `log_*` with `missing`, `mismatch` or `invalid`. Indexes and logs are compared after normalising order and duplicate headings and rows; review records are compared after reading them as the union of their lines. A file that holds the same content in another layout (a union merge, a non-canonical review record) is listed under `needsRebuild` and is not a problem. `kind` and `subject` have no record besides the card, so they are kept from it.
+- **`library rebuild`** rewrites machine fields, every `index.md` and `log.md` and the canonical layout of review records under the library write lock, then checks again; a second run changes nothing. The root log's `bible` lines are read from the existing file and kept, so a root log deleted with its bible lines cannot get them back.
+- **`library stats`** gives counts by `kind` and `state`, and `changeRequests`: `total`, `approvedWithinTwoVersions` and their `share`. A change request counts when one of the next two versions after the one it targets is approved.
+- **`library drift`** lists `stale` assets (the card's `bible` is older than the style bible's `version`, read from `--bible`, default `<target>/.assetgrove/art-direction/BIBLE.md`) and `modified` ones (the file's sha256, or a Git LFS pointer's oid, differs from `lock.sha256`; a matching pointer is not modified). It is computed from the cards and stores nothing.
+
 ## Merges
 
 `index.md`, `log.md` and `*.review.json` are meant for Git's union merge driver, so two branches that write into one folder never conflict; the readers above accept what that driver produces.

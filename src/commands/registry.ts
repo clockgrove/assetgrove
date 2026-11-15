@@ -11,6 +11,12 @@ import { identityCheckCommand } from "./identity-check.ts";
 import { identityEvalCommand } from "./identity-eval.ts";
 import { importCommand } from "./import.ts";
 import { initCommand } from "./init.ts";
+import {
+  libraryCheckCommand,
+  libraryDriftCommand,
+  libraryRebuildCommand,
+  libraryStatsCommand,
+} from "./library.ts";
 import { lodCommand } from "./lod.ts";
 import { lookDevCommand } from "./look-dev.ts";
 import { materialsCommand } from "./materials.ts";
@@ -56,6 +62,10 @@ export const commands: readonly CommandSpec[] = [
   recipeCommand,
   opsCommand,
   migrateCommand,
+  libraryCheckCommand,
+  libraryRebuildCommand,
+  libraryStatsCommand,
+  libraryDriftCommand,
   settingsCommand,
   settingsChangeCommand,
   extensionsCommand,

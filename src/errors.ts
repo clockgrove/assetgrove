@@ -44,6 +44,7 @@ export const EXIT = {
   qa_found_nothing: 5,
   validator_rejected: 6,
   handoff_check_failed: 6,
+  library_check_failed: 6,
   license_refused: 7,
   confirmation_required: 8,
   confirmation_declined: 8,

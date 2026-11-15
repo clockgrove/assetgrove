@@ -30,7 +30,7 @@ const DESIGN: Record<number, string[]> = {
   3: ["cap_refused", "provider_limit_undeclared", "provider_limit_mismatch", "spend_hold"],
   4: ["provider_error"],
   5: ["qa_found_nothing"],
-  6: ["validator_rejected", "handoff_check_failed"],
+  6: ["validator_rejected", "handoff_check_failed", "library_check_failed"],
   7: ["license_refused"],
   8: ["confirmation_required", "confirmation_declined"],
   9: ["prompt_refused"],
