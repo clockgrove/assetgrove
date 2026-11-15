@@ -13,7 +13,8 @@ import { startOpenAiCompatibleServer } from "./fixtures/openai-compatible-server
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const connections = fileURLToPath(new URL("./fixtures/connections.ts", import.meta.url));
+// A file URL, not a path: on Windows `--import D:\\...` is read as a URL with the scheme `d:`.
+const connections = new URL("./fixtures/connections.ts", import.meta.url).href;
 
 const stillSpec: AssetSpec = {
   kind: "still",
