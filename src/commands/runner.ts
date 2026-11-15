@@ -6,6 +6,7 @@ import { EXIT, InputError } from "../errors.ts";
 import { checkTrackedKeys } from "../guard.ts";
 import { redact } from "../redact.ts";
 import { executeRun } from "../runs/execute.ts";
+import { DEFAULT_ROUND } from "../runs/plan.ts";
 import { checkContextEnvironment, isPaid } from "./context.ts";
 import { failureOutcome } from "./result.ts";
 import type {
@@ -160,10 +161,13 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
   const plan = await spec.plan!(args, ctx);
   const own = args["providerScript"];
   const script = typeof own === "string" ? own : ctx.providerScript;
+  const prior = spec.priorConfirmation;
   return executeRun({
     command: spec.name,
     plan,
     ctx,
+    round: typeof args["round"] === "number" ? args["round"] : DEFAULT_ROUND,
+    ...(prior && { prior: () => prior(args, ctx, plan) }),
     run: (runCtx) => spec.run(args, runCtx),
     toOutcome: errorOutcome,
     ...(script !== undefined && { providerScript: script }),
@@ -185,14 +189,9 @@ export function errorOutcome(error: unknown): Outcome {
 
 /**
  * Input properties no tool accepts: the scripted provider and routes come from the server, a dry
- * run is the CLI's, and approval is a person's. `json` and `help` are CLI flags, not properties.
+ * run is the CLI's. `json` and `help` are CLI flags, not properties.
  */
-export const CLI_ONLY_PROPERTIES: readonly string[] = [
-  "providerScript",
-  "dryRun",
-  "routes",
-  "autoApprove",
-];
+export const CLI_ONLY_PROPERTIES: readonly string[] = ["providerScript", "dryRun", "routes"];
 
 /** A tool's input schema: the command's input without the CLI-only properties or help placeholders. */
 export function toolInputSchema(spec: CommandSpec): JsonSchemaObject {

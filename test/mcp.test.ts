@@ -493,8 +493,6 @@ const rows: Row[] = [
     tool: "apply",
     prepare: async () => {
       const plan = join(paths.repo(), "plan.json");
-      const saved = JSON.parse(await readFile(plan, "utf8")) as Doc;
-      await writeFile(plan, JSON.stringify({ ...saved, approved: true }));
       return { plan, out: join(paths.repo(), "runs") };
     },
   },

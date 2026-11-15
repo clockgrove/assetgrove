@@ -4,7 +4,9 @@ import { basename, dirname } from "node:path";
 import { loadBible } from "../bible.ts";
 import { applyJobs, applyPlan } from "../planning.ts";
 import type { SavedPlan } from "../planning.ts";
+import { readConfirmation } from "../confirm/records.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
+import type { ConfirmationRecord } from "../types.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, paidBy } from "../runs/plan.ts";
 import { dryRunOutcome, formatRun, formatWork, refusal } from "./result.ts";
@@ -13,7 +15,6 @@ import type { RunContext, WorkPlan } from "./types.ts";
 
 interface ApplyArgs {
   plan?: string;
-  autoApprove?: boolean;
   out?: string;
   workItem?: string;
   providerScript?: string;
@@ -41,6 +42,37 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
   return { providers, work };
 }
 
+/**
+ * The plan's confirmation, when it covers this apply (design section 7): the record of the saved
+ * plan's request digest, every input hash it holds equal to the saved plan's, and apply's forecast
+ * at or under the confirmed one. Otherwise apply asks under its own digest.
+ */
+export async function planConfirmation(
+  planPath: string,
+  work: WorkPlan,
+  configDir: string,
+): Promise<ConfirmationRecord | undefined> {
+  let saved: SavedPlan;
+  try {
+    saved = JSON.parse(await readFile(planPath, "utf8")) as SavedPlan;
+  } catch {
+    return undefined;
+  }
+  if (typeof saved.requestDigest !== "string" || !/^[0-9a-f]{64}$/.test(saved.requestDigest))
+    return undefined;
+  const record = await readConfirmation(configDir, "spend", saved.requestDigest);
+  if (record === undefined) return undefined;
+  const inputs = saved.inputs ?? {};
+  for (const [name, sha256] of Object.entries(record.inputs)) {
+    // The plan request hashes its arguments' files and the files they name (`bible/<path>`);
+    // the saved plan records the arguments' files. Each one both name must agree.
+    if (name.includes("/")) continue;
+    if (inputs[name] === undefined || inputs[name].sha256 !== sha256) return undefined;
+  }
+  if (work.forecastUsd > record.forecastUsd + 1e-9) return undefined;
+  return record;
+}
+
 export const applyCommand = defineCommand<ApplyArgs>({
   name: "apply",
   tool: "apply",
@@ -48,13 +80,14 @@ export const applyCommand = defineCommand<ApplyArgs>({
   details: `Refuses stale inputs before generation, and exits 2 plan_changed when the routes, estimates,
 output grants or run cap resolved from the developer settings differ from planning time.
 The plan's prompts pass the prompt policy (exit 9 prompt_refused) before any spend.
-Set the plan's approved field to true after review, or use --auto-approve for unattended runs.
-Approval authorizes this generation spend; resulting assets remain pending review. Never prompts.`,
+The plan's spend confirmation covers apply while every input hash it confirmed still matches and
+apply's forecast is at or under the confirmed one; otherwise apply asks under its own digest (headless
+settings, a record, the TTY, or exit 8 confirmation_required and \`assetgrove confirm <id>\`). The
+confirmation authorizes this generation spend; resulting assets remain pending review.`,
   input: {
     type: "object",
     properties: {
       plan: { type: "string", description: "the saved plan", placeholder: "<plan.json>" },
-      autoApprove: { type: "boolean", description: "approve the plan's spend without review" },
       out: {
         type: "string",
         description: "where runs are staged",
@@ -82,6 +115,10 @@ Approval authorizes this generation spend; resulting assets remain pending revie
     if (args.plan === undefined) throw new InputError("apply requires exactly one plan file");
     return (await prepare(args.plan, args, ctx)).work;
   },
+  priorConfirmation: (args, ctx, work) =>
+    args.plan === undefined
+      ? Promise.resolve(undefined)
+      : planConfirmation(args.plan, work, ctx.settings.configDir),
   async run(args, ctx) {
     if (args.plan === undefined) throw new InputError("apply requires exactly one plan file");
     const { providers, work } = await prepare(args.plan, args, ctx);
@@ -94,7 +131,6 @@ Approval authorizes this generation spend; resulting assets remain pending revie
       log: ctx.log,
       runCapUsd: ctx.settings.caps.runUsd,
       promptAllow: ctx.settings.promptPolicy.allow,
-      autoApprove: args.autoApprove === true,
       outDir: dirname(dir),
       runId: basename(dir),
     });

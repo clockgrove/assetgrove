@@ -6,9 +6,11 @@
  * refuses a test. Child processes inherit all of this through process.env. The removed values stay
  * in `machineProxyEnv`, for children such as `npm install` that need the machine's proxy.
  *
- * Every top-level test starts from the base settings; the helpers rewrite the file for tests that
- * need a headless operator, approved commands or declared limits, and the change ends with that
- * test.
+ * The base settings are headless with an operator (`HEADLESS_OPERATOR`), so a paid command spends
+ * and a pick names its candidate without a person (design section 7); `useAttended()` removes it
+ * for a test that asks a person. Every top-level test starts from the base settings; the helpers
+ * rewrite the file for tests that need attended settings, approved commands or declared limits,
+ * and the change ends with that test.
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -63,17 +65,37 @@ function child(parent: Settings, key: string): Settings {
 /** The limit the base settings declare for the scripted provider. */
 export const SCRIPTED_LIMIT = { kind: "prepaid", usd: 100 } as const;
 
+/** The operator the base settings' headless mode names. */
+export const HEADLESS_OPERATOR = "test:fixture";
+
 /**
- * Writes the base settings (format, stateDir and the scripted provider's limit) with `settings`
- * over them.
+ * Commands `approve` approved for this test file: headless settings run only commands listed in
+ * `settings.commands.approved`, so the base settings list them too.
+ */
+const approvedCommands: Array<{ hash: string; kind: string; argv: string[]; cwd: string }> = [];
+
+/**
+ * Writes the base settings (format, stateDir, the scripted provider's limit, headless with
+ * `HEADLESS_OPERATOR` and the commands `approve` approved) with `settings` over them.
  */
 export function writeSettings(settings: Settings): Settings {
   return save({
     format: FORMAT,
     stateDir,
+    headless: { operator: HEADLESS_OPERATOR },
     providers: { scripted: { limit: { ...SCRIPTED_LIMIT } } },
+    ...(approvedCommands.length > 0 && {
+      commands: { approved: approvedCommands.map((c) => ({ ...c })) },
+    }),
     ...settings,
   });
+}
+
+/** Attended settings: no headless operator, so a person is asked (a TTY, a record, or exit 8). */
+export function useAttended(): Settings {
+  const settings = load();
+  delete settings["headless"];
+  return save(settings);
 }
 
 /** The spend ledger of the base settings. */
@@ -105,10 +127,14 @@ export function approveCommand(command: {
 /** Where the approval records of the test's config directory go: `<configDir>/approvals`. */
 export const approvalsDir: string = join(root, "config", "approvals");
 
+/** Where the confirmation records of the test's config directory go: `<configDir>/confirmations`. */
+export const confirmationsDir: string = join(root, "config", "confirmations");
+
 /**
  * Approves commands for this test file the way a person's terminal accept does: one record per
  * hash at `<configDir>/approvals/<hex>.json` (method `terminal`). Records live beside the settings
- * file, so they survive each test's settings reset; headless tests use `approveCommand`. Each
+ * file, so they survive each test's settings reset; the commands are also listed in the base
+ * settings' `commands.approved`, which headless settings read. Each
  * argument is a --provider-script module path, or a command `{kind, argv, cwd}`. A profile's
  * validator (`approveProfile`) and material commands are commands too. Returns the identities.
  */
@@ -132,6 +158,10 @@ export function approve(
       at: new Date(0).toISOString(),
     };
     writeFileSync(join(approvalsDir, `${hash}.json`), `${JSON.stringify(record, null, 2)}\n`);
+    if (!approvedCommands.some((c) => c.hash === hash)) {
+      approvedCommands.push({ hash, kind, argv, cwd });
+      approveCommand({ hash, kind, argv, cwd });
+    }
     return identity;
   });
 }

@@ -113,7 +113,6 @@ async function run(
   const result = await applyPlan(plan.plan, {
     provider,
     ...(options.routes && { routes: options.routes }),
-    autoApprove: true,
     outDir: join(f.root, "runs"),
     log: (m) => logs.push(m),
   });

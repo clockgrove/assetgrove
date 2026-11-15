@@ -314,7 +314,6 @@ async function editedPlan(dir: string, term: string): Promise<string> {
   const saved = JSON.parse(await readFile(files.plan, "utf8")) as SavedPlan;
   saved.prompts.images = saved.prompts.images.map((p) => `${p}\n${term}`);
   saved.prompts.generation = `${saved.prompts.generation}\n${term}`;
-  saved.approved = true;
   saved.digest = planDigest(saved);
   await writeFile(files.plan, JSON.stringify(saved, null, 2));
   return files.plan;

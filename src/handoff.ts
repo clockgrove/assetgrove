@@ -25,7 +25,7 @@ import { renderString, setPath } from "./template.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
 import type { PresetRegistry } from "./handoff/presets/index.ts";
 import type { HandoffProblem, PresetFile } from "./handoff/presets/index.ts";
-import type { AssetSpec, Provenance, TargetProfile } from "./types.ts";
+import type { AssetSpec, ConfirmationRecord, Provenance, TargetProfile } from "./types.ts";
 
 const run = promisify(execFile);
 
@@ -39,6 +39,8 @@ export interface PickOptions {
   gate?: ApprovalGate;
   /** The presets the profile's `handoff` list chooses among; core's when absent. */
   registry?: PresetRegistry;
+  /** The person's confirmation of this pick (design section 7), copied into its provenance. */
+  confirmation?: ConfirmationRecord;
 }
 
 export interface PickResult {
@@ -347,7 +349,9 @@ export async function pick(options: PickOptions): Promise<PickResult> {
       fields: shaped.fields,
       ...(shaped.sidecars.length > 0 && { sidecars: shaped.sidecars }),
     },
-    provenance: candidate.provenance,
+    provenance: options.confirmation
+      ? { ...candidate.provenance, confirmation: options.confirmation }
+      : candidate.provenance,
     run: { runId: record.runId, candidateId: candidate.id, pickedAt: now().toISOString() },
     targetDir,
     ...(options.gate && { gate: options.gate }),

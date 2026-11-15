@@ -193,10 +193,22 @@ export function journalCount(callsDir: string): number {
   }
 }
 
+/**
+ * A run's clearance to spend (design section 7): built in memory by the executor
+ * (src/runs/execute.ts) from the confirmation it verified for the run's digest, or from headless
+ * settings, and nowhere else. `Caller` refuses a paid call without one.
+ */
+export interface Clearance {
+  digest: string;
+  record: import("../types.ts").ConfirmationRecord;
+}
+
 /** The run a paid command is executing: its journal and where answered calls are reported. */
 export interface RunScope {
   journal: Journal;
   onCall?: (progress: CallProgress) => void;
+  /** The run's clearance to spend; absent when the request needed no confirmation. */
+  clearance?: Clearance;
 }
 
 const scope = new AsyncLocalStorage<RunScope>();
