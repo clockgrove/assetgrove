@@ -140,9 +140,13 @@ Characters of one kind can share a skeleton template fitted to each model, with 
 
 Assetgrove writes the licence the target profile declares and records the models, route and provider terms in provenance.
 
+## Routes come only from developer settings; grants belong to provider and model
+
+Which provider and model serve an operation decides what is spent and what the output may become, so routes come only from the developer settings: `routes.<operation>` over `roles.<role>` over the configured adapters' default routes. Shared files, run options and plans carry no route, and there is no routes file or `--routes` option. A route must name a configured provider whose adapter has the role's capability, or the command exits 2 `route_unavailable` before any reservation. An output grant and provider terms describe one (provider, model) pair, so an override that changes either carries only the grant and terms it declares itself. A `ProviderSet` built from the settings serves each call on its route's provider, and the call records its route as `<providerId>:<operation>:<model>`. The `openai-compatible` adapter uses the AI SDK's own `@ai-sdk/openai-compatible` provider.
+
 ## Provider output grants
 
-Provider terms differ on who owns an output, so each route declares its `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`), every call records it, and the provenance carries the most restrictive combination over its calls. The provenance's `license` is the target's licence only when the grant allows relabelling; otherwise it is the granted licence, when that licence is commercial and the target lists it in `acceptedLicenses`. Anything else is refused at hand-off (`pick`, `write-families`) with exit 7 (`license_refused`) before a file is written. Staging is unaffected, so free-credit trials that never reach a target still run.
+Provider terms differ on who owns an output, so each route declares its `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`), every call records it, and the provenance carries the most restrictive combination over its calls. No grant, no hand-off: a provenance with a call that records no grant is refused at `pick` and `write-families` with exit 7 (`license_refused`), naming the call's route and the settings field (`routes.<operation>.outputGrant` or `roles.<role>.outputGrant`) that declares it. Core defaults carry the grant their terms give, or none. The provenance's `license` is the target's licence only when the grant allows relabelling; otherwise it is the granted licence, when that licence is commercial and the target lists it in `acceptedLicenses`. Anything else is refused at hand-off (`pick`, `write-families`) with exit 7 (`license_refused`) before a file is written. Staging is unaffected, so free-credit trials that never reach a target still run.
 
 ## Settings are validated with zod; command inputs stay JSON Schema
 

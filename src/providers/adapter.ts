@@ -241,9 +241,10 @@ export function createProviders(
 }
 
 /**
- * The provider a command uses for an adapter until settings routes exist: the entry whose id is
- * the adapter's id, else the first entry (by id) of that adapter, else an instance of the adapter
- * with no settings, under the adapter's id, with no declared limit.
+ * One adapter's provider, for `spend check` with a provider script and no scripted entry: the
+ * entry whose id is the adapter's id, else the first entry (by id) of that adapter, else an
+ * instance of the adapter with no settings, under the adapter's id, with no declared limit. Calls
+ * are never routed through it; routes come from settings (src/providers/set.ts).
  */
 export function providerOfAdapter(
   settings: Pick<Settings, "providers" | "path">,
