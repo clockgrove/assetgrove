@@ -158,12 +158,15 @@ export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext)
  */
 async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
   const plan = await spec.plan!(args, ctx);
+  const own = args["providerScript"];
+  const script = typeof own === "string" ? own : ctx.providerScript;
   return executeRun({
     command: spec.name,
     plan,
     ctx,
     run: (runCtx) => spec.run(args, runCtx),
     toOutcome: errorOutcome,
+    ...(script !== undefined && { providerScript: script }),
   });
 }
 

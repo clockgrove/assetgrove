@@ -65,7 +65,7 @@ export class VercelGateway implements GenerationProvider {
     apiKey: string | undefined;
     keyEnv?: string;
     baseURL?: string;
-    billing?: Omit<Billing, "hosts" | "readLimit">;
+    billing?: Omit<Billing, "hosts" | "readLimit" | "callCost">;
   }) {
     const baseURL = options.baseURL ?? GATEWAY_BASE_URL;
     this.#keyEnv = options.keyEnv ?? "AI_GATEWAY_API_KEY";
@@ -81,6 +81,7 @@ export class VercelGateway implements GenerationProvider {
       ...options.billing,
       hosts: [new URL(baseURL).host],
       readLimit: () => this.credits(),
+      callCost: (requestId) => this.generationCost(requestId),
     };
   }
 
@@ -110,6 +111,22 @@ export class VercelGateway implements GenerationProvider {
     const balanceUsd = toNumber((credits as { balance?: unknown }).balance);
     if (balanceUsd === undefined) throw new ProviderError("gateway credits: no balance returned");
     return { balanceUsd, source: "gateway credits" };
+  }
+
+  /**
+   * The gateway's own cost of one generation (`getGenerationInfo`, `totalCost` in USD); spends
+   * nothing. Undefined while the gateway cannot report it yet; null for an ID that is not a
+   * generation ID (a response header or a local ID), which it can never look up.
+   */
+  async generationCost(requestId: string): Promise<number | null | undefined> {
+    if (!requestId.startsWith("gen_")) return null;
+    if (this.#gateway === undefined) return undefined;
+    try {
+      const info = await this.#gateway.getGenerationInfo({ id: requestId });
+      return toNumber(info.totalCost);
+    } catch {
+      return undefined; // Not reported yet, or the lookup failed: retried later.
+    }
   }
 
   async generateImage(req: ImageRequest): Promise<ImageResult> {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { BudgetExceededError } from "./budget.ts";
@@ -124,6 +124,16 @@ export interface ReserveMeta {
   callKey?: string;
 }
 
+/** One paid call of a run as the ledger counts it. */
+export interface LedgerCall {
+  /** The reservation's ledger id. */
+  id: string;
+  provider: string;
+  callKey?: string;
+  /** The settled cost, or the reservation's estimate while unsettled. */
+  costUsd: number;
+}
+
 /** A cap as the settings set it, and the profile's lower value when it has one. */
 interface LimitSetting {
   settings: number;
@@ -232,6 +242,28 @@ export class SpendLedger {
       throw error;
     }
     return id;
+  }
+
+  /**
+   * The paid calls of one run reserved at or after `since` (ISO time), each with what the ledger
+   * counts for it: its settled cost, or its estimate while unsettled. Spends nothing.
+   */
+  runCalls(runId: string, since: string): LedgerCall[] {
+    const entries = this.read();
+    const settled = new Map<string, number>();
+    for (const e of entries) if (e.op === "settle") settled.set(e.id, e.costUsd);
+    const from = Date.parse(since);
+    const calls: LedgerCall[] = [];
+    for (const e of entries) {
+      if (e.op !== "reserve" || e.runId !== runId || Date.parse(e.at) < from) continue;
+      calls.push({
+        id: e.id,
+        provider: e.provider ?? "",
+        ...(e.callKey !== undefined && { callKey: e.callKey }),
+        costUsd: settled.get(e.id) ?? e.amountUsd,
+      });
+    }
+    return calls;
   }
 
   /** Records what a reserved call actually cost. */
@@ -353,4 +385,117 @@ function profileLimit(value: unknown, field: string): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
     throw new InputError(`profile ${field} must be a non-negative number of USD`);
   return value;
+}
+
+/**
+ * A spend hold (design section 3): reconciling a run found the provider's own usage further from
+ * the ledger than the margin. Holds are appended to `<stateDir>/holds.jsonl`; every paid run is
+ * refused (exit 3 `spend_hold`) while one is not listed in the settings' `spend.acknowledgedHolds`.
+ */
+export interface Hold {
+  /** 16 hex digits; a person lists it in `spend.acknowledgedHolds` to clear the hold. */
+  id: string;
+  at: string;
+  provider: string;
+  runId: string;
+  ledgerUsd: number;
+  providerUsd: number;
+  gapUsd: number;
+}
+
+export const HOLDS_FILE = "holds.jsonl";
+
+/** `<stateDir>/holds.jsonl`. */
+export function holdsPath(stateDir: string): string {
+  return join(stateDir, HOLDS_FILE);
+}
+
+/** Every hold recorded under a state directory, oldest first. */
+export function readHolds(stateDir: string): Hold[] {
+  const holds: Hold[] = [];
+  for (const value of readJsonLines(holdsPath(stateDir), "spend holds")) {
+    const h = value as Record<string, unknown>;
+    if (
+      typeof h["id"] === "string" &&
+      typeof h["at"] === "string" &&
+      typeof h["provider"] === "string" &&
+      typeof h["runId"] === "string" &&
+      ["ledgerUsd", "providerUsd", "gapUsd"].every((k) => typeof h[k] === "number")
+    )
+      holds.push(value as Hold);
+  }
+  return holds;
+}
+
+/** Appends a hold with a new id and returns it. */
+export function appendHold(
+  stateDir: string,
+  hold: Omit<Hold, "id" | "at">,
+  now: Date = new Date(),
+): Hold {
+  const recorded: Hold = { id: randomBytes(8).toString("hex"), at: now.toISOString(), ...hold };
+  appendJsonLine(holdsPath(stateDir), recorded, "spend holds");
+  return recorded;
+}
+
+/** The holds the settings do not acknowledge. */
+export function openHolds(settings: Pick<Settings, "stateDir" | "spend">): Hold[] {
+  const acknowledged = new Set(settings.spend.acknowledgedHolds.map((id) => id.toLowerCase()));
+  return readHolds(settings.stateDir).filter((h) => !acknowledged.has(h.id.toLowerCase()));
+}
+
+/** A paid run refused while a hold is not acknowledged. Exit 3 `spend_hold`. */
+export class SpendHoldError extends Error {
+  readonly code = "spend_hold";
+  readonly holds: Hold[];
+  constructor(holds: Hold[]) {
+    const ids = holds.map((h) => h.id).join(", ");
+    super(
+      `refused: spend hold ${ids}: the provider's own usage differs from the spend ledger by more than the reconcile margin; after a person has looked, list the id in the developer settings' spend.acknowledgedHolds`,
+    );
+    this.name = "SpendHoldError";
+    this.holds = holds;
+  }
+}
+
+/** Throws `SpendHoldError` while a hold is not acknowledged. */
+export function assertNoOpenHold(settings: Pick<Settings, "stateDir" | "spend">): void {
+  const holds = openHolds(settings);
+  if (holds.length > 0) throw new SpendHoldError(holds);
+}
+
+/** The JSON values of a JSON Lines file; none when it is missing. A torn line is skipped. */
+export function readJsonLines(path: string, what: string): unknown[] {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new InputError(`cannot read ${what} ${path}: ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
+  const values: unknown[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const value: unknown = JSON.parse(line);
+      if (typeof value === "object" && value !== null) values.push(value);
+    } catch {
+      // A line torn by a crash mid-write records nothing usable.
+    }
+  }
+  return values;
+}
+
+/** Appends one JSON line in one O_APPEND write. */
+export function appendJsonLine(path: string, value: unknown, what: string): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  } catch (error) {
+    throw new InputError(`cannot write ${what} ${path}: ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
 }

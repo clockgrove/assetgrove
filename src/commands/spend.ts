@@ -3,7 +3,9 @@ import { checkLimit } from "../limits.ts";
 import type { LimitCheck } from "../limits.ts";
 import { createProviders, providerOfAdapter } from "../providers/adapter.ts";
 import { loadScript, spendLedger } from "../providers/index.ts";
-import { limitLabel } from "../spend.ts";
+import { retryPending } from "../reconcile.ts";
+import type { ReconcileEntry } from "../reconcile.ts";
+import { limitLabel, readHolds } from "../spend.ts";
 import { refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
 
@@ -32,7 +34,8 @@ export const spendCommand = defineCommand<SpendArgs>({
   summary: "show the spend ledger and caps, or check each provider's declared limit",
   details: `Actions (the spend tool takes the action as its action argument):
   status  the ledger (<stateDir>/spend.jsonl), the caps from the settings, today's spend (last 24
-          hours) and the work item (--work-item or ASSETGROVE_WORK_ITEM) with its spend
+          hours), the work item (--work-item or ASSETGROVE_WORK_ITEM) with its spend, and the
+          spend holds (<stateDir>/holds.jsonl), each with whether the settings acknowledge it
   check   per configured provider (--provider narrows it): whether a limit is declared, the
           provider's reading where it gives one to an ordinary key (gateway credits, Tripo
           balance) and whether the reading verifies the limit. Exits 3 provider_limit_mismatch
@@ -69,7 +72,14 @@ Spends nothing and writes nothing.`,
     if (action === "status") {
       const status = spendLedger(ctx, args.workItem ?? ctx.workItem).status();
       const daily = status.limits.find((l) => l.limit === "daily");
-      const fields = { ...status, today: { spentUsd: daily?.spentUsd ?? 0 } };
+      const acknowledged = new Set(
+        ctx.settings.spend.acknowledgedHolds.map((id) => id.toLowerCase()),
+      );
+      const holds = readHolds(ctx.settings.stateDir).map((h) => ({
+        ...h,
+        acknowledged: acknowledged.has(h.id.toLowerCase()),
+      }));
+      const fields = { ...status, today: { spentUsd: daily?.spentUsd ?? 0 }, holds };
       const { caps } = status;
       const human = [
         `spend ledger ${status.ledger}`,
@@ -77,6 +87,11 @@ Spends nothing and writes nothing.`,
         `work item: ${status.workItem ?? "none"}`,
         ...status.limits.map(
           (l) => `  ${limitLabel(l)}: ${usd(l.spentUsd)} spent, ${usd(l.remainingUsd)} left`,
+        ),
+        `holds: ${holds.length === 0 ? "none" : ""}`,
+        ...holds.map(
+          (h) =>
+            `  ${h.id} ${h.provider} run ${h.runId}: gap ${usd(h.gapUsd)} (ledger ${usd(h.ledgerUsd)}, provider ${usd(h.providerUsd)})${h.acknowledged ? ", acknowledged" : ", open: paid runs are refused"}`,
         ),
       ].join("\n");
       return { exitCode: 0, fields, human };
@@ -107,6 +122,65 @@ Spends nothing and writes nothing.`,
         fields,
         human,
       );
+    return { exitCode: 0, fields, human };
+  },
+});
+
+interface ReconcileArgs {
+  providerScript?: string;
+}
+
+function describeReconcile(e: ReconcileEntry): string {
+  const amounts =
+    e.ledgerUsd !== undefined && e.providerUsd !== undefined
+      ? `: ledger ${usd(e.ledgerUsd)}, provider ${usd(e.providerUsd)}, gap ${usd(e.gapUsd ?? 0)}`
+      : "";
+  const hold = e.holdId !== undefined ? `, hold ${e.holdId}` : "";
+  const note = e.note !== undefined ? ` (${e.note})` : "";
+  return `${e.provider} run ${e.runId ?? "?"}: ${e.status}${amounts}${hold}${note}`;
+}
+
+export const spendReconcileCommand = defineCommand<ReconcileArgs>({
+  name: "spend reconcile",
+  tool: "spend_reconcile",
+  summary: "retry the pending reconcile lookups against the providers' own usage",
+  details: `Retries each pending lookup (<stateDir>/reconcile.jsonl): a run whose per-call costs the
+provider had not reported when it ended. Once every call is reported, the run's ledger spend is
+compared with the provider's; a gap above max(reconcile.marginUsd, reconcile.marginPct% of the
+ledger spend) appends a spend hold to <stateDir>/holds.jsonl, and every paid run then exits 3
+spend_hold until the hold's id is listed in the settings' spend.acknowledgedHolds. A paid run
+also retries them at its start. Reads the providers' usage and spends nothing.`,
+  input: {
+    type: "object",
+    properties: {
+      providerScript: {
+        type: "string",
+        description: "the scripted provider's module, whose callCost the lookups read",
+        placeholder: "<module>",
+      },
+    },
+    additionalProperties: false,
+  },
+  effect: { readOnly: false, spends: "never", writes: "state" },
+  async run(args, ctx) {
+    const providerScript = args.providerScript ?? ctx.providerScript;
+    const script = providerScript !== undefined ? await loadScript(providerScript, ctx) : undefined;
+    const providers = createProviders(ctx.settings, {
+      ...(ctx.env && { env: ctx.env }),
+      ...(script && { script }),
+      ...(ctx.extensions && { adapters: ctx.extensions.adapters }),
+    });
+    const reconciled = await retryPending({ settings: ctx.settings, providers });
+    const held = reconciled.filter((e) => e.status === "held");
+    const pending = reconciled.filter((e) => e.status === "pending");
+    const fields = { reconciled };
+    const human =
+      reconciled.length === 0
+        ? "no pending reconcile lookups"
+        : [
+            ...reconciled.map(describeReconcile),
+            `${pending.length} still pending, ${held.length} new hold(s)`,
+          ].join("\n");
     return { exitCode: 0, fields, human };
   },
 });

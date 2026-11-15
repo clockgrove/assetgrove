@@ -45,6 +45,13 @@ export interface Script {
   paid?: boolean;
   /** Test only: the provider's limit reading, as a real adapter reads its balance. */
   limitReading?(): LimitReading | Promise<LimitReading>;
+  /** Test only: how the provider's usage is reconciled, as a real adapter declares it. */
+  reconcile?: Billing["reconcile"];
+  /**
+   * Test only: the provider's own cost of a call by its request ID, as the gateway reports it;
+   * undefined while it is not reported yet.
+   */
+  callCost?(requestId: string): number | null | undefined | Promise<number | null | undefined>;
 }
 
 type Scripted<T extends { requestId: string }> = Omit<T, "requestId"> & { requestId?: string };
@@ -71,6 +78,7 @@ export class ScriptedProvider implements GenerationProvider {
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
     this.script = script;
     const read = script.limitReading?.bind(script);
+    const cost = script.callCost?.bind(script);
     this.billing = {
       adapter: "scripted",
       providerId: "scripted",
@@ -78,7 +86,9 @@ export class ScriptedProvider implements GenerationProvider {
       reconcile: "unavailable",
       ...billing,
       paid: script.paid === true,
+      ...(script.reconcile !== undefined && { reconcile: script.reconcile }),
       ...(read !== undefined && { readLimit: async () => read() }),
+      ...(cost !== undefined && { callCost: async (requestId: string) => cost(requestId) }),
     };
   }
 

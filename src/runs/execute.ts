@@ -13,6 +13,11 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CONTACT_SHEET_FILE } from "../contact.ts";
 import type { Outcome, RunContext } from "../commands/types.ts";
+import { createProviders } from "../providers/adapter.ts";
+import { loadScript } from "../providers/script.ts";
+import { finishRunReconcile, recordReconcile, startRunReconcile } from "../reconcile.ts";
+import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcile.ts";
+import { SpendHoldError } from "../spend.ts";
 import type { WorkPlan } from "./plan.ts";
 import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "./dir.ts";
 import { Journal, withRunScope } from "./journal.ts";
@@ -59,7 +64,11 @@ async function writeState(runDir: string, state: RunState): Promise<void> {
 }
 
 /** The outcome of a refusal before the run starts. */
-function refused(code: "cap_refused" | "run_in_progress", message: string, exitCode: number) {
+function refused(
+  code: "cap_refused" | "run_in_progress" | "spend_hold",
+  message: string,
+  exitCode: number,
+) {
   return { exitCode, fields: {}, human: "", error: { code, message } } satisfies Outcome;
 }
 
@@ -78,6 +87,8 @@ export async function executeRun(options: {
   ctx: RunContext;
   run: (ctx: RunContext) => Promise<Outcome>;
   toOutcome: (error: unknown) => Outcome;
+  /** The `--provider-script` module, which reconciling gives the scripted providers it makes. */
+  providerScript?: string;
 }): Promise<Outcome> {
   const { command, plan, ctx } = options;
   if (plan.forecastUsd > plan.capUsd + 1e-9)
@@ -86,6 +97,23 @@ export async function executeRun(options: {
       `refused: the forecast $${plan.forecastUsd.toFixed(4)} exceeds the $${plan.capUsd.toFixed(2)} cap`,
       3,
     );
+  // A paid run first retries pending reconcile lookups, then is refused while a spend hold is not
+  // acknowledged, and takes the balance readings its end compares with (src/reconcile.ts).
+  let reconcileCtx: ReconcileContext | undefined;
+  let reconcile: RunReconcile | undefined;
+  if (plan.paid) {
+    reconcileCtx = await reconcileContext(ctx, options.providerScript);
+    try {
+      reconcile = await startRunReconcile(reconcileCtx, {
+        runId: runIdOfDir(plan.runDir),
+        runDir: plan.runDir,
+        providers: plan.jobs.map((j) => j.provider),
+      });
+    } catch (error) {
+      if (error instanceof SpendHoldError) return refused("spend_hold", error.message, 3);
+      throw error;
+    }
+  }
   await openRunDir(plan);
   let lock;
   try {
@@ -153,6 +181,15 @@ export async function executeRun(options: {
         }),
       });
     }
+    if (reconcileCtx !== undefined && reconcile !== undefined) {
+      const entries = await reconciled(reconcileCtx, reconcile);
+      await recordReconcile(plan.runDir, entries);
+      for (const e of entries)
+        if (e.status === "held")
+          ctx.log(
+            `spend hold ${e.holdId}: provider "${e.provider}" reports $${e.providerUsd?.toFixed(4)} against $${e.ledgerUsd?.toFixed(4)} in the ledger; paid runs are refused until it is acknowledged`,
+          );
+    }
     const ok = outcome.exitCode === 0;
     await writeState(plan.runDir, {
       ...state,
@@ -166,6 +203,34 @@ export async function executeRun(options: {
     return outcome;
   } finally {
     lock.release();
+  }
+}
+
+/** The settings and the providers they make, for reconciling; makes no call. */
+async function reconcileContext(
+  ctx: RunContext,
+  providerScript: string | undefined,
+): Promise<ReconcileContext> {
+  const script = providerScript !== undefined ? await loadScript(providerScript, ctx) : undefined;
+  const providers = createProviders(ctx.settings, {
+    ...(ctx.env && { env: ctx.env }),
+    ...(script && { script }),
+    ...(ctx.extensions && { adapters: ctx.extensions.adapters }),
+  });
+  return { settings: ctx.settings, providers };
+}
+
+/** The run's reconcile; an error reconciling never changes how the run ended. */
+async function reconciled(rctx: ReconcileContext, run: RunReconcile): Promise<ReconcileEntry[]> {
+  try {
+    return await finishRunReconcile(rctx, run);
+  } catch (error) {
+    return run.providers.map((provider) => ({
+      provider,
+      status: "failed" as const,
+      runId: run.runId,
+      note: (error as Error).message,
+    }));
   }
 }
 
