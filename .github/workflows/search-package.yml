@@ -2,7 +2,7 @@ name: Search package
 
 # The optional search package (packages/assetgrove-search) has its own install and tests, kept out of
 # the root install so core CI stays light. This job runs only when the package's files change, installs
-# the package alone and runs its check and test commands on Linux, macOS and Windows. Not a
+# the core and the package and runs the package's check and test commands on Linux, macOS and Windows. Not a
 # required check, so it does not run in the merge queue.
 on:
   pull_request:
@@ -57,6 +57,11 @@ jobs:
       - name: Enable pnpm from packageManager
         working-directory: .
         run: corepack enable
+
+      # The bench under bench/search imports the core's source, which needs the core's dependencies.
+      - name: Install the core's locked dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Install the package's locked dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts --no-optional

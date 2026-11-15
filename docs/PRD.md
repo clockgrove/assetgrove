@@ -148,7 +148,7 @@ Which providers offer a hard limit per key is not yet verified. Phase 1 checks e
 - **The prompt policy,** best-effort: a blocklist plus one model check refuse a prompt that names a living artist's style, a copyrighted character or a real person, before spend.
 - **Linux, macOS and Windows** pass CI, including Windows paths: long paths, case and separators.
 - **No product names in the core:** the settings named after a CI product become generic ones.
-- **The name:** a trademark check on Assetgrove, before the first npm release.
+- **The name:** a trademark check on Assetgrove, before 1.0.
 
 The rest of the core belongs here too, so later phases only add:
 
@@ -158,7 +158,7 @@ The rest of the core belongs here too, so later phases only add:
 - **Runs that hold up:** asking the same thing twice doesn't pay twice, a stopped run resumes, and checks filter only once they give the same answer on repeated runs.
 - **Shared files:** style bibles and presets travel as plain files. Each format carries a version: older files migrate forward and newer ones are refused. A bible carries a licence field for its references.
 - **`init` and the bible:** set up from the harness, with the style bible drafted with the developer, and an art-direction skill written where Claude Code, Codex and Copilot read skills.
-- **On npm from the start:** each phase's gate publishes a pre-release of `@clockgrove/assetgrove`, after the trademark check. Phase 1's gate is the first, 0.1.
+- **On npm from the start:** each phase's gate publishes a pre-release of `@clockgrove/assetgrove`. Phase 1's gate is the first, 0.1.
 - Skills: every package ships its skills in the Agent Skills format, installable with `npx skills add clockgrove/assetgrove`: a name matching its folder, a description of at most 1,024 characters, strict YAML, and a SKILL.md under 500 lines, with detail in linked reference files. A test fails when the core skill and the CLI disagree, so a command or option can't ship without the skill saying how to use it. Skills for working on Assetgrove itself, if any are needed, live in both .claude/skills/ and .agents/skills/.
 
 ### Phase 2: asset management and search
@@ -263,7 +263,7 @@ What we tell users, plainly:
 - AI output may not be protected by copyright where you live;
 - what you may do with the output depends on the model's terms, which Assetgrove records but doesn't change.
 
-Two questions need a lawyer before the first npm release: a trademark check on the new name, and what the EU AI Act's Article 50 asks of Assetgrove itself, as distinct from its users.
+Two questions need a lawyer: a trademark check on the new name, before 1.0, and, before the first npm release, what the EU AI Act's Article 50 asks of Assetgrove itself, as distinct from its users.
 
 ## Split out, rename or move
 
@@ -331,7 +331,7 @@ The biggest risk is reputational: an AI-art tool under the Clockgrove name meets
 | Risk | What could happen | How we handle it |
 | --- | --- | --- |
 | AI-art backlash | Clockgrove is seen as "the AI art people", and the work is dismissed on sight | The name stays under Clockgrove by choice. Positioning says plainly what it is; disclosure by default; the prompt policy; records that show a person picked every asset |
-| The name | Assetgrove fails its trademark check, and the project has to be renamed | The check runs first in Phase 1, before anything is published under the name |
+| The name | Assetgrove fails its trademark check, and the project has to be renamed | The check runs before 1.0, while a pre-release can still be renamed |
 | Controls promised beyond what holds | A user trusts a cap the agent could get round | The PRD and the docs promise only what holds: the limit at the provider, and best-effort for the rest |
 | A shared file runs code | A stranger's style bible or preset runs commands on a developer's machine | Phase 1's gate, over the full list of places a file can name a command or an endpoint |
 | Provider terms | A developer ships output their plan doesn't allow commercially | No declared grant, no hand-off. Terms and their date are recorded per asset |
