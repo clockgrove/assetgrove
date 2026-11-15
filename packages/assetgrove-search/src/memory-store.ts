@@ -1,5 +1,14 @@
 import { cosine } from "./embedder.ts";
-import type { BuiltFrom, FilterTerm, Hit, Row, Store, StoreQuery } from "./store.ts";
+import type {
+  BuiltFrom,
+  CachedVector,
+  FilterTerm,
+  Hit,
+  Row,
+  SourceRow,
+  Store,
+  StoreQuery,
+} from "./store.ts";
 
 function matches(row: Row, t: FilterTerm): boolean {
   if (t.op === "has") return (row.tags ?? []).includes(String(t.value));
@@ -22,6 +31,8 @@ const words = (s: string): string[] => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) 
 export class MemoryStore implements Store {
   private rows = new Map<string, Row>();
   private built = new Map<string, BuiltFrom>();
+  private sourceRows = new Map<string, SourceRow>();
+  private vectors = new Map<string, Float32Array>();
 
   async upsert(rows: Row[]): Promise<void> {
     for (const r of rows) this.rows.set(r.key, structuredClone(r));
@@ -29,6 +40,11 @@ export class MemoryStore implements Store {
 
   async remove(keys: string[]): Promise<void> {
     for (const k of keys) this.rows.delete(k);
+  }
+
+  async removePaths(tree: string, paths: string[]): Promise<void> {
+    const gone = new Set(paths);
+    for (const [k, r] of this.rows) if (r.tree === tree && gone.has(r.path)) this.rows.delete(k);
   }
 
   async query(q: StoreQuery): Promise<Hit[]> {
@@ -65,4 +81,32 @@ export class MemoryStore implements Store {
   async builtFrom(tree: string): Promise<BuiltFrom | undefined> {
     return this.built.get(tree);
   }
+
+  async sources(tree: string): Promise<SourceRow[]> {
+    return [...this.sourceRows.values()].filter((s) => s.tree === tree).map((s) => ({ ...s }));
+  }
+
+  async putSources(rows: SourceRow[]): Promise<void> {
+    for (const r of rows) this.sourceRows.set(`${r.tree}\0${r.path}`, { ...r });
+  }
+
+  async removeSources(tree: string, paths: string[]): Promise<void> {
+    for (const p of paths) this.sourceRows.delete(`${tree}\0${p}`);
+  }
+
+  async cachedVectors(
+    embedder: string,
+    keys: { sha256: string; view: string }[],
+  ): Promise<CachedVector[]> {
+    return keys.flatMap(({ sha256, view }) => {
+      const vec = this.vectors.get(`${embedder}\0${sha256}\0${view}`);
+      return vec ? [{ sha256, view, vec }] : [];
+    });
+  }
+
+  async cacheVectors(embedder: string, vectors: CachedVector[]): Promise<void> {
+    for (const v of vectors) this.vectors.set(`${embedder}\0${v.sha256}\0${v.view}`, v.vec);
+  }
+
+  async optimize(): Promise<void> {}
 }

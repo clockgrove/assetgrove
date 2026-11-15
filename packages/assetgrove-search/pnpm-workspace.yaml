@@ -1,6 +1,11 @@
 # Makes this folder its own pnpm root: the root install never reaches it.
 autoInstallPeers: false
 packages: []
+# LanceDB lists its own embedding helpers (a second Transformers.js with its onnxruntime-node, and
+# the OpenAI client) as optional dependencies; the package embeds through its own pinned copy.
+ignoredOptionalDependencies:
+  - "@huggingface/transformers"
+  - openai
 allowBuilds:
   onnxruntime-node: false
   protobufjs: false
