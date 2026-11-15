@@ -114,14 +114,9 @@ describe("the shipped manifest", () => {
     assert.ok(MODEL_MANIFEST.files.some((f) => f.path === "onnx/vision_model.onnx"));
   });
 
-  // Fails until `pnpm pin-model` has run where Hugging Face is reachable.
-  it(
-    "pins a commit and ships a sha256 for every file",
-    { todo: "needs Hugging Face: run pnpm pin-model" },
-    () => {
-      assert.equal(isPinned(MODEL_MANIFEST), true);
-    },
-  );
+  it("pins a commit and ships a sha256 for every file", () => {
+    assert.equal(isPinned(MODEL_MANIFEST), true);
+  });
 
   it("refuses to set up an unpinned manifest", async () => {
     await assert.rejects(

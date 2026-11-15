@@ -2,7 +2,7 @@ import manifestJson from "./model-manifest.json" with { type: "json" };
 
 export interface ModelFile {
   path: string;
-  /** Lower-case hex sha256; empty while the model is not pinned. */
+  /** Lower-case hex sha256; pinned. */
   sha256: string;
 }
 
