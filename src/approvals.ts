@@ -104,8 +104,11 @@ function sha256Hex(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
+/** The real path, or its nearest existing ancestor's real path joined with the rest. */
 function real(path: string): string {
-  return existsSync(path) ? realpathSync.native(path) : path;
+  if (existsSync(path)) return realpathSync.native(path);
+  const parent = dirname(path);
+  return parent === path ? path : join(real(parent), basename(path));
 }
 
 /** The nearest directory at or above `dir` holding a `.git` entry (a directory or a file). */

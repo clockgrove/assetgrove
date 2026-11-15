@@ -48,7 +48,7 @@ Serves one MCP tool per command other than `mcp` over MCP stdio with the officia
 materials --albedo <painted.png> --spec <spec.json> --profile <profile.json> --derivation <derivation.json> --out <directory> [--cap <usd>] [--routes <routes.json>] [--work-item <label>] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--dry-run] [--json]
 ```
 
-Derives the material channels the profile's `style.materials` requests from a painted albedo, checks alignment and temporal stability, writes native-resolution renditions into `--out`, runs the target's compression and lit previews, and judges the flat and lit images with vision QA. Paid gateway calls (vision QA and any model-assisted channel). Rejected materials exit 5 and stay unapproved. Never writes into the target.
+Derives the material channels the profile's `style.materials` requests from a painted albedo, checks alignment and temporal stability, writes native-resolution renditions into `--out`, runs the target's compression and lit previews, and judges the flat and lit images with vision QA. The compression and preview commands run only with an approval tied to each command's hash, exactly as `pick`'s validator does (cwd: the profile's directory); every one is checked before the first model call, exit 8 `confirmation_required` otherwise, and each output's provenance records the command's `hash` and approval `method`. Paid gateway calls (vision QA and any model-assisted channel). Rejected materials exit 5 and stay unapproved. Never writes into the target.
 
 MCP tool: `materials`, arguments `albedo`, `spec`, `profile`, `derivation`, `out`, `cap`, `workItem`, `digitalSourceType`.
 
@@ -68,7 +68,7 @@ MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `cap`, `r
 pick --run <run directory> --candidate <id> --target <target directory> [--json]
 ```
 
-Writes the chosen candidate and its manifest into the target with review pending, then runs the target profile's validator command locally when it declares one (exit 6 when it rejects). Refuses, before writing, an output the target's licence cannot declare (exit 7). Calls no model and spends nothing. Only a person runs it.
+Writes the chosen candidate and its manifest into the target with review pending, then runs the target profile's validator command locally when it declares one (exit 6 when it rejects). The validator is a command a file names, so it runs only with an approval tied to its exact command hash (kind, argv template, cwd relative to the target's Git top level, and the bytes of each argv file under it): listed in the settings' `commands.approved`, or a record at `<configDir>/approvals/<hash>.json`. Otherwise pick asks at a TTY and records the accept, or exits 8 `confirmation_required` before writing anything, with `error.confirmation` carrying `id` (the hash), `confirmCommand` and `command` (`kind`, `hash`, `argv`, `cwd`, `files`); `confirm` approves it. Under headless settings only `commands.approved` counts. On Windows a validator whose program resolves to a `.cmd` or `.bat` file exits 2 `command_refused`. The provenance's `commands` records the validator's hash and approval `method` (`settings`, `tty` or `terminal`). Refuses, before writing, an output the target's licence cannot declare (exit 7). Calls no model and spends nothing. Only a person runs it.
 
 MCP tool: `pick`, arguments `run`, `candidate`, `target`.
 
@@ -232,3 +232,11 @@ spend <status|check> [--provider <id>] [--work-item <label>] [--provider-script 
 `status` gives the ledger (`<stateDir>/spend.jsonl`), the caps from the settings, the last 24 hours' spend, and the work item (`--work-item` or `ASSETGROVE_WORK_ITEM`) with its spend. `check` reports per configured provider (`--provider` narrows it) `{provider, adapter, paid, declared, limit, verified, reading, mismatch, note}`: whether a limit is declared, the provider's reading where it gives one to an ordinary key (gateway credits balance, Tripo balance), and whether the reading verifies the limit. A reading verifies only a `prepaid` limit with `usd` (balance at or below it); a balance above it exits 3 with `provider_limit_mismatch`. Anthropic and OpenAI limits are declared only. `--provider-script` names the scripted provider's module, whose `limitReading` check reads. No spend, nothing written.
 
 MCP tool: `spend`, arguments `action`, `provider`, `workItem`. The provider script flag is CLI-only.
+
+### `confirm`
+
+```text
+confirm <hex> [--json]
+```
+
+Approves a pending request at a terminal. A command that exits 8 `confirmation_required` because a command a file names (a profile's validator, a profile style's material compression or preview command, or the CLI's provider script module) has no approval saves the request to `<stateDir>/pending/<hex>.json`; `confirm <hex>` shows its kind, argv, cwd and file hashes and asks. An accept writes `<configDir>/approvals/<hex>.json` (method `terminal`) and the command runs on the next try; a decline exits 8 `confirmation_declined`. Without a TTY on stdin and stderr, or with no pending request of that id, it exits 2. Headless settings ignore these records: list the hash in `commands.approved` instead. Local: no model call, no spend. CLI only; no MCP tool serves it.

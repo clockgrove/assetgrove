@@ -38,7 +38,7 @@ test("registered material operations run in recipes with exact geometry and chai
   assert.deepEqual(result.steps[0]!.outputs, result.steps[1]!.inputs);
   assert.deepEqual(result.steps[1]!.outputs, result.steps[2]!.inputs);
   assert.equal(result.steps[0]!.report!["version"], "synthetic-1");
-  for (const name of ["height", "normal", "emissive", "roughness", "wind", "rendition", "encode"]) {
+  for (const name of ["height", "normal", "emissive", "roughness", "wind", "rendition"]) {
     const declaration = describeOperations().operations.find(
       (op) => op.name === `material-${name}`,
     );

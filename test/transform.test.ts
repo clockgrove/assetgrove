@@ -1,3 +1,4 @@
+import { approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -51,7 +52,6 @@ test("every declared operation is implemented by a default engine", () => {
     "flip",
     "join",
     "material-emissive",
-    "material-encode",
     "material-height",
     "material-normal",
     "material-rendition",
@@ -446,6 +446,7 @@ test("the sheet import records its transformation steps, and each strip's proven
   );
   assert.deepEqual(record.steps?.[0]?.inputs, [pixelHash(sheet.raster)]);
   const target = join(root, "target");
+  approveProfile(syntheticProfile(), { targetDir: target });
   const { families } = await writeFamilies({
     importDir,
     targetDir: target,
