@@ -48,7 +48,7 @@ Agents never confirm a grouping.`,
   },
   effect: { readOnly: false, spends: "never", writes: "target" },
   confirm: "write",
-  async run(args) {
+  async run(args, ctx) {
     const importDir = args.import;
     const groupingPath = args.grouping ?? join(importDir, GROUPING_FILE);
     const result = await writeFamilies({
@@ -56,6 +56,7 @@ Agents never confirm a grouping.`,
       grouping: (await readJson<unknown>(groupingPath)).value,
       targetDir: args.target,
       jitterBoundPx: args.jitterBound ?? DEFAULT_JITTER_BOUND_PX,
+      gate: { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
     });
     const lines: string[] = [];
     for (const f of result.families) {

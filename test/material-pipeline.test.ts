@@ -1,3 +1,5 @@
+import "./fixtures/env.ts";
+import { approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -105,6 +107,7 @@ async function setup(
     manifest: {},
     review: { path: "review.status", pending: "pending" },
   } as TargetProfile;
+  approveProfile(profile, { profileDir: dir });
   const derivation: MaterialDerivation = {
     maps: {
       height: {
@@ -287,6 +290,7 @@ test("fake-only KTX2 compressor exercises external container validation per rend
     "require('node:fs').writeFileSync(process.argv[1], 'bad')",
     "{{output}}",
   ];
+  approveProfile(f.options.profile, { profileDir: f.dir });
   await assert.rejects(runMaterials(f.options), /did not produce KTX2/);
 });
 
@@ -310,6 +314,7 @@ test("fractional 3x native downsampling preserves frame grid and preview failure
   assert.equal(map.height, 4);
   assert.equal(getPixel(map, 7, 3)[0], 128);
   f.config.preview.command = [process.execPath, "-e", "process.exit(1)"];
+  approveProfile(f.options.profile, { profileDir: f.dir });
   await assert.rejects(runMaterials(f.options));
   result = JSON.parse(await readFile(join(f.dir, "out", "materials.json"), "utf8"));
   assert.equal(result.qa.passed, false);
@@ -358,6 +363,7 @@ test("rendition normal renormalization fails QA before out-of-range delivery or 
     command: [process.execPath, compressor, "{{input}}", "{{output}}"],
     version: "fake-ktx2-container",
   };
+  approveProfile(f.options.profile, { profileDir: f.dir });
   const normal = createRaster(8, 4);
   for (let y = 0; y < 4; y++)
     for (let x = 0; x < 8; x++) setPixel(normal, x, y, [x % 2 ? 38 : 217, 128, 219, 255]);
@@ -405,6 +411,7 @@ test("undeclared material PNG previews remain local while package compression re
   );
   const compressed = await setup({ compression: true });
   f.config.compression = compressed.config.compression;
+  approveProfile(f.options.profile, { profileDir: f.dir });
   await assert.rejects(runMaterials(f.options), /undeclared.*--digital-source-type/);
   const exported = await runMaterials({
     ...f.options,

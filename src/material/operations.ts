@@ -10,7 +10,6 @@ const grid: ParamSchema = {
   required: ["width", "height", "count"],
 };
 const string: ParamSchema = { type: "string" };
-const argv: ParamSchema = { type: "array", items: string, minItems: 1 };
 export const MATERIAL_OPERATIONS: OperationSpec[] = [
   ...["normal", "height", "emissive", "roughness", "wind"].map((channel) => ({
     name: `material-${channel}`,
@@ -46,16 +45,6 @@ export const MATERIAL_OPERATIONS: OperationSpec[] = [
         normal: { type: "boolean", default: false },
       },
       required: ["grid", "scale", "native"],
-    },
-  },
-  {
-    name: "material-encode",
-    summary: "encode a material with a bounded target GPU command",
-    scope: "each",
-    params: {
-      type: "object",
-      properties: { command: argv, version: string, input: string, output: string, cwd: string },
-      required: ["command", "version", "input", "output", "cwd"],
     },
   },
 ];

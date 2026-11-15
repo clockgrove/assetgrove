@@ -4,6 +4,7 @@
  */
 import { checkEnvironment } from "../env.ts";
 import type { Env } from "../env.ts";
+import { ttyPort } from "../confirm/prompt.ts";
 import { createProviders } from "../providers/adapter.ts";
 import { loadSettings } from "../settings.ts";
 import type { CommandSpec, RunContext } from "./types.ts";
@@ -18,6 +19,8 @@ export interface ContextOptions {
   providerScript?: string;
   /** The server's --work-item, given to every tool call that names none. */
   workItem?: string;
+  /** True for the CLI: a person at a TTY (stdin and stderr) can be asked inline. */
+  interactive?: boolean;
 }
 
 /** Loads the developer settings once and builds the context every command of this process runs in. */
@@ -29,9 +32,11 @@ export function createRunContext(options: ContextOptions): RunContext {
   // Each provider is made by its adapter now, so an adapter-aware refusal (an unknown adapter, a
   // baseURL the adapter does not take) exits 2 settings_invalid before any command runs.
   createProviders(settings, { ...(options.env && { env: options.env }) });
+  const prompt = options.interactive ? ttyPort() : undefined;
   return {
     settings,
     log: options.log,
+    ...(prompt && { prompt }),
     ...(options.providerScript !== undefined && { providerScript: options.providerScript }),
     ...(options.workItem !== undefined && { workItem: options.workItem }),
     ...(options.env && { env: options.env }),

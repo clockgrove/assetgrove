@@ -14,6 +14,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach } from "node:test";
+import { commandIdentity, scriptIdentity } from "../../src/approvals.ts";
+import type { CommandIdentity, CommandKind } from "../../src/approvals.ts";
 import { REFUSED_VARIABLES } from "../../src/env.ts";
 
 const FORMAT = "assetgrove-settings/1";
@@ -98,6 +100,72 @@ export function approveCommand(command: {
   const approved = Array.isArray(commands["approved"]) ? (commands["approved"] as unknown[]) : [];
   commands["approved"] = [...approved, command];
   return save(settings);
+}
+
+/** Where the approval records of the test's config directory go: `<configDir>/approvals`. */
+export const approvalsDir: string = join(root, "config", "approvals");
+
+/**
+ * Approves commands for this test file the way a person's terminal accept does: one record per
+ * hash at `<configDir>/approvals/<hex>.json` (method `terminal`). Records live beside the settings
+ * file, so they survive each test's settings reset; headless tests use `approveCommand`. Each
+ * argument is a --provider-script module path, or a command `{kind, argv, cwd}`. A profile's
+ * validator (`approveProfile`) and material commands are commands too. Returns the identities.
+ */
+export function approve(
+  ...commands: Array<string | { kind: CommandKind; argv: string[]; cwd: string }>
+): CommandIdentity[] {
+  mkdirSync(approvalsDir, { recursive: true });
+  return commands.map((command) => {
+    const identity =
+      typeof command === "string"
+        ? scriptIdentity(command)
+        : commandIdentity(command.kind, command.argv, command.cwd);
+    const { hash, kind, argv, cwd, files } = identity;
+    const record = {
+      kind,
+      hash,
+      argv,
+      cwd,
+      files,
+      method: "terminal",
+      at: new Date(0).toISOString(),
+    };
+    writeFileSync(join(approvalsDir, `${hash}.json`), `${JSON.stringify(record, null, 2)}\n`);
+    return identity;
+  });
+}
+
+interface ProfileCommands {
+  validator?: { command: string[] };
+  style?: { materials?: { compression?: { command: string[] }; preview?: { command: string[] } } };
+}
+
+/**
+ * Approves every command a target profile names: its validator, run in `targetDir`, and its
+ * style's material compression and preview, run in `profileDir` (the profile's directory).
+ */
+export function approveProfile(
+  profile: ProfileCommands,
+  dirs: { targetDir?: string; profileDir?: string },
+): CommandIdentity[] {
+  const commands: Array<{ kind: CommandKind; argv: string[]; cwd: string }> = [];
+  if (profile.validator && dirs.targetDir !== undefined)
+    commands.push({ kind: "validator", argv: profile.validator.command, cwd: dirs.targetDir });
+  const materials = profile.style?.materials;
+  if (materials?.compression && dirs.profileDir !== undefined)
+    commands.push({
+      kind: "material-compression",
+      argv: materials.compression.command,
+      cwd: dirs.profileDir,
+    });
+  if (materials?.preview && dirs.profileDir !== undefined)
+    commands.push({
+      kind: "material-preview",
+      argv: materials.preview.command,
+      cwd: dirs.profileDir,
+    });
+  return approve(...commands);
 }
 
 export function declareLimit(

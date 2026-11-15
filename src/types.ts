@@ -302,6 +302,8 @@ export interface Provenance {
   steps?: TransformStep[];
   /** The identity score against the character's identity lock, when the character has one. */
   identity?: import("./identity.ts").IdentityScore;
+  /** Each command a developer wrote that ran for this output: its hash and approval method. */
+  commands?: import("./approvals.ts").CommandStep[];
 }
 
 /** A file a generator produced. Each output declares its own media type and extension. */

@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -16,6 +17,7 @@ import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/model3d-script.ts", import.meta.url));
 const VALIDATOR = fileURLToPath(new URL("./fixtures/validator-3d.ts", import.meta.url));
+approve(SCRIPT);
 
 interface Result {
   code: number;
@@ -132,6 +134,7 @@ async function world(
   const runs = join(dir, "runs");
   const target = join(dir, "target");
   await mkdir(target);
+  approveProfile(profile3d(profileOverrides), { targetDir: target });
   const base = ["--spec", files.spec, "--bible", files.bible, "--profile", files.profile];
   return { dir, base, runs, target };
 }

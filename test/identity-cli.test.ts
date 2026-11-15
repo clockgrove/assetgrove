@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -15,6 +16,7 @@ import { syntheticProfile } from "./fixtures/synthetic.ts";
 const exec = promisify(execFile);
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/identity-script.ts", import.meta.url));
+approve(SCRIPT);
 const roots: string[] = [];
 after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
@@ -97,6 +99,7 @@ test("import scores a locked character's sheet; enforce mode makes write-familie
   await writeFile(grouping, JSON.stringify({ status: "confirmed", families: [], unassigned: [] }));
   const target = join(f.root, "target");
   await mkdir(target);
+  approveProfile(syntheticProfile(), { targetDir: target });
   await assert.rejects(
     exec(
       process.execPath,
@@ -201,6 +204,7 @@ export default {
 };
 `,
   );
+  approve(script);
   await writeFile(join(f.root, "key.png"), encodePng(createRaster(16, 16)));
   const spec = join(f.root, "spec.json");
   await writeFile(

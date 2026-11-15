@@ -1,3 +1,5 @@
+import "./fixtures/env.ts";
+import { approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,6 +71,7 @@ async function run(
   const root = await mkdtemp(join(tmpdir(), "assetgrove-identity-sheet-"));
   const targetDir = join(root, "target");
   await mkdir(targetDir);
+  approveProfile(syntheticProfile(), { targetDir });
   const { provider, caller } = setup(score);
   const settings: IdentitySettings = { mode: mode ?? "shadow", threshold: 0.6, question: "score" };
   const imported = await importSheet({

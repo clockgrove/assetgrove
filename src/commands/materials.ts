@@ -143,6 +143,7 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
       profileDir: profile.dir,
       outDir: resolve(args.out),
       call,
+      gate: { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
     });
     const fields = { ...result };
     const human = `materials ${result.passed ? "passed QA" : "failed QA"}: ${result.reportPath}`;

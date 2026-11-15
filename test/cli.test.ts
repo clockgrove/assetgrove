@@ -1,5 +1,5 @@
 import "./fixtures/env.ts";
-import { declareLimit } from "./fixtures/env.ts";
+import { approve, approveProfile, declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -12,6 +12,7 @@ import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+approve(passingScript, passingScript.replace("script.ts", "reject.ts"));
 
 interface Result {
   code: number;
@@ -52,6 +53,7 @@ async function files() {
   await writeFile(spec, JSON.stringify(shelterSpec));
   await writeFile(bible, JSON.stringify(world.bible));
   await writeFile(profile, JSON.stringify(world.profile));
+  approveProfile(world.profile, { targetDir: world.targetDir });
   const base = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
   return { world, base };
 }
@@ -59,6 +61,7 @@ async function files() {
 async function script(dir: string, body: string): Promise<string> {
   const path = join(dir, "script.mjs");
   await writeFile(path, `export default ${body};`);
+  approve(path);
   return path;
 }
 
@@ -211,6 +214,7 @@ test("pick reports a validator rejection as validator_rejected with the result",
     command: [process.execPath, "-e", "console.error('nope'); process.exit(1)"],
   };
   await writeFile(join(world.dir, "profile.json"), JSON.stringify(world.profile));
+  approveProfile(world.profile, { targetDir: world.targetDir });
   const staged = doc(
     await cli([
       "stage",
@@ -374,6 +378,7 @@ async function recordingScript(dir: string): Promise<{ path: string; marker: str
 const record = (kind) => { appendFileSync(${JSON.stringify(marker)}, kind + "\\n"); throw new Error("no call expected"); };
 export default { image: () => record("image"), vision: () => record("vision") };`,
   );
+  approve(path);
   return { path, marker };
 }
 

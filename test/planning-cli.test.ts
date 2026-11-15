@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -85,6 +86,7 @@ export default {
   }
 };`,
   );
+  approve(script);
   const args = [
     "--spec",
     spec,
@@ -170,6 +172,7 @@ test("CLI apply requires explicit approval, auto-approve generates, stale templa
     DIGITAL_SOURCE_TYPES.generated,
   );
   const { pick } = await import("../src/handoff.ts");
+  approveProfile(syntheticProfile(), { targetDir: join(f.dir, "target") });
   const picked = await pick({
     runDir,
     candidateId: candidate.id,

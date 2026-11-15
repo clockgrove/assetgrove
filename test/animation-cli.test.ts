@@ -1,5 +1,5 @@
 import "./fixtures/env.ts";
-import { declareLimit } from "./fixtures/env.ts";
+import { approve, approveProfile, declareLimit } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -17,6 +17,7 @@ import { syntheticProfile } from "./fixtures/synthetic.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/animation-script.ts", import.meta.url));
+approve(SCRIPT);
 
 interface Result {
   code: number;
@@ -252,6 +253,7 @@ test("write-families writes the onion skin and loop preview and reports animatio
   const root = await mkdtemp(join(tmpdir(), "assetgrove-anim-wf-"));
   const target = join(root, "target");
   await mkdir(target);
+  approveProfile(syntheticProfile(), { targetDir: target });
   await writeFile(join(root, "sheet.png"), syntheticSheet().png);
   await writeFile(
     join(root, "profile.json"),

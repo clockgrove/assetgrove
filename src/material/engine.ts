@@ -1,12 +1,10 @@
 import { execFile } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
+import { resolveProgram } from "../approvals.ts";
 import {
   DIGITAL_SOURCE_TYPES,
-  requireDeclared,
   combineDigitalSourceTypes,
-  embedDigitalSourceType,
   readDigitalSourceType,
 } from "../metadata.ts";
 import { InputError } from "../errors.ts";
@@ -20,7 +18,7 @@ import type {
 } from "../transform/types.ts";
 import { deriveNormals, extractScalarMap } from "./core.ts";
 import type { MaterialGrid } from "./core.ts";
-import { downsample, checkCompressed } from "./rendition.ts";
+import { downsample } from "./rendition.ts";
 const execute = promisify(execFile);
 export interface CommandRecord {
   argv: string[];
@@ -29,6 +27,10 @@ export interface CommandRecord {
   stdout: string;
   stderr: string;
 }
+/**
+ * Runs a material command of the profile style (compression or preview) with its placeholders
+ * filled, never through a shell. The caller has approved its hash (src/approvals.ts) first.
+ */
 export async function targetCommand(
   argv: string[],
   values: Record<string, string>,
@@ -45,7 +47,7 @@ export async function targetCommand(
     throw new InputError("material target command must be a nonempty argument array");
   if (values["output"]) await rm(values["output"], { force: true });
   try {
-    const result = await execute(expanded[0]!, expanded.slice(1), {
+    const result = await execute(resolveProgram(expanded[0]!, cwd), expanded.slice(1), {
       cwd,
       timeout: 120_000,
       maxBuffer: 1024 * 1024,
@@ -161,42 +163,6 @@ export const materialEngine: ImageEngine = {
           ),
         })),
       }),
-    ],
-    [
-      "material-encode",
-      async (items: ImageItem[], params: Record<string, unknown>): Promise<OperationResult> => {
-        const item = items[0]!;
-        requireDeclared(item.digitalSourceType);
-        const input = params["input"] as string,
-          output = params["output"] as string;
-        if (resolve(input) === resolve(output))
-          throw new InputError("encode input and output must differ");
-        await writeFile(
-          input,
-          embedDigitalSourceType(
-            encodePng(item.raster),
-            "image/png",
-            item.digitalSourceType ?? DIGITAL_SOURCE_TYPES.undeclared,
-          ),
-        );
-        const result = await targetCommand(
-          params["command"] as string[],
-          { input, output },
-          params["cwd"] as string,
-        );
-        const bytes = new Uint8Array(await readFile(output));
-        checkCompressed(bytes, item.raster.width, item.raster.height);
-        return {
-          items,
-          report: {
-            ...result,
-            version: params["version"],
-            sha256: sha256(bytes),
-            path: output,
-            mediaType: "image/ktx2",
-          },
-        };
-      },
     ],
   ]) as NonNullable<ImageEngine["asyncOperations"]>,
 };

@@ -1,5 +1,7 @@
 import type { Env } from "../env.ts";
 import type { ErrorCode } from "../errors.ts";
+import type { CommandConfirmation } from "../approvals.ts";
+import type { ConfirmPort } from "../confirm/prompt.ts";
 import type { Settings } from "../settings.ts";
 
 /** What running a command can do: whether it only reads, whether it spends, and where it writes. */
@@ -41,6 +43,8 @@ export interface RunContext {
   providerScript?: string;
   /** The MCP server's --work-item, given to each tool call that names no work item. */
   workItem?: string;
+  /** A channel to ask a person (the CLI's inline TTY prompt); absent when no one can be asked. */
+  prompt?: ConfirmPort;
 }
 
 /** A refusal's code and message; a spend-limit refusal also names the limit and its numbers. */
@@ -49,6 +53,8 @@ export interface Failure {
   message: string;
   /** For `format_unsupported`: why the format line was refused (`missing`, `too_new`, `unknown`). */
   reason?: string;
+  /** For exit 8: what a person must confirm, and how (design section 7). */
+  confirmation?: CommandConfirmation;
   limit?: {
     name: string;
     workItem?: string;
