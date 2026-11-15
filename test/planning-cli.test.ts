@@ -292,13 +292,7 @@ test("CLI preset switching changes subsequent plans and makes the prior plan sta
   assert.equal(switched.code, 0, switched.stderr);
   const next = JSON.parse(switched.stdout) as { preset: string };
   assert.equal(next.preset, "cozy-storybook");
-  const refused = await cli([
-    "apply",
-    f.plan,
-    "--provider-script",
-    f.script,
-    "--json",
-  ]);
+  const refused = await cli(["apply", f.plan, "--provider-script", f.script, "--json"]);
   assert.equal(refused.code, 2, refused.stderr);
   assert.match(refused.stderr, /stale|changed/i);
   assert.doesNotMatch(await readFile(f.events, "utf8"), /"kind":"image"/);
