@@ -81,6 +81,7 @@ import type { TexelMap } from "./texels.ts";
 import {
   compareMarking,
   markingsPrompt,
+  markingsFiltering,
   markingsReason,
   measureBox,
   parseMarkingsReply,
@@ -1433,7 +1434,9 @@ export async function lookDev(
       });
     }
   }
-  reasons.push(markingsReason(markingMeasures, { unmeasured, unreadable }));
+  // lookdev-markings filters only where measured stable on the run's markings model.
+  const markingsState = markingsFiltering(options.routes[LOOKDEV_MARKINGS_OPERATION]?.model);
+  reasons.push(markingsReason(markingMeasures, { unmeasured, unreadable }, markingsState));
 
   // 6. Identity lock on the looked-dev turntable (front and three-quarter), as for wave 0.
   let identity: IdentityScore | undefined;
@@ -1695,6 +1698,7 @@ export async function lookDev(
     candidates: [],
     filtered: passed ? 0 : 1,
     errors: [],
+    filtering: [markingsState],
   };
   if (passed) {
     const file = `${id}.glb`;

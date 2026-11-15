@@ -9,7 +9,7 @@ It is a development tool. A game repository never depends on it at runtime: Asse
 1. **Spec, not freehand.** Each request starts from the target asset's spec (asset, animation family, frame count and size, anchor) and the world's style bible (approved reference images, palette, perspective).
 2. **Candidates.** Models behind provider adapters produce several candidates per request, within a per-run cost cap.
 3. **Post-processing to spec.** Background to true alpha, crop and scale to the frame grid, palette and pivot alignment.
-4. **Vision QA.** A vision model checks each candidate against the spec and the references; only passing candidates are shown.
+4. **QA.** Deterministic checks and a vision model check each candidate against the spec and the references. A candidate that fails a deterministic check is not shown. A vision verdict filters only where it is measured stable on the run's model; at 0.1 none is, so vision verdicts are advisory: recorded and shown beside the candidate ([docs/decisions.md](docs/decisions.md#model-backed-checks-advisory-at-01)).
 5. **Operator pick.** A person picks and approves. Nothing is accepted automatically.
 6. **Hand-off.** The chosen files and their provenance are written into the target repository for its pipeline; media is stored with Git LFS.
 

@@ -128,9 +128,31 @@ Without a skeleton template, a character uses the provider's auto-rig and its cl
 
 Characters of one kind can share a skeleton template fitted to each model, with locomotion generated from a gait profile the target declares. QA checks foot contact, joint limits and skinning. For any kind whose target declares a template, this replaces the provider's auto-rig and clip library, because a provider's library walk does not move the way each species moves.
 
-## `lookdev-markings` is advisory
+## Model-backed checks advisory at 0.1
 
-`lookdev-markings` runs and records every measurement, but it never filters a look-dev candidate, and a drift does not make the run exit 5. Its reason is marked `shadow` and starts by saying the check is advisory and why; the run summary shows its verdict as "not filtered". The check measures each marking in boxes a vision model draws, and on the same code it names a different set of drifting markings on each run, so it cannot make a pass or fail call. It filters only once repeated measurements on the same renders name the same drifting markings, which takes stable boxes, not a looser threshold. A person judges the compare images.
+A model-backed QA check can give different answers on the same input, so it filters only where it is measured stable. Each check declares whether it is model-backed (`src/qa/stability.ts`), and `src/qa/stability.json` holds measured entries `{checkId, version, model, cases, repeats, agreement, measuredAt}`. A model-backed check filters only with an entry for its id, its version and the model its route resolves to on the run, with `cases >= 30`, `repeats >= 3` and `agreement >= 0.95`. Otherwise its reasons are advisory: marked `shadow`, recorded beside QA and shown as "not filtered", never used to filter or to fail a run. The result says why in `filtering: [{check, state: "filtering" | "advisory", cause?: "no-entry" | "model-differs"}]`: `no-entry` when no qualifying entry exists for the check's id and version, `model-differs` when one exists only for another model. So a run on a model other than the default turns filtering off for every check measured only on the default.
+
+These model-backed checks are advisory at 0.1, with no qualifying entry on the core default vision model. A test fails on a model-backed check with neither such an entry nor a place in this list; a check leaves it once its measured entry lands.
+
+```json
+[
+  "transparency",
+  "frame-count",
+  "identity",
+  "perspective",
+  "identity-flicker",
+  "holes",
+  "lookdev-markings",
+  "style-score",
+  "flat-albedo",
+  "normal-orientation",
+  "emissive-placement",
+  "dusk-rain",
+  "night"
+]
+```
+
+`transparency`, `frame-count`, `identity` and `perspective` are the vision verdict's checks of a still or strip; the deterministic `transparency` and `frame-count` checks of the same names always filter. `identity-flicker` and `holes` are animation QA's vision checks. `lookdev-markings` measures each marking in boxes a vision model draws, and on the same code it names a different set of drifting markings on each run; while advisory, its reason starts by saying so, and a person judges the compare images. `style-score` is a planned run's vision verdict on each candidate (`apply`): while advisory, a candidate below the strictness is kept, its reason marked `shadow`. `flat-albedo`, `normal-orientation`, `emissive-placement`, `dusk-rain` and `night` are the material pipeline's lit checks (`materials`): while advisory, a failing lit verdict is recorded in `materials.json` but no longer fails the maps.
 
 ## 3D identity results are provisional
 

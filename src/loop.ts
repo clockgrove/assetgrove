@@ -21,6 +21,8 @@ import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import { checkWrites } from "./paths.ts";
 import type { IdentityAgreement } from "./identity.ts";
+import { applyStability, mergeFiltering } from "./qa/stability.ts";
+import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import type { Generator, PlannedCall } from "./generators/generator.ts";
 import { sha256, sniffMediaType } from "./request.ts";
@@ -61,6 +63,8 @@ export interface StageOptions {
   now?: () => Date;
   /** Receives one line per candidate outcome and one when the run stops early. */
   log?: (message: string) => void;
+  /** The measured stability entries model-backed checks filter by; src/qa/stability.json by default. */
+  stability?: readonly StabilityEntry[];
 }
 
 /** What a stage run would call and cost, computed without spending anything. */
@@ -179,6 +183,12 @@ export interface RunRecord {
     /** How many candidates were scored. */
     scores: number;
   };
+  /**
+   * Whether each model-backed check filtered: `filtering` only where it is measured stable on the
+   * run's model (src/qa/stability.json); otherwise `advisory`, its reasons marked `shadow`, with
+   * the cause. Absent when no model-backed check ran.
+   */
+  filtering?: FilteringState[];
   /** Why candidate generation stopped early, when it did (for example the cost cap). */
   stopped?: string;
   picked?: { candidateId: string; at: string; target: string; files: string[] };
@@ -294,13 +304,21 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         await mkdir(join(runDir, posix.dirname(name)), { recursive: true });
         await writeFile(join(runDir, name), artifact.bytes);
       }
-      if (!generated.qa.passed) {
+      // A model-backed check filters only where it is measured stable on the run's model.
+      const qa = applyStability(generated.qa.reasons, routes, {
+        ...(options.stability !== undefined && { entries: options.stability }),
+      });
+      if (qa.filtering.length > 0)
+        run.filtering = mergeFiltering(run.filtering ?? [], qa.filtering);
+      // The generator's own verdict stands unless stability made one of its reasons advisory.
+      const advised = qa.reasons.some((r, i) => r !== generated.qa.reasons[i] && !r.passed);
+      if (!(advised ? qa.passed : generated.qa.passed)) {
         run.filtered++;
         if (generated.artifacts) {
           // Recorded per candidate, with what it cost, so the filtered ones can be reviewed too.
           (run.rejections ??= []).push({
             candidate: index + 1,
-            reasons: generated.qa.reasons,
+            reasons: qa.reasons,
             costUsd: call.records.reduce((sum, r) => sum + r.costUsd, 0),
             artifacts,
           });
@@ -342,7 +360,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         mediaType: generated.output.mediaType,
         extension: generated.output.extension,
         sha256: sha256(bytes),
-        reasons: generated.qa.reasons,
+        reasons: qa.reasons,
         fields: generated.output.fields,
         provenance,
         ...(artifacts.length > 0 && { artifacts }),

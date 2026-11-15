@@ -11,6 +11,9 @@ import { encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
+import { applyStability, ANIMATION_VISION_CHECKS, filteringState } from "../qa/stability.ts";
+import type { FilteringState } from "../qa/stability.ts";
+import type { Routes } from "../routes.ts";
 import type { ResolvedStyle } from "../style.ts";
 import type { Point, Size, TargetProfile } from "../types.ts";
 import { appendDecisionLog, checkFlicker } from "./flicker.ts";
@@ -95,13 +98,25 @@ export interface StripQaOptions {
    * Runs the vision checks (identity flicker, and holes on frames with see-through areas inside
    * the outline) through this caller; omitted, both are skipped.
    */
-  vision?: { call: Caller; subject: string; subjectDescription?: string; now?: () => Date };
+  vision?: {
+    call: Caller;
+    /** The caller's routes: the model each vision check runs on decides whether it filters. */
+    routes: Routes;
+    subject: string;
+    subjectDescription?: string;
+    now?: () => Date;
+  };
 }
 
 export interface StripQaResult {
   report: AnimationReport & {
     identityFlicker: "checked" | "skipped";
     holes: "checked" | "skipped";
+    /**
+     * Whether identity flicker and holes filtered (when checked): only where measured stable on
+     * the run's model; otherwise advisory, their reasons marked `shadow`, with the cause.
+     */
+    filtering?: FilteringState[];
   };
   decisions: FlickerDecision[];
   holeDecisions: HoleDecision[];
@@ -168,13 +183,22 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
       ...(options.vision.now !== undefined && { now: options.vision.now }),
     });
     holeDecisions = holes.decisions;
-    const reasons = [...base.reasons, ...flicker.reasons, ...holes.reasons];
+    // The vision checks filter only where measured stable on the run's model.
+    const vision = applyStability([...flicker.reasons, ...holes.reasons], options.vision.routes, {
+      checks: ANIMATION_VISION_CHECKS,
+    });
+    const reasons = [...base.reasons, ...vision.reasons];
     report = {
       ...base,
       reasons,
-      passed: reasons.every((r) => r.passed),
+      passed: reasons.every((r) => r.passed || r.shadow),
       identityFlicker: "checked",
       holes: "checked",
+      filtering: ANIMATION_VISION_CHECKS.map(
+        (check) =>
+          vision.filtering.find((f) => f.check === check.id) ??
+          filteringState(check, options.vision!.routes[check.operation!]?.model),
+      ),
     };
   }
 
@@ -208,7 +232,8 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
 
 /** The human lines of a report: the verdict, then each failed check (each names its frames). */
 export function formatReport(report: StripQaResult["report"]): string[] {
-  const failed = report.reasons.filter((r) => !r.passed);
+  const failed = report.reasons.filter((r) => !r.passed && !r.shadow);
+  const advisory = report.reasons.filter((r) => !r.passed && r.shadow);
   const lines = [
     `${report.family}: ${report.frameCount} frames, template ${report.template ?? "none"}` +
       (report.gait !== undefined ? `, gait ${report.gait}` : "") +
@@ -217,5 +242,8 @@ export function formatReport(report: StripQaResult["report"]): string[] {
       (report.identityFlicker === "skipped" ? " (identity flicker and holes not checked)" : ""),
   ];
   for (const r of failed) lines.push(`  ${r.check} [${r.source}]: ${r.reason}`);
+  // An advisory check is recorded beside QA: its verdict is shown, but it filtered nothing.
+  for (const r of advisory)
+    lines.push(`  ${r.check} [${r.source}; failed, not filtered]: ${r.reason}`);
   return lines;
 }

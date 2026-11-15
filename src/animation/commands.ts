@@ -235,6 +235,7 @@ export async function runAnimationQa(options: {
         ...(call && {
           vision: {
             call,
+            routes: options.routes,
             subject: t.subject,
             ...(options.now !== undefined && { now: options.now }),
           },

@@ -173,7 +173,7 @@ test("every candidate failing to generate is provider_error", async () => {
   assert.equal(doc(r)["error"].code, "provider_error");
 });
 
-test("QA rejecting every candidate is qa_found_nothing", async () => {
+test("a failing vision verdict without a stability entry is advisory: the candidate is staged", async () => {
   const { base } = await files();
   const r = await cli(
     [
@@ -187,8 +187,18 @@ test("QA rejecting every candidate is qa_found_nothing", async () => {
     ],
     noKey(),
   );
-  assert.equal(r.code, 5, r.stderr);
-  assert.equal(doc(r)["error"].code, "qa_found_nothing");
+  // The vision checks have no measured stability entry, so their verdict filters nothing.
+  assert.equal(r.code, 0, r.stderr);
+  const d = doc(r);
+  assert.equal(d["candidates"].length, 1);
+  const identity = d["candidates"][0].reasons.find(
+    (x: { check: string; source: string }) => x.check === "identity" && x.source === "vision",
+  );
+  assert.deepEqual([identity.passed, identity.shadow], [false, true]);
+  assert.deepEqual(
+    d["filtering"].find((f: { check: string }) => f.check === "identity"),
+    { check: "identity", state: "advisory", cause: "no-entry" },
+  );
 });
 
 test("a provider script without image and vision is invalid_input", async () => {

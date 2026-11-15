@@ -64,6 +64,8 @@ Decide on the exit and `error.code`, never on the message. What the commands ret
 - 6: a hand-off preset's check found problems in what `pick` or `write-families` wrote (`handoff_check_failed`, listed in `error.problems`; the validator did not run), or the target's validator rejected it (`validator_rejected`).
 - 7: the provider's output grant does not let the target declare the output; nothing written.
 
+A model-backed QA check (a vision verdict, identity flicker, holes, look-dev markings) filters only where it is measured stable on the run's model. Otherwise its reasons are advisory: marked `shadow`, shown as "not filtered", never the cause of a filtered candidate or an exit 5. `filtering: [{check, state, cause?}]` in the run (and in the `animation-qa` report) says which: `state` is `filtering` or `advisory`, `cause` is `no-entry` (never measured) or `model-differs` (measured only on another model). A non-default model turns filtering off for those checks. At 0.1 every model-backed check is advisory.
+
 ## Environment
 
 - `AI_GATEWAY_API_KEY`: the Vercel AI Gateway key, from the environment only. Not needed for `--dry-run` or `--provider-script`.

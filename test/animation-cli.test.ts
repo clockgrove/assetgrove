@@ -71,10 +71,15 @@ for (const [name, style, drawn] of STYLES) {
       ...["--provider-script", SCRIPT, "--json"],
     ]);
     const d = doc(r);
-    // The scripted model calls the 2 → 3 pair a flicker; everything on pixels passes.
-    assert.equal(r.code, 5, r.stderr);
-    assert.equal(d.error.code, "qa_found_nothing");
+    // The scripted model calls the 2 → 3 pair a flicker; everything on pixels passes. Identity
+    // flicker has no measured stability entry, so its verdict is advisory and filters nothing.
+    assert.equal(r.code, 0, r.stderr);
     const family = d.families[0];
+    assert.equal(family.passed, true);
+    assert.deepEqual(family.filtering, [
+      { check: "identity-flicker", state: "advisory", cause: "no-entry" },
+      { check: "holes", state: "advisory", cause: "no-entry" },
+    ]);
     assert.equal(family.template, "walk");
     assert.equal(family.identityFlicker, "checked");
     const failed = family.reasons.filter((x: { passed: boolean }) => !x.passed);
@@ -83,6 +88,7 @@ for (const [name, style, drawn] of STYLES) {
       [["identity-flicker", [2, 3]]],
     );
     assert.match(failed[0].reason, /frame 2 → frame 3/);
+    assert.equal(failed[0].shadow, true);
     // 7 consecutive pairs plus the seam, one call each.
     assert.equal(family.decisions.length, 8);
     const log = (await readFile(join(out, "flicker.jsonl"), "utf8")).trim().split("\n");

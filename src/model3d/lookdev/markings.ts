@@ -3,6 +3,8 @@
  * renders against the matching turnaround view, in CIELAB, per marking and per view.
  */
 import { ProviderError } from "../../errors.ts";
+import { filteringState, LOOKDEV_MARKINGS_CHECK } from "../../qa/stability.ts";
+import type { FilteringState } from "../../qa/stability.ts";
 import type { Raster } from "../../image/raster.ts";
 
 /** x0, y0, x1, y1 as fractions 0..1 of the image's width and height. */
@@ -302,30 +304,40 @@ function detail(m: MarkingMeasure): string {
 }
 
 /**
- * Why the check is advisory, said in every reason: its boxes come from a vision model, and on
+ * Why the check is advisory while it has no qualifying stability entry for the run's model
+ * (src/qa/stability.ts), said in every such reason: its boxes come from a vision model, and on
  * unchanged code they name a different set of drifting markings on each run (docs/decisions.md).
  */
 export const MARKINGS_ADVISORY =
   "advisory, never filters: the boxes come from a vision model, and on the same code they name a different set of drifting markings on each run, so a person judges the compare images";
+
+/** Whether lookdev-markings filters on the run's markings model, and why not when it does not. */
+export function markingsFiltering(model: string | undefined): FilteringState {
+  return filteringState(LOOKDEV_MARKINGS_CHECK, model);
+}
 
 /**
  * The check's verdict. A marking drifts when its colour or contrast drifts, or when the
  * turnaround shows it and a render does not (`missing`); a view whose reply could not be read
  * (`unreadable`) fails too, because a marking there could have vanished unseen. Only what the
  * references give nothing to measure (`unmeasured`) passes, named. The verdict is recorded with
- * every measurement but is `shadow`: it never filters the candidate (MARKINGS_ADVISORY).
+ * every measurement. It filters only where the check is measured stable on the run's model
+ * (`filtering`, from `markingsFiltering`); otherwise it is `shadow` and never filters the
+ * candidate (MARKINGS_ADVISORY). Without `filtering` it is advisory.
  */
 export function markingsReason(
   measures: MarkingMeasure[],
   notes: { unmeasured: string[]; unreadable?: string[] },
+  filtering: FilteringState = markingsFiltering(undefined),
 ): {
   check: "lookdev-markings";
   passed: boolean;
   reason: string;
   source: "deterministic";
-  shadow: true;
+  shadow?: true;
 } {
-  const parts: string[] = [MARKINGS_ADVISORY];
+  const advisory = filtering.state === "advisory";
+  const parts: string[] = advisory ? [MARKINGS_ADVISORY] : [];
   if (measures.length === 0) {
     parts.push("no marking was measured");
   } else {
@@ -358,6 +370,6 @@ export function markingsReason(
     passed: !measures.some((m) => m.drifts) && unreadable.length === 0,
     reason: parts.join(". "),
     source: "deterministic",
-    shadow: true,
+    ...(advisory && { shadow: true as const }),
   };
 }

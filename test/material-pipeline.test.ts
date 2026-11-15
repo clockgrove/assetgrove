@@ -18,6 +18,7 @@ import { sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import type { TargetProfile } from "../src/types.ts";
 import { runMaterials } from "../src/material/pipeline.ts";
+import { MATERIAL_LIT_CHECKS } from "../src/qa/stability.ts";
 import type { OutputGrant } from "../src/types.ts";
 import type { MaterialDerivation, MaterialProfile } from "../src/material/pipeline.ts";
 
@@ -237,11 +238,42 @@ test("material pipeline emits aligned native 1x/2x maps, provenance and lit revi
   }
 });
 
-test("lit QA rejects bad normal orientation even with valid maps", async () => {
+test("lit QA without a stability entry is advisory: a bad normal orientation is recorded, not failed", async () => {
   const f = await setup({ failLit: true });
   const result = await runMaterials(f.options);
+  assert.equal(result.passed, true);
+  const reason = result.qa.reasons.find((r) => r.check === "normal-orientation");
+  assert.equal(reason?.passed, false);
+  assert.equal(reason?.shadow, true);
+  assert.deepEqual(
+    result.filtering?.find((s) => s.check === "normal-orientation"),
+    { check: "normal-orientation", state: "advisory", cause: "no-entry" },
+  );
+  const report = JSON.parse(await readFile(result.reportPath, "utf8"));
+  assert.equal(report.filtering.length, 5);
+});
+
+test("lit QA rejects bad normal orientation with a qualifying entry for the run's model", async () => {
+  const f = await setup({ failLit: true });
+  const stability = MATERIAL_LIT_CHECKS.map((c) => ({
+    checkId: c.id,
+    version: c.version,
+    model: "vision",
+    cases: 30,
+    repeats: 3,
+    agreement: 0.95,
+    measuredAt: "2026-11-14T00:00:00.000Z",
+  }));
+  const result = await runMaterials({ ...f.options, stability });
   assert.equal(result.passed, false);
   assert.equal(result.qa.reasons.find((r) => r.check === "normal-orientation")?.passed, false);
+  assert.ok(result.filtering?.every((s) => s.state === "filtering"));
+  const other = await runMaterials({
+    ...f.options,
+    stability: stability.map((e) => ({ ...e, model: "another" })),
+  });
+  assert.equal(other.passed, true);
+  assert.ok(other.filtering?.every((s) => s.cause === "model-differs"));
 });
 
 test("native resolution, named emitters and declared range fail closed", async () => {
