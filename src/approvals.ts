@@ -137,6 +137,32 @@ function canonical(identity: Omit<CommandIdentity, "hash">): string {
   return JSON.stringify({ kind: identity.kind, argv: identity.argv, cwd: identity.cwd, files });
 }
 
+/**
+ * The identity a stored `{kind, argv, cwd, files}` describes, when it is well formed and hashes to
+ * `hash`; otherwise undefined. `assetgrove confirm` approves only a pending request whose shown
+ * command is the one its id names.
+ */
+export function verifiedIdentity(details: unknown, hash: string): CommandIdentity | undefined {
+  if (typeof details !== "object" || details === null) return undefined;
+  const d = details as Record<string, unknown>;
+  const kind = d.kind;
+  if (typeof kind !== "string" || !(COMMAND_KINDS as readonly string[]).includes(kind)) {
+    return undefined;
+  }
+  if (!Array.isArray(d.argv) || !d.argv.every((a) => typeof a === "string")) return undefined;
+  if (typeof d.cwd !== "string") return undefined;
+  if (typeof d.files !== "object" || d.files === null || Array.isArray(d.files)) return undefined;
+  const files = d.files as Record<string, unknown>;
+  if (!Object.values(files).every((v) => typeof v === "string")) return undefined;
+  const identity = {
+    kind: kind as CommandKind,
+    argv: [...(d.argv as string[])],
+    cwd: d.cwd,
+    files: { ...(files as Record<string, string>) },
+  };
+  return sha256Hex(canonical(identity)) === hash ? { ...identity, hash } : undefined;
+}
+
 /** The cwd as hashed: relative to its Git top level with `/`, or absolute outside a repository. */
 export function hashedCwd(cwd: string): string {
   const full = real(resolve(cwd));

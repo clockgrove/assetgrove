@@ -296,6 +296,30 @@ test("confirm <hex> approves a pending request at a terminal and exits 2 without
   assert.equal(gone.exitCode, 2);
 });
 
+test("confirm <hex> refuses a pending request whose command does not hash to its id", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "assetgrove-confirm-tampered-"));
+  const identity = commandIdentity("material-preview", ["node", "tampered.mjs"], dir);
+  const settings = loadSettings();
+  await assert.rejects(requireApproval(identity, { settings }), {
+    code: "confirmation_required",
+  });
+  const path = join(stateDir, "pending", `${identity.hash}.json`);
+  const saved = JSON.parse(await readFile(path, "utf8"));
+  saved.details.argv = ["node", "other.mjs"];
+  await writeFile(path, JSON.stringify(saved));
+  const asked: ConfirmRequest[] = [];
+  const ctx = { settings, log: () => {}, prompt: port(true, asked) };
+  const edited = await runCommand(confirmCommand, { id: identity.hash }, ctx);
+  assert.equal(edited.exitCode, 2);
+  assert.equal(asked.length, 0);
+  saved.details = "not a command";
+  await writeFile(path, JSON.stringify(saved));
+  const malformed = await runCommand(confirmCommand, { id: identity.hash }, ctx);
+  assert.equal(malformed.exitCode, 2);
+  assert.equal(asked.length, 0);
+  assert.equal(existsSync(join(settings.configDir, "approvals", `${identity.hash}.json`)), false);
+});
+
 test(
   "on Windows a validator resolving to a .cmd file exits 2 command_refused",
   { skip: process.platform !== "win32" && "win32 only" },

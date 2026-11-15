@@ -1,5 +1,4 @@
-import { approvalPath, writeApproval } from "../approvals.ts";
-import type { CommandIdentity } from "../approvals.ts";
+import { approvalPath, verifiedIdentity, writeApproval } from "../approvals.ts";
 import { readPending, removePending } from "../confirm/pending.ts";
 import { describeRequest } from "../confirm/prompt.ts";
 import { refusal } from "./result.ts";
@@ -16,8 +15,9 @@ export const confirmCommand = defineCommand<ConfirmArgs>({
   details: `Shows the request a command saved to <stateDir>/pending/<id>.json when it exited 8
 confirmation_required, and asks at the terminal. For a command a file names (kind command, id its
 hash), an accept writes <configDir>/approvals/<id>.json (method terminal), and the command runs on
-the next try. CLI only; exits 2 without a TTY on stdin and stderr, or with no pending request of
-that id. Declining exits 8 confirmation_declined.`,
+the next try. CLI only; exits 2 without a TTY on stdin and stderr, with no pending request of that
+id, or when the request's kind, argv, cwd and files do not hash to that id. Declining exits 8
+confirmation_declined.`,
   input: {
     type: "object",
     properties: {
@@ -44,6 +44,15 @@ that id. Declining exits 8 confirmation_declined.`,
     const { stateDir, configDir } = ctx.settings;
     const request = await readPending(stateDir, args.id);
     const fields = { id: request.id, kind: request.kind, request: request.details };
+    const identity = verifiedIdentity(request.details, request.id);
+    if (request.kind !== "command" || identity === undefined) {
+      return refusal(
+        "invalid_input",
+        `pending request ${args.id} does not describe the command its id hashes; rerun the command to save it again`,
+        fields,
+        "",
+      );
+    }
     if (!(await ctx.prompt.confirm(request))) {
       return refusal(
         "confirmation_declined",
@@ -52,12 +61,7 @@ that id. Declining exits 8 confirmation_declined.`,
         describeRequest(request),
       );
     }
-    const d = request.details as Omit<CommandIdentity, "hash">;
-    const path = await writeApproval(
-      configDir,
-      { kind: d.kind, argv: d.argv, cwd: d.cwd, files: d.files, hash: request.id },
-      "terminal",
-    );
+    const path = await writeApproval(configDir, identity, "terminal");
     await removePending(stateDir, request.id);
     return {
       exitCode: 0,
