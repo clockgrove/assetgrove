@@ -93,7 +93,7 @@ test("core registers its kinds, presets and adapters through the extension contr
   const [core] = CORE_REGISTRY.loaded;
   assert.equal(core?.name, "core");
   assert.deepEqual(core?.kinds, ["still", "sprite-strip", "character-3d"]);
-  assert.deepEqual(core?.presets, ["manifest"]);
+  assert.deepEqual(core?.presets, ["manifest", "atlas-json", "aseprite-json"]);
   assert.deepEqual(
     [...(core?.adapters ?? [])].sort(),
     ["anthropic", "openai", "openai-compatible", "scripted", "tripo", "vercel-ai-gateway"].sort(),

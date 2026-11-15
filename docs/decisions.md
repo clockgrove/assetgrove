@@ -234,6 +234,10 @@ An extension is code, so the only input that may name one is the developer setti
 
 A package whose entry file the working directory's Git tracks is refused (`extension_refused`), because a tracked entry would be code the project supplies, and a project must never make Assetgrove run its code. The manifest (`assetgrove.api`, `entry` inside the package) is checked by reading package.json before any import. Core registers its own kinds, preset and adapters through the same contract, so the contract is the one path by which anything is added.
 
+## Atlas writers are hand-written
+
+The `atlas-json` and `aseprite-json` presets (`src/handoff/presets`) write their JSON themselves. I looked for a maintained library that writes sprite-atlas or Aseprite JSON: the packers (`free-tex-packer`, `texturepacker` wrappers, `spritesmith`) pack images into a new sheet and would repack a strip whose geometry is already fixed, and the Aseprite tooling is the Aseprite program itself or readers of its export. None writes this document from known frame rectangles. The output is a handful of fixed-shape objects, byte-stable, and each preset reads it back and checks it ([handoff.md](handoff.md)).
+
 ## Search bars and the image-similarity threshold (design section 7.9)
 
 The owner confirmed these bars, and they are committed here before the measuring run. Quality bars are the search spike's measured values minus two standard errors, rounded down to 0.05. Speed bars are measured on the 24-thread reference box. `bench/search/bars.ts` reads the table below at run time; `packages/assetgrove-search/test/bench-bars.test.ts` fails when this table and the design's values disagree.
