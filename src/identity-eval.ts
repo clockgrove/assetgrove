@@ -260,28 +260,18 @@ export async function readEvalCases(path: string): Promise<{ cases: EvalCase[]; 
   return { cases, dir: dirname(resolve(path)) };
 }
 
-export async function evaluateIdentity(options: {
-  /** The bible of every case that names none. */
+/** Reads the cases and the bibles and resolves every (bible, subject) identity, as a run does. */
+async function loadEvalSet(options: {
   biblePath?: string;
   casesPath: string;
   profile: Pick<TargetProfile, "identity" | "spend">;
-  routes: Routes;
-  provider: GenerationProvider;
-  providerName?: string;
-  capUsd: number;
-  /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
-  ledger?: SpendLedger;
-  /** JSON Lines log: one line per case with its score, label, confidence, latency and cost. */
-  logPath?: string;
-  log?: (message: string) => void;
-}): Promise<EvalReport> {
+}) {
   const { cases, dir } = await readEvalCases(options.casesPath);
   // The eval measures; it never filters, so it runs in shadow mode at the configured threshold.
   const settings = { ...identitySettings(options.profile, "shadow") };
   const operation = settings.question === "cast" ? IDENTITY_CAST_OPERATION : "identity";
 
   const docs = new Map<string, BibleDocument>();
-  const casts = new Map<string, Promise<CastMember[]>>();
   const bibleOf = async (c: EvalCase): Promise<BibleDocument> => {
     const path = c.bible !== undefined ? resolve(dir, c.bible) : options.biblePath;
     if (path === undefined)
@@ -302,6 +292,39 @@ export async function evaluateIdentity(options: {
     }
     prepared.push({ c, doc, key });
   }
+  return { cases, dir, settings, operation, identities, prepared };
+}
+
+/**
+ * What an evaluation would call, from its inputs alone: the case count, the distinct identities
+ * (bible and subject) and the operation each case is scored with. Fails as a run does.
+ */
+export async function planEvaluation(options: {
+  biblePath?: string;
+  casesPath: string;
+  profile: Pick<TargetProfile, "identity" | "spend">;
+}): Promise<{ cases: number; identities: number; operation: string }> {
+  const set = await loadEvalSet(options);
+  return { cases: set.cases.length, identities: set.identities.size, operation: set.operation };
+}
+
+export async function evaluateIdentity(options: {
+  /** The bible of every case that names none. */
+  biblePath?: string;
+  casesPath: string;
+  profile: Pick<TargetProfile, "identity" | "spend">;
+  routes: Routes;
+  provider: GenerationProvider;
+  providerName?: string;
+  capUsd: number;
+  /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
+  ledger?: SpendLedger;
+  /** JSON Lines log: one line per case with its score, label, confidence, latency and cost. */
+  logPath?: string;
+  log?: (message: string) => void;
+}): Promise<EvalReport> {
+  const { cases, dir, settings, operation, identities, prepared } = await loadEvalSet(options);
+  const casts = new Map<string, Promise<CastMember[]>>();
 
   const budget = new Budget(
     options.capUsd,

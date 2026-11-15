@@ -13,6 +13,16 @@ import { runCap } from "../budget.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  jobOf,
+  paidBy,
+} from "../runs/plan.ts";
+import type { PlanJob } from "../runs/plan.ts";
 
 interface AnimationQaArgs {
   strip?: string;
@@ -28,6 +38,57 @@ interface AnimationQaArgs {
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** The plan step: the strips, their flicker and holes calls and the WorkPlan, with no call made. */
+async function prepare(args: AnimationQaArgs, ctx: RunContext) {
+  const capUsd = runCap(args.cap, ctx.settings);
+  const providers = await providerSet(args.providerScript, ctx);
+  const routes = providers.routes;
+  const vision = !args.noVision;
+  const spec = await specForQa(args.spec);
+  let targets;
+  if (typeof args.import === "string") {
+    if (args.strip !== undefined) throw new InputError("give --strip or --import, not both");
+    targets = await importTargets(args.import);
+  } else {
+    const missing = (["strip", "family", "profile"] as const).filter((n) => !args[n]);
+    if (missing.length > 0) {
+      throw new InputError(`missing required option ${missing.map((n) => `--${n}`).join(", ")}`);
+    }
+    const profile = await loadProfile(args.profile as string);
+    const anchor = parseAnchor(args.anchor);
+    targets = [
+      stripTarget({
+        path: args.strip as string,
+        family: args.family as string,
+        profile: profile.value,
+        ...(args.subject !== undefined && { subject: args.subject }),
+        ...(anchor !== undefined && { anchor }),
+      }),
+    ];
+  }
+  const subject = args.subject ?? spec.subject;
+  for (const t of targets) {
+    if (subject !== undefined) t.subject = subject;
+    if (spec.gait !== undefined) t.gait = spec.gait;
+  }
+  const plan = await planAnimationQa(targets, routes, capUsd, vision);
+  const flickers = plan.perFamily.reduce((sum, f) => sum + f.flickerCalls, 0);
+  const holes = plan.perFamily.reduce((sum, f) => sum + f.holeCalls, 0);
+  const jobs: PlanJob[] = [];
+  if (flickers > 0) jobs.push(jobOf("flicker", routes.flicker, flickers));
+  if (holes > 0) jobs.push(jobOf("holes", routes.holes, holes));
+  const work = await buildWorkPlan(animationQaCommand, args, {
+    inputs: ["spec", "strip", "profile", "import"],
+    jobs,
+    capUsd,
+    paid: paidBy(providers, jobs),
+    candidates: 0,
+  });
+  return { capUsd, providers, routes, vision, targets, plan, work };
 }
 
 export const animationQaCommand = defineCommand<AnimationQaArgs>({
@@ -104,47 +165,18 @@ Exits 5 when any check fails; every failed check names its frame.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
-      dryRun: { type: "boolean", description: "print the plan and forecast; spend nothing" },
+      round: ROUND_PROPERTY,
+      runs: RUNS_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
-    const capUsd = runCap(args.cap, ctx.settings);
-    const providers = await providerSet(args.providerScript, ctx);
-    const routes = providers.routes;
-    const vision = !args.noVision;
-    const spec = await specForQa(args.spec);
-    let targets;
-    if (typeof args.import === "string") {
-      if (args.strip !== undefined) throw new InputError("give --strip or --import, not both");
-      targets = await importTargets(args.import);
-    } else {
-      const missing = (["strip", "family", "profile"] as const).filter((n) => !args[n]);
-      if (missing.length > 0) {
-        throw new InputError(`missing required option ${missing.map((n) => `--${n}`).join(", ")}`);
-      }
-      const profile = await loadProfile(args.profile as string);
-      const anchor = parseAnchor(args.anchor);
-      targets = [
-        stripTarget({
-          path: args.strip as string,
-          family: args.family as string,
-          profile: profile.value,
-          ...(args.subject !== undefined && { subject: args.subject }),
-          ...(anchor !== undefined && { anchor }),
-        }),
-      ];
-    }
-    const subject = args.subject ?? spec.subject;
-    for (const t of targets) {
-      if (subject !== undefined) t.subject = subject;
-      if (spec.gait !== undefined) t.gait = spec.gait;
-    }
+    const { capUsd, providers, routes, vision, targets, plan, work } = await prepare(args, ctx);
     if (args.dryRun) {
-      const billing = providers.billing;
-      const plan = await planAnimationQa(targets, routes, capUsd, vision);
       const human = [
         `dry run: ${targets.length} strip(s), ${plan.calls} planned vision call(s), nothing spent`,
         ...plan.perFamily.map(
@@ -158,7 +190,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
         (l, t) => l.forProfile(t.profile),
         spendLedger(ctx, args.workItem),
       );
-      return dryRunOutcome(plan, human, ledger, billing);
+      return dryRunOutcome(work, human, ledger, plan as unknown as Record<string, unknown>);
     }
     const outDir = resolve(args.out ?? ".assetgrove/animation");
     const { results, spentUsd } = await runAnimationQa({

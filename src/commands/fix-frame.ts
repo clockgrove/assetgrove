@@ -13,6 +13,15 @@ import { specForQa, loadProfile, loadStyleBible } from "../inputs.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { dryRunOutcome, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  jobsOf,
+  paidBy,
+} from "../runs/plan.ts";
 
 interface FixFrameArgs {
   strip: string;
@@ -32,6 +41,40 @@ interface FixFrameArgs {
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** The plan step: the strip's inputs, the one edit call and the WorkPlan, with no call made. */
+async function prepare(args: FixFrameArgs, ctx: RunContext) {
+  if ((args.from === undefined) === (args.keyPose === undefined)) {
+    throw new InputError("give exactly one of --from <frame> or --key-pose <image>");
+  }
+  const capUsd = runCap(args.cap, ctx.settings, DEFAULT_FIX_CAP_USD);
+  const providers = await providerSet(args.providerScript, ctx);
+  const routes = providers.routes;
+  const profile = await loadProfile(args.profile);
+  const anchor = parseAnchor(args.anchor);
+  const spec = await specForQa(args.spec);
+  const subject = args.subject ?? spec.subject;
+  const target = stripTarget({
+    path: args.strip,
+    family: args.family,
+    profile: profile.value,
+    ...(subject !== undefined && { subject }),
+    ...(anchor !== undefined && { anchor }),
+    ...(spec.gait !== undefined && { gait: spec.gait }),
+  });
+  const plan = planFrameFix(routes, capUsd);
+  const jobs = jobsOf(plan.perCall, routes);
+  const work = await buildWorkPlan(fixFrameCommand, args, {
+    inputs: ["strip", "profile", "spec", "keyPose", "provenance", "bible"],
+    jobs,
+    capUsd,
+    paid: paidBy(providers, jobs),
+    candidates: 1,
+  });
+  return { capUsd, providers, routes, profile, target, plan, work };
 }
 
 export const fixFrameCommand = defineCommand<FixFrameArgs>({
@@ -117,38 +160,22 @@ limits, and needs no key.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
-      dryRun: { type: "boolean", description: "print the plan and forecast; spend nothing" },
+      round: ROUND_PROPERTY,
+      runs: RUNS_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["strip", "family", "profile", "frame", "out"],
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     const index = args.frame;
     const neighbour = args.from;
     const keyPose = args.keyPose;
-    if ((neighbour === undefined) === (keyPose === undefined)) {
-      throw new InputError("give exactly one of --from <frame> or --key-pose <image>");
-    }
-    const capUsd = runCap(args.cap, ctx.settings, DEFAULT_FIX_CAP_USD);
-    const providers = await providerSet(args.providerScript, ctx);
-    const routes = providers.routes;
-    const profile = await loadProfile(args.profile);
-    const anchor = parseAnchor(args.anchor);
-    const spec = await specForQa(args.spec);
-    const subject = args.subject ?? spec.subject;
-    const target = stripTarget({
-      path: args.strip,
-      family: args.family,
-      profile: profile.value,
-      ...(subject !== undefined && { subject }),
-      ...(anchor !== undefined && { anchor }),
-      ...(spec.gait !== undefined && { gait: spec.gait }),
-    });
+    const { capUsd, providers, routes, profile, target, plan, work } = await prepare(args, ctx);
     if (args.dryRun) {
-      const billing = providers.billing;
-      const plan = planFrameFix(routes, capUsd);
       const human = [
         `dry run: fix frame ${index}, ${plan.calls} planned call(s), nothing spent`,
         ...plan.perCall.map((c) => `  ${c.operation}  ${c.model}  ~${usd(c.estimatedCostUsd)}`),
@@ -156,10 +183,10 @@ limits, and needs no key.`,
           (plan.withinCap ? "" : " (over the cap)"),
       ].join("\n");
       return dryRunOutcome(
-        plan,
+        work,
         human,
         spendLedger(ctx, args.workItem).forProfile(profile.value),
-        billing,
+        plan,
       );
     }
     const bible = args.bible !== undefined ? (await loadStyleBible(args.bible)).value : undefined;

@@ -1,8 +1,11 @@
 import { InputError } from "../errors.ts";
-import { generationTool } from "../mcp.ts";
-import { planningContext } from "../providers/index.ts";
-import { formatRun, refusal } from "./result.ts";
+import { basename, dirname } from "node:path";
+import { applyJobs, applyPlan } from "../planning.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
+import { DRY_RUN_PROPERTY, ROUND_PROPERTY, buildWorkPlan, paidBy } from "../runs/plan.ts";
+import { dryRunOutcome, formatRun, formatWork, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext, WorkPlan } from "./types.ts";
 
 interface ApplyArgs {
   plan?: string;
@@ -10,6 +13,23 @@ interface ApplyArgs {
   out?: string;
   workItem?: string;
   providerScript?: string;
+  dryRun?: boolean;
+  round?: number;
+}
+
+/** The plan step: the saved plan checked as apply checks it, and the calls apply would make. */
+async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
+  const providers = await providerSet(args.providerScript, ctx);
+  const forecast = await applyJobs(plan, providers, ctx.settings.caps.runUsd);
+  const work: WorkPlan = await buildWorkPlan(applyCommand, args, {
+    inputs: ["plan"],
+    jobs: forecast.jobs,
+    capUsd: forecast.capUsd,
+    paid: paidBy(providers, forecast.jobs),
+    candidates: forecast.candidates,
+    runsArg: "out",
+  });
+  return { providers, work };
 }
 
 export const applyCommand = defineCommand<ApplyArgs>({
@@ -39,19 +59,33 @@ Approval authorizes this generation spend; resulting assets remain pending revie
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     additionalProperties: false,
   },
   positionals: [{ name: "plan" }],
   effect: { readOnly: false, spends: "always", writes: "runs" },
   confirm: "spend",
+  plan: async (args, ctx) => {
+    if (args.plan === undefined) throw new InputError("apply requires exactly one plan file");
+    return (await prepare(args.plan, args, ctx)).work;
+  },
   async run(args, ctx) {
     if (args.plan === undefined) throw new InputError("apply requires exactly one plan file");
-    const result = await generationTool(
-      "apply",
-      { plan: args.plan, autoApprove: args.autoApprove === true, out: args.out },
-      { ...(await planningContext(args.providerScript, args.workItem, ctx)), log: ctx.log },
-    );
+    const { providers, work } = await prepare(args.plan, args, ctx);
+    const ledger = spendLedger(ctx, args.workItem);
+    if (args.dryRun) return dryRunOutcome(work, formatWork("apply", work), ledger);
+    const dir = ctx.run?.dir ?? work.runDir;
+    const result = await applyPlan(args.plan, {
+      provider: providers,
+      ledger,
+      log: ctx.log,
+      runCapUsd: ctx.settings.caps.runUsd,
+      autoApprove: args.autoApprove === true,
+      outDir: dirname(dir),
+      runId: basename(dir),
+    });
     const fields = { ...result };
     const human = formatRun(result.run, result.runDir);
     if (result.run.candidates.length === 0)

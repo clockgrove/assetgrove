@@ -10,6 +10,15 @@ import type { AssetSpec } from "../types.ts";
 import { formatImport } from "./import.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  jobsOf,
+  paidBy,
+} from "../runs/plan.ts";
 
 interface GenerateSheetArgs {
   spec: string;
@@ -23,6 +32,48 @@ interface GenerateSheetArgs {
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** Generate-sheet's plan step: its inputs, providers, planned calls and WorkPlan, with no call. */
+async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
+  const capUsd = runCap(args.cap, ctx.settings);
+  const spec = await readJson<AssetSpec>(args.spec);
+  const bible = await loadStyleBible(args.bible);
+  const profile = await loadProfile(args.profile);
+  const brief =
+    args.brief === undefined ? undefined : sheetBrief((await readJson<unknown>(args.brief)).value);
+  const providers = await providerSet(args.providerScript, ctx);
+  const routes = providers.routes;
+  const lock = await lockFor(
+    args.lockBible,
+    args.identityMode,
+    spec.value.subject ?? spec.value.assetId,
+    profile.value,
+  );
+  const perCall = [
+    ...planSheet(spec.value, profile.value, routes),
+    ...(lock
+      ? [
+          lock.settings.question === "cast" ? IDENTITY_CAST_OPERATION : "identity",
+          ...(lock.settings.mode === "enforce" ? [IDENTITY_CHECK_OPERATION] : []),
+        ].map((operation) => ({
+          operation,
+          model: (routes[operation] as Route).model,
+          estimatedCostUsd: (routes[operation] as Route).estimatedCostUsd,
+        }))
+      : []),
+  ];
+  const jobs = jobsOf(perCall, routes);
+  const work = await buildWorkPlan(generateSheetCommand, args, {
+    inputs: ["spec", "bible", "profile", "brief", "lockBible"],
+    jobs,
+    capUsd,
+    paid: paidBy(providers, jobs),
+    candidates: 1,
+  });
+  return { spec, bible, profile, brief, providers, routes, capUsd, lock, perCall, work };
 }
 
 export const generateSheetCommand = defineCommand<GenerateSheetArgs>({
@@ -82,46 +133,21 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
-      dryRun: { type: "boolean", description: "print the plan and forecast; spend nothing" },
+      runs: RUNS_PROPERTY,
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["spec", "bible", "profile"],
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     const ledger = spendLedger(ctx, args.workItem);
-    const capUsd = runCap(args.cap, ctx.settings);
-    const spec = await readJson<AssetSpec>(args.spec);
-    const bible = await loadStyleBible(args.bible);
-    const profile = await loadProfile(args.profile);
-    const brief =
-      args.brief === undefined
-        ? undefined
-        : sheetBrief((await readJson<unknown>(args.brief)).value);
-    const providers = await providerSet(args.providerScript, ctx);
-    const routes = providers.routes;
-    const lock = await lockFor(
-      args.lockBible,
-      args.identityMode,
-      spec.value.subject ?? spec.value.assetId,
-      profile.value,
-    );
-    const perCall = [
-      ...planSheet(spec.value, profile.value, routes),
-      ...(lock
-        ? [
-            lock.settings.question === "cast" ? IDENTITY_CAST_OPERATION : "identity",
-            ...(lock.settings.mode === "enforce" ? [IDENTITY_CHECK_OPERATION] : []),
-          ].map((operation) => ({
-            operation,
-            model: (routes[operation] as Route).model,
-            estimatedCostUsd: (routes[operation] as Route).estimatedCostUsd,
-          }))
-        : []),
-    ];
+    const { spec, bible, profile, brief, providers, routes, capUsd, lock, perCall, work } =
+      await prepare(args, ctx);
     if (args.dryRun) {
-      const billing = providers.billing;
       const estimateUsd = perCall.reduce((sum, c) => sum + c.estimatedCostUsd, 0);
       const plan = {
         kind: "sheet",
@@ -137,7 +163,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.`
         `forecast ${usd(estimateUsd)} against a $${capUsd.toFixed(2)} cap` +
           (plan.withinCap ? "" : " (over the cap)"),
       ].join("\n");
-      return dryRunOutcome(plan, human, ledger.forProfile(profile.value), billing);
+      return dryRunOutcome(work, human, ledger.forProfile(profile.value), plan);
     }
     let generated: Awaited<ReturnType<typeof generateSheet>>;
     try {

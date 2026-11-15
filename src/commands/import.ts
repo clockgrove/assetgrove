@@ -16,7 +16,20 @@ import type { ImportOptions, ImportRecord } from "../sheet/import.ts";
 import type { Grouping } from "../sheet/types.ts";
 import { ledgerFor } from "../spend.ts";
 import type { AssetSpec } from "../types.ts";
+import { IDENTITY_OPERATION } from "../identity.ts";
+import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
+import type { Route } from "../routes.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  jobsOf,
+  paidBy,
+} from "../runs/plan.ts";
+import { dryRunOutcome, formatWork } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
 
 /** The identity score of an import as text lines. */
 export function formatIdentity(record: ImportRecord): string[] {
@@ -74,6 +87,60 @@ interface ImportArgs {
   imports?: string;
   workItem?: string;
   providerScript?: string;
+  dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** Import's plan step: its inputs, the calls it can make and its WorkPlan, with no call. */
+async function prepare(args: ImportArgs, ctx: RunContext) {
+  const capUsd = runCap(args.cap, ctx.settings);
+  const slice = sliceOptions(args.grid, args.components, args.frames);
+  const profile = await loadProfile(args.profile);
+  const bible = args.bible ? await loadStyleBible(args.bible) : undefined;
+  const subject = args.subject ?? args.asset;
+  const sheet = await readBytes(args.sheet, "sheet");
+  const digitalSourceType = declarationOption(args.digitalSourceType);
+  const lock = await lockFor(args.lockBible, args.identityMode, subject, profile.value);
+  const operations = [
+    ...(args.noPropose ? [] : ["vision"]),
+    ...(lock && lock.settings.mode !== "off"
+      ? [
+          lock.settings.question === "cast" ? IDENTITY_CAST_OPERATION : IDENTITY_OPERATION,
+          ...(lock.settings.mode === "enforce" ? [IDENTITY_CHECK_OPERATION] : []),
+        ]
+      : []),
+  ];
+  const providers = operations.length > 0 ? await providerSet(args.providerScript, ctx) : undefined;
+  const jobs = providers
+    ? jobsOf(
+        operations.map((operation) => ({
+          operation,
+          model: (providers.routes[operation] as Route).model,
+          estimatedCostUsd: (providers.routes[operation] as Route).estimatedCostUsd,
+        })),
+        providers.routes,
+      )
+    : [];
+  const work = await buildWorkPlan(importCommand, args, {
+    inputs: ["sheet", "profile", "bible", "lockBible"],
+    jobs,
+    capUsd,
+    paid: providers ? paidBy(providers, jobs) : false,
+    candidates: 1,
+  });
+  return {
+    capUsd,
+    slice,
+    profile,
+    bible,
+    subject,
+    sheet,
+    digitalSourceType,
+    lock,
+    providers,
+    work,
+  };
 }
 
 export const importCommand = defineCommand<ImportArgs>({
@@ -162,25 +229,38 @@ below the threshold, off skips scoring.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
+      runs: RUNS_PROPERTY,
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["sheet", "profile", "asset", "tool"],
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "runs" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
-    const capUsd = runCap(args.cap, ctx.settings);
-    const slice = sliceOptions(args.grid, args.components, args.frames);
-    const profile = await loadProfile(args.profile);
-    const bible = args.bible ? await loadStyleBible(args.bible) : undefined;
-    const subject = args.subject ?? args.asset;
-    const sheet = await readBytes(args.sheet, "sheet");
-    const digitalSourceType = declarationOption(args.digitalSourceType);
-    const lock = await lockFor(args.lockBible, args.identityMode, subject, profile.value);
+    const ledger = spendLedger(ctx, args.workItem);
+    const {
+      capUsd,
+      slice,
+      profile,
+      bible,
+      subject,
+      sheet,
+      digitalSourceType,
+      lock,
+      providers,
+      work,
+    } = await prepare(args, ctx);
+    if (args.dryRun) {
+      const human = formatWork("import", work);
+      return dryRunOutcome(work, human, ledger.forProfile(profile.value));
+    }
     let shared: Caller | undefined;
     const caller = async (): Promise<Caller> => {
       if (!shared) {
-        const provider = await providerSet(args.providerScript, ctx);
+        const provider = providers ?? (await providerSet(args.providerScript, ctx));
         const routes = provider.routes;
         shared = new Caller({
           provider,

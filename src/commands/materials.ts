@@ -11,6 +11,15 @@ import { ledgerFor } from "../spend.ts";
 import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import type { RunContext } from "./types.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  jobsOf,
+  paidBy,
+} from "../runs/plan.ts";
 
 interface MaterialsArgs {
   albedo: string;
@@ -23,6 +32,45 @@ interface MaterialsArgs {
   digitalSourceType?: string;
   providerScript?: string;
   dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** The plan step: the inputs, the channels' model calls and the QA call, with no call made. */
+async function prepare(args: MaterialsArgs, ctx: RunContext) {
+  const spec = await readJson<AssetSpec>(args.spec);
+  const profile = await loadProfile(args.profile);
+  const derivation = await readJson<MaterialDerivation>(args.derivation);
+  const provider = await providerSet(args.providerScript, ctx);
+  const routes = provider.routes;
+  const config = resolveMaterialProfile(profile.value.style?.materials);
+  const capUsd = runCap(args.cap, ctx.settings);
+  new Budget(capUsd);
+  const needed = new Set(config.channels);
+  if (needed.has("normal") && derivation.value.maps?.normal?.method === "height-derived-normal")
+    needed.add("height");
+  const operations = [...needed].flatMap((channel) => {
+    const input = derivation.value.maps?.[channel];
+    if (!input?.version?.trim())
+      throw new InputError(`missing declared method/version for ${channel}`);
+    return input.method === "model-assisted-painting" ? [`material-${channel}`] : [];
+  });
+  operations.push("material-qa");
+  const perCall = operations.map((operation) => {
+    const route = routes[operation];
+    if (!route || !Number.isFinite(route.estimatedCostUsd) || route.estimatedCostUsd < 0)
+      throw new InputError(`missing or invalid route for ${operation}`);
+    return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
+  });
+  const jobs = jobsOf(perCall, routes);
+  const work = await buildWorkPlan(materialsCommand, args, {
+    inputs: ["albedo", "spec", "profile", "derivation"],
+    jobs,
+    capUsd,
+    paid: paidBy(provider, jobs),
+    candidates: 1,
+  });
+  return { spec, profile, derivation, provider, routes, config, capUsd, perCall, work };
 }
 
 export const materialsCommand = defineCommand<MaterialsArgs>({
@@ -74,41 +122,22 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
         description: "answer every model call from this module instead of a provider",
         placeholder: "<module>",
       },
-      dryRun: { type: "boolean", description: "print the plan and forecast; spend nothing" },
+      round: ROUND_PROPERTY,
+      runs: RUNS_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
     },
     required: ["albedo", "spec", "profile", "derivation", "out"],
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "conditional", writes: "out" },
   confirm: "spend",
+  plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
-    const spec = await readJson<AssetSpec>(args.spec);
-    const profile = await loadProfile(args.profile);
-    const derivation = await readJson<MaterialDerivation>(args.derivation);
-    const provider = await providerSet(args.providerScript, ctx);
-    const routes = provider.routes;
-    const config = resolveMaterialProfile(profile.value.style?.materials);
-    const capUsd = runCap(args.cap, ctx.settings);
+    const { spec, profile, derivation, provider, routes, config, capUsd, perCall, work } =
+      await prepare(args, ctx);
     const ledger = spendLedger(ctx, args.workItem).forProfile(profile.value);
-    new Budget(capUsd);
     if (args.dryRun) {
-      const needed = new Set(config.channels);
-      if (needed.has("normal") && derivation.value.maps?.normal?.method === "height-derived-normal")
-        needed.add("height");
-      const operations = [...needed].flatMap((channel) => {
-        const input = derivation.value.maps?.[channel];
-        if (!input?.version?.trim())
-          throw new InputError(`missing declared method/version for ${channel}`);
-        return input.method === "model-assisted-painting" ? [`material-${channel}`] : [];
-      });
-      operations.push("material-qa");
-      const perCall = operations.map((operation) => {
-        const route = routes[operation];
-        if (!route || !Number.isFinite(route.estimatedCostUsd) || route.estimatedCostUsd < 0)
-          throw new InputError(`missing or invalid route for ${operation}`);
-        return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
-      });
-      const estimateUsd = perCall.reduce((sum, call) => sum + call.estimatedCostUsd, 0);
+      const estimateUsd = work.forecastUsd;
       const plan = {
         kind: "materials",
         channels: config.channels,
@@ -120,7 +149,7 @@ unapproved. Model calls reserve against --cap. See docs/materials.md.`,
         withinCap: estimateUsd <= capUsd + 1e-9,
       };
       const human = `dry run: materials, ${plan.calls} planned call(s), nothing spent\nforecast ${usd(estimateUsd)} against a $${capUsd.toFixed(2)} cap`;
-      return dryRunOutcome(plan, human, ledger, provider.billing);
+      return dryRunOutcome(work, human, ledger, plan);
     }
     const call = new Caller({
       provider,
