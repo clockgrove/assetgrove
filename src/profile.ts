@@ -25,6 +25,8 @@ const profileSchema = z.strictObject({
   spend: section.optional(),
   model3d: section.optional(),
   animation: section.optional(),
+  // Each preset's options are checked against its own schema at hand-off (src/handoff/presets).
+  handoff: z.array(z.strictObject({ preset: z.string(), options: section.optional() })).optional(),
 });
 
 /** The top-level fields a target profile may carry. */

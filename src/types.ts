@@ -167,6 +167,11 @@ export interface TargetProfile {
   model3d?: import("./model3d/profile.ts").Model3dProfile;
   /** Motion templates the target adds or overrides, and the animation QA thresholds. */
   animation?: import("./animation/types.ts").AnimationProfile;
+  /**
+   * The hand-off presets, in order (docs/target-profile.md#hand-off-presets); each entry's
+   * `options` is validated against its preset's schema. Default `[{ preset: "manifest" }]`.
+   */
+  handoff?: Array<{ preset: string; options?: Record<string, unknown> }>;
 }
 
 export interface Reason {

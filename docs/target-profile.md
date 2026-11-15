@@ -121,7 +121,7 @@ The paths are illustrative.
 
 `validator.command` is an argv array run in the target directory without a shell after `pick` or `write-families` writes. It is code a shared file names, so it runs only with an approval tied to its exact hash; see [decisions.md](decisions.md#command-approvals-are-hashed-relative-to-the-git-top-level-shims-are-refused). An unapproved validator exits 8 `confirmation_required` before anything is written, unless a person at a TTY accepts it; `assetgrove confirm <hex>` approves a pending one. The provenance's `commands` records its hash and approval method.
 
-- **Validation.** The profile's top-level fields are validated: `format`, `name`, `license`, `acceptedLicenses`, `style`, `values`, `frames`, `layout`, `manifest`, `review`, `validator`, `identity`, `spend`, `model3d` and `animation`. An unknown top-level field or a value of the wrong type is invalid input (exit 2).
+- **Validation.** The profile's top-level fields are validated: `format`, `name`, `license`, `acceptedLicenses`, `style`, `values`, `frames`, `layout`, `manifest`, `review`, `validator`, `identity`, `spend`, `model3d`, `animation` and `handoff`. An unknown top-level field or a value of the wrong type is invalid input (exit 2).
 - **Style.** `style` is the world's style profile: alpha mode (`soft` or `binary`, with a `threshold`), colour rule (`full` or `palette`) and edges (`antialiased` or `crisp`). The sheet import path follows it ([sheet-import.md](sheet-import.md#style-profile)). It is optional, and templates can read it as `{{profile.style}}`.
 - **Templates.** `"{{a.b}}"` as a whole string inserts the value of any JSON type; `"{{a.b?}}"` drops the key when the value is undefined; `{{a.b}}` inside a longer string interpolates text. An undefined required value is an error.
 - **Values available:** `spec.*` (the spec, with its `fields` also merged in), `profile.*` (`values`, `name`, `license`), `bible.version`, `output.*` (`path`, `mediaType`, `extension`, `sha256`, and what the generator adds: `frames`, `anchor`, `bounds`, `palette` for images; imported strips add `jitterPx` and set `palette` only under a palette colour rule), `provenance` (the full record) and `run.*` (`runId`, `candidateId`, `pickedAt`).
@@ -130,9 +130,29 @@ The paths are illustrative.
 - **Project root.** Reference paths in shared files (the JSON bible's references and perspective, the anchors and identity images of `BIBLE.md`) must resolve inside the project root, with symlinks resolved. The root is the nearest ancestor of the bible's directory holding `.git` or `.assetgrove`, else the bible's own directory. The walk stops below the home directory, which is never a project root (as in settings), so a dotfiles repository at the home directory does not open every file under it; a bible with no project marker may reference only files beside or below it. A path outside it is invalid input (exit 2) before any provider call.
 - **Review.** Assetgrove always sets the field at `review.path` to `review.pending` and never writes another value there.
 - **Validator.** Run in the target directory after the pick is written, with `{{manifest}}` and `{{media}}` replaced by the written paths. A non-zero exit is reported as a rejection.
+- **Hand-off presets.** `handoff` lists the presets that write what the target reads, in order: `[{ "preset": "manifest" }]` when absent. See [Hand-off presets](#hand-off-presets).
 - **Media.** Each output declares its own media type and extension; `.gitattributes` in the target decides what Git LFS stores.
 - **3D detail levels and tiers.** `model3d.lods` declares the detail-level chain: each level's `triangleRatio` of the full model and the `minScreenHeight` it shows down to. `model3d.tiers` declares each quality tier's budgets (`triangles`, `textureMaxPx` and, optionally, `materials`, `bones` and `lods`), either directly or nested by class. A tier may also set `fur: false`. `model3d.lodQa.silhouette` sets the level QA tolerance, and `model3d.handoff.lods` (`embedded` or `files`) sets how the levels are packaged. `assetgrove lod` makes the chain and the tier renditions within these budgets ([characters-3d.md](characters-3d.md#detail-levels-and-tiers)).
 - **Spend.** An optional `spend` object, `{ "dailyLimitUsd": 10, "workItemLimitUsd": 5 }`, sets the cross-run spend limits below. Each is a non-negative USD amount.
+
+## Hand-off presets
+
+```json
+"handoff": [{ "preset": "manifest" }]
+```
+
+Every hand-off (`pick`, a 3D `pick` and `write-families`) goes through one path:
+
+1. Each entry's `options` is validated against its preset's options schema. An unknown preset, an invalid option or an empty list is invalid input (exit 2 `invalid_input`), and nothing is written.
+2. The media, its sidecars and its provenance are written, together with each preset's files. Every path is checked before anything is written.
+3. Each preset checks what it wrote by reading it back. A failed check exits 6 `handoff_check_failed`; with `--json`, `error.problems` lists each problem as `{ preset, problem }`. The validator does not run, and the pick is not recorded in the run.
+4. The approved validator runs.
+
+| Preset     | Options | Writes                                                                                                                                                           | Checks                                                                                                |
+| ---------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `manifest` | none    | the `manifest` template rendered at `layout.manifest`, with the field at `review.path` set to `review.pending`; byte for byte what hand-off wrote before presets | the file reads back as written, parses as a JSON object, and holds the pending value at `review.path` |
+
+A layout that writes another file over the manifest, such as a `layout.provenance` equal to `layout.manifest`, fails the `manifest` check.
 
 ## Spend limits across runs
 
