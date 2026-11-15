@@ -338,6 +338,8 @@ export interface ConfirmationRecord {
   inputs: Record<string, string>;
   /** A pick's chosen candidate. */
   choice?: string;
+  /** A pick's note, when the person gave one through a form. */
+  note?: string;
   client?: string;
   protocolVersion?: string;
   /** Whether the tool asked was marked as requiring a user; false on the CLI. */

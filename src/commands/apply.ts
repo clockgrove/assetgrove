@@ -92,7 +92,7 @@ The plan's prompts pass the prompt policy (exit 9 prompt_refused) before any spe
 The plan's spend confirmation covers one apply, the default round, while every input hash it confirmed
 still matches and apply's forecast is at or under the confirmed one; --round n > 1, or any other
 apply, asks under its own digest (headless
-settings, a record, the TTY, or exit 8 confirmation_required and \`assetgrove confirm <id>\`). The
+settings, a record, an MCP client's form, the TTY, or exit 8 confirmation_required and \`assetgrove confirm <id>\`). The
 confirmation authorizes this generation spend; resulting assets remain pending review.`,
   input: {
     type: "object",
