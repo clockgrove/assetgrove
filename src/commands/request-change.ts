@@ -348,7 +348,7 @@ function editPrompt(regions: readonly Region[], masked: boolean, keepRest: boole
   let next = 2;
   const lines = ["Reference image 1 is the current version of the asset."];
   for (const [i, r] of regions.entries())
-    for (const _ of r.refs)
+    for (let j = 0; j < r.refs.length; j++)
       lines.push(`Reference image ${next++} is a reference for change ${i + 1}.`);
   lines.push(
     masked
@@ -499,15 +499,21 @@ version is appended with answers naming the requests. The run that made the asse
         ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
       });
       run = staging.run;
-      const views = turntableViews(asset.mediaPath);
-      const n = regions[0]!.view!;
-      const viewRegions = regions.filter((r) => r.view === n);
-      const beforeView = views[n - 1];
-      for (const [i, c] of run.candidates.entries()) {
-        const renders = (c.artifacts ?? [])
+      const renders = (c: StagedCandidate | undefined) =>
+        (c?.artifacts ?? [])
           .filter((a) => a.endsWith(".png") && !basename(a).startsWith("clip-"))
           .sort();
-        const after = renders[n - 1];
+      const n = regions[0]!.view!;
+      const viewRegions = regions.filter((r) => r.view === n);
+      // The version's view: its turntable render in the library, else the one its run staged.
+      const sourceRender = renders(sourceCandidate)[n - 1];
+      const beforeView =
+        turntableViews(asset.mediaPath)[n - 1] ??
+        (sourceRender !== undefined
+          ? join(resolve(args.runs ?? DEFAULT_RUNS), source.runId, sourceRender)
+          : undefined);
+      for (const [i, c] of run.candidates.entries()) {
+        const after = renders(c)[n - 1];
         if (beforeView === undefined || after === undefined) continue;
         const comparison = await compareRasters(
           decodeImage(new Uint8Array(await readFile(beforeView))),

@@ -6,25 +6,27 @@
 import { approve, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { pickCommand } from "../src/commands/pick.ts";
 import { requestChangeCommand } from "../src/commands/request-change.ts";
+import { stageCommand } from "../src/commands/stage.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import type { RunContext } from "../src/commands/types.ts";
 import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { writeToTarget } from "../src/handoff.ts";
-import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
+import { createRaster, decodePng, encodePng, setPixel } from "../src/image/raster.ts";
 import { parseReview, versionStatus } from "../src/library/review.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "../src/types.ts";
 import { libraryProfile } from "./fixtures/library.ts";
+import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
 
 const RASTER = new URL("../src/image/raster.ts", import.meta.url).href;
 
@@ -81,8 +83,9 @@ async function project(spec: AssetSpec = { kind: "still", assetId: "lamp" }, med
       candidates: [{ id: "c1", fields: {}, provenance, mediaType: "image/png", extension: "png" }],
     }),
   );
-  const card = join(dir, `assets/${spec.assetId}.md`);
-  const review = join(dir, `assets/${spec.assetId}.review.json`);
+  const id = readdirSync(join(dir, "assets")).find((f) => f.endsWith(".review.json"))!;
+  const card = join(dir, "assets", id.replace(/\.review\.json$/, ".md"));
+  const review = join(dir, "assets", id);
   return { dir, card, review, runs };
 }
 
@@ -402,5 +405,164 @@ test("picking a candidate appends the version answering the request and logs it;
     assert.equal(stale.exitCode, 2, stale.error?.message);
     assert.equal(stale.error?.code, "version_changed");
     assert.equal(parseReview(await readFile(p.review, "utf8"), p.review).versions.length, 2);
+  });
+});
+
+test("a frame region edits only that frame, through fix-frame's path", async () => {
+  // Four 32 px frames, each a figure on a transparent background.
+  const strip = createRaster(128, 32);
+  for (let i = 0; i < 4; i++)
+    for (let y = 12; y < 30; y++)
+      for (let x = i * 32 + 10; x < i * 32 + 20; x++)
+        setPixel(strip, x, y, [60 + i * 30, 90, 140, 255]);
+  const p = await project(
+    { kind: "sprite-strip", assetId: "walker", animationFamily: "walk" },
+    strip,
+  );
+  const s = await script(p.dir);
+  await inProject(p.dir, async () => {
+    const done = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,16,16 frame 3 : raise the paw"],
+        candidates: 1,
+        runs: p.runs,
+        providerScript: s.path,
+      },
+      context(),
+    );
+    assert.equal(done.exitCode, 0, done.error?.message);
+    const f = done.fields as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    assert.equal(f.job, "fix-frame");
+    assert.deepEqual(f.requests[0].frame, 3);
+    const calls = await s.calls();
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!.prompt, /frame 3 of 4/);
+    assert.match(calls[0]!.prompt, /raise the paw/);
+    const after = decodePng(await readFile(join(f.runDir, f.candidates[0].file)));
+    assert.equal(after.width, 128);
+    const frameOf = (r: { width: number; data: Uint8Array }, i: number) => {
+      const rows: number[] = [];
+      for (let y = 0; y < 32; y++)
+        rows.push(...r.data.subarray((y * r.width + i * 32) * 4, (y * r.width + i * 32 + 32) * 4));
+      return rows;
+    };
+    for (const i of [0, 1, 3])
+      assert.deepEqual(frameOf(after, i), frameOf(strip, i), `frame ${i + 1}`);
+    assert.notDeepEqual(frameOf(after, 2), frameOf(strip, 2), "frame 3 changed");
+    assert.equal(typeof f.candidates[0].outsideChange, "number");
+    assert.ok(existsSync(join(f.runDir, "compare.png")));
+  });
+});
+
+const SCRIPT_3D = fileURLToPath(new URL("./fixtures/model3d-script.ts", import.meta.url));
+
+test("a view region on a 3D asset runs another round of the 3D kind with the note", async () => {
+  approve(SCRIPT_3D);
+  const dir = await mkdtemp(join(tmpdir(), "assetgrove-request-change-3d-"));
+  await mkdir(join(dir, "refs"));
+  const roles = ["turnaround-front", "turnaround-side", "turnaround-back"];
+  for (const [i, role] of roles.entries())
+    await writeFile(join(dir, "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
+  const bible = join(dir, "bible.json");
+  await writeFile(
+    bible,
+    JSON.stringify({
+      format: "assetgrove-style-bible/1",
+      referenceLicense: "NOASSERTION",
+      version: "2026-11-10",
+      palette: PALETTE,
+      references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "fern" })),
+      perspective: "refs/turnaround-front.png",
+      subjects: { fern: { description: "a lean grey fox" } },
+    }),
+  );
+  const profile = {
+    format: "assetgrove-target-profile/1",
+    name: "synthetic-grove-3d",
+    license: "MIT",
+    values: { creator: "Synthetic Grove" },
+    frames: { width: 32, height: 32 },
+    model3d: {
+      format: "glb",
+      budgets: { triangles: 40000, textureMaxPx: 2048, materials: 4, bones: 80, lods: 1 },
+      forward: "+z",
+      units: "m",
+      turntable: { sizePx: 96 },
+    },
+    layout: {
+      media: "characters/{{spec.assetId}}/{{spec.assetId}}.{{output.extension}}",
+      manifest: "manifests/{{spec.assetId}}.json",
+    },
+    manifest: { assetId: "{{spec.assetId}}", review: { status: "pending" } },
+    review: { path: "review.status", pending: "pending" },
+    library: { root: "characters", game: "test-grove" },
+  };
+  await writeFile(join(dir, "profile.json"), JSON.stringify(profile));
+  await writeFile(
+    join(dir, "spec.json"),
+    JSON.stringify({
+      kind: "character-3d",
+      assetId: "fern",
+      subject: "fern",
+      gait: "biped",
+      clips: ["idle"],
+      heightM: 0.5,
+    }),
+  );
+  const runs = join(dir, ".assetgrove/runs");
+  await inProject(dir, async () => {
+    const staged = await runCommand(
+      stageCommand,
+      {
+        spec: join(dir, "spec.json"),
+        bible,
+        profile: join(dir, "profile.json"),
+        runs,
+        candidates: 1,
+        providerScript: SCRIPT_3D,
+      },
+      context(),
+    );
+    assert.equal(staged.exitCode, 0, staged.error?.message);
+    const picked = await runCommand(
+      pickCommand,
+      { run: staged.fields["runDir"] as string, candidate: "c1", target: dir },
+      context(),
+    );
+    assert.equal(picked.exitCode, 0, picked.error?.message);
+    const card = join(dir, "characters/fern/fern.md");
+    const args = {
+      address: card,
+      region: ["0,0,40,40 view 2 : darker ear tips"],
+      candidates: 1,
+      runs,
+      providerScript: SCRIPT_3D,
+    };
+    const noBible = await runCommand(requestChangeCommand, args, context());
+    assert.equal(noBible.exitCode, 2);
+    assert.match(noBible.error!.message, /--bible/);
+    const flat = await runCommand(
+      requestChangeCommand,
+      { ...args, region: ["0,0,40,40 : no view"], bible },
+      context(),
+    );
+    assert.equal(flat.exitCode, 2, "a region on a 3D asset names its view");
+
+    const done = await runCommand(requestChangeCommand, { ...args, bible }, context());
+    assert.equal(done.exitCode, 0, done.error?.message);
+    const f = done.fields as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    assert.equal(f.job, "3d-round");
+    assert.equal(f.requests[0].view, 2);
+    const run = JSON.parse(await readFile(join(f.runDir, "run.json"), "utf8"));
+    assert.equal(run.candidates.length, 1);
+    assert.match(run.candidates[0].provenance.prompt, /In view 2: darker ear tips/);
+    assert.equal(run.changeRequest.answers[0], f.requests[0].id);
+    assert.ok(existsSync(join(f.runDir, "compare.png")));
+    assert.equal(typeof f.candidates[0].outsideChange, "number");
+    const review = join(dir, "characters/fern/fern.review.json");
+    const record = parseReview(await readFile(review, "utf8"), review);
+    assert.equal(versionStatus(record, record.versions[0]!.sha256), "changes-requested");
   });
 });

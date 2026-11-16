@@ -67,7 +67,7 @@ test("the role coverage table per adapter: each core adapter's default routes se
   assert.equal(anthropic.endpointFromSettings, false);
   assert.deepEqual(anthropic.fixedHosts, ["api.anthropic.com"]);
   const openai = CORE_ADAPTERS.find((a) => a.id === "openai")!;
-  assert.deepEqual(openai.capabilities, ["image", "edit", "vision", "decide"]);
+  assert.deepEqual(openai.capabilities, ["image", "edit", "vision", "decide", "mask"]);
   assert.equal(openai.endpointFromSettings, false);
   assert.deepEqual(openai.fixedHosts, ["api.openai.com"]);
 });
