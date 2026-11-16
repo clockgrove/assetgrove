@@ -1,15 +1,17 @@
 /**
- * The prompt policy's text check (design section 16): a request's prompt text, normalised (NFKC,
- * case, diacritics, spacing), matched against the package blocklist on word boundaries. A hit
- * not cleared by a settings allow term refuses the request with exit 9 `prompt_refused` and
- * `error.policy`, before confirmation and spend.
+ * The prompt policy's text check (design section 16): a request's prompt text, as labelled parts,
+ * normalised (NFKC, case, diacritics, spacing) and matched against the package blocklist on word
+ * boundaries. A hit on an unambiguous name not cleared by a settings allow term refuses the request
+ * with exit 9 `prompt_refused` and `error.policy`, before confirmation and spend. A hit on a phrase
+ * or on a name that is also an ordinary word refuses nothing by itself: it is recorded, with the
+ * words around it, for the model check the run starts with (src/policy/model.ts) to decide.
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { doDontSection } from "../bible.ts";
-import { packageBlocklist } from "./blocklist.ts";
+import { packageBlocklist, refusesFree } from "./blocklist.ts";
 import type { BlockKind, Blocklist } from "./blocklist.ts";
 
 /** The blocklist term a prompt matched. */
@@ -18,6 +20,40 @@ export interface PolicyMatch {
   kind: BlockKind;
 }
 
+/**
+ * What a part of a request's prompt text is: the spec's strings, the brief, the bible's tone
+ * fields, the bible's Do's and Don'ts (rules the art must follow), the template's body, other text
+ * a person or a profile gave (a note, a subject), or text the prompt compiler (a model) wrote: its
+ * prompt and its negative prompt.
+ */
+export type PromptPartLabel =
+  "spec" | "brief" | "tone" | "rules" | "template" | "text" | "model-prompt" | "model-negative";
+
+/** One labelled part of a request's prompt text. */
+export interface PromptPart {
+  label: PromptPartLabel;
+  text: string;
+}
+
+/** Whether a part is text a model (the prompt compiler) wrote, not the person. */
+export function modelWritten(part: { label: PromptPartLabel }): boolean {
+  return part.label === "model-prompt" || part.label === "model-negative";
+}
+
+/** A phrase or ambiguous-name hit the model check decides: the term, its part and its context. */
+export interface PolicyHit {
+  term: string;
+  kind: BlockKind;
+  /** Present on a name that is also an ordinary word or a given name. */
+  ambiguous?: true;
+  part: PromptPartLabel;
+  /** The normalised words around the hit: up to `HIT_CONTEXT_WORDS` either side. */
+  context: string;
+}
+
+/** How many words either side of a hit go to the model check with it. */
+export const HIT_CONTEXT_WORDS = 12;
+
 /** The record of one policy check, kept in the request, the run record and provenance. */
 export interface PromptPolicyRecord {
   /** sha256 hex of the blocklist file. */
@@ -25,14 +61,24 @@ export interface PromptPolicyRecord {
   /** sha256 hex of the normalised text checked. */
   textSha256: string;
   verdict: "allowed" | "refused";
-  /** The first term that refused the text; absent when allowed. */
+  /** The first unambiguous name that refused the text; absent when allowed. */
   match?: PolicyMatch;
   /** The settings allow terms (`promptPolicy.allow`) that cleared a hit. */
   allowedBy: string[];
+  /**
+   * The phrase and ambiguous-name hits the free check refused nothing for: the model check decides
+   * them when the run starts, and its answer is this record's `probability` and `verdict`.
+   */
+  hits?: PolicyHit[];
   /** The model check's route, `<provider>:prompt-policy:<model>`, once it has run. */
   model?: string;
   /** The model check's probability that the text breaks the policy, once it has run. */
   probability?: number;
+  /**
+   * Why the run used the repository template's prompt in place of the prompt compiler's: the
+   * policy objected only to text the compiler wrote, so the person's request is not refused.
+   */
+  fallback?: string;
 }
 
 /** A prompt the policy refuses: exit 9 `prompt_refused`, with `error.policy`. */
@@ -43,7 +89,7 @@ export class PromptRefusedError extends Error {
     super(
       policy.match === undefined && policy.probability !== undefined
         ? `${where} reads as a request for a protected style, work, character or real person (the prompt-policy model check gives ${policy.probability.toFixed(2)}, refused at 0.5 or more): describe the look in plain visual words and anchor it with reference images`
-        : `${where} names "${policy.match?.term ?? ""}" (${policy.match?.kind ?? "term"}), which the prompt policy refuses: describe the look in plain visual words and anchor it with reference images${policy.match?.kind === "phrase" ? "" : `, or add the term to promptPolicy.allow in the developer settings if it is not a name`}`,
+        : `${where} names "${policy.match?.term ?? ""}" (${policy.match?.kind ?? "term"}), which the prompt policy refuses: describe the look in plain visual words and anchor it with reference images, or add the term to promptPolicy.allow in the developer settings if it is not a name`,
     );
     this.name = "PromptRefusedError";
     this.policy = policy;
@@ -80,6 +126,23 @@ function holds(text: string, term: string): boolean {
   return compact !== term && padded.includes(` ${compact} `);
 }
 
+/**
+ * The normalised words around the first place normalised `text` holds normalised `term`: up to
+ * `HIT_CONTEXT_WORDS` either side.
+ */
+export function hitContext(text: string, term: string): string {
+  const words = text.split(" ");
+  const termWords = term.split(" ");
+  const compact = term.replaceAll(" ", "");
+  for (let i = 0; i < words.length; i++) {
+    const length = words.slice(i, i + termWords.length).join(" ") === term ? termWords.length : 0;
+    const width = length || (words[i] === compact ? 1 : 0);
+    if (width === 0) continue;
+    return words.slice(Math.max(0, i - HIT_CONTEXT_WORDS), i + width + HIT_CONTEXT_WORDS).join(" ");
+  }
+  return term;
+}
+
 /** Every blocklist term `text` holds, in blocklist order. */
 export function blocklistMatches(
   text: string,
@@ -91,18 +154,34 @@ export function blocklistMatches(
     .map((t) => ({ term: t.term, kind: t.kind }));
 }
 
+/** Prompt text as labelled parts: a plain string is a `text` part. */
+export function asParts(texts: string | readonly (string | PromptPart)[]): PromptPart[] {
+  return (typeof texts === "string" ? [texts] : texts).map((t) =>
+    typeof t === "string" ? { label: "text", text: t } : t,
+  );
+}
+
+/** The parts' text, joined as the policy hashes it and the model check reads it. */
+export function partsText(parts: readonly PromptPart[]): string {
+  return parts.map((p) => p.text).join("\n");
+}
+
 /**
  * Checks prompt text against the blocklist. A matched term equal (normalised) to an allow term is
- * cleared and recorded in `allowedBy`; the first other match refuses.
+ * cleared and recorded in `allowedBy`; the first other unambiguous name refuses; every other phrase
+ * or ambiguous-name hit is recorded in `hits` (once per term and part), for the model check.
  */
 export function checkPromptText(
-  texts: string | readonly string[],
+  texts: string | readonly (string | PromptPart)[],
   allow: readonly string[] = [],
   blocklist: Blocklist = packageBlocklist(),
 ): PromptPolicyRecord {
-  const text = normalizeText(typeof texts === "string" ? texts : texts.join("\n"));
+  const parts = asParts(texts);
+  const text = normalizeText(partsText(parts));
+  const normalizedParts = parts.map((p) => ({ label: p.label, text: normalizeText(p.text) }));
   const allowed = new Map(allow.map((a) => [normalizeText(a), a]));
   const allowedBy = new Set<string>();
+  const hits: PolicyHit[] = [];
   let match: PolicyMatch | undefined;
   for (const t of blocklist.terms) {
     const term = normalizeText(t.term);
@@ -112,7 +191,31 @@ export function checkPromptText(
       allowedBy.add(allowTerm);
       continue;
     }
-    match ??= { term: t.term, kind: t.kind };
+    if (refusesFree(t)) {
+      match ??= { term: t.term, kind: t.kind };
+      continue;
+    }
+    const seen = new Set<PromptPartLabel>();
+    for (const part of normalizedParts) {
+      if (seen.has(part.label) || !holds(part.text, term)) continue;
+      seen.add(part.label);
+      hits.push({
+        term: t.term,
+        kind: t.kind,
+        ...(t.ambiguous === true && { ambiguous: true as const }),
+        part: part.label,
+        context: hitContext(part.text, term),
+      });
+    }
+    // A term only the joined text holds (it spans two parts) goes to the model as one hit too.
+    if (seen.size === 0)
+      hits.push({
+        term: t.term,
+        kind: t.kind,
+        ...(t.ambiguous === true && { ambiguous: true as const }),
+        part: parts[0]?.label ?? "text",
+        context: hitContext(text, term),
+      });
   }
   return {
     blocklistSha256: blocklist.sha256,
@@ -120,12 +223,13 @@ export function checkPromptText(
     verdict: match ? "refused" : "allowed",
     ...(match && { match }),
     allowedBy: [...allowedBy],
+    ...(!match && hits.length > 0 && { hits }),
   };
 }
 
 /** Checks prompt text and throws `PromptRefusedError` on a refusal; returns the record. */
 export function enforcePromptPolicy(
-  texts: string | readonly string[],
+  texts: string | readonly (string | PromptPart)[],
   allow: readonly string[] = [],
   where?: string,
 ): PromptPolicyRecord {
@@ -196,21 +300,55 @@ export const PROMPT_INPUTS: ReadonlySet<string> = new Set([
   "plan",
 ]);
 
+/** The part a file's text is, by the argument that names it. */
+const FILE_LABELS: Readonly<Record<string, PromptPartLabel>> = {
+  spec: "spec",
+  brief: "brief",
+  bible: "tone",
+  lockBible: "tone",
+  template: "template",
+};
+
 /**
- * The prompt text of one input file: a JSON file's strings minus paths; a template's body without
- * its `{{fields}}`; another Markdown file's front matter strings minus paths and its Do's and
- * Don'ts section. A file that cannot be read gives none (the command reports it when it loads it).
+ * A saved plan's prompts as labelled parts: its image prompts (the compiler's prompt, deduplicated)
+ * and its negative prompt are model-written; its QA prompt comes from the repository's template.
+ * Its other strings (format, digests, operation names) feed no prompt.
  */
-export async function promptTextOf(name: string, path: string): Promise<string[]> {
+function savedPlanParts(data: unknown): PromptPart[] | undefined {
+  const prompts = (data as { prompts?: unknown } | null)?.prompts;
+  if (prompts === null || typeof prompts !== "object") return undefined;
+  const { images, generation, negative, qa } = prompts as Record<string, unknown>;
+  const written = [
+    ...new Set([...(Array.isArray(images) ? images : []), generation].filter(isText)),
+  ];
+  return [
+    ...written.map((text) => ({ label: "model-prompt" as const, text })),
+    ...(isText(negative) ? [{ label: "model-negative" as const, text: negative }] : []),
+    ...(isText(qa) ? [{ label: "template" as const, text: qa }] : []),
+  ];
+}
+
+function isText(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+/**
+ * The prompt text of one input file, labelled: a JSON file's strings minus paths; a template's
+ * body without its `{{fields}}`; another Markdown file's front matter strings minus paths (`tone`)
+ * and its Do's and Don'ts section (`rules`); a saved plan's prompts (`savedPlanParts`). A file that
+ * cannot be read gives none (the command reports it when it loads it).
+ */
+export async function promptPartsOf(name: string, path: string): Promise<PromptPart[]> {
   let source: string;
   try {
     source = await readFile(path, "utf8");
   } catch {
     return [];
   }
+  const label = FILE_LABELS[name] ?? "text";
   const front = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(source);
   const body = front ? source.slice(front[0].length) : source;
-  if (name === "template") return [body.replace(/\{\{[\s\S]*?\}\}/g, " ")];
+  if (name === "template") return [{ label, text: body.replace(/\{\{[\s\S]*?\}\}/g, " ") }];
   if (extname(path).toLowerCase() === ".md" || front) {
     let data: unknown;
     try {
@@ -218,19 +356,38 @@ export async function promptTextOf(name: string, path: string): Promise<string[]
     } catch {
       data = undefined;
     }
-    return [...promptStrings(data), doDontSection(body)].filter((s) => s.length > 0);
+    return [
+      ...promptStrings(data).map((text) => ({ label, text })),
+      { label: "rules" as const, text: doDontSection(body) },
+    ].filter((p) => p.text.length > 0);
   }
+  let data: unknown;
   try {
-    return promptStrings(JSON.parse(source) as unknown);
+    data = JSON.parse(source) as unknown;
   } catch {
     return [];
   }
+  if (name === "plan") {
+    const parts = savedPlanParts(data);
+    if (parts !== undefined) return parts;
+  }
+  return promptStrings(data).map((text) => ({ label, text }));
+}
+
+/** The prompt text of one input file, unlabelled (`promptPartsOf`). */
+export async function promptTextOf(name: string, path: string): Promise<string[]> {
+  return (await promptPartsOf(name, path)).map((p) => p.text);
+}
+
+/** The labelled prompt text of a request's input files, in argument order. */
+export async function collectPromptParts(files: Record<string, string>): Promise<PromptPart[]> {
+  const parts: PromptPart[] = [];
+  for (const [name, path] of Object.entries(files))
+    if (PROMPT_INPUTS.has(name)) parts.push(...(await promptPartsOf(name, path)));
+  return parts;
 }
 
 /** The prompt text of a request's input files, in argument order. */
 export async function collectPromptText(files: Record<string, string>): Promise<string[]> {
-  const texts: string[] = [];
-  for (const [name, path] of Object.entries(files))
-    if (PROMPT_INPUTS.has(name)) texts.push(...(await promptTextOf(name, path)));
-  return texts;
+  return (await collectPromptParts(files)).map((p) => p.text);
 }

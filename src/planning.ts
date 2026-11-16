@@ -68,7 +68,8 @@ import { writeContact } from "./contact.ts";
 import { writeRun } from "./loop.ts";
 import { canonicalJson, jobOf } from "./runs/plan.ts";
 import type { PlanJob } from "./runs/plan.ts";
-import { enforcePromptPolicy, promptStrings } from "./policy/text.ts";
+import { checkPromptText, enforcePromptPolicy, promptStrings } from "./policy/text.ts";
+import type { PromptPart, PromptPartLabel } from "./policy/text.ts";
 import type { PromptPolicyRecord } from "./policy/text.ts";
 
 export interface GenerationBrief {
@@ -444,16 +445,17 @@ async function prepare(options: CreatePlanOptions): Promise<Prepared> {
   const uiColors = await loadDesignColors(resolve(doc.dir, "../.."), brief.purpose ?? "");
   // The prompt policy (design section 16): every text that feeds a prompt, before any call.
   const lock = doc.data.identities[subject];
+  const part = (label: PromptPartLabel) => (text: string) => ({ label, text });
   enforcePromptPolicy(
     [
-      ...promptStrings(promptSpec),
-      ...promptStrings(originalBrief),
-      ...promptStrings(axes),
-      ...promptStrings(doc.data.tone),
-      ...(lock ? promptStrings([lock.signatureFeatures, lock.proportions]) : []),
-      templateBody.replace(/\{\{[\s\S]*?\}\}/g, " "),
-      doDontSection(doc.prose),
-      ...promptStrings(uiColors),
+      ...promptStrings(promptSpec).map(part("spec")),
+      ...promptStrings(originalBrief).map(part("brief")),
+      ...promptStrings(axes).map(part("brief")),
+      ...promptStrings(doc.data.tone).map(part("tone")),
+      ...(lock ? promptStrings([lock.signatureFeatures, lock.proportions]) : []).map(part("tone")),
+      part("template")(templateBody.replace(/\{\{[\s\S]*?\}\}/g, " ")),
+      part("rules")(doDontSection(doc.prose)),
+      ...promptStrings(uiColors).map(part("text")),
     ],
     options.promptAllow,
     "the request",
@@ -649,10 +651,9 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
   let rawOutput: string | undefined;
   let mode: CompilerRecord["mode"] = "template-fallback";
   let fallbackReason: string | undefined = "LLM provider unavailable";
-  let output: CompilerRecord["output"] = {
-    prompt: `${p.rendered}\n${p.canonical}`,
-    negativePrompt: p.negative,
-  };
+  /** Why the policy set the compiler's output aside, when it did. */
+  let policyFallback: string | undefined;
+  let output: CompilerRecord["output"] = templateOutput(p);
   const clamps = [...p.clamps];
   if (caller) {
     let text: string | undefined;
@@ -715,36 +716,38 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
         ? (parsed.framePrompts as string[])
         : undefined;
       framePrompts?.forEach((prompt) => assertConstitutionalContext(prompt, doc.data));
-      output = {
+      const compiled = {
         prompt: parsed.prompt,
         negativePrompt: parsed.negativePrompt,
         ...(framePrompts && { framePrompts }),
       };
-      mode = "llm";
-      fallbackReason = undefined;
+      // Text the compiler wrote is never the reason the person's request is refused after the
+      // spend: a name in it falls back to the template's prompt, for free. Its phrase hits are
+      // decided by apply's model check, which sees them labelled model-written.
+      const named = checkPromptText(
+        [
+          { label: "model-prompt", text: compiled.prompt },
+          ...(framePrompts ?? []).map((text) => ({ label: "model-prompt" as const, text })),
+          { label: "model-negative", text: compiled.negativePrompt },
+        ],
+        options.promptAllow,
+      ).match;
+      if (named === undefined) {
+        output = compiled;
+        mode = "llm";
+        fallbackReason = undefined;
+      } else
+        policyFallback =
+          fallbackReason = `the compiler's text names "${named.term}" (${named.kind}), which the prompt policy refuses; the repository template's prompt is used in its place`;
     }
   }
-  // Final immutable directives are outside LLM-authored text, so the LLM cannot rewrite them.
-  const prompt = `${output.prompt}\n${p.canonical}`;
-  const negativePrompt = `${output.negativePrompt}\n${p.negative}`;
-  const generationPrompt = `${prompt}\nNegative prompt:\n${negativePrompt}`;
-  const images = Array.from({ length: frameCount }, (_, i) =>
-    frameCount === 1
-      ? generationPrompt
-      : `${output.framePrompts?.[i] ?? `${output.prompt}\nEdit the approved key pose into frame ${i + 1} of ${frameCount} of the animation; preserve identity, proportions, camera, scale and palette.`}\n${p.canonical}\nNegative prompt:\n${negativePrompt}`,
-  );
-  const prompts: PlanPrompts = {
-    images,
-    generation: generationPrompt,
-    negative: negativePrompt,
-    qa: p.qaPrompt,
+  const prompts = planPrompts(p, output);
+  // The compiled prompts are checked as apply will check them: a name refuses (only the person's
+  // text can hold one now), a phrase hit is recorded for apply's model check.
+  const promptPolicy = {
+    ...enforcePromptPolicy(promptParts(prompts, mode), options.promptAllow, "the compiled prompt"),
+    ...(policyFallback !== undefined && { fallback: policyFallback }),
   };
-  // The compiled prompts are checked as apply will check them.
-  const promptPolicy = enforcePromptPolicy(
-    promptTexts(prompts),
-    options.promptAllow,
-    "the compiled prompt",
-  );
   const spent = budget.spentUsd;
   const body: Omit<SavedPlan, "digest"> = {
     format: PLAN_FORMAT,
@@ -788,9 +791,40 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
   };
 }
 
-/** The texts of a plan's prompts, as the prompt policy reads them. */
-function promptTexts(prompts: PlanPrompts): string[] {
-  return [...prompts.images, prompts.generation, prompts.negative, prompts.qa];
+/**
+ * A plan's prompts from the compiler's output, or from the template's (`templateOutput`); the
+ * final immutable directives are outside LLM-authored text, so the LLM cannot rewrite them.
+ */
+function planPrompts(p: Prepared, output: CompilerRecord["output"]): PlanPrompts {
+  const frameCount = p.postprocess.frameCount;
+  const prompt = `${output.prompt}\n${p.canonical}`;
+  const negativePrompt = `${output.negativePrompt}\n${p.negative}`;
+  const generationPrompt = `${prompt}\nNegative prompt:\n${negativePrompt}`;
+  const images = Array.from({ length: frameCount }, (_, i) =>
+    frameCount === 1
+      ? generationPrompt
+      : `${output.framePrompts?.[i] ?? `${output.prompt}\nEdit the approved key pose into frame ${i + 1} of ${frameCount} of the animation; preserve identity, proportions, camera, scale and palette.`}\n${p.canonical}\nNegative prompt:\n${negativePrompt}`,
+  );
+  return { images, generation: generationPrompt, negative: negativePrompt, qa: p.qaPrompt };
+}
+
+/** The repository template's prompt and negative prompt, used when no compiler output is. */
+function templateOutput(p: Prepared): CompilerRecord["output"] {
+  return { prompt: `${p.rendered}\n${p.canonical}`, negativePrompt: p.negative };
+}
+
+/**
+ * A plan's prompts as the prompt policy reads them, labelled: the image prompts and the negative
+ * are model-written when the compiler wrote them; the QA prompt is the template's.
+ */
+function promptParts(prompts: PlanPrompts, mode: CompilerRecord["mode"]): PromptPart[] {
+  const llm = mode === "llm";
+  return [
+    ...prompts.images.map((text) => ({ label: llm ? "model-prompt" : "template", text }) as const),
+    { label: llm ? "model-prompt" : "template", text: prompts.generation },
+    { label: llm ? "model-negative" : "template", text: prompts.negative },
+    { label: "template", text: prompts.qa },
+  ];
 }
 
 /** What a plan or apply would call and spend, computed without a provider call. */
@@ -859,6 +893,12 @@ export interface ApplyPlanOptions extends ResolveOptions {
   outDir?: string;
   /** The author's note of this round, appended to each image prompt and checked by the prompt policy. */
   note?: string;
+  /**
+   * Why the run's prompt-policy model check set the saved plan's compiled prompts aside (it
+   * objected only to text the compiler wrote): apply then generates from the repository
+   * template's prompt, and records this in the run's `promptPolicy.fallback`.
+   */
+  templateFallback?: string;
   /** The run's directory name under `outDir`, when the caller already opened it. */
   runId?: string;
   /** Receives one line per provider decision call. */
@@ -1023,11 +1063,22 @@ export async function applyPlan(
   const refs = prepared.references;
   const bibleLicenses = referenceLicenses(doc.data.referenceLicense, bibleReferences(doc.data));
   // A saved plan's prompts are a request input: the policy reads them before any spend.
-  const promptPolicy = enforcePromptPolicy(
-    [...promptTexts(plan.prompts), ...(options.note !== undefined ? [options.note] : [])],
-    options.promptAllow,
-    "the saved plan's prompts",
-  );
+  const promptPolicy = {
+    ...enforcePromptPolicy(
+      [
+        ...promptParts(plan.prompts, "llm"),
+        ...(options.note !== undefined ? [{ label: "text" as const, text: options.note }] : []),
+      ],
+      options.promptAllow,
+      "the saved plan's prompts",
+    ),
+    ...(options.templateFallback !== undefined && { fallback: options.templateFallback }),
+  };
+  // The run's model check objected only to the compiler's text: the template's prompt is used.
+  const prompts =
+    options.templateFallback === undefined
+      ? plan.prompts
+      : planPrompts(prepared, templateOutput(prepared));
   const budget = new Budget(
     prepared.capUsd,
     ledgerFor(options.ledger, options.provider, prepared.profile),
@@ -1083,10 +1134,10 @@ export async function applyPlan(
           ? undefined
           : prepared.runOptions.seed + index * prepared.postprocess.frameCount;
       const frames = [];
-      for (let frameIndex = 0; frameIndex < plan.prompts.images.length; frameIndex++) {
+      for (let frameIndex = 0; frameIndex < prompts.images.length; frameIndex++) {
         const source = await caller.image(
           "planned",
-          withNote(plan.prompts.images[frameIndex] as string, options.note),
+          withNote(prompts.images[frameIndex] as string, options.note),
           refs,
           seed === undefined ? undefined : seed + frameIndex,
         );
@@ -1159,10 +1210,7 @@ export async function applyPlan(
         bytes: image.bytes,
         sha256: sha256(image.bytes),
       };
-      const verdictText = await caller.vision("planned-qa", plan.prompts.qa, [
-        candidateRef,
-        ...refs,
-      ]);
+      const verdictText = await caller.vision("planned-qa", prompts.qa, [candidateRef, ...refs]);
       let verdict: { styleScore?: unknown; passed?: unknown; reason?: unknown } = {};
       try {
         const parsed: unknown = JSON.parse(verdictText);
@@ -1257,15 +1305,15 @@ export async function applyPlan(
         generator: prepared.spec.kind,
         route: calls.map((c) => c.route).join(" + "),
         models: [...new Set(calls.map((c) => c.model))],
-        prompt: plan.prompts.generation,
+        prompt: prompts.generation,
         parameters: {
-          negativePrompt: plan.prompts.negative,
+          negativePrompt: prompts.negative,
           planDigest: plan.digest,
           requestDigest: plan.requestDigest,
           resolutionSha256: plan.resolutionSha256,
           brief: prepared.brief,
           originalBrief: prepared.originalBrief,
-          imagePrompts: plan.prompts.images,
+          imagePrompts: prompts.images,
           postprocess: prepared.postprocess,
           template: prepared.template,
           identity: prepared.identity,

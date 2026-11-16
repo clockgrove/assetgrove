@@ -13,7 +13,7 @@ import {
   bibleReads,
   specReads,
   buildWorkPlan,
-  jobOf,
+  policyJobOf,
   paidBy,
 } from "../runs/plan.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
@@ -58,11 +58,9 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
   });
-  // The apply after this plan runs its own prompt-policy check first: forecast it too.
-  const jobs = [
-    jobOf(PROMPT_POLICY_OPERATION, providers.routes[PROMPT_POLICY_OPERATION]!),
-    ...forecast.jobs,
-  ];
+  // The apply after this plan runs its own prompt-policy check first, on the compiled prompts
+  // (model-written, so up to two calls): forecast it too.
+  const jobs = [policyJobOf(providers.routes[PROMPT_POLICY_OPERATION]!, true), ...forecast.jobs];
   const reads = {
     ...(await bibleReads("bible", args.bible)),
     ...specReads("spec", spec),

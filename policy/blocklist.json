@@ -29,19 +29,19 @@
     { "term": "pixar", "kind": "studio" },
     { "term": "ghibli", "kind": "studio" },
     { "term": "fromsoftware", "kind": "studio" },
-    { "term": "blizzard", "kind": "studio" },
+    { "term": "blizzard", "kind": "studio", "ambiguous": true },
     { "term": "riot games", "kind": "studio" },
-    { "term": "supergiant", "kind": "studio" },
+    { "term": "supergiant", "kind": "studio", "ambiguous": true },
     { "term": "terraria", "kind": "game" },
     { "term": "minecraft", "kind": "game" },
     { "term": "fortnite", "kind": "game" },
     { "term": "stardew", "kind": "game" },
     { "term": "elden ring", "kind": "game" },
     { "term": "hollow knight", "kind": "game" },
-    { "term": "zelda", "kind": "character" },
+    { "term": "zelda", "kind": "character", "ambiguous": true },
     { "term": "pokemon", "kind": "character" },
     { "term": "pikachu", "kind": "character" },
     { "term": "mickey mouse", "kind": "character" },
-    { "term": "mario", "kind": "character" }
+    { "term": "mario", "kind": "character", "ambiguous": true }
   ]
 }

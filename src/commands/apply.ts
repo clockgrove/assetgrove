@@ -178,6 +178,9 @@ confirmation authorizes this generation spend; resulting assets remain pending r
       promptAllow: ctx.settings.promptPolicy.allow,
       outDir: dirname(dir),
       ...(args.note !== undefined && { note: args.note }),
+      ...(ctx.run?.promptPolicy?.fallback !== undefined && {
+        templateFallback: ctx.run.promptPolicy.fallback,
+      }),
       runId: basename(dir),
     });
     const bible = await loadBible(

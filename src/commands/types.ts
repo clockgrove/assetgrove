@@ -59,9 +59,11 @@ export interface RunContext {
   prompt?: ConfirmPort;
   /**
    * The run of a paid command's real run: its directory `<runs>/r-<16 hex>/`, where the runner has
-   * written `request.json`, and the WorkPlan its plan step returned.
+   * written `request.json`, and the WorkPlan its plan step returned. `promptPolicy` is the record
+   * after the run's prompt-policy check (with `fallback` when the command must use its template's
+   * prompt in place of the compiler's).
    */
-  run?: { dir: string; plan: WorkPlan };
+  run?: { dir: string; plan: WorkPlan; promptPolicy?: PromptPolicyRecord };
   /**
    * Where a paid run reports its progress while a client is connected (the MCP server's
    * `notifications/progress` for a request that carries a progressToken).
