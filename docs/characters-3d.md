@@ -84,10 +84,12 @@ Also available:
 
    The profile's triangle budget goes with the call (`maxTriangles`, Tripo's `face_limit`), because Tripo otherwise returns about 400K triangles.
 
+   **Facing.** The route's `forward` is a setting, not an answer: a provider can return a model facing another way. So each candidate's raw model is rendered by the local renderer at yaw 0°, 90°, 180° and 270° (free; yaw 0° sees a `+z`-facing model from its front, 90° a `+x`-facing one, 180° `-z`, 270° `-x`), and one `model3d-facing` call (decisions role, `perplexity/pplx-decider-v1.2`, $0.001 estimate, one per candidate) is shown the four renders and chooses which one shows the model's front, or `unclear`. The answer is the model's facing, recorded in the call's provenance (`decision.question: "choice"`, the chosen yaw as `label`, its probability when the model reports one) and in the candidate's `parameters.facing`. The `facing` check passes only when the answer is the route's `forward` (`+z` when unset). When the answer is another axis, or `unclear`, the candidate gets a failing `facing` reason instead of a rig: no rig or clip call is made, no shared rig is fitted, and the candidate keeps the provider's unrigged model with the four renders (`facing-yaw-<deg>.png`) so a person sees why. A model fitted facing the wrong way would put the head joints at the tail; a quadruped is roughly symmetric front to back, so contact, joint-limit and skinning QA could pass while the walk runs backwards.
+
 2. **Rig** (`rig3d` route): the provider's auto-rig for the gait. The route's `rigTypes` maps a gait to the provider's rig type.
 3. **Clips** (`clips3d` route): the provider's library clips, retargeted onto the rig. The route's `library` maps gait → family → `{ clip, loop }`. A family with no library entry is reported as missing for the candidate. It is never faked, and the candidate is not refused for it. Each returned animation is renamed after its family. For a looping family, the last key of every channel is set to its first, which closes the loop.
 4. **Normalise.** The scene gets a single root node that:
-   - turns the model from the route's `forward` (the provider's facing, `+z` by default; Tripo's models face `+x`, as measured on one four-legged character) to the profile's `forward`;
+   - turns the model from the route's `forward` (the provider's facing, `+z` by default; Tripo's is set to `+x`), which the facing decision confirmed, to the profile's `forward`;
    - scales it to `heightM`;
    - stands it on y = 0 and centres it on x and z.
 5. **QA**, recorded per candidate. All before the pick:
@@ -328,7 +330,7 @@ A model that has been through look-dev carries its groom maps, tint and eye mask
 
 ## Spend
 
-`stage` reserves every call against the cap before the first one: the reference-view calls (once per request), then generation, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $1.001 per candidate, so 4 candidates reserve $4.004 against the $5 cap. Each call settles at the cost Tripo reports (its credits × the provider entry's `usdPerCredit`) or, with no rate set, at its estimate. Every candidate's provenance carries its own `costUsd`.
+`stage` reserves every call against the cap before the first one: the reference-view calls (once per request), then generation, the facing decision, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $1.002 per candidate (the `model3d-facing` call is $0.001 of it), so 4 candidates reserve $4.008 against the $5 cap. Each call settles at the cost Tripo reports (its credits × the provider entry's `usdPerCredit`) or, with no rate set, at its estimate. Every candidate's provenance carries its own `costUsd`.
 
 ## Hand-off
 

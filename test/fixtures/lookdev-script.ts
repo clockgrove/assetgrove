@@ -5,6 +5,8 @@
  * answer lengths per region, with a frosted tint for a season named `winter`. Markings calls name
  * no marking, unless `SCRIPT_LOOKDEV_MARKINGS` is `figure` (one marking, "patch", boxed, on the 0..1000 scale, on the middle
  * of each image's figure against its lower part), `vanished` (that marking on the reference only) or a literal reply.
+ * Marking decisions answer `kept` with probability 0.9, `missing` when markings are `vanished`;
+ * `SCRIPT_LOOKDEV_MARKING` names the verdict (`kept`, `drifted` or `missing`) instead.
  */
 import type { Script } from "../../src/gateway/scripted.ts";
 import { referenceView } from "./scripted-views.ts";
@@ -99,6 +101,15 @@ const script: Script = {
         tint: winter ? { color: "#e8ecf2", tipWeight: 0.7 } : null,
       }),
       costUsd: 0.001,
+    };
+  },
+  marking() {
+    const choice =
+      process.env["SCRIPT_LOOKDEV_MARKING"] ??
+      (process.env["SCRIPT_LOOKDEV_MARKINGS"] === "vanished" ? "missing" : "kept");
+    return {
+      answer: { type: "choice", choice, probabilities: { [choice]: 0.9 } },
+      costUsd: 0.00003,
     };
   },
   decide(_request, index) {

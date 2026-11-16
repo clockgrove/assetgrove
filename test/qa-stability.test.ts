@@ -18,8 +18,8 @@ import {
   STABILITY,
 } from "../src/qa/stability.ts";
 import type { StabilityEntry } from "../src/qa/stability.ts";
-import { markingsReason } from "../src/model3d/lookdev/markings.ts";
-import { defaultRoutes } from "../src/routes.ts";
+import { markingsFiltering, markingsReason } from "../src/model3d/lookdev/markings.ts";
+import { defaultRoutes, LOOKDEV_MARKING_OPERATION } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
 import type { Reason } from "../src/types.ts";
 import { scriptedProvider, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
@@ -167,6 +167,35 @@ test("lookdev-markings is advisory without an entry and filters with one", () =>
   );
   assert.equal(filtering.shadow, undefined);
   assert.doesNotMatch(filtering.reason, /advisory/);
+});
+
+test("the markings decision filters through the stability rule on the marking route's model", () => {
+  const model = defaultRoutes[LOOKDEV_MARKING_OPERATION]!.model;
+  const drifted = [
+    markingsReason(
+      [{ marking: "mask", view: "front", image: "default", verdict: "drifted", drifts: true }],
+      { unmeasured: [] },
+    ),
+  ];
+  assert.equal(drifted[0]!.source, "decision");
+  const shipped = applyStability(drifted, defaultRoutes);
+  assert.equal(shipped.reasons[0]!.shadow, true, "no entry: the verdict is advisory");
+  assert.deepEqual(shipped.filtering, [
+    { check: "lookdev-markings", state: "advisory", cause: "no-entry" },
+  ]);
+  const entries = [entry({ checkId: "lookdev-markings", version: "2", model })];
+  const measured = applyStability(drifted, defaultRoutes, { entries });
+  assert.equal(measured.passed, false, "a qualifying version 2 entry makes it filter");
+  assert.deepEqual(measured.filtering, [{ check: "lookdev-markings", state: "filtering" }]);
+  const old = applyStability(drifted, defaultRoutes, {
+    entries: [entry({ checkId: "lookdev-markings", version: "1", model })],
+  });
+  assert.equal(
+    old.filtering[0]?.state,
+    "advisory",
+    "an entry for the thresholded version does not count",
+  );
+  assert.equal(markingsFiltering(model).state, "advisory", "none is shipped");
 });
 
 test("stability entries are validated", () => {

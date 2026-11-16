@@ -165,7 +165,7 @@ test("a target with a rig template forecasts no provider rig or clip call", asyn
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(
     doc(r)["plan"].perCandidate.map((c: { operation: string }) => c.operation),
-    ["model3d", "identity"],
+    ["model3d", "model3d-facing", "identity"],
   );
 });
 
@@ -267,7 +267,7 @@ test("stage fits the shared rig, generates the walk, checks every clip, and pick
     assert.match(checks["clip-sniff"].reason, /missing, not faked/);
     assert.deepEqual(
       c.provenance.calls.map((x: { operation: string }) => x.operation),
-      ["model3d", "identity"],
+      ["model3d", "model3d-facing", "identity"],
     );
     assert.equal(c.fields.clips.length, 1);
     assert.equal(c.fields.clips[0].name, "walk");

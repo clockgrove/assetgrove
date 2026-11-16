@@ -1,6 +1,7 @@
 /**
  * The `character-3d` generator: a rigged, animated `.glb` from a character's approved turnaround.
- * One candidate makes a 3D generation call, a rig call, one clip call for every family the
+ * One candidate makes a 3D generation call, a facing decision on renders of the raw mesh (a mesh that
+ * faces other than the route says fails with no rig), a rig call, one clip call for every family the
  * provider's library has, and an identity call on the rendered views; all are reserved against the
  * cap before the run's first call. QA runs before the pick and is recorded per candidate.
  */
@@ -16,8 +17,10 @@ import type { IdentityRecord, IdentityScore } from "../identity.ts";
 import { createRaster, decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256, subjectOf, withNote } from "../request.ts";
+import { MODEL3D_FACING_OPERATION } from "../routes.ts";
 import type { Route, Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, Reason, StyleBible, TargetProfile } from "../types.ts";
+import { judgeFacing } from "./facing.ts";
 import { GLB_MEDIA_TYPE, parseGlb, writeGlb } from "./glb.ts";
 import type { Glb } from "./glb.ts";
 import {
@@ -198,6 +201,8 @@ export const character3dGenerator: Generator = {
       calls.push({ operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd });
     };
     add(MODEL_OPERATION);
+    // Which way the returned mesh faces is judged before it is rigged.
+    add(MODEL3D_FACING_OPERATION);
     if (declaresRig(profile)) {
       // The target's shared rig and generated gaits replace the provider's rig and clips.
       rigProfileOf(profile);
@@ -243,27 +248,58 @@ export const character3dGenerator: Generator = {
       context.seed,
       settings.budgets.triangles,
     );
+    let source: Glb;
+    try {
+      source = parseGlb(made.glb);
+    } catch (error) {
+      throw new ProviderError(`the provider returned no usable glTF: ${(error as Error).message}`);
+    }
+    const routeForward = call.route(MODEL_OPERATION).forward ?? "+z";
+    const facing = await judgeFacing(call, source, routeForward, settings.turntablePx);
+    const facingParameters = {
+      answer: facing.facing ?? facing.choice,
+      ...(facing.probability !== undefined && {
+        probability: Math.round(facing.probability * 1e4) / 1e4,
+      }),
+      routeForward,
+    };
+    if (!facing.reason.passed) {
+      // No rig, clip or identity call is paid for a model the rig would fit backwards.
+      return {
+        output: {
+          mediaType: GLB_MEDIA_TYPE,
+          extension: "glb",
+          bytes: made.glb,
+          fields: { gait: character.gait, facing: facingParameters },
+        },
+        qa: { passed: false, reasons: [facing.reason] },
+        prompt: text,
+        parameters: {
+          gait: character.gait,
+          forward: settings.forward,
+          ...(character.heightM !== undefined && { heightM: character.heightM }),
+          references: viewRecord(references),
+          facing: facingParameters,
+        },
+        artifacts: facing.renders.map((r) => ({
+          name: `facing-yaw-${r.yawDeg}.png`,
+          bytes: r.bytes,
+        })),
+      };
+    }
     let rigged: Awaited<ReturnType<typeof riggedCandidate>> | undefined;
     if (rig) {
-      let source: Glb;
-      try {
-        source = parseGlb(made.glb);
-      } catch (error) {
-        throw new ProviderError(
-          `the provider returned no usable glTF: ${(error as Error).message}`,
-        );
-      }
       rigged = await riggedCandidate({
         source,
         sourceSha256: sha256(made.glb),
-        sourceForward: call.route(MODEL_OPERATION).forward ?? "+z",
+        sourceForward: routeForward,
         settings,
         character,
         rig,
       });
     }
     const built = rigged ? undefined : await providerRigged();
-    const reasons: Reason[] = rigged ? rigged.reasons : built!.reasons;
+    const reasons: Reason[] = [facing.reason, ...(rigged ? rigged.reasons : built!.reasons)];
     const renders: TurntableFrame[] = rigged ? rigged.renders : built!.renders;
 
     async function providerRigged() {
@@ -300,7 +336,7 @@ export const character3dGenerator: Generator = {
         if (p.loop) closed[p.family] = closeLoop(glb, i);
       });
       const bounds = normalize(glb, {
-        sourceForward: call.route(MODEL_OPERATION).forward ?? "+z",
+        sourceForward: routeForward,
         forward: settings.forward,
         ...(character.heightM !== undefined && { heightM: character.heightM }),
       });
@@ -394,6 +430,7 @@ export const character3dGenerator: Generator = {
             lods: measures.lods,
             ...rigged.fields,
             gait: character.gait,
+            facing: facingParameters,
             ...identityFields,
           },
         },
@@ -406,6 +443,7 @@ export const character3dGenerator: Generator = {
           forward: settings.forward,
           ...(character.heightM !== undefined && { heightM: character.heightM }),
           references: referenceParameters,
+          facing: facingParameters,
         },
         artifacts: rigged.artifacts,
       };
@@ -431,6 +469,7 @@ export const character3dGenerator: Generator = {
           clips: clipFields,
           bounds: { min: bounds.min.map(round), max: bounds.max.map(round) },
           gait: character.gait,
+          facing: facingParameters,
           missingClips: missing,
           ...(unmatched.length > 0 && { unmatchedClips: unmatched }),
           ...identityFields,
@@ -448,6 +487,7 @@ export const character3dGenerator: Generator = {
         forward: settings.forward,
         ...(character.heightM !== undefined && { heightM: character.heightM }),
         references: referenceParameters,
+        facing: facingParameters,
       },
       artifacts: renders.map((r) => ({ name: r.name, bytes: r.png })),
     };

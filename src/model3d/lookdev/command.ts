@@ -31,6 +31,7 @@ import {
   IDENTITY_CAST_OPERATION,
   LOOKDEV_GROOM_OPERATION,
   LOOKDEV_LOCATE_OPERATION,
+  LOOKDEV_MARKING_OPERATION,
   LOOKDEV_MARKINGS_OPERATION,
   LOOKDEV_OPERATION,
 } from "../../routes.ts";
@@ -49,7 +50,14 @@ import { GLB_MEDIA_TYPE, parseGlb, writeGlb } from "../glb.ts";
 import type { Glb } from "../glb.ts";
 import { CHARACTER_3D_KIND, characterSpec, model3dSettings } from "../profile.ts";
 import { budgetChecks, qaPassed, validatorCheck } from "../qa.ts";
-import { TURNTABLE_VIEWS, closeUpCamera, framedCamera, renderView, speckle } from "../render.ts";
+import {
+  TURNTABLE_VIEWS,
+  closeUpCamera,
+  framedCamera,
+  renderView,
+  renderViewWithDepth,
+  speckle,
+} from "../render.ts";
 import type { FurMaps, PreviewLighting, ViewCamera } from "../render.ts";
 import { profileSha256 } from "../rig/candidate.ts";
 import { declaresRig, loadRig } from "../rig/template.ts";
@@ -64,6 +72,7 @@ import {
   nodePositions,
   replaceImage,
   setEmissive,
+  setEmissiveAt,
   splitEyes,
 } from "./edit.ts";
 import {
@@ -89,14 +98,18 @@ import type { ReferenceView, ViewedReference } from "../views.ts";
 import { bakeTexels } from "./texels.ts";
 import type { TexelMap } from "./texels.ts";
 import {
-  compareMarking,
+  deltaE,
+  MARKING_VERDICTS,
+  MAX_MARKINGS_JUDGED,
+  markingCrop,
+  markingDecisionPrompt,
   markingsPrompt,
   markingsFiltering,
   markingsReason,
   measureBox,
   parseMarkingsReply,
 } from "./markings.ts";
-import type { MarkingMeasure } from "./markings.ts";
+import type { MarkingMeasure, MarkingVerdict } from "./markings.ts";
 import type { PromptPolicyRecord } from "../../policy/text.ts";
 import { lookdevSettings } from "./settings.ts";
 import type { LookdevSettings, PreviewLightingSettings } from "./settings.ts";
@@ -211,6 +224,10 @@ export function planLookdev(
   for (let i = 0; i < seasonsOf(settings).length; i++) add(LOOKDEV_GROOM_OPERATION);
   // At most one markings call per turntable view: only views with their own turnaround view call.
   for (let i = 0; i < TURNTABLE_VIEWS.length; i++) add(LOOKDEV_MARKINGS_OPERATION);
+  // An upper bound: one decision per marking, view and season, at most MAX_MARKINGS_JUDGED markings
+  // per view, and only the markings the box call names.
+  const judged = TURNTABLE_VIEWS.length * seasonsOf(settings).length * MAX_MARKINGS_JUDGED;
+  for (let i = 0; i < judged; i++) add(LOOKDEV_MARKING_OPERATION);
   // Identity never filters a 3D character, so no record check is forecast.
   const identity = identitySettings3d(profile);
   if (identity.mode !== "off") {
@@ -674,21 +691,25 @@ export function parseMarkers(
  * Paints a soft catch-light into each eye of a texture on the model's UVs: a small near-white
  * spot on the eye's surface, offset from its centre toward the key light (above, in front, to the
  * character's left, as the turntable light). Changes only texels inside the eye markers. Look-dev
- * paints it into the eye material's own emissive texture, never into the base colour.
+ * paints it into an emissive texture, never into the base colour. An eye whose texels are all
+ * farther from the spot's centre than its radius gets the nearest one. Returns, per eye in order,
+ * the indices of the texels it painted (none only for an eye with no texel inside it).
  */
 export function paintCatchLights(
   albedo: Raster,
   texels: TexelMap,
   eyes: SurfaceMarker[],
   forward: Vec3,
-): number {
+): number[][] {
   const left: Vec3 = [forward[2], 0, -forward[0]];
   const l = [0.8 * 0 + 0.6 * forward[0] + 0.3 * left[0], 0.8, 0.6 * forward[2] + 0.3 * left[2]];
   const ll = Math.hypot(l[0]!, l[1]!, l[2]!);
   const light: Vec3 = [l[0]! / ll, l[1]! / ll, l[2]! / ll];
-  let painted = 0;
+  const painted: number[][] = [];
   const size = texels.size;
   for (const eye of eyes) {
+    const mine: number[] = [];
+    painted.push(mine);
     // The eye's outward normal: the mean normal of its texels.
     const n: Vec3 = [0, 0, 0];
     const inside: number[] = [];
@@ -717,20 +738,30 @@ export function paintCatchLights(
       eye.point[2] + (t[2] / tl) * eye.radius * 0.35,
     ];
     const r = eye.radius * 0.3;
+    const paint = (i: number, w: number) => {
+      for (let c = 0; c < 3; c++) {
+        const o = i * 4 + c;
+        albedo.data[o] = Math.round(albedo.data[o]! * (1 - w) + 250 * w);
+      }
+      mine.push(i);
+    };
+    let nearest = inside[0]!;
+    let nearestD = Infinity;
     for (const i of inside) {
       const d = Math.hypot(
         texels.position[i * 3]! - centre[0],
         texels.position[i * 3 + 1]! - centre[1],
         texels.position[i * 3 + 2]! - centre[2],
       );
-      if (d >= r) continue;
-      const w = 0.92 * (1 - (d / r) ** 2);
-      for (let c = 0; c < 3; c++) {
-        const o = i * 4 + c;
-        albedo.data[o] = Math.round(albedo.data[o]! * (1 - w) + 250 * w);
+      if (d < nearestD) {
+        nearest = i;
+        nearestD = d;
       }
-      painted++;
+      if (d >= r) continue;
+      paint(i, 0.92 * (1 - (d / r) ** 2));
     }
+    // An eye whose texels are coarser than the spot still gets one: the texel nearest its centre.
+    if (mine.length === 0) paint(nearest, 0.92);
   }
   return painted;
 }
@@ -832,37 +863,47 @@ function changedShare(a: Raster, b: Raster): number {
   return changed / (a.width * a.height);
 }
 
-/** Whether the close-up shows a catch-light in every located eye: a near-white highlight inside it. */
+/** How much of one eye's painted catch-light the close-up camera sees. */
+export interface EyeCatchLight {
+  /** Texels painted with the catch-light inside the eye. */
+  painted: number;
+  /** Of those, the texels inside the close-up's frame that pass its depth test. */
+  visible: number;
+}
+
+/**
+ * Whether every located eye got its catch-light and the close-up can see it, exactly: per eye, the
+ * painted texels are more than zero and at least one of them projects inside the close-up and
+ * passes its depth test (its depth along the view axis within half the eye's radius of the
+ * nearest surface the close-up drew there). No brightness is measured: a pale eye or an eye
+ * smaller than one triangle passes when its catch-light was painted where the close-up sees it.
+ */
 export function catchLight(
-  render: Raster,
   camera: ViewCamera,
+  depth: Float64Array,
+  texels: TexelMap,
   eyes: SurfaceMarker[],
-): { found: boolean; peak: number; eyes: number } {
-  let peak = 0;
-  let found = 0;
-  for (const eye of eyes) {
-    const [cx, cy, depth] = camera.project(...eye.point);
-    const r = Math.max(2, (eye.radius * camera.focal) / depth);
-    let max = 0;
-    let sum = 0;
-    let n = 0;
-    for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) {
-      for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
-        if (x < 0 || y < 0 || x >= render.width || y >= render.height) continue;
-        if ((x - cx) ** 2 + (y - cy) ** 2 > r * r) continue;
-        const o = (y * render.width + x) * 4;
-        const l =
-          0.2126 * render.data[o]! + 0.7152 * render.data[o + 1]! + 0.0722 * render.data[o + 2]!;
-        max = Math.max(max, l);
-        sum += l;
-        n++;
-      }
+  painted: number[][],
+): { found: boolean; eyes: number; perEye: EyeCatchLight[] } {
+  const size = camera.sizePx;
+  const perEye = eyes.map((eye, e) => {
+    const mine = painted[e] ?? [];
+    let visible = 0;
+    for (const i of mine) {
+      const [x, y, d] = camera.project(
+        texels.position[i * 3]!,
+        texels.position[i * 3 + 1]!,
+        texels.position[i * 3 + 2]!,
+      );
+      const px = Math.floor(x);
+      const py = Math.floor(y);
+      if (!(d > 0) || px < 0 || py < 0 || px >= size || py >= size) continue;
+      if (d <= depth[py * size + px]! + eye.radius * 0.5) visible++;
     }
-    if (n === 0) continue;
-    peak = Math.max(peak, max);
-    if (max >= 200 && max - sum / n >= 60) found++;
-  }
-  return { found: eyes.length > 0 && found === eyes.length, peak: Math.round(peak), eyes: found };
+    return { painted: mine.length, visible };
+  });
+  const lit = perEye.filter((p) => p.painted > 0 && p.visible > 0).length;
+  return { found: eyes.length > 0 && lit === eyes.length, eyes: lit, perEye };
 }
 
 function greyMask(mask: Uint8Array, size: number): Raster {
@@ -1293,11 +1334,18 @@ export async function lookDev(
   // wet at the closest zoom whatever the eye geometry, while the base colour stays unlit albedo.
   // The target can keep it, or drop it and shade the eyes itself; the glossy eye material adds
   // the live highlight.
-  if (eyeTriangles > 0) {
-    const catchLightTexture = createRaster(textureSize, textureSize);
-    for (let i = 3; i < catchLightTexture.data.length; i += 4) catchLightTexture.data[i] = 255;
-    paintCatchLights(catchLightTexture, texels, markers.eyes, forward);
-    setEmissive(glb, EYE_MATERIAL, encodePng(catchLightTexture), "eyes.catchLight");
+  // An eye smaller than one triangle moves no triangle into the eye material; its catch-light is
+  // still painted, into the textured material's emissive texture (black everywhere else).
+  const catchLightTexture = createRaster(textureSize, textureSize);
+  for (let i = 3; i < catchLightTexture.data.length; i += 4) catchLightTexture.data[i] = 255;
+  const catchLightTexels = paintCatchLights(catchLightTexture, texels, markers.eyes, forward);
+  const catchLightOn = eyeTriangles > 0 ? EYE_MATERIAL : "textured";
+  if (catchLightTexels.some((p) => p.length > 0)) {
+    if (eyeTriangles > 0) {
+      setEmissive(glb, EYE_MATERIAL, encodePng(catchLightTexture), "eyes.catchLight");
+    } else {
+      setEmissiveAt(glb, textured.material, encodePng(catchLightTexture), "eyes.catchLight");
+    }
   }
   const eyeMaskTexture = markerMask(texels, markers.eyes);
   sidecars.push({
@@ -1334,7 +1382,13 @@ export async function lookDev(
         ),
       },
       images: groomExtras,
-      eyes: { material: EYE_MATERIAL, catchLight: "the eye material's emissiveTexture" },
+      eyes: {
+        material: EYE_MATERIAL,
+        catchLight:
+          catchLightOn === EYE_MATERIAL
+            ? "the eye material's emissiveTexture"
+            : "the textured material's emissiveTexture (no triangle lies wholly inside an eye)",
+      },
     },
   };
   const raw = writeGlb(glb);
@@ -1444,26 +1498,30 @@ export async function lookDev(
       `95th percentile ${seamsBefore.p95.toFixed(1)})`,
     source: "deterministic",
   });
-  const eyesClose = renderView(written, {
+  // The close-up's depth buffer: the catch-light check is a depth test, not a brightness one.
+  const { depth: closeDepth } = renderViewWithDepth(written, {
     sizePx: CLOSE_UP_PX,
     yawDeg: 0,
     framing,
     camera: closeUp(0),
     lighting,
   });
-  const light = catchLight(eyesClose, closeUp(0), markers.eyes);
+  const light = catchLight(closeUp(0), closeDepth, texels, markers.eyes, catchLightTexels);
   // A character the locate call says has no eyes (a robot with a visor) has no eye material to
   // light: recorded as absent, not as a failure, like its groom mask.
   reasons.push({
     check: "eyes-catch-light",
-    passed: parts.eyes === "absent" || (eyeTriangles > 0 && light.found),
+    passed: parts.eyes === "absent" || light.found,
     reason:
       (parts.eyes === "absent"
         ? "eyes: absent (the locate call says the character has none), no eye material or catch-light required; "
         : "") +
       `${markers.eyes.length} eye(s) located, ${eyeTriangles} triangle(s) in the "${EYE_MATERIAL}" material; ` +
-      `catch-light in ${light.eyes} of ${markers.eyes.length} eye(s) of the close-up at the closest zoom ` +
-      `(peak luminance ${light.peak}; the catch-light is the eye material's emissive texture, the base colour has none)`,
+      `catch-light painted and seen by the close-up at the closest zoom in ${light.eyes} of ${markers.eyes.length} eye(s)` +
+      (light.perEye.length > 0
+        ? ` (${light.perEye.map((p, e) => `eye ${e + 1}: ${p.painted} texel(s) painted, ${p.visible} passing the close-up's depth test`).join("; ")})`
+        : "") +
+      `; the catch-light is the ${catchLightOn === EYE_MATERIAL ? "eye" : "textured"} material's emissive texture, the base colour has none`,
     source: "deterministic",
   });
   reasons.push(
@@ -1512,7 +1570,13 @@ export async function lookDev(
     }
     if (markings.length === 0) unmeasured.push(`${view.name} (no marking was named)`);
     const refImage = decodeImage(ref.bytes);
-    for (const m of markings) {
+    for (const [n, m] of markings.entries()) {
+      if (n >= MAX_MARKINGS_JUDGED) {
+        unmeasured.push(
+          `${m.name} in ${view.name} (not judged: over ${MAX_MARKINGS_JUDGED} markings)`,
+        );
+        continue;
+      }
       const refBoxes = m.boxes[0];
       const refMark = refBoxes && measureBox(refImage, refBoxes.mark, undefined);
       const refGround = refBoxes && measureBox(refImage, refBoxes.ground, undefined);
@@ -1520,38 +1584,59 @@ export async function lookDev(
         unmeasured.push(`${m.name} in ${view.name} (not located on the reference)`);
         continue;
       }
-      renders.forEach((render, k) => {
-        const boxes = m.boxes[k + 1];
-        const mark = boxes && measureBox(render, boxes.mark, BACKGROUND);
-        const ground = boxes && measureBox(render, boxes.ground, BACKGROUND);
+      const refCrop = {
+        ...png(encodePng(markingCrop(refImage, refBoxes))),
+        role: `reference crop: ${m.name}, ${view.name}`,
+      };
+      for (const [k, render] of renders.entries()) {
+        const boxes = m.boxes[k + 1] ?? null;
         const image = plan.seasons[k]!;
-        if (!mark) {
-          // The turnaround shows this marking; a render that does not has lost it.
-          const missing = boxes ? "not measurable in the render" : "not shown in the render";
-          markingMeasures.push({
+        const renderMark = boxes && measureBox(render, boxes.mark, BACKGROUND);
+        const { result, record } = await caller.decide(
+          LOOKDEV_MARKING_OPERATION,
+          markingDecisionPrompt({
+            subject: subjectName,
             marking: m.name,
+            against: m.against,
             view: view.name,
-            image,
-            drifts: true,
-            missing,
-            why: missing,
-          });
-          return;
+            season: image,
+          }),
+          [
+            refCrop,
+            {
+              ...png(encodePng(markingCrop(render, boxes))),
+              role: `render crop: ${m.name}, ${view.name}, ${image}`,
+            },
+          ],
+          {
+            type: "choice",
+            instructions:
+              "Is the marking still there in the render, in the same colour and contrast as in the reference?",
+            options: MARKING_VERDICTS,
+          },
+        );
+        if (
+          result.answer.type !== "choice" ||
+          !Object.hasOwn(MARKING_VERDICTS, result.answer.choice)
+        ) {
+          throw new ProviderError(`the marking decision for ${m.name} did not choose an option`);
         }
+        const verdict = result.answer.choice as MarkingVerdict;
+        const probability = record.decision?.value;
         markingMeasures.push({
           marking: m.name,
           view: view.name,
           image,
-          ...compareMarking(
-            { mark: refMark, ground: refGround },
-            { mark, ...(ground && { ground }) },
-          ),
+          verdict,
+          ...(probability !== undefined && { probability }),
+          ...(renderMark && { deltaE: deltaE(refMark, renderMark) }),
+          drifts: verdict !== "kept",
         });
-      });
+      }
     }
   }
   // lookdev-markings filters only where measured stable on the run's markings model.
-  const markingsState = markingsFiltering(options.routes[LOOKDEV_MARKINGS_OPERATION]?.model);
+  const markingsState = markingsFiltering(options.routes[LOOKDEV_MARKING_OPERATION]?.model);
   reasons.push(markingsReason(markingMeasures, { unmeasured, unreadable }, markingsState));
 
   // 6. Identity lock on the looked-dev turntable (front and three-quarter), as for wave 0.
@@ -1723,8 +1808,6 @@ export async function lookDev(
       markings: markingMeasures.map((m) => ({
         ...m,
         ...(m.deltaE !== undefined && { deltaE: round(m.deltaE, 2) }),
-        ...(m.contrastRef !== undefined && { contrastRef: round(m.contrastRef, 2) }),
-        ...(m.contrastRender !== undefined && { contrastRender: round(m.contrastRender, 2) }),
       })),
       coverage: round(projection.coverage, 4),
       costUsd: round(budget.spentUsd),
