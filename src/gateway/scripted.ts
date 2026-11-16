@@ -7,6 +7,8 @@ import type {
   RigRequest,
   DecisionRequest,
   DecisionResult,
+  EmbedRequest,
+  EmbedResult,
   GenerationProvider,
   ImageRequest,
   ImageResult,
@@ -45,6 +47,8 @@ export interface Script {
   promptPolicy?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /** Answers embedding calls (images and text in one space); a script without it cannot answer one. */
+  embed?(request: EmbedRequest, index: number): Scripted<EmbedResult>;
   /**
    * Answers the brief policy's model check (the `brief-policy` decisions; `briefPolicyAsked` in
    * src/policy/brief.ts reads the field and target from the prompt). A script without it finds
@@ -98,7 +102,9 @@ export class ScriptedProvider implements GenerationProvider {
     | { kind: "model"; request: ModelRequest }
     | { kind: "rig"; request: RigRequest }
     | { kind: "animate"; request: AnimateRequest }
+    | { kind: "embed"; request: EmbedRequest }
   > = [];
+  private embedCount = 0;
   private modelCount = 0;
   private rigCount = 0;
   private animateCount = 0;
@@ -173,6 +179,13 @@ export class ScriptedProvider implements GenerationProvider {
     if (!this.script.decide) throw new Error("the provider script has no decide answer");
     const result = this.script.decide(request, index);
     return { requestId: `scripted-decide-${index}`, ...result };
+  }
+
+  async embed(request: EmbedRequest): Promise<EmbedResult> {
+    this.calls.push({ kind: "embed", request });
+    const index = this.embedCount++;
+    if (!this.script.embed) throw new Error("the provider script has no embed answer");
+    return { requestId: `scripted-embed-${index}`, ...this.script.embed(request, index) };
   }
 
   async generateModel(request: ModelRequest): Promise<ModelResult> {

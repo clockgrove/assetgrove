@@ -8,7 +8,7 @@ import { checkTrackedKeys } from "../guard.ts";
 import { redact } from "../redact.ts";
 import { executeRun } from "../runs/execute.ts";
 import { DEFAULT_ROUND } from "../runs/plan.ts";
-import { checkContextEnvironment, isPaid } from "./context.ts";
+import { canSpend, checkContextEnvironment } from "./context.ts";
 import { failureOutcome } from "./result.ts";
 import type {
   CommandSpec,
@@ -136,9 +136,17 @@ const KEY_READINGS: ReadonlyMap<string, readonly string[] | null> = new Map([
   ["spend reconcile", null],
 ]);
 
-/** Whether a command can send a key: a paid command, or a free one that reads the provider. */
-function sendsKey(spec: CommandSpec, args: Args): boolean {
-  if (isPaid(spec)) return true;
+/**
+ * Whether this call can spend: a paid command under these settings, taking its plan step (find
+ * and search index only with a hosted embedder, find only when it embeds).
+ */
+function spends(spec: CommandSpec, args: Args, ctx: RunContext): boolean {
+  return canSpend(spec, ctx) && (spec.planned?.(args, ctx) ?? true);
+}
+
+/** Whether a call can send a key: a paid call, or a free one that reads the provider. */
+function sendsKey(spec: CommandSpec, args: Args, ctx: RunContext): boolean {
+  if (spends(spec, args, ctx)) return true;
   if (!KEY_READINGS.has(spec.name)) return false;
   const actions = KEY_READINGS.get(spec.name);
   return actions === null || actions === undefined || actions.includes(String(args["action"]));
@@ -161,13 +169,17 @@ export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext)
       // The object store's variables could redirect index data (design section 7.2).
       checkContextEnvironment(ctx);
     }
-    if (sendsKey(spec, args)) checkContextEnvironment(ctx);
-    if (isPaid(spec)) checkTrackedKeys(process.cwd(), guard);
+    if (sendsKey(spec, args, ctx)) checkContextEnvironment(ctx);
+    if (spends(spec, args, ctx)) checkTrackedKeys(process.cwd(), guard);
     await validateArgs(spec, args);
     if (spec.tool !== null && GUARDED_TARGETS.has(spec.tool) && typeof args["target"] === "string")
       checkTrackedKeys(args["target"], guard);
     const logged: RunContext = { ...ctx, log: (message) => ctx.log(redact(message)) };
-    if (spec.plan !== undefined && args["dryRun"] !== true)
+    if (
+      spec.plan !== undefined &&
+      args["dryRun"] !== true &&
+      (spec.planned?.(args, logged) ?? true)
+    )
       return await planned(spec, args, logged);
     return await spec.run(args, logged);
   } catch (error) {
@@ -194,6 +206,7 @@ async function planned(spec: CommandSpec, args: Args, ctx: RunContext): Promise<
     ...(prior && { prior: () => prior(args, ctx, plan) }),
     run: (runCtx) => spec.run(args, runCtx),
     toOutcome: errorOutcome,
+    ...(spec.replayFinished === false && { replayFinished: false }),
     ...(script !== undefined && { providerScript: script }),
   });
 }

@@ -5,8 +5,11 @@
  * the tool list leave them out and a call exits 2 `extension_unavailable` (src/commands/runner.ts).
  * Core never imports the search package.
  */
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Budget, runCap } from "../budget.ts";
+import { Caller } from "../calls.ts";
 import { keyValue } from "../env.ts";
 import type { Env } from "../env.ts";
 import { InputError, ProviderError } from "../errors.ts";
@@ -14,11 +17,29 @@ import { registerKeyEnv } from "../redact.ts";
 import { EXIT } from "../errors.ts";
 import type {
   SearchContext,
+  SearchForecast,
   SearchOutliersResult,
   SearchQuery,
+  SearchRouteEmbedder,
   SearchSlot,
   SearchSource,
 } from "../extension/api.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
+import type { ProviderSet } from "../providers/set.ts";
+import { sniffMediaType } from "../request.ts";
+import { EMBED_OPERATION } from "../routes.ts";
+import type { Route } from "../routes.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  jobOf,
+  paidBy,
+} from "../runs/plan.ts";
+import type { WorkPlan } from "../runs/plan.ts";
+import { ledgerFor } from "../spend.ts";
+import { dryRunOutcome, formatWork } from "./result.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { createLibraryReader } from "../search/reader.ts";
 import type { LibraryReader } from "../search/reader.ts";
@@ -27,7 +48,7 @@ import type { SearchSettings, Settings } from "../settings.ts";
 import { folderChildren } from "../audit/members.ts";
 import { openProject, projectDir } from "../tree/project.ts";
 import { defineCommand } from "./types.ts";
-import type { RunContext } from "./types.ts";
+import type { CommandSpec, JsonSchemaProperty, RunContext } from "./types.ts";
 
 const TARGET = {
   type: "string",
@@ -57,9 +78,13 @@ export async function searchCall(
   target: string | undefined,
   ctx: RunContext,
   needsProject = true,
+  embedder?: SearchRouteEmbedder,
 ): Promise<{ slot: SearchSlot; context: SearchContext; reader: LibraryReader }> {
   const slot = (ctx.extensions ?? CORE_REGISTRY).requireSearch(command);
   const settings = searchSettings(ctx.settings);
+  // A hosted embedder with no port given: the route's identity, so the slot embeds nothing.
+  if (embedder === undefined && needsProject && settings.embedder === "route")
+    embedder = (await embedRoute(undefined, ctx)).embedder;
   const dir = projectDir(target);
   const reader = await createLibraryReader({
     dir,
@@ -77,6 +102,7 @@ export async function searchCall(
     settings,
     library: reader,
     env: credentialEnv(settings, ctx.env),
+    ...(embedder && { embedder }),
     log: ctx.log,
   };
   return { slot, context, reader };
@@ -129,7 +155,181 @@ export async function calling<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-interface FindArgs {
+/** The width hosted vectors are asked for: the index schema's (design section 7.3). */
+export const EMBED_DIMENSION = 768;
+
+/** Whether the settings embed through the `embeddings` role (design section 7.7). */
+function hosted(ctx: RunContext): boolean {
+  return searchSettings(ctx.settings).embedder === "route";
+}
+
+/** What a hosted request's arguments carry beside the command's own. */
+interface PaidArgs {
+  cap?: number;
+  workItem?: string;
+  providerScript?: string;
+  runs?: string;
+  round?: number;
+  dryRun?: boolean;
+}
+
+/**
+ * A dry run of a call that spends nothing (the local model, or a hosted find that embeds nothing)
+ * is invalid input, so it never runs the real index or query in its place.
+ */
+function refuseDryRun(name: string, args: PaidArgs, ctx: RunContext): void {
+  if (args.dryRun !== true) return;
+  throw new InputError(
+    hosted(ctx)
+      ? `${name} spends nothing here: --outliers embeds nothing, so it has no dry run or estimate`
+      : `${name} spends nothing with the local model, so it has no dry run or estimate; dry runs and estimates need search.embedder "route"`,
+  );
+}
+
+/** The inputs a hosted embedder's paid request takes, as every paid command does. */
+const PAID_PROPERTIES: Record<string, JsonSchemaProperty> = {
+  cap: {
+    type: "number",
+    description:
+      "with a hosted embedder, the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
+    placeholder: "<usd>",
+  },
+  workItem: {
+    type: "string",
+    description: "with a hosted embedder, the work item the spend ledger counts against",
+    placeholder: "<label>",
+  },
+  providerScript: {
+    type: "string",
+    description: "answer every model call from this module instead of a provider",
+    placeholder: "<module>",
+  },
+  runs: { ...RUNS_PROPERTY, description: `with a hosted embedder, ${RUNS_PROPERTY.description}` },
+  round: ROUND_PROPERTY,
+  dryRun: {
+    ...DRY_RUN_PROPERTY,
+    description: "with a hosted embedder, print the plan and forecast; spend nothing",
+  },
+};
+
+/**
+ * The hosted embedder's route and the providers that serve it. A route no configured provider
+ * serves, or one whose adapter has no `embed` capability, exits 2 `route_unavailable` here, before
+ * any reservation.
+ */
+async function embedRoute(
+  providerScript: string | undefined,
+  ctx: RunContext,
+): Promise<{ providers: ProviderSet; route: Route; embedder: SearchRouteEmbedder }> {
+  const providers = await providerSet(providerScript, ctx);
+  const route = providers.routes[EMBED_OPERATION] as Route;
+  return {
+    providers,
+    route,
+    embedder: { route: route.provider ?? "", model: route.model, dimension: EMBED_DIMENSION },
+  };
+}
+
+/** The slot's forecast of a request; nothing to embed when the slot cannot forecast. */
+async function forecastOf(
+  slot: SearchSlot,
+  request: Parameters<NonNullable<SearchSlot["forecast"]>>[0],
+  context: SearchContext,
+): Promise<SearchForecast> {
+  if (slot.forecast === undefined) return { images: 0, texts: 0, queries: 0, state: "" };
+  return calling(() => slot.forecast!(request, context));
+}
+
+/**
+ * The free plan step of a hosted embedder's request: one `embed` job of every image, card text
+ * and query the slot would embed, its forecast against the cap, and a digest covering the pending
+ * work, so the same work is the same request and a repeat pays nothing twice.
+ */
+async function hostedPlan(
+  spec: { name: string; input: CommandSpec["input"] },
+  args: PaidArgs & { target?: string },
+  ctx: RunContext,
+  request: Parameters<NonNullable<SearchSlot["forecast"]>>[0],
+  extra: Record<string, string> = {},
+): Promise<{ work: WorkPlan; forecast: SearchForecast; providers: ProviderSet }> {
+  const { providers, route, embedder } = await embedRoute(args.providerScript, ctx);
+  const { slot, context } = await searchCall(spec.name, args.target, ctx, true, embedder);
+  const forecast = await forecastOf(slot, request, context);
+  const count = forecast.images + forecast.texts + forecast.queries;
+  const jobs = count > 0 ? [jobOf(EMBED_OPERATION, route, count)] : [];
+  const work = await buildWorkPlan(spec, args, {
+    inputs: [],
+    jobs,
+    capUsd: runCap(args.cap, ctx.settings),
+    paid: paidBy(providers, jobs),
+    providers,
+    candidates: 0,
+    hashes: { "search/pending": forecast.state, ...extra },
+  });
+  return { work, forecast, providers };
+}
+
+/**
+ * Inside a confirmed run, the hosted embedder with its `embed` port: each image or text is one
+ * `embed` call through the `Caller`, reserved against the run's cap and the spend ledger and
+ * journalled, so a resumed run pays for none twice.
+ */
+async function paidEmbedder(
+  args: PaidArgs,
+  ctx: RunContext,
+  work: WorkPlan,
+): Promise<{ embedder: SearchRouteEmbedder; budget: Budget }> {
+  const { providers, embedder } = await embedRoute(args.providerScript, ctx);
+  const budget = new Budget(work.capUsd, ledgerFor(spendLedger(ctx, args.workItem), providers));
+  budget.check(work.forecastUsd, `the ${work.jobs[0]?.count ?? 0} embedding calls`);
+  const caller = new Caller({
+    provider: providers,
+    budget,
+    routes: providers.routes,
+    log: ctx.log,
+  });
+  return {
+    budget,
+    embedder: {
+      ...embedder,
+      embed: (input) => {
+        if ("text" in input)
+          return caller.embed(EMBED_OPERATION, { text: input.text }, EMBED_DIMENSION);
+        const sha256 = createHash("sha256").update(input.image).digest("hex");
+        return caller.embed(
+          EMBED_OPERATION,
+          {
+            image: {
+              role: "search",
+              path: `sha256:${sha256}`,
+              mediaType: sniffMediaType(input.image),
+              bytes: input.image,
+              sha256,
+            },
+          },
+          EMBED_DIMENSION,
+        );
+      },
+    },
+  };
+}
+
+/**
+ * Whether a find query embeds: words, or an image file to rank by look. The runner asks before
+ * it validates the input, so an argument of the wrong type embeds nothing here and is refused
+ * by validation (exit 2 invalid_input).
+ */
+/**
+ * Whether a hosted find takes its plan step: every find but --outliers (advisory and free, design
+ * 7.5). A find without words or an image file still brings the index up to date first (design
+ * 7.4), so it forecasts and confirms the images that adds; with nothing to embed it pays nothing
+ * and asks nothing.
+ */
+function findPlanned(args: FindArgs): boolean {
+  return args.outliers === undefined;
+}
+
+interface FindArgs extends PaidArgs {
   words?: string;
   like?: string;
   where?: string[];
@@ -163,31 +363,13 @@ export async function setOutliers(
   return calling(() => slot.outliers(addresses, context));
 }
 
-/**
- * One find, as the `find` command and the tree's search paths both run it (design sections 2 and
- * 7.5): the same slot call over the same query, so both return the same hits. `sheet` is false for
- * a resource read, which writes nothing.
- */
-export async function runFind(
-  args: FindArgs,
-  ctx: RunContext,
-  options: { sheet: boolean },
-): Promise<{ fields: Record<string, unknown>; human: string }> {
+/** The query of a find call; an image file for --like is read here. */
+async function findQuery(args: FindArgs, game: string): Promise<SearchQuery> {
   for (const source of args.source ?? [])
     if (!(SEARCH_SOURCES as readonly string[]).includes(source))
       throw new InputError(`unknown --source "${source}"; use ${SEARCH_SOURCES.join(", ")}`);
-  const { slot, context, reader } = await searchCall("find", args.target, ctx);
-  if (args.game !== undefined && args.game !== "all" && args.game !== context.game)
-    throw new InputError(`--game takes all or this project's game "${context.game}"`);
-  if (args.outliers !== undefined) {
-    const members = await folderMembers(context.worktree, ctx.settings.stateDir, args.outliers);
-    const result = await calling(() => slot.outliers(members, context));
-    const human = [
-      ...result.outliers.map((o) => `${o.address} (z ${o.z.toFixed(2)})`),
-      `${result.outliers.length} outlier${result.outliers.length === 1 ? "" : "s"} among ${result.members} members of ${args.outliers}`,
-    ].join("\n");
-    return { fields: { set: args.outliers, ...result }, human };
-  }
+  if (args.game !== undefined && args.game !== "all" && args.game !== game)
+    throw new InputError(`--game takes all or this project's game "${game}"`);
   let like: SearchQuery["like"];
   if (args.like !== undefined) {
     if (args.like.startsWith("asset://")) like = { address: args.like };
@@ -199,7 +381,7 @@ export async function runFind(
       }
     }
   }
-  const query: SearchQuery = {
+  return {
     ...(args.words !== undefined && args.words.trim() !== "" && { words: args.words }),
     ...(like && { like }),
     ...(args.where !== undefined && args.where.length > 0 && { where: args.where }),
@@ -208,6 +390,39 @@ export async function runFind(
     ...(args.game === "all" && { allGames: true }),
     limit: args.limit ?? 20,
   };
+}
+
+/**
+ * One find, as the `find` command and the tree's search paths both run it (design sections 2 and
+ * 7.5): the same slot call over the same query, so both return the same hits. `sheet` is false for
+ * a resource read, which writes nothing. With a hosted embedder, `embedder` is the paid run's port;
+ * without it the slot answers from the vectors already in the index and embeds nothing.
+ */
+export async function runFind(
+  args: FindArgs,
+  ctx: RunContext,
+  options: { sheet: boolean; embedder?: SearchRouteEmbedder },
+): Promise<{ fields: Record<string, unknown>; human: string }> {
+  // Without the paid run's port a hosted embedder is the route's identity only: stored vectors.
+  const embedder =
+    options.embedder ??
+    (hosted(ctx) ? (await embedRoute(args.providerScript, ctx)).embedder : undefined);
+  const { slot, context, reader } = await searchCall("find", args.target, ctx, true, embedder);
+  if (args.outliers !== undefined) {
+    for (const source of args.source ?? [])
+      if (!(SEARCH_SOURCES as readonly string[]).includes(source))
+        throw new InputError(`unknown --source "${source}"; use ${SEARCH_SOURCES.join(", ")}`);
+    if (args.game !== undefined && args.game !== "all" && args.game !== context.game)
+      throw new InputError(`--game takes all or this project's game "${context.game}"`);
+    const members = await folderMembers(context.worktree, ctx.settings.stateDir, args.outliers);
+    const result = await calling(() => slot.outliers(members, context));
+    const human = [
+      ...result.outliers.map((o) => `${o.address} (z ${o.z.toFixed(2)})`),
+      `${result.outliers.length} outlier${result.outliers.length === 1 ? "" : "s"} among ${result.members} members of ${args.outliers}`,
+    ].join("\n");
+    return { fields: { set: args.outliers, ...result }, human };
+  }
+  const query = await findQuery(args, context.game);
   const result = await calling(() => slot.find(query, context));
   const fields: Record<string, unknown> = {
     hits: result.hits,
@@ -231,7 +446,24 @@ export async function runFind(
   return { fields, human };
 }
 
-export const findCommand = defineCommand<FindArgs>({
+/** A hosted find's plan step: the refresh and the query it would embed. */
+async function findPlan(args: FindArgs, ctx: RunContext) {
+  const game = (
+    await createLibraryReader({
+      dir: projectDir(args.target),
+      stateDir: ctx.settings.stateDir,
+      settings: searchSettings(ctx.settings),
+    })
+  ).game;
+  const query = await findQuery(args, game);
+  const like: Record<string, string> =
+    query.like !== undefined && "image" in query.like
+      ? { "search/like": createHash("sha256").update(query.like.image).digest("hex") }
+      : {};
+  return hostedPlan(findCommand, args, ctx, { find: query }, like);
+}
+
+export const findCommand: CommandSpec = defineCommand<FindArgs>({
   name: "find",
   tool: "find",
   requires: "search",
@@ -246,8 +478,13 @@ the hits numbered by rank, which the tool also returns as image content. The ind
 to date first unless another process is writing it (fresh false then). --outliers <folder> instead
 lists the members of an asset:// folder whose indexed image is off the rest (mean cosine distance
 to its five nearest neighbours, as a robust z above 3): {set, members, outliers: [{address,
-distance, z}]}. Spends nothing; writes only
-the index and the sheet under the state directory.`,
+distance, z}]}; it spends nothing. With the local model find spends nothing and writes only the
+index and the sheet under the state directory.
+With a hosted embedder (search.embedder "route", the embeddings role) find is a paid request: its
+plan step forecasts the images and card texts that bringing the index up to date embeds, and the
+words or image file to embed, one spend confirmation covers it, and each embedding is reserved
+against the caps and journalled in its run directory. With nothing to embed it pays nothing and
+asks nothing. --outliers stays free: it answers from the vectors already in the index.`,
   input: {
     type: "object",
     properties: {
@@ -282,23 +519,43 @@ the index and the sheet under the state directory.`,
         placeholder: "<set>",
       },
       target: TARGET,
+      ...PAID_PROPERTIES,
     },
     additionalProperties: false,
   },
   positionals: [{ name: "words" }],
-  effect: { readOnly: true, spends: "never", writes: "state" },
+  effect: { readOnly: true, spends: "conditional", writes: "state" },
+  plan: async (args, ctx) => (await findPlan(args, ctx)).work,
+  planned: (args, ctx) => hosted(ctx) && findPlanned(args),
+  spendsWith: hosted,
+  replayFinished: false,
   async run(args, ctx) {
-    const { fields, human } = await runFind(args, ctx, { sheet: true });
+    let embedder: SearchRouteEmbedder | undefined;
+    let budget: Budget | undefined;
+    if (!(hosted(ctx) && findPlanned(args))) refuseDryRun("find", args, ctx);
+    else {
+      const { work, forecast } = await findPlan(args, ctx);
+      if (args.dryRun || ctx.run === undefined)
+        return dryRunOutcome(work, formatWork("find", work), spendLedger(ctx, args.workItem), {
+          embed: forecast,
+        });
+      ({ embedder, budget } = await paidEmbedder(args, ctx, ctx.run.plan));
+    }
+    const { fields, human } = await runFind(args, ctx, {
+      sheet: true,
+      ...(embedder && { embedder }),
+    });
+    if (budget) fields["spentUsd"] = budget.spentUsd;
     return { exitCode: 0, fields, human };
   },
 });
 
-interface IndexArgs {
+interface IndexArgs extends PaidArgs {
   rebuild?: boolean;
   target?: string;
 }
 
-export const searchIndexCommand = defineCommand<IndexArgs>({
+export const searchIndexCommand: CommandSpec = defineCommand<IndexArgs>({
   name: "search index",
   tool: "search_index",
   requires: "search",
@@ -307,21 +564,66 @@ export const searchIndexCommand = defineCommand<IndexArgs>({
 picks, bible references, run candidates and the settings' folders. With a shared store
 (search.store) and writer true it also builds the shared index from pick and reference rows,
 refused (exit 2 invalid_input) while files under the library root differ from HEAD. --rebuild
-starts the local index afresh. Spends nothing; writes the index under the state directory.`,
+starts the local index afresh; with a hosted embedder it keeps the vectors already paid for. An index built by another embedder exits 2 embedder_changed until
+--rebuild rebuilds it under this one. With the local model it spends nothing and writes the index
+under the state directory. With a hosted embedder (search.embedder "route", the embeddings role)
+it is a paid request: its plan step forecasts one embedding per image view and card text not
+embedded yet, one spend confirmation covers it, each call is reserved against the caps and
+journalled, and content embedded before is never paid for again. With the local model there is
+nothing to forecast, so --dry-run and estimate refuse it (exit 2 invalid_input). The same request run again is
+run again, not returned as it ended, so a deleted or changed index is built afresh; its journal
+answers every call it made before.`,
   input: {
     type: "object",
     properties: {
-      rebuild: { type: "boolean", description: "delete the local index and build it afresh" },
+      rebuild: {
+        type: "boolean",
+        description:
+          "delete the local index and build it afresh (a hosted embedder keeps its paid vector cache)",
+      },
       target: TARGET,
+      ...PAID_PROPERTIES,
     },
     additionalProperties: false,
   },
-  effect: { readOnly: false, spends: "never", writes: "state" },
+  effect: { readOnly: false, spends: "conditional", writes: "state" },
+  plan: async (args, ctx) =>
+    (
+      await hostedPlan(searchIndexCommand, args, ctx, {
+        index: args.rebuild === true ? { rebuild: true } : {},
+      })
+    ).work,
+  planned: (_args, ctx) => hosted(ctx),
+  spendsWith: hosted,
+  replayFinished: false,
   async run(args, ctx) {
-    const { slot, context } = await searchCall("search index", args.target, ctx);
-    const fields = await calling(() =>
+    let embedder: SearchRouteEmbedder | undefined;
+    let budget: Budget | undefined;
+    let embedded: SearchForecast | undefined;
+    if (!hosted(ctx)) refuseDryRun("search index", args, ctx);
+    else {
+      const { work, forecast } = await hostedPlan(searchIndexCommand, args, ctx, {
+        index: args.rebuild === true ? { rebuild: true } : {},
+      });
+      if (args.dryRun || ctx.run === undefined)
+        return dryRunOutcome(
+          work,
+          formatWork("search index", work),
+          spendLedger(ctx, args.workItem),
+          { embed: forecast },
+        );
+      embedded = forecast;
+      ({ embedder, budget } = await paidEmbedder(args, ctx, ctx.run.plan));
+    }
+    const { slot, context } = await searchCall("search index", args.target, ctx, true, embedder);
+    const result = await calling(() =>
       slot.index(args.rebuild === true ? { rebuild: true } : {}, context),
     );
+    const fields = {
+      ...result,
+      ...(embedded && { forecast: embedded }),
+      ...(budget && { spentUsd: budget.spentUsd }),
+    };
     return { exitCode: 0, fields, human: JSON.stringify(fields, null, 2) };
   },
 });
@@ -337,7 +639,8 @@ work tree's HEAD. Reads only.`,
   input: { type: "object", properties: { target: TARGET }, additionalProperties: false },
   effect: { readOnly: true, spends: "never", writes: "none" },
   async run(args, ctx) {
-    const { slot, context } = await searchCall("search status", args.target, ctx);
+    const embedder = hosted(ctx) ? (await embedRoute(undefined, ctx)).embedder : undefined;
+    const { slot, context } = await searchCall("search status", args.target, ctx, true, embedder);
     const fields = await calling(() => slot.status(context));
     return { exitCode: 0, fields, human: JSON.stringify(fields, null, 2) };
   },

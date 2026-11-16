@@ -7,7 +7,8 @@ export type SearchErrorCode =
   | "invalid_input"
   | "settings_invalid"
   | "extension_unavailable"
-  | "store_locked";
+  | "store_locked"
+  | "embedder_changed";
 
 export class SearchError extends Error {
   readonly code: SearchErrorCode;

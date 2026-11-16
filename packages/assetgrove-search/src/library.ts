@@ -46,9 +46,13 @@ export interface Library {
 export const sha256Hex = (data: Uint8Array | string): string =>
   createHash("sha256").update(data).digest("hex");
 
-/** The key of a work tree's rows: the sha256 of its real path. */
+/**
+ * The key of a work tree's rows: the sha256 of its real path. The native realpath, so every
+ * spelling of one tree gives one key: on Windows it expands 8.3 short names (a `RUNNER~1` temp
+ * folder) and Git's forward-slash top level alike, which the JavaScript one leaves as they are.
+ */
 export function treeKey(worktree: string): string {
-  return sha256Hex(realpathSync(worktree));
+  return sha256Hex(realpathSync.native(worktree));
 }
 
 /** The text an item is full-text indexed and embedded by. */

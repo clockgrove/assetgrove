@@ -21,8 +21,9 @@ test("every configured operation appears once with its host, and gateway routes 
   assert.equal(new Set(operations).size, operations.length, "each operation once");
   assert.deepEqual(
     [...operations].sort(),
+    // `fix` has no default route, nor `embed`, which only the embeddings role routes.
     Object.keys(OPERATION_ROLES)
-      .filter((op) => op !== "fix")
+      .filter((op) => op !== "fix" && op !== "embed")
       .sort(),
   );
 

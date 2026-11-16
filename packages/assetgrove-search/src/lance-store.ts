@@ -13,7 +13,16 @@ import type * as Arrow from "apache-arrow";
 import type * as Lance from "@lancedb/lancedb";
 import { assertSupportedPlatform } from "./platform.ts";
 import { compileFilter } from "./where.ts";
-import type { BuiltFrom, CachedVector, Hit, Row, SourceRow, Store, StoreQuery } from "./store.ts";
+import type {
+  BuiltFrom,
+  CachedVector,
+  EmbedderRecord,
+  Hit,
+  Row,
+  SourceRow,
+  Store,
+  StoreQuery,
+} from "./store.ts";
 
 export interface LanceModules {
   lancedb: typeof Lance;
@@ -93,6 +102,9 @@ export function builtTableName(embedder: { id: string; revision: string }): stri
   return `built_${tableSuffix(embedder)}`;
 }
 
+/** The one-row table recording which embedder made the store's vectors. */
+const EMBEDDER_TABLE = "embedder";
+
 type Mode = "read" | "write";
 
 export class LanceStore implements Store {
@@ -158,6 +170,15 @@ export class LanceStore implements Store {
         str("view", false),
         str("embedder", false),
         new Field("vec", new List(new Field("item", new Float32(), true)), false),
+      ]);
+    }
+    if (name === EMBEDDER_TABLE) {
+      return new Schema([
+        str("id", false),
+        str("revision", false),
+        str("route"),
+        str("model"),
+        num("dimension"),
       ]);
     }
     return new Schema([str("tree", false), str("head", false), str("at", false)]);
@@ -307,6 +328,32 @@ export class LanceStore implements Store {
 
   private async hasIndex(t: Lance.Table, column: string): Promise<boolean> {
     return (await t.listIndices()).some((i) => i.columns.includes(column));
+  }
+
+  async embedder(): Promise<EmbedderRecord | undefined> {
+    const [o] = await this.select(EMBEDDER_TABLE, "id IS NOT NULL");
+    if (!o) return undefined;
+    const record: EmbedderRecord = {
+      id: o.id as string,
+      revision: o.revision as string,
+      dimension: o.dimension as number,
+    };
+    if (typeof o.route === "string") record.route = o.route;
+    if (typeof o.model === "string") record.model = o.model;
+    return record;
+  }
+
+  async recordEmbedder(record: EmbedderRecord): Promise<void> {
+    const t = (await this.table(EMBEDDER_TABLE, "write")) as Lance.Table;
+    await t.delete("id IS NOT NULL");
+    const row = {
+      id: record.id,
+      revision: record.revision,
+      route: record.route ?? null,
+      model: record.model ?? null,
+      dimension: record.dimension,
+    };
+    await t.add(this.m.lancedb.makeArrowTable([row], { schema: this.schemas(EMBEDDER_TABLE) }));
   }
 
   async recordBuiltFrom(tree: string, built: BuiltFrom): Promise<void> {

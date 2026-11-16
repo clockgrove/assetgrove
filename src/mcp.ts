@@ -22,6 +22,7 @@ import { describeBible, useBiblePreset } from "./bible.ts";
 import {
   checkContextEnvironment,
   createRunContext,
+  canSpend,
   isPaid,
   settingsScope,
 } from "./commands/context.ts";
@@ -143,17 +144,36 @@ const outputSchema = {
 const HEADLESS_ANSWERS: ReadonlySet<string> = new Set(["spend", "pick", "write"]);
 
 /**
- * Whether a tool is marked as requiring the person (`anthropic/requiresUserInteraction`): every
- * tool with a confirmation, except spend, pick and write tools when the settings are headless.
+ * The confirmation a tool asks for under these settings: its command's `confirm`, or spend for a
+ * command that spends only under some settings (find and search index with a hosted embedder).
  */
-export function requiresUserInteraction(spec: CommandSpec, headless: boolean): boolean {
-  if (spec.confirm === undefined) return false;
-  return !(headless && HEADLESS_ANSWERS.has(spec.confirm));
+function toolConfirm(spec: CommandSpec, ctx?: RunContext): string | undefined {
+  if (spec.confirm !== undefined) return spec.confirm;
+  if (ctx !== undefined && spec.spendsWith !== undefined && canSpend(spec, ctx)) return "spend";
+  return undefined;
 }
 
-/** A tool's annotations, from its command's effect (design section 5). */
-export function toolAnnotations(spec: CommandSpec): ToolAnnotations {
-  const paid = isPaid(spec);
+/**
+ * Whether a tool is marked as requiring the person (`anthropic/requiresUserInteraction`): every
+ * tool with a confirmation under the server's settings, except spend, pick and write tools when
+ * the settings are headless.
+ */
+export function requiresUserInteraction(
+  spec: CommandSpec,
+  headless: boolean,
+  ctx?: RunContext,
+): boolean {
+  const confirm = toolConfirm(spec, ctx);
+  if (confirm === undefined) return false;
+  return !(headless && HEADLESS_ANSWERS.has(confirm));
+}
+
+/**
+ * A tool's annotations, from its command's effect (design section 5) and, for a command that
+ * spends only under some settings (find and search index with a hosted embedder), these settings.
+ */
+export function toolAnnotations(spec: CommandSpec, ctx?: RunContext): ToolAnnotations {
+  const paid = ctx === undefined ? isPaid(spec) : canSpend(spec, ctx);
   return {
     readOnlyHint: spec.effect.readOnly,
     destructiveHint: spec.tool === "pick" || spec.tool === "write_families",
@@ -434,14 +454,14 @@ function createServer(
     const listed = {
       "~standard": { ...input["~standard"], validate: (value: unknown) => ({ value }) },
     };
-    const marked = requiresUserInteraction(spec, headless);
+    const marked = requiresUserInteraction(spec, headless, ctx);
     server.registerTool(
       spec.tool,
       {
         description: `${spec.summary[0]!.toUpperCase()}${spec.summary.slice(1)}.`,
         inputSchema: listed as typeof input,
         outputSchema: fromJsonSchema<Arguments>(outputSchema),
-        annotations: toolAnnotations(spec),
+        annotations: toolAnnotations(spec, ctx),
         ...(marked && { _meta: { "anthropic/requiresUserInteraction": true } }),
       },
       async (args, request) => {

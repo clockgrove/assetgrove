@@ -58,11 +58,26 @@ export interface SearchStoreSettings {
 
 export interface SearchSettings {
   store?: SearchStoreSettings;
-  embedder: "local" | "scripted";
+  embedder: "local" | "scripted" | "route";
   model: "siglip2-base";
   candidates: boolean;
   nearMatch: boolean;
   folders: string[];
+}
+
+/** The hosted embedder core resolved from the `embeddings` role; set only when settings.search.embedder is "route". */
+export interface SearchRouteEmbedder {
+  /** The settings id of the provider the route names. */
+  route: string;
+  /** The route's model. */
+  model: string;
+  /** Vector width; core requests 768. */
+  dimension: number;
+  /**
+   * Embeds one image (encoded bytes) or one text through core's Caller: reserved, journalled, ledgered.
+   * Present only inside a confirmed paid run; absent, nothing may call the provider.
+   */
+  embed?(input: { image: Uint8Array } | { text: string }): Promise<number[]>;
 }
 
 export interface SearchContext {
@@ -72,6 +87,7 @@ export interface SearchContext {
   settings: SearchSettings;
   library: SearchLibrary;
   env: Record<string, string | undefined>;
+  embedder?: SearchRouteEmbedder;
   log(message: string): void;
 }
 
@@ -123,6 +139,18 @@ export interface SearchOutliersResult {
   outliers: SearchOutlier[];
 }
 
+/** What a request would embed, counted without embedding anything. */
+export interface SearchForecast {
+  /** Image views neither in the vector cache nor already indexed unchanged. */
+  images: number;
+  /** Card texts likewise. */
+  texts: number;
+  /** Query embeddings: 1 for words, 1 for a `like` image; 0 otherwise. */
+  queries: number;
+  /** sha256 hex over the pending work (stale/new item paths+size+mtime+meta, removed paths, the embedder key, the query), so the same pending work gives the same value. */
+  state: string;
+}
+
 export interface SearchSlot {
   nearMatch?(query: NearMatchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult>;
@@ -130,6 +158,10 @@ export interface SearchSlot {
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;
   setup(ctx: SearchContext): Promise<Record<string, unknown>>;
+  forecast?(
+    request: { index: { rebuild?: boolean } } | { find: SearchQuery },
+    ctx: SearchContext,
+  ): Promise<SearchForecast>;
 }
 
 export interface Extension {

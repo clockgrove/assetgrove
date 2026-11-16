@@ -13,6 +13,11 @@ export const LOOKDEV_LOCATE_OPERATION = "lookdev-locate";
 export const LOOKDEV_GROOM_OPERATION = "lookdev-groom";
 export const LOOKDEV_MARKINGS_OPERATION = "lookdev-markings";
 export const IDENTITY_CHECK_OPERATION = "identity-check";
+/**
+ * Hosted search embeddings (design section 7.7): one operation for images and texts alike, so both
+ * always land in one model's space. No adapter routes it by default: the `embeddings` role does.
+ */
+export const EMBED_OPERATION = "embed";
 /** The prompt policy's model check: one Boolean decision on a request's prompt text. */
 export const PROMPT_POLICY_OPERATION = "prompt-policy";
 /** The brief policy's model check: Boolean decisions on whether text departs from the style bible. */
@@ -422,6 +427,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   model3d: "model3d",
   rig3d: "rig3d",
   clips3d: "clips3d",
+  [EMBED_OPERATION]: "embeddings",
 };
 
 /** The adapter capability each role needs. */
@@ -434,6 +440,7 @@ export const ROLE_CAPABILITY: Readonly<Record<string, string>> = {
   model3d: "model",
   rig3d: "rig",
   clips3d: "animate",
+  embeddings: "embed",
 };
 
 /** The role of an operation; undefined for an operation outside the table. */
@@ -465,6 +472,8 @@ export interface RouteProvider {
     id: string;
     capabilities: readonly string[];
     defaultRoutes?: Readonly<Record<string, Route>>;
+    /** Which of its models embed images and text in one space; every model when absent. */
+    embedsModel?: (model: string) => boolean;
   };
   /** The provider's settings entry; `free` lets an override leave out its estimate. */
   settings?: { free?: boolean };
@@ -566,6 +575,12 @@ export function resolveRoute(
     throw new RouteUnavailableError(
       operation,
       `route unavailable: ${what} names provider "${provider.id}", whose ${provider.adapter.id} adapter has no ${capability} capability; set ${fields} in the developer settings to a provider that has it`,
+    );
+  }
+  if (capability === "embed" && provider.adapter.embedsModel?.(route.model) === false) {
+    throw new RouteUnavailableError(
+      operation,
+      `route unavailable: ${what} names model "${route.model}" of provider "${provider.id}", which its ${provider.adapter.id} adapter cannot embed images and text with in one space; set ${fields} in the developer settings to a model that can`,
     );
   }
   if (

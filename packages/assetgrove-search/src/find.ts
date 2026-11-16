@@ -123,8 +123,12 @@ export class SearchIndex {
     return new SearchIndex(o, store);
   }
 
-  private async refreshUnder(lock: WriteLock): Promise<RefreshStats> {
+  private async refreshUnder(
+    lock: WriteLock,
+    before?: (store: Store) => Promise<void>,
+  ): Promise<RefreshStats> {
     try {
+      if (before) await before(this.store);
       const stats = await refreshTree({
         store: this.store,
         embedder: this.o.embedder,
@@ -147,10 +151,14 @@ export class SearchIndex {
     return { fresh: true, stats: await this.refreshUnder(lock) };
   }
 
-  /** The writer's path (`search index`): waits its turn for the lock, then refreshes. */
-  async index(): Promise<RefreshStats> {
+  /**
+   * The writer's path (`search index`): waits its turn for the lock, then refreshes. `before`
+   * runs under the same lock first (a rebuild records its embedder there, so no concurrent
+   * refresh sees the record missing).
+   */
+  async index(options: { before?: (store: Store) => Promise<void> } = {}): Promise<RefreshStats> {
     const lock = await acquireWriteLock(this.dir, { timeoutMs: this.o.lockTimeoutMs });
-    return this.refreshUnder(lock);
+    return this.refreshUnder(lock, options.before);
   }
 
   async find(q: FindOptions): Promise<FindResult> {

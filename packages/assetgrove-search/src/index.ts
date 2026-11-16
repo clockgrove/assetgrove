@@ -3,6 +3,7 @@ export * from "./errors.ts";
 export * from "./flatten.ts";
 export * from "./memory-store.ts";
 export * from "./model-manifest.ts";
+export * from "./route-embedder.ts";
 export * from "./scripted.ts";
 export * from "./setup.ts";
 export * from "./siglip2.ts";
