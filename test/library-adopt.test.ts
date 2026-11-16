@@ -39,7 +39,8 @@ const provenance: Provenance = {
   calls: [],
 };
 
-const OWN_PROVENANCE = "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.png.provenance.json";
+const OWN_PROVENANCE =
+  "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.png.provenance.json";
 
 async function handedOff(provenanceLayout?: string) {
   const targetDir = await mkdtemp(join(tmpdir(), "assetgrove-adopt-"));
@@ -143,7 +144,10 @@ test("a provenance file of another name keeps its card source and gets the adopt
   const provenancePath = join(targetDir, "assets/source/fern/shelter.provenance.json");
   await edit(media);
   const result = await adoptHandEdit(options);
-  assert.ok(result.files.includes("assets/source/fern/shelter.provenance.json"), result.files.join());
+  assert.ok(
+    result.files.includes("assets/source/fern/shelter.provenance.json"),
+    result.files.join(),
+  );
   const own = JSON.parse(await readFile(provenancePath, "utf8"));
   assert.equal(own.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
   assert.equal(own.steps.at(-1).op, "adopt-hand-edit");
@@ -160,7 +164,9 @@ test("a provenance file of another name keeps its card source and gets the adopt
   );
   assert.equal(
     review.versions.at(-1)!.provenanceSha256,
-    createHash("sha256").update(await readFile(provenancePath)).digest("hex"),
+    createHash("sha256")
+      .update(await readFile(provenancePath))
+      .digest("hex"),
   );
 });
 

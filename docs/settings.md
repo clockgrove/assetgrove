@@ -78,7 +78,7 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 
 ## Content credentials
 
-Hand-off signs a C2PA manifest into every PNG, JPEG and WebP it writes ([handoff.md](handoff.md#content-credentials)). The signing key and certificate come only from `contentCredentials` here: never from a shared file, the target profile or the repository, and a path inside any project is refused. With no `contentCredentials`, Assetgrove creates a development CA and signer once under `<stateDir>/content-credentials/` (`chain.pem`, `signer.key`, `ca.pem`) and signs with it; the hand-off result, its provenance and the disclosure summary then say the development certificate signed. No C2PA trust list holds it, so readers report the signature valid but untrusted. A certificate from a C2PA-recognised authority is the owner's step before 1.0.
+Hand-off signs a C2PA manifest into every PNG, JPEG and WebP it writes ([disclosure.md](disclosure.md#content-credentials)). The signing key and certificate come only from `contentCredentials` here: never from a shared file, the target profile or the repository, and a path inside any project is refused. With no `contentCredentials`, Assetgrove creates a development CA and signer once under `<stateDir>/content-credentials/` (`chain.pem`, `signer.key`, `ca.pem`) and signs with it; the hand-off result, its provenance and the disclosure summary then say the development certificate signed. No C2PA trust list holds it, so readers report the signature valid but untrusted. A certificate from a C2PA-recognised authority is the owner's step before 1.0.
 
 ## Refusals
 

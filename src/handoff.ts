@@ -257,7 +257,7 @@ export interface LibraryResult {
   files: string[];
 }
 
-/** The C2PA content credentials a hand-off signed into its images (docs/handoff.md). */
+/** The C2PA content credentials a hand-off signed into its images (docs/disclosure.md, "Content credentials"). */
 export interface CredentialsResult extends SignerRecord {
   /** Each image carrying them, relative to the target. */
   files: string[];
