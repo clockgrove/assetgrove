@@ -16,7 +16,13 @@ import type { DecisionQuestion } from "../gateway/provider.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { asParts, modelWritten, PromptRefusedError } from "./text.ts";
-import type { PolicyHit, PromptPart, PromptPartLabel, PromptPolicyRecord } from "./text.ts";
+import type {
+  PolicyHit,
+  PromptPart,
+  PromptPartLabel,
+  PromptPolicyCheck,
+  PromptPolicyRecord,
+} from "./text.ts";
 
 export { PROMPT_POLICY_OPERATION };
 
@@ -141,30 +147,43 @@ export async function checkPromptModel(
 ): Promise<PromptPolicyRecord> {
   const all = asParts(parts);
   const verdict = await decidePromptPolicy(caller, all, record.hits);
-  const checked: PromptPolicyRecord = {
+  const first = answer("all", verdict);
+  const checked = (
+    decided: PromptModelVerdict,
+    checks: PromptPolicyCheck[],
+    fallback?: string,
+  ): PromptPolicyRecord => ({
     ...record,
-    verdict: verdict.refused ? "refused" : "allowed",
-    model: verdict.model,
-    probability: verdict.probability,
-  };
-  if (!verdict.refused) return checked;
+    verdict: decided.refused && !fallback ? "refused" : "allowed",
+    model: decided.model,
+    probability: decided.probability,
+    checks,
+    ...(fallback !== undefined && { fallback }),
+  });
+  if (!verdict.refused) return checked(verdict, [{ ...first, decided: true }]);
   const person = all.filter((p) => !modelWritten(p));
   if (person.length === all.length)
-    throw new PromptRefusedError(checked, "the request's prompt text");
-  // Compiler-written text is never the reason a person's request is refused: ask about theirs.
+    throw new PromptRefusedError(
+      checked(verdict, [{ ...first, decided: true }]),
+      "the request's prompt text",
+    );
+  // Compiler-written text is never the reason a person's request is refused: a second call, on the
+  // person's parts and the bible's rules alone with the same question and cut, decides.
   const personHits = record.hits?.filter((h) => !modelWritten({ label: h.part })) ?? [];
   const second = person.some((p) => p.text.trim())
     ? await decidePromptPolicy(caller, person, personHits)
     : undefined;
   if (second?.refused)
     throw new PromptRefusedError(
-      { ...checked, probability: second.probability },
+      checked(second, [first, { ...answer("person", second), decided: true }]),
       "the request's prompt text",
     );
-  return {
-    ...checked,
-    verdict: "allowed",
-    ...(second && { probability: second.probability }),
-    fallback: `the prompt-policy model check objected only to text the prompt compiler wrote (${verdict.probability.toFixed(2)} with it, ${second ? `${second.probability.toFixed(2)} on the person's text alone` : "no person-written text"}): the repository template's prompt is used in its place`,
-  };
+  const fallback = `the prompt-policy model check objected only to text the prompt compiler wrote (${verdict.probability.toFixed(2)} with it, ${second ? `${second.probability.toFixed(2)} on the person's text alone` : "no person-written text"}): the repository template's prompt is used in its place`;
+  return second
+    ? checked(second, [first, { ...answer("person", second), decided: true }], fallback)
+    : checked(verdict, [{ ...first, decided: true }], fallback);
+}
+
+function answer(scope: PromptPolicyCheck["scope"], v: PromptModelVerdict): PromptPolicyCheck {
+  return { scope, model: v.model, probability: v.probability, refused: v.refused };
 }

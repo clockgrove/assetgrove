@@ -70,15 +70,36 @@ export interface PromptPolicyRecord {
    * them when the run starts, and its answer is this record's `probability` and `verdict`.
    */
   hits?: PolicyHit[];
-  /** The model check's route, `<provider>:prompt-policy:<model>`, once it has run. */
+  /**
+   * The route, `<provider>:prompt-policy:<model>`, of the model answer that decided the outcome,
+   * once the check has run.
+   */
   model?: string;
-  /** The model check's probability that the text breaks the policy, once it has run. */
+  /** The deciding model answer's probability that the text breaks the policy. */
   probability?: number;
+  /**
+   * Every model answer the run's check got, in order: the first on all the labelled parts, and a
+   * second on the person's parts alone only when the first refused text holding compiler-written
+   * parts. `decided` marks the answer the outcome follows.
+   */
+  checks?: PromptPolicyCheck[];
   /**
    * Why the run used the repository template's prompt in place of the prompt compiler's: the
    * policy objected only to text the compiler wrote, so the person's request is not refused.
    */
   fallback?: string;
+}
+
+/** One model answer in a prompt-policy record. */
+export interface PromptPolicyCheck {
+  /** `all`: every labelled part; `person`: the person's parts and the bible's rules alone. */
+  scope: "all" | "person";
+  /** The answer's route, `<provider>:prompt-policy:<model>`. */
+  model: string;
+  probability: number;
+  refused: boolean;
+  /** Present on the answer the outcome follows. */
+  decided?: true;
 }
 
 /** A prompt the policy refuses: exit 9 `prompt_refused`, with `error.policy`. */

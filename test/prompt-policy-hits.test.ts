@@ -163,6 +163,7 @@ test("the model check is given labelled parts and the hits; exit 9 follows only 
   const record = JSON.parse(await readFile(join(doc(run)["runDir"], "run.json"), "utf8")) as Doc;
   assert.equal(record["promptPolicy"].verdict, "allowed");
   assert.equal(record["promptPolicy"].probability, 0.1);
+  assert.equal(record["promptPolicy"].checks.length, 1, "one model decision");
   assert.equal(record["promptPolicy"].hits[0].term, "inspired by");
 
   const refuseDir = join(world.dir, "refuse");
@@ -321,10 +322,22 @@ test("when the check objects only to compiler-written text, apply falls back to 
   assert.match(first!, /\[rules\][^\n]*\n<<<\n[^>]*Don't describe or imitate/);
   assert.doesNotMatch(first!, /\[model-prompt\]/, "the compiler wrote no prompt of its own here");
   assert.doesNotMatch(second!, /\[model-/, "the second check sees the person's parts alone");
+  assert.match(second!, /\[rules\][^\n]*\n<<<\n[^>]*Don't describe or imitate/, "and the rules");
   const record = JSON.parse(await readFile(join(doc(run)["runDir"], "run.json"), "utf8")) as Doc;
-  assert.equal(record["promptPolicy"].verdict, "allowed");
-  assert.match(record["promptPolicy"].model, /^scripted:prompt-policy:/);
-  assert.match(record["promptPolicy"].fallback, /objected only to text the prompt compiler wrote/);
+  const policy = record["promptPolicy"];
+  assert.equal(policy.verdict, "allowed");
+  assert.match(policy.model, /^scripted:prompt-policy:/);
+  assert.match(policy.fallback, /objected only to text the prompt compiler wrote/);
+  assert.deepEqual(
+    (policy.checks as Doc[]).map((c) => [c.scope, c.probability, c.refused, c.decided]),
+    [
+      ["all", 0.9, true, undefined],
+      ["person", 0.1, false, true],
+    ],
+    "both answers, each with its model and probability, and the second decided",
+  );
+  for (const check of policy.checks as Doc[]) assert.match(check.model, /^scripted:prompt-policy:/);
+  assert.equal(policy.probability, 0.1, "the deciding answer's probability");
 });
 
 test("when the check also objects to the person's text, apply exits 9 with no generation", async () => {
@@ -347,6 +360,16 @@ test("when the check also objects to the person's text, apply exits 9 with no ge
   assert.equal(run.code, 9, run.stdout + run.stderr);
   assert.equal(doc(run)["error"].code, "prompt_refused");
   assert.deepEqual(await provider.events(), ["prompt-policy", "prompt-policy"]);
+  const policy = doc(run)["error"].policy;
+  assert.equal(policy.verdict, "refused");
+  assert.deepEqual(
+    (policy.checks as Doc[]).map((c) => [c.scope, c.refused, c.decided]),
+    [
+      ["all", true, undefined],
+      ["person", true, true],
+    ],
+    "the person's own text is the reason",
+  );
 });
 
 test("a plan the template wrote has no model-written text: a refusal at apply exits 9 after one call", async () => {
@@ -367,6 +390,10 @@ test("a plan the template wrote has no model-written text: a refusal at apply ex
   assert.equal(run.code, 9, run.stdout + run.stderr);
   assert.equal(doc(run)["error"].code, "prompt_refused");
   assert.deepEqual(await provider.events(), ["prompt-policy"], "no fallback and no generation");
+  assert.deepEqual(
+    (doc(run)["error"].policy.checks as Doc[]).map((c) => [c.scope, c.refused, c.decided]),
+    [["all", true, true]],
+  );
   const [request] = await provider.requests();
   assert.doesNotMatch(request!, /\[model-/, "the template's prompt is not model-written");
   assert.match(request!, /\[template\][^\n]*\n<<<\n[^>]*Create original art/);
