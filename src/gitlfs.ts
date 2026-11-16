@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { gitDirSet } from "./env.ts";
 import { InputError } from "./errors.ts";
 
 export const LFS_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "glb", "ktx2"] as const;
@@ -68,7 +69,7 @@ function existingDir(path: string): string {
  */
 function gitCwd(path: string): string {
   const start = existingDir(path);
-  if (process.env["GIT_DIR"] !== undefined) return start;
+  if (gitDirSet()) return start;
   for (let at = start; ; at = dirname(at)) {
     if (existsSync(join(at, ".git"))) return at;
     if (dirname(at) === at) return start;
