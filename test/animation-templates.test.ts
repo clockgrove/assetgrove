@@ -38,12 +38,14 @@ test("templates: a target adds its own and overrides a built-in without code", (
     animation: { templates: [sleep, slowWalk] as never },
   });
   assert.equal(templateFor("sleep", templates)?.frames.max, 8);
-  assert.equal(templateFor("walk-left", templates)?.frames.min, 8);
+  assert.equal(templateFor("walk", templates)?.frames.min, 8);
   assert.equal(templates.length, BUILTIN_TEMPLATES.length + 1);
 });
 
-test("templates: families match by name or by name-suffix, else none", () => {
-  assert.equal(templateFor("walk-right", BUILTIN_TEMPLATES)?.name, "walk");
+test("templates: a family matches a template by its exact name only, else none", () => {
+  assert.equal(templateFor("walk-right", BUILTIN_TEMPLATES), undefined);
+  assert.equal(templateFor("walk-left", BUILTIN_TEMPLATES), undefined);
+  assert.equal(templateFor("play-dead", BUILTIN_TEMPLATES), undefined);
   assert.equal(templateFor("idle", BUILTIN_TEMPLATES)?.name, "idle");
   assert.equal(templateFor("crouch-hop", BUILTIN_TEMPLATES), undefined);
   assert.equal(templateFor("walker", BUILTIN_TEMPLATES), undefined);
