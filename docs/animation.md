@@ -119,7 +119,7 @@ Both are plain image files (`image/png`, `image/webp`), so a target's review sho
 
 ## Per-frame fix
 
-A reference-guided edit of one frame. Image 1 is the approved neighbour frame (`--from <n>`) or the approved key pose (`--key-pose <file>`); image 2 is the bad frame. The `edit` route makes one call, reserved against the cap (default $2) first. The result is matted when it has no alpha, scaled so its area matches the reference's, registered on the anchor and styled to the profile. Only that frame changes; every other frame stays byte-identical.
+A reference-guided edit of one frame. Image 1 is the approved neighbour frame (`--from <n>`) or the approved key pose (`--key-pose <file>`); image 2 is the bad frame. The `edit` route makes one call, reserved against the cap (default $2) first. The result is matted when it has no alpha, scaled so its area matches the reference's, registered on the anchor by its family's pin (a planted family's ground footprint, a moving family's centre of mass, as sheet import registers it) and styled to the profile. Only that frame changes; every other frame stays byte-identical.
 
 `--out` receives the fixed strip, its provenance, its QA report and new previews. The provenance carries the strip's own record forward (read from `--provenance`, or `<strip>.provenance.json` beside it) and adds the call (model, route, prompt, seed, request ID, time, cost), a `fixes` entry (frame, source, the frame's pixel hashes before and after) and an `edit-frame` transform on that frame. A strip with a model-edited frame is disclosed as a composite with trained algorithmic media unless it was fully generated already. The fix never writes into a target and never sets a review value: the person picks the fixed strip and hands it off.
 
