@@ -1254,6 +1254,7 @@ export async function applyPlan(
   const cast = check?.question === "cast" && loadedIdentity ? await loadCast(doc) : undefined;
   let recordCheck: IdentityRecordCheck | undefined;
   const pairs: Array<{ qa: boolean; identity: boolean }> = [];
+  let unscored = 0;
   const run: RunRecord = {
     runId,
     ...(options.runId !== undefined && { runDir }),
@@ -1272,6 +1273,30 @@ export async function applyPlan(
     promptPolicy,
   };
   try {
+    // Enforce mode checks the record against its references once, before any paid generation.
+    if (check?.mode === "enforce" && loadedIdentity) {
+      const checkCaller = new Caller({
+        provider: options.provider,
+        ...(options.providerName !== undefined && { providerName: options.providerName }),
+        budget,
+        routes: callRoutes,
+        ...(options.log && { log: options.log }),
+      });
+      recordCheck = await checkIdentityRecord({
+        caller: checkCaller,
+        record: loadedIdentity.record,
+        references: loadedIdentity.references,
+        edges: resolveStyle(
+          {
+            ...prepared.profile.style,
+            color: { rule: prepared.postprocess.colorRule, palette: prepared.postprocess.palette },
+          },
+          prepared.postprocess.palette,
+        ).edges,
+      });
+      if (!recordCheck.checked)
+        throw new ProviderError(`the identity record check could not run: ${recordCheck.reason}`);
+    }
     for (let index = 0; index < prepared.runOptions.candidates; index++) {
       const caller = new Caller({
         provider: options.provider,
@@ -1378,14 +1403,6 @@ export async function applyPlan(
         score < prepared.runOptions.strictness ||
         score > 1
       );
-      // Enforce mode checks the record against its references once per run, before the first score.
-      if (check?.mode === "enforce" && loadedIdentity && !recordCheck)
-        recordCheck = await checkIdentityRecord({
-          caller,
-          record: loadedIdentity.record,
-          references: loadedIdentity.references,
-          edges: style.edges,
-        });
       const identity =
         check && loadedIdentity
           ? await scoreIdentity({
@@ -1403,7 +1420,9 @@ export async function applyPlan(
               ...(recordCheck && { recordCheck }),
             })
           : undefined;
-      if (identity) pairs.push({ qa: qaPassed, identity: identity.passed });
+      // A failed scoring call is unknown, not off-model: it stays out of the shadow agreement.
+      if (identity?.unscored) unscored++;
+      else if (identity) pairs.push({ qa: qaPassed, identity: identity.passed });
       const identityReasons: Reason[] = identity ? [identityReason(identity)] : [];
       // The style verdict filters only where the QA model is measured stable; otherwise advisory.
       const styleState = filteringState(
@@ -1532,6 +1551,8 @@ export async function applyPlan(
         threshold: check.threshold,
         agreement: agreement(pairs),
         scores: pairs.length,
+        ...(unscored > 0 && { unscored }),
+        ...(recordCheck && { recordCheck }),
       };
     run.spentUsd = budget.spentUsd;
     const contact = await writeContact(

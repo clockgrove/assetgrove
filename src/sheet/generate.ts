@@ -6,7 +6,10 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { keyIndexes, writeContactRows } from "../contact.ts";
-import { InputError } from "../errors.ts";
+import { InputError, ProviderError } from "../errors.ts";
+import { checkIdentityRecord } from "../identity.ts";
+import type { IdentityRecordCheck } from "../identity.ts";
+import { resolveStyle } from "../style.ts";
 import { decodeImage } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import type { PlannedCall } from "../generators/generator.ts";
@@ -246,7 +249,21 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
   );
   const seed = Number.parseInt(sha256(new TextEncoder().encode(prompt)).slice(0, 8), 16);
   const refs = [...keyPose, ...inputs.subject, inputs.perspective, inputs.palette];
+  // Enforce mode checks the record against its references before the sheet is paid for: a check
+  // that cannot run stops here, before any generation spend.
+  let recordCheck: IdentityRecordCheck | undefined;
+  if (options.identity !== undefined && options.identity.settings.mode === "enforce") {
+    recordCheck = await checkIdentityRecord({
+      caller: call,
+      record: options.identity.record,
+      references: options.identity.references,
+      edges: resolveStyle(profile.style, bible.palette).edges,
+    });
+    if (!recordCheck.checked)
+      throw new ProviderError(`the identity record check could not run: ${recordCheck.reason}`);
+  }
   const image = await call.image("sheet", prompt, refs, seed);
+  // The record check, when one ran, is recorded with the sheet's own calls.
   const generationCalls = [...call.records];
   const description = bible.subjects?.[subjectOf(spec)]?.description;
 
@@ -268,7 +285,9 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
       ...(options.importId !== undefined && { importId: options.importId }),
       // The sheet must hold exactly the frames the spec asks for, or the import is refused.
       slice: { ...options.slice, count: grid.count },
-      ...(options.identity !== undefined && { identity: { ...options.identity, caller: call } }),
+      ...(options.identity !== undefined && {
+        identity: { ...options.identity, caller: call, ...(recordCheck && { recordCheck }) },
+      }),
       frame: grid.frame,
       ...(spec.anchor !== undefined && { anchor: spec.anchor }),
       propose: {

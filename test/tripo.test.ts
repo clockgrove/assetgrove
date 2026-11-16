@@ -245,3 +245,74 @@ test("the tripo adapter prices credits with the settings' usdPerCredit in its ba
   assert.equal(tripo.billing.paid, true);
   assert.deepEqual(tripo.billing.hosts, ["api.tripo3d.ai"]);
 });
+
+test("callCost prices a task by its consumed credits at usdPerCredit, and spends nothing", async () => {
+  const f = fake({ credit: 30 });
+  const cost = await provider(f, [], undefined, { usdPerCredit: 0.01 }).callCost("task-1");
+  assert.ok(Math.abs((cost ?? 0) - 0.3) < 1e-9);
+  assert.deepEqual(
+    f.calls.map((c) => [c.method, new URL(c.url).pathname]),
+    [["GET", "/v2/openapi/task/task-1"]],
+  );
+  const billing = provider(f, [], undefined, { usdPerCredit: 0.01 }).billing;
+  assert.equal(billing.reconcile, "per-call-cost");
+  assert.ok(billing.callCost);
+});
+
+test("callCost is undefined while the task runs, and null without a rate", async () => {
+  for (const status of ["queued", "running", "unknown"])
+    assert.equal(
+      await provider(fake({ statuses: [status] }), [], undefined, { usdPerCredit: 0.01 }).callCost(
+        "task-1",
+      ),
+      undefined,
+    );
+  assert.equal(await provider(fake({})).callCost("task-1"), null);
+  assert.equal(
+    await provider(fake({ statuses: ["failed"], credit: 0 }), [], undefined, {
+      usdPerCredit: 0.01,
+    }).callCost("task-1"),
+    0,
+  );
+});
+
+test("callCost is null for a task ID Tripo rejects, and a transport failure still throws", async () => {
+  const f = fake({});
+  const tripo = provider(f, [], undefined, { usdPerCredit: 0.01 });
+  // The fake answers an unknown task with code 1, HTTP 404.
+  assert.equal(await tripo.callCost("task-gone"), null);
+  const down = provider(
+    {
+      fetch: (async () => {
+        throw new TypeError("fetch failed");
+      }) as typeof fetch,
+    },
+    [],
+    undefined,
+    { usdPerCredit: 0.01 },
+  );
+  await assert.rejects(down.callCost("task-1"), ProviderError);
+  const unauthorised = provider(
+    {
+      fetch: (async () =>
+        new Response(JSON.stringify({ code: 1002, message: "bad key" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    },
+    [],
+    undefined,
+    { usdPerCredit: 0.01 },
+  );
+  await assert.rejects(unauthorised.callCost("task-1"), ProviderError);
+});
+
+test("the tripo adapter keeps callCost through its billing", () => {
+  const configured = createProvider(
+    "tripo",
+    { keyEnv: "ASSETGROVE_TEST_TRIPO_KEY", usdPerCredit: 0.01 },
+    { env: { ASSETGROVE_TEST_TRIPO_KEY: KEY } },
+  );
+  assert.equal(configured.provider.billing.reconcile, "per-call-cost");
+  assert.equal(typeof configured.provider.billing.callCost, "function");
+});

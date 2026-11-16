@@ -60,7 +60,7 @@ export class TripoProvider implements GenerationProvider {
     keyEnv?: string;
     /** USD per Tripo credit, from settings (`providers.<id>.usdPerCredit`). */
     usdPerCredit?: number;
-    billing?: Omit<Billing, "hosts" | "readLimit">;
+    billing?: Omit<Billing, "hosts" | "readLimit" | "callCost">;
     /** Tests only: a loopback fixture. Settings never set it. */
     baseUrl?: string;
     fetch?: typeof fetch;
@@ -76,10 +76,11 @@ export class TripoProvider implements GenerationProvider {
       adapter: "tripo",
       providerId: "tripo",
       paid: true,
-      reconcile: "balance-delta",
+      reconcile: "per-call-cost",
       ...options.billing,
       hosts: [new URL(this.#baseUrl).host],
       readLimit: () => this.limitReading(),
+      callCost: (taskId) => this.callCost(taskId),
     };
     this.#fetch = options.fetch ?? fetch;
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -112,6 +113,28 @@ export class TripoProvider implements GenerationProvider {
       ...(this.#usdPerCredit !== undefined && { balanceUsd: balance * this.#usdPerCredit }),
       source: "tripo balance",
     };
+  }
+
+  /**
+   * One task's cost in USD by its task ID (the journaled request ID); spends nothing. Undefined
+   * while the task is queued or running or reports no credits yet; null when no `usdPerCredit`
+   * prices it, a task that ended without a credit count, or a task ID Tripo rejects (it answered
+   * with an error code other than an auth, rate or server failure). A transport failure, or an
+   * auth, rate or server refusal, is thrown: it says nothing about this one task.
+   */
+  async callCost(taskId: string): Promise<number | null | undefined> {
+    let task: Json;
+    try {
+      task = await this.#call("task", "GET", `/task/${encodeURIComponent(taskId)}`);
+    } catch (error) {
+      if (rejectsTask(error)) return null;
+      throw error;
+    }
+    const status = task["status"];
+    const credits = task["consumed_credit"];
+    if (status === "queued" || status === "running" || status === "unknown") return undefined;
+    if (typeof credits !== "number") return status === "success" ? undefined : null;
+    return this.#usdPerCredit === undefined ? null : credits * this.#usdPerCredit;
   }
 
   async generateModel(request: ModelRequest): Promise<ModelResult> {
@@ -228,7 +251,7 @@ export class TripoProvider implements GenerationProvider {
       const text = `tripo ${label}: ${message} (HTTP ${response.status}, code ${String(code)})`;
       if (isQuotaRefusal({ message, status: response.status }))
         throw new ProviderQuotaError(`refused: ${text}`, response.status, String(code));
-      throw new ProviderError(text);
+      throw new ProviderError(text, { status: response.status, providerCode: String(code) });
     }
     return isRecord(json["data"]) ? json["data"] : {};
   }
@@ -291,4 +314,11 @@ export class TripoProvider implements GenerationProvider {
       ...(typeof credits === "number" && { credits }),
     };
   }
+}
+
+/** Whether Tripo answered a task lookup with an error about that task, not about the account or itself. */
+function rejectsTask(error: unknown): boolean {
+  if (!(error instanceof ProviderError) || error.providerCode === undefined) return false;
+  const status = error.status ?? 0;
+  return status < 500 && ![401, 403, 408, 429].includes(status);
 }

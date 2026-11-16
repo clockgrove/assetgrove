@@ -307,7 +307,7 @@ test("below the threshold: shadow mode records and marks the reason, enforce mod
   assert.equal(identityReason(enforce).shadow, undefined);
 });
 
-test("a Boolean decision uses the probability of true; a failed call fails closed only in enforce mode", async () => {
+test("a Boolean decision uses the probability of true; a failed call is kept unscored, never filtered", async () => {
   const f = await lockedBible();
   const identity = (await loadIdentity(await loadBible(f.biblePath), "fox"))!;
   const profile = { ...syntheticProfile(), identity: { question: "boolean" as const } };
@@ -335,7 +335,8 @@ test("a Boolean decision uses the probability of true; a failed call fails close
     settings: identitySettings(profile, "enforce"),
     recordCheck: trusted(identity.record),
   });
-  assert.equal(enforce.filtered, true);
+  assert.equal(enforce.filtered, false);
+  assert.equal(enforce.unscored, true);
   assert.equal(enforce.score, undefined);
   assert.match(enforce.error ?? "", /429 rate limited/);
   // The failed call is logged with its model, latency and the estimate it was charged.
@@ -361,7 +362,8 @@ test("a Boolean decision uses the probability of true; a failed call fails close
     settings: identitySettings(profile, "enforce"),
     recordCheck: trusted(identity.record),
   });
-  assert.equal(none.filtered, true);
+  assert.equal(none.filtered, false);
+  assert.equal(none.unscored, true);
 });
 
 test("small images are upscaled for decision models; large ones go as they are", () => {
@@ -665,8 +667,11 @@ test("an unreadable cast answer is a failed score that fails closed in enforce m
     recordCheck: trusted(fox.record),
   });
   assert.equal(score.score, undefined);
-  assert.equal(score.filtered, true);
-  assert.match(score.reason, /failed: .*no JSON object/);
+  assert.equal(score.filtered, false);
+  assert.equal(score.unscored, true);
+  assert.equal(score.passed, false);
+  assert.equal(identityReason(score).shadow, true);
+  assert.match(score.reason, /failed: .*no JSON object.*kept unscored/);
   assert.equal(score.costUsd, 0.001);
 });
 
@@ -710,7 +715,7 @@ test("enforce with a record that contradicts its references scores but does not 
   );
 });
 
-test("enforce with a consistent record filters; an unreadable check fails closed", async () => {
+test("enforce with a consistent record filters; an unreadable check stops", async () => {
   const f = await castBible();
   const cast = await loadCast(await loadBible(f.biblePath));
   const fox = cast[0]!;
@@ -734,20 +739,20 @@ test("enforce with a consistent record filters; an unreadable check fails closed
   assert.equal(record.consistent, false);
   assert.match(record.reason, /could not be checked/);
   const fox1 = '{"choice": "fox"}';
-  const unchecked = await scoreIdentity({
-    caller: caller(visionScript(fox1, "garbled")),
-    ...fox,
-    candidate: candidate(),
-    describe: "a still",
-    settings,
-    cast,
-  });
-  // The cast answer names the subject (score 1), yet a check that could not run filters it.
-  assert.equal(unchecked.mode, "enforce");
-  assert.equal(unchecked.filtered, true);
-  assert.equal(unchecked.passed, false);
-  assert.equal(unchecked.recordCheck?.checked, false);
-  assert.match(unchecked.reason, /could not be checked.*fail closed/);
+  // The cast answer names the subject, yet a check that could not run stops the scoring.
+  await assert.rejects(
+    scoreIdentity({
+      caller: caller(visionScript(fox1, "garbled")),
+      ...fox,
+      candidate: candidate(),
+      describe: "a still",
+      settings,
+      cast,
+    }),
+    (error: unknown) =>
+      error instanceof ProviderError &&
+      /record check could not run.*could not be checked/.test(error.message),
+  );
   // In shadow mode no check runs, so nothing changes there.
   const shadow = await scoreIdentity({
     caller: caller(visionScript(fox1, "garbled")),

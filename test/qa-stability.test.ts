@@ -10,8 +10,10 @@ import {
   applyStability,
   coverageGaps,
   DEFAULT_VISION_MODEL,
+  errorRates,
   filteringState,
   parseStability,
+  qualifies,
   QA_CHECKS,
   STABILITY,
 } from "../src/qa/stability.ts";
@@ -29,7 +31,11 @@ const entry = (over: Partial<StabilityEntry> = {}): StabilityEntry => ({
   checkId: "identity",
   version: "1",
   model: RUN_MODEL,
-  cases: 30,
+  cases: 40,
+  passCases: 20,
+  failCases: 20,
+  falsePasses: 1,
+  falseFails: 2,
   repeats: 3,
   agreement: 0.95,
   measuredAt: "2026-11-14T00:00:00.000Z",
@@ -53,7 +59,7 @@ test("a model-backed check without a qualifying entry filters nothing: advisory,
   assert.equal(combineQa(result.reasons).passed, true);
 
   // Entries below any bar do not qualify either.
-  for (const weak of [entry({ cases: 29 }), entry({ repeats: 2 }), entry({ agreement: 0.949 })]) {
+  for (const weak of [entry({ repeats: 2 }), entry({ agreement: 0.949 })]) {
     const r = applyStability(reasons(), defaultRoutes, { entries: [weak] });
     assert.equal(r.passed, true);
     assert.deepEqual(r.filtering[0], { check: "identity", state: "advisory", cause: "no-entry" });
@@ -63,6 +69,40 @@ test("a model-backed check without a qualifying entry filters nothing: advisory,
   assert.equal(old.filtering[0]?.cause, "no-entry");
 });
 
+test("agreeing with itself is not enough: a check that is wrong often does not qualify", () => {
+  const advisory = { check: "identity", state: "advisory", cause: "no-entry" };
+  const cases = [
+    // Always answers "passed": perfect agreement, every should-fail case passed.
+    entry({ agreement: 1, falsePasses: 20, falseFails: 0 }),
+    // Always scores 0.75 (a pass): the same, and nothing it fails is right either.
+    entry({ agreement: 1, falsePasses: 20 }),
+    // Always fails: every should-pass case failed.
+    entry({ agreement: 1, falsePasses: 0, falseFails: 20 }),
+    // Too few cases of one class: not measured.
+    entry({ cases: 34, passCases: 20, failCases: 14, falsePasses: 0, falseFails: 0 }),
+    entry({ cases: 34, passCases: 14, failCases: 20, falsePasses: 0, falseFails: 0 }),
+    entry({ cases: 20, passCases: 20, failCases: 0, falsePasses: 0, falseFails: 0 }),
+    // Rates just over the bars: 2 of 20 false passes (0.10), 3 of 20 false fails (0.15).
+    entry({ falsePasses: 2 }),
+    entry({ falseFails: 3 }),
+  ];
+  for (const weak of cases) {
+    assert.equal(qualifies(weak), false);
+    const r = applyStability(reasons(), defaultRoutes, { entries: [weak] });
+    assert.equal(r.passed, true, "the check stays advisory");
+    assert.deepEqual(r.filtering, [advisory]);
+  }
+  // Within both rates on enough cases of each class: qualifies and filters.
+  const edge = entry({ falsePasses: 1, falseFails: 2 });
+  assert.equal(qualifies(edge), true);
+  assert.deepEqual(errorRates(edge), { falsePassRate: 0.05, falseFailRate: 0.1 });
+  assert.equal(applyStability(reasons(), defaultRoutes, { entries: [edge] }).passed, false);
+  assert.equal(
+    qualifies(entry({ cases: 30, passCases: 15, failCases: 15, falsePasses: 0, falseFails: 0 })),
+    true,
+  );
+});
+
 test("the shipped entries leave every model-backed check advisory at 0.1", () => {
   const result = applyStability(reasons(), defaultRoutes);
   assert.equal(result.passed, true);
@@ -70,7 +110,7 @@ test("the shipped entries leave every model-backed check advisory at 0.1", () =>
   assert.ok(Array.isArray(STABILITY));
 });
 
-test("an entry of cases 30, repeats 3, agreement 0.95 for the run's model filters", () => {
+test("an entry labelled within both bars, repeats 3, agreement 0.95 for the run's model filters", () => {
   const result = applyStability(reasons(), defaultRoutes, { entries: [entry()] });
   assert.equal(result.passed, false, "the failing vision verdict filters the candidate");
   assert.deepEqual(result.filtering, [{ check: "identity", state: "filtering" }]);
@@ -133,6 +173,11 @@ test("stability entries are validated", () => {
   assert.deepEqual(parseStability([entry()]), [entry()]);
   assert.throws(() => parseStability({}), /JSON array/);
   assert.throws(() => parseStability([{ checkId: "identity" }]), /stability entry 1/);
+  const unlabelled: Partial<ReturnType<typeof entry>> = entry();
+  delete unlabelled.passCases;
+  assert.throws(() => parseStability([unlabelled]), /stability entry 1 needs/);
+  assert.throws(() => parseStability([entry({ cases: 39 })]), /inconsistent/);
+  assert.throws(() => parseStability([entry({ falsePasses: 21 })]), /inconsistent/);
 });
 
 const decisions = () => readFile(new URL("../docs/decisions.md", import.meta.url), "utf8");

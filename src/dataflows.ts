@@ -5,7 +5,12 @@
  */
 import type { Env } from "./env.ts";
 import { createProviders } from "./providers/adapter.ts";
-import { knownOperations, resolveRoute, RouteUnavailableError } from "./routes.ts";
+import {
+  knownOperations,
+  resolveRoute,
+  RouteAmbiguousError,
+  RouteUnavailableError,
+} from "./routes.ts";
 import type { Settings } from "./settings.ts";
 import { isLoopback } from "./settings.ts";
 
@@ -23,8 +28,8 @@ export interface RouteDataFlow {
 }
 
 /**
- * One entry per operation the settings route (an operation no configured provider serves is left
- * out), in the role table's order. Makes no call and reads no key.
+ * One entry per operation the settings route (an operation no configured provider serves, or
+ * that several could and none is chosen, is left out), in the role table's order. Makes no call and reads no key.
  */
 export function routeDataFlows(
   settings: Pick<Settings, "providers" | "roles" | "routes" | "path">,
@@ -37,7 +42,7 @@ export function routeDataFlows(
     try {
       route = resolveRoute(settings, operation, configured);
     } catch (error) {
-      if (error instanceof RouteUnavailableError) continue;
+      if (error instanceof RouteUnavailableError || error instanceof RouteAmbiguousError) continue;
       throw error;
     }
     const provider = configured.find((c) => c.id === route.provider)!;

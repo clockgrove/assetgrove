@@ -150,6 +150,14 @@ function settingsFields(change: SettingsChange): FormProperties {
       description: "the spend holds to acknowledge, comma-separated; remove one to leave it open",
       default: change.acknowledgeHolds.join(", "),
     };
+  if (change.acknowledgeBlobs !== undefined)
+    properties["acknowledgeBlobs"] = {
+      type: "string",
+      title: "keyGuard.acknowledgedBlobs",
+      description:
+        "the tracked file contents (blob ids) a person has checked hold no live key, comma-separated",
+      default: change.acknowledgeBlobs.join(", "),
+    };
   return properties;
 }
 

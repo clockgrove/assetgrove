@@ -30,6 +30,7 @@ export interface SettingsChange {
   caps?: Partial<Record<CapField, number>>;
   limit?: { provider: string; limit: ProviderLimit };
   acknowledgeHolds?: string[];
+  acknowledgeBlobs?: string[];
 }
 
 /** How a change was confirmed, as each `confirmedBy` entry records it. */
@@ -65,9 +66,10 @@ export function checkChange(
 ): void {
   const caps = Object.entries(change.caps ?? {});
   const holds = change.acknowledgeHolds ?? [];
-  if (caps.length === 0 && change.limit === undefined && holds.length === 0)
+  const blobs = change.acknowledgeBlobs ?? [];
+  if (caps.length === 0 && change.limit === undefined && holds.length === 0 && blobs.length === 0)
     throw new InputError(
-      "settings change proposes nothing: give a cap, a provider limit or a hold to acknowledge",
+      "settings change proposes nothing: give a cap, a provider limit, a hold or a file's blob id to acknowledge",
     );
   for (const [field, value] of caps) {
     if (!(CAP_FIELDS as readonly string[]).includes(field) || !usd(value))
@@ -86,6 +88,10 @@ export function checkChange(
       throw new InputError(
         `provider "${provider}" is not in the settings' providers and is not a core adapter id (${CORE_ADAPTERS.map((a) => a.id).join(", ")}); add its entry by hand first`,
       );
+  }
+  for (const id of blobs) {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(id))
+      throw new InputError(`blob id "${id}" must be a full Git object id: 40 or 64 hex digits`);
   }
   if (holds.length > 0) {
     const known = new Set(readHolds(settings.stateDir).map((h) => h.id.toLowerCase()));
@@ -108,6 +114,7 @@ export function normalChange(change: SettingsChange): SettingsChange {
     if (value !== undefined) caps[field] = value;
   }
   const holds = [...new Set(change.acknowledgeHolds ?? [])];
+  const blobs = [...new Set(change.acknowledgeBlobs ?? [])];
   return {
     ...(Object.keys(caps).length > 0 && { caps }),
     ...(change.limit !== undefined && {
@@ -122,6 +129,7 @@ export function normalChange(change: SettingsChange): SettingsChange {
       },
     }),
     ...(holds.length > 0 && { acknowledgeHolds: holds }),
+    ...(blobs.length > 0 && { acknowledgeBlobs: blobs }),
   };
 }
 
@@ -139,6 +147,8 @@ function changeDetails(change: SettingsChange): Record<string, unknown> {
   }
   if (change.acknowledgeHolds !== undefined)
     details["spend.acknowledgedHolds"] = change.acknowledgeHolds.join(", ");
+  if (change.acknowledgeBlobs !== undefined)
+    details["keyGuard.acknowledgedBlobs"] = change.acknowledgeBlobs.join(", ");
   return details;
 }
 
@@ -230,10 +240,24 @@ export function editedChange(
     );
     holds = holds.filter((id) => kept.has(id.toLowerCase()));
   }
+  let blobs = proposed.acknowledgeBlobs;
+  const listedBlobs = content["acknowledgeBlobs"];
+  if (blobs !== undefined && listedBlobs !== undefined) {
+    if (typeof listedBlobs !== "string")
+      throw new InputError("the form's acknowledgeBlobs must be text: blob ids, comma-separated");
+    const kept = new Set(
+      listedBlobs
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .map((id) => id.toLowerCase()),
+    );
+    blobs = blobs.filter((id) => kept.has(id.toLowerCase()));
+  }
   return normalChange({
     ...(Object.keys(caps).length > 0 && { caps }),
     ...(limit !== undefined && { limit }),
     ...(holds !== undefined && holds.length > 0 && { acknowledgeHolds: holds }),
+    ...(blobs !== undefined && blobs.length > 0 && { acknowledgeBlobs: blobs }),
   });
 }
 
@@ -289,18 +313,24 @@ export function setInPlace(text: string, path: string[], value: unknown): string
 }
 
 /** The parts of the file being edited a change depends on, read from its text, not the context. */
-function current(
-  text: string,
-): Pick<Settings, "providers"> & { acknowledgedHolds: string[]; format: unknown } {
+function current(text: string): Pick<Settings, "providers"> & {
+  acknowledgedHolds: string[];
+  acknowledgedBlobs: string[];
+  format: unknown;
+} {
   const doc = parse(text) as unknown;
   const object = (v: unknown): Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   const holds = object(object(doc)["spend"])["acknowledgedHolds"];
+  const blobs = object(object(doc)["keyGuard"])["acknowledgedBlobs"];
   return {
     format: object(doc)["format"],
     providers: object(object(doc)["providers"]) as Settings["providers"],
     acknowledgedHolds: Array.isArray(holds)
       ? holds.filter((id): id is string => typeof id === "string")
+      : [],
+    acknowledgedBlobs: Array.isArray(blobs)
+      ? blobs.filter((id): id is string => typeof id === "string")
       : [],
   };
 }
@@ -376,6 +406,16 @@ export async function applySettingsChange(
       [...listed, ...holds.filter((id) => !have.has(id.toLowerCase()))],
     );
     written.push("spend.acknowledgedHolds");
+  }
+  const blobs = change.acknowledgeBlobs ?? [];
+  if (blobs.length > 0) {
+    const listed = now.acknowledgedBlobs;
+    const have = new Set(listed.map((id) => id.toLowerCase()));
+    set(
+      ["keyGuard", "acknowledgedBlobs"],
+      [...listed, ...blobs.filter((id) => !have.has(id.toLowerCase()))],
+    );
+    written.push("keyGuard.acknowledgedBlobs");
   }
   if (written.length === 0) return { path, written, notWritten };
   if (now.format !== FORMAT) set(["format"], FORMAT);

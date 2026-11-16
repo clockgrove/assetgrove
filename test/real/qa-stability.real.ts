@@ -2,10 +2,14 @@
  * Measures how stable the image QA vision checks are on the default vision model. Each check of the
  * vision verdict (src/qa.ts) judges synthetic sprite strips drawn in code, some of them faulty, and
  * every case is judged several times; a check's agreement is the share of cases on which every
- * repeat gave the same verdict.
+ * repeat gave the same verdict. Each strip is labelled, per check, with whether the check should
+ * pass it (known from how the strip was drawn): a case counts as a false pass or a false fail when
+ * any repeat gave the wrong answer. A check no strip is faulty for (identity, perspective) has no
+ * should-fail cases, so its entry is written but never qualifies.
  *
  * Set AI_GATEWAY_API_KEY (the test skips without it) and optionally:
- * - QA_STABILITY_CASES: distinct strips (default 30, the minimum for a check to filter);
+ * - QA_STABILITY_CASES: distinct strips (default 60: 15 faulty for each of the two faults, the
+ *   minimum of each class for a check to filter);
  * - QA_STABILITY_REPEATS: times each strip is judged (default 3, the minimum);
  * - QA_STABILITY_STATE: the file the cases judged so far are kept in between runs (default
  *   `qa-stability.json` in the real-check ledger directory);
@@ -13,7 +17,7 @@
  * Calls run through the product's spend controls (test/real/budget.ts). Before any call the check
  * forecasts its whole spend, cases x repeats x the vision route's estimate, and sizes this run's
  * batch of cases so its forecast fits what is left of the 1.50 USD run cap and of the budget; it
- * refuses when not one case fits. 30 cases x 3 repeats do not fit one run cap, so the cases judged
+ * refuses when not one case fits. 60 cases x 3 repeats do not fit one run cap, so the cases judged
  * in full are kept in the state file and the next run continues from them; the entries are made
  * once every case is judged, and the state file is then removed. Run with `pnpm test:real`.
  *
@@ -29,7 +33,7 @@ import { createRaster, encodePng, setPixel, type Raster } from "../../src/image/
 import { buildVisionPrompt, parseVisionVerdict, VISION_CHECKS } from "../../src/qa.ts";
 import {
   IMAGE_QA_CHECKS,
-  MIN_CASES,
+  MIN_CLASS_CASES,
   MIN_REPEATS,
   qualifies,
   type StabilityEntry,
@@ -83,16 +87,29 @@ function png(role: string, r: Raster): LoadedReference {
   return { role, path: `(${role})`, mediaType: "image/png", bytes, sha256: sha256(bytes) };
 }
 
-/** Every third case is faulty: an opaque background, or one empty frame. */
+/** Which check each kind of case is faulty for; every other check should pass it. */
+const FAULTS = { opaque: "transparency", empty: "frame-count" } as const;
+
+/** Of every four cases, two are clean, one has an opaque background and one an empty frame. */
+function faultOf(i: number): keyof typeof FAULTS | undefined {
+  return i % 4 === 1 ? "opaque" : i % 4 === 3 ? "empty" : undefined;
+}
+
+/** Whether `check` should pass case `i`, known from how the case is drawn. */
+function shouldPass(i: number, check: string): boolean {
+  const fault = faultOf(i);
+  return fault === undefined || FAULTS[fault] !== check;
+}
+
 function drawCase(i: number): Case {
   const frameCount = 2 + (i % 3);
   const strip = createRaster(FRAME * frameCount, FRAME);
-  const faulty = i % 3 === 2;
+  const fault = faultOf(i);
   for (let f = 0; f < frameCount; f++) {
-    if (faulty && i % 2 === 1 && f === 1) continue;
+    if (fault === "empty" && f === 1) continue;
     drawShape(strip, f * FRAME, i, f % 2);
   }
-  if (faulty && i % 2 === 0) {
+  if (fault === "opaque") {
     for (let y = 0; y < strip.height; y++) {
       for (let x = 0; x < strip.width; x++) {
         if (strip.data[(y * strip.width + x) * 4 + 3] === 0) {
@@ -110,7 +127,7 @@ test(
   "QA stability: the image QA vision checks, repeated on synthetic strips",
   { skip },
   async () => {
-    const cases = count("QA_STABILITY_CASES", MIN_CASES);
+    const cases = count("QA_STABILITY_CASES", 4 * MIN_CLASS_CASES);
     const repeats = count("QA_STABILITY_REPEATS", MIN_REPEATS);
     const model = defaultRoutes.vision.model;
 
@@ -125,14 +142,25 @@ test(
     );
     /** Per check, per completed case: whether every repeat gave the same `passed`. */
     let agreed: Record<string, boolean[]> = Object.fromEntries(checks.map((c) => [c.id, []]));
+    /** Per check, per completed case: whether any repeat contradicted the case's label. */
+    let wrong: Record<string, boolean[]> = Object.fromEntries(checks.map((c) => [c.id, []]));
     const statePath = process.env["QA_STABILITY_STATE"] ?? join(rb.ledgerDir, "qa-stability.json");
-    const key = { model, repeats, versions: checks.map((c) => `${c.id}@${c.version}`) };
+    const key = {
+      labelled: 1,
+      model,
+      repeats,
+      versions: checks.map((c) => `${c.id}@${c.version}`),
+    };
     try {
       const saved = JSON.parse(await readFile(statePath, "utf8")) as {
         key?: unknown;
         agreed?: Record<string, boolean[]>;
+        wrong?: Record<string, boolean[]>;
       };
-      if (JSON.stringify(saved.key) === JSON.stringify(key) && saved.agreed) agreed = saved.agreed;
+      if (JSON.stringify(saved.key) === JSON.stringify(key) && saved.agreed && saved.wrong) {
+        agreed = saved.agreed;
+        wrong = saved.wrong;
+      }
     } catch {
       /* No state yet: start from the first case. */
     }
@@ -167,6 +195,8 @@ test(
         for (const check of checks) {
           const first = verdicts[0]?.get(check.id);
           agreed[check.id]!.push(verdicts.every((v) => v.get(check.id) === first));
+          const should = shouldPass(i, check.id);
+          wrong[check.id]!.push(verdicts.some((v) => v.get(check.id) !== should));
         }
       }
     } catch (error) {
@@ -177,7 +207,7 @@ test(
 
     const completed = agreed[checks[0]!.id]!.length;
     if (completed < cases) {
-      await writeFile(statePath, `${JSON.stringify({ key, agreed })}\n`);
+      await writeFile(statePath, `${JSON.stringify({ key, agreed, wrong })}\n`);
       console.log(
         `judged ${completed} of ${cases} cases; the next run continues from ${statePath}`,
       );
@@ -185,20 +215,29 @@ test(
     }
     await rm(statePath, { force: true });
     const measuredAt = new Date().toISOString();
-    const entries: StabilityEntry[] = checks.map((check) => ({
-      checkId: check.id,
-      version: check.version,
-      model,
-      cases: completed,
-      repeats,
-      // Rounded down, so rounding never lifts a check over the bar.
-      agreement: Math.floor((agreed[check.id]!.filter(Boolean).length / completed) * 1000) / 1000,
-      measuredAt,
-    }));
+    const entries: StabilityEntry[] = checks.map((check) => {
+      const should = Array.from({ length: completed }, (_, i) => shouldPass(i, check.id));
+      const miss = (label: boolean) =>
+        should.filter((s, i) => s === label && wrong[check.id]![i]).length;
+      return {
+        checkId: check.id,
+        version: check.version,
+        model,
+        cases: completed,
+        passCases: should.filter(Boolean).length,
+        failCases: should.filter((s) => !s).length,
+        falsePasses: miss(false),
+        falseFails: miss(true),
+        repeats,
+        // Rounded down, so rounding never lifts a check over the bar.
+        agreement: Math.floor((agreed[check.id]!.filter(Boolean).length / completed) * 1000) / 1000,
+        measuredAt,
+      };
+    });
     for (const e of entries) {
       console.log(`${JSON.stringify(e)} qualifies: ${qualifies(e)}`);
       assert.ok(e.checkId && e.version && e.model);
-      assert.equal(e.cases, completed);
+      assert.equal(e.cases, e.passCases + e.failCases);
       assert.ok(e.agreement >= 0 && e.agreement <= 1);
       assert.ok(!Number.isNaN(Date.parse(e.measuredAt)));
     }

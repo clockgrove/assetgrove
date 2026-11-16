@@ -28,7 +28,7 @@ import { decodePng, encodePng } from "../src/image/raster.ts";
 import {
   DEFAULT_VISION_MODEL,
   MIN_AGREEMENT,
-  MIN_CASES,
+  MIN_CLASS_CASES,
   MIN_REPEATS,
 } from "../src/qa/stability.ts";
 import { defaultRoutes } from "../src/routes.ts";
@@ -367,7 +367,11 @@ test("a model-backed score is advisory unless the stability file has a qualifyin
     checkId,
     version: "1",
     model,
-    cases: MIN_CASES,
+    cases: 2 * MIN_CLASS_CASES,
+    passCases: MIN_CLASS_CASES,
+    failCases: MIN_CLASS_CASES,
+    falsePasses: 0,
+    falseFails: 0,
     repeats: MIN_REPEATS,
     agreement: MIN_AGREEMENT,
     measuredAt: "2026-11-15T00:00:00Z",
@@ -386,7 +390,11 @@ test("a model-backed score is advisory unless the stability file has a qualifyin
     ["filtering", "filtering"],
   );
   const short = auditFiltering(routes, [
-    { ...entry("audit-style", DEFAULT_VISION_MODEL), cases: MIN_CASES - 1 },
+    {
+      ...entry("audit-style", DEFAULT_VISION_MODEL),
+      cases: 2 * MIN_CLASS_CASES - 1,
+      failCases: MIN_CLASS_CASES - 1,
+    },
   ]);
   assert.equal(short[0]!.state, "advisory");
 });

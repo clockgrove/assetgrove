@@ -62,7 +62,13 @@ import type { AnimationReport } from "../animation/types.ts";
 import type { Grouping, MatteQuality, SliceOptions } from "./types.ts";
 import type { ConfirmationRecord, LoadedReference } from "../types.ts";
 import { scoreIdentity } from "../identity.ts";
-import type { CastMember, IdentityRecord, IdentityScore, IdentitySettings } from "../identity.ts";
+import type {
+  CastMember,
+  IdentityRecord,
+  IdentityRecordCheck,
+  IdentityScore,
+  IdentitySettings,
+} from "../identity.ts";
 
 export const IMPORT_FILE = "import.json";
 export const GROUPING_FILE = "grouping.json";
@@ -147,6 +153,8 @@ export interface ImportIdentity {
   settings: IdentitySettings;
   /** The whole cast, for the "cast" question. */
   cast?: CastMember[];
+  /** An existing check of the record (run before the sheet was paid for), so none is run here. */
+  recordCheck?: IdentityRecordCheck;
 }
 
 export interface ImportOptions {
@@ -419,7 +427,7 @@ export async function importSheet(
     if (c && !starts.has(c)) starts.set(c, c.records.length);
   }
   if (options.identity && options.identity.settings.mode !== "off") {
-    const { caller, record: lock, references, settings, cast } = options.identity;
+    const { caller, record: lock, references, settings, cast, recordCheck } = options.identity;
     record.identity = await scoreIdentity({
       caller,
       record: lock,
@@ -429,6 +437,7 @@ export async function importSheet(
       settings,
       edges: style.edges,
       ...(cast && { cast }),
+      ...(recordCheck && { recordCheck }),
     });
   }
 

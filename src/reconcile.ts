@@ -1,17 +1,17 @@
 /**
  * Reconcile (design section 3): the spend ledger is an estimate, so where a provider reports its
  * own usage to an ordinary key, a run's ledger spend is compared with it when the run ends. The
- * gateway reports each call's cost (`per-call-cost`, looked up by request ID); Tripo's balance
- * moves (`balance-delta`, read at the run's start and end). Other providers record
- * `unavailable`. A gap above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger
+ * gateway and Tripo report each call's cost (`per-call-cost`, looked up by the request ID the
+ * journal holds: the generation ID, the Tripo task ID), so another run on the same key or a credit
+ * top-up changes nothing. Other providers record `unavailable`. A gap above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger
  * spend) appends a hold (src/spend.ts), and every paid run is refused until a person acknowledges
  * it. A per-call lookup the provider cannot answer yet is recorded as pending in
  * `<stateDir>/reconcile.jsonl` and retried at the next paid run's start and by `spend reconcile`;
  * one still unanswered a day after the run resolves as `failed`.
  *
- * The run directory keeps `reconcile-state.json`: the ledger reservations already reconciled and
- * the balance readings taken at the start of an attempt not yet reconciled. An attempt that stops
- * before its end leaves both, so its resume compares that attempt's spend too.
+ * The run directory keeps `reconcile-state.json`: the ledger reservations already reconciled. An
+ * attempt that stops before its end leaves its reservations unreconciled, so its resume compares
+ * that attempt's spend too.
  *
  * Reconciling reads the provider's usage and spends nothing.
  */
@@ -47,7 +47,7 @@ export interface ReconcileEntry {
   provider: string;
   status: ReconcileStatus;
   /** How the provider reports usage; absent when it reports none. */
-  method?: "per-call-cost" | "balance-delta";
+  method?: "per-call-cost";
   runId?: string;
   ledgerUsd?: number;
   providerUsd?: number;
@@ -99,35 +99,24 @@ export interface RunReconcile {
   runDir: string;
   /** The paid providers the plan names, by settings id. */
   providers: string[];
-  /** Balance readings in USD at the start, by provider id, or why there is none. */
-  balances: Map<string, number | string>;
-  /** Providers whose start reading is an earlier, interrupted attempt's. */
-  carried?: Set<string>;
 }
 
 interface RunReconcileState {
   /** Ledger reservation ids an earlier attempt's end already reconciled. */
   reconciled: string[];
-  /** Start readings of an attempt that has not reached its end yet. */
-  balanceStart: Record<string, number | string>;
 }
 
 function readRunState(runDir: string): RunReconcileState {
   try {
     const raw = JSON.parse(readFileSync(join(runDir, RUN_RECONCILE_STATE_FILE), "utf8")) as {
       reconciled?: unknown;
-      balanceStart?: unknown;
     };
     const reconciled = Array.isArray(raw.reconciled)
       ? raw.reconciled.filter((v): v is string => typeof v === "string")
       : [];
-    const balanceStart: Record<string, number | string> = {};
-    if (raw.balanceStart !== null && typeof raw.balanceStart === "object")
-      for (const [k, v] of Object.entries(raw.balanceStart))
-        if (typeof v === "number" || typeof v === "string") balanceStart[k] = v;
-    return { reconciled, balanceStart };
+    return { reconciled };
   } catch {
-    return { reconciled: [], balanceStart: {} };
+    return { reconciled: [] };
   }
 }
 
@@ -182,8 +171,7 @@ function compare(
 
 /**
  * The start of a paid run: retries every pending lookup, refuses the run while a hold is not
- * acknowledged (`SpendHoldError`, exit 3 `spend_hold`), then reads the balance of each paid
- * balance-delta provider the plan names.
+ * acknowledged (`SpendHoldError`, exit 3 `spend_hold`).
  */
 export async function startRunReconcile(
   ctx: ReconcileContext,
@@ -194,42 +182,7 @@ export async function startRunReconcile(
   const providers = [...new Set(run.providers)].filter(
     (id) => id !== "" && billingOfId(ctx, id)?.paid === true,
   );
-  const balances = new Map<string, number | string>();
-  for (const id of providers) {
-    const billing = billingOfId(ctx, id)!;
-    if (billing.reconcile === "balance-delta") balances.set(id, await readBalance(billing));
-  }
-  return { runId: run.runId, runDir: run.runDir, providers, balances };
-}
-
-/**
- * The start of an attempt that will call providers (the run directory is open and locked): an
- * earlier attempt that never reached its end left its balance readings, and they stay the start,
- * so the delta covers that attempt's spend too. Otherwise this attempt's readings are kept.
- */
-export function beginRunReconcile(run: RunReconcile): void {
-  const state = readRunState(run.runDir);
-  const carried = new Set<string>();
-  for (const id of run.balances.keys()) {
-    const stored = state.balanceStart[id];
-    if (stored !== undefined) {
-      run.balances.set(id, stored);
-      carried.add(id);
-    } else state.balanceStart[id] = run.balances.get(id)!;
-  }
-  run.carried = carried;
-  writeRunState(run.runDir, state);
-}
-
-/** The provider's balance in USD, or why it cannot be read. */
-async function readBalance(billing: Billing): Promise<number | string> {
-  if (billing.readLimit === undefined) return "the provider gives no balance reading";
-  try {
-    const reading = await billing.readLimit();
-    return reading.balanceUsd ?? "the balance reading has no USD value (set usdPerCredit)";
-  } catch (error) {
-    return `the balance reading failed: ${(error as Error).message}`;
-  }
+  return { runId: run.runId, runDir: run.runDir, providers };
 }
 
 /** The request ID the journal holds for a call, when the provider gave it. */
@@ -267,18 +220,6 @@ export async function finishRunReconcile(
     try {
       if (billing === undefined || billing.reconcile === "unavailable") {
         entries.push({ provider, status: "unavailable", runId: run.runId, ledgerUsd });
-      } else if (billing.reconcile === "balance-delta") {
-        // A call the journal answered was paid; a failed or interrupted one may or may not have
-        // been (a refused or failed task leaves the balance alone), so it widens the ledger side.
-        let answeredUsd = 0;
-        const seen = new Set<string>();
-        for (const call of mine.toReversed()) {
-          const key = call.callKey;
-          if (key === undefined || seen.has(key) || !journaled(run.runDir, key)) continue;
-          seen.add(key);
-          answeredUsd += call.costUsd;
-        }
-        entries.push(await balanceDelta(ctx, run, provider, billing, { answeredUsd, ledgerUsd }));
       } else if (billing.callCost === undefined) {
         entries.push({
           provider,
@@ -315,51 +256,8 @@ export async function finishRunReconcile(
   }
   writeRunState(run.runDir, {
     reconciled: [...state.reconciled, ...calls.map((c) => c.id)],
-    balanceStart: {},
   });
   return entries;
-}
-
-async function balanceDelta(
-  ctx: ReconcileContext,
-  run: RunReconcile,
-  provider: string,
-  billing: Billing,
-  spend: { answeredUsd: number; ledgerUsd: number },
-): Promise<ReconcileEntry> {
-  const { answeredUsd, ledgerUsd } = spend;
-  const base = { provider, method: "balance-delta" as const, runId: run.runId };
-  const start = run.balances.get(provider);
-  const end = await readBalance(billing);
-  if (typeof start !== "number" || typeof end !== "number") {
-    const note = typeof start === "number" ? end : (start ?? "no balance reading at the start");
-    return { ...base, status: "failed", ledgerUsd, note: String(note) };
-  }
-  const providerUsd = start - end;
-  // The ledger side is the answered calls plus as much of the unanswered ones as the balance
-  // moved, so only a delta outside what the run may have been billed counts as a gap.
-  const side = Math.min(Math.max(providerUsd, answeredUsd), Math.max(answeredUsd, ledgerUsd));
-  const notes = [
-    ...(run.carried?.has(provider) === true
-      ? ["the start reading is an interrupted earlier attempt's; the delta spans both"]
-      : []),
-    ...(ledgerUsd - answeredUsd > EPSILON
-      ? [
-          `$${(ledgerUsd - answeredUsd).toFixed(4)} of failed or interrupted calls counts only as far as the balance moved`,
-        ]
-      : []),
-  ];
-  return compare(
-    ctx,
-    { ...base, ...(notes.length > 0 && { note: notes.join("; ") }) },
-    side,
-    providerUsd,
-  );
-}
-
-/** Whether the run's journal answered the call of a key. */
-function journaled(runDir: string, callKey: string): boolean {
-  return existsSync(join(runDir, CALLS_DIR, `${callKey}.json`));
 }
 
 /**

@@ -412,3 +412,22 @@ test("acknowledging a hold through the tool clears spend_hold", async () => {
   const freed = await paidStage(script);
   assert.equal(freed.code, 0, freed.stdout);
 });
+
+test("a second change acknowledging blob ids keeps the first's and writes keyGuard.acknowledgedBlobs", async () => {
+  useAttended();
+  const ids = ["a1".repeat(20), "b2".repeat(20)];
+  const settings = loadSettings();
+  await applySettingsChange(settings, { acknowledgeBlobs: [ids[0]!] }, { method: "terminal" });
+  await applySettingsChange(
+    settings,
+    { acknowledgeBlobs: [ids[0]!.toUpperCase(), ids[1]!] },
+    { method: "terminal" },
+  );
+  const after = readDoc();
+  assert.deepEqual(after["keyGuard"].acknowledgedBlobs, ids);
+  assert.equal(after["confirmedBy"]["keyGuard.acknowledgedBlobs"].method, "terminal");
+  await assert.rejects(
+    applySettingsChange(settings, { acknowledgeBlobs: ["abc"] }, { method: "terminal" }),
+    /40 or 64 hex/,
+  );
+});

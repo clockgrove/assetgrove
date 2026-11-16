@@ -465,6 +465,25 @@ export class RouteUnavailableError extends Error {
   }
 }
 
+/**
+ * More than one configured provider could serve an operation and no route or role picks one.
+ * Exit 2 `settings_invalid`: which provider serves it is the developer's choice, not an order.
+ */
+export class RouteAmbiguousError extends SettingsError {
+  readonly operation: string;
+  readonly candidates: readonly string[];
+  readonly field: string;
+  constructor(operation: string, candidates: readonly string[], field: string) {
+    super(
+      `settings.${field} is not set, and ${candidates.length} configured providers (${candidates.join(", ")}) could serve the ${operation} operation; set settings.${field} to the provider and model that should`,
+    );
+    this.name = "RouteAmbiguousError";
+    this.operation = operation;
+    this.candidates = candidates;
+    this.field = field;
+  }
+}
+
 /** A configured provider as resolution sees it: its settings id, its adapter and its entry. */
 export interface RouteProvider {
   id: string;
@@ -490,10 +509,12 @@ const STAND_IN_ADAPTER = "scripted";
 
 /**
  * The route of one operation: `settings.routes[op]` over `settings.roles[role]` over the default
- * route of the first configured provider (by id, the scripted stand-in last) whose adapter lists
- * the operation. An override that names the default's provider and model keeps the whole default
- * route. One that changes either belongs to another (provider, model) pair, so it takes nothing
- * from the default: it carries only its own `estimatedCostUsd`, `outputGrant` and `providerTerms`,
+ * route of the one configured provider whose adapter lists the operation, the scripted stand-in
+ * serving only when no other does. When more than one provider could serve it and no route or role
+ * picks one, throws `RouteAmbiguousError` (`settings_invalid`) naming the field to set: no order of
+ * ids chooses. An override that names the default's provider and model (the default of the
+ * override's own provider) keeps the whole default route. One that changes either belongs to
+ * another (provider, model) pair, so it takes nothing from the default: it carries only its own `estimatedCostUsd`, `outputGrant` and `providerTerms`,
  * and it must set `estimatedCostUsd` unless its provider is `free` or the scripted stand-in
  * (`settings_invalid` otherwise). Throws `RouteUnavailableError` when the result names no
  * configured provider whose adapter has the role's capability.
@@ -509,14 +530,10 @@ export function resolveRoute(
     .map((f) => `settings.${f}`)
     .join(" or ");
   const what = `the ${operation} operation${role !== undefined ? ` (role ${role})` : ""}`;
-  const standIn = (p: RouteProvider): number => (p.adapter.id === STAND_IN_ADAPTER ? 1 : 0);
-  const sorted = [...providers].sort(
-    (a, b) => standIn(a) - standIn(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-  );
-  const serving = sorted.find((p) => p.adapter.defaultRoutes?.[operation] !== undefined);
-  const fallback: Route | undefined = serving
-    ? { ...structuredClone(serving.adapter.defaultRoutes![operation]!), provider: serving.id }
-    : undefined;
+  const candidates = providers
+    .filter((p) => p.adapter.id !== STAND_IN_ADAPTER && p.adapter.defaultRoutes?.[operation])
+    .map((p) => p.id)
+    .sort();
   const field = Object.hasOwn(settings.routes, operation)
     ? `routes.${operation}`
     : role !== undefined && Object.hasOwn(settings.roles, role)
@@ -528,6 +545,27 @@ export function resolveRoute(
       : field.startsWith("routes.")
         ? settings.routes[operation]
         : settings.roles[role!];
+  const defaultOf = (id: string | undefined): Route | undefined => {
+    const p = providers.find((q) => q.id === id);
+    const base = p?.adapter.defaultRoutes?.[operation];
+    return p !== undefined && base !== undefined
+      ? { ...structuredClone(base), provider: p.id }
+      : undefined;
+  };
+  let fallback: Route | undefined;
+  if (override !== undefined) {
+    fallback = defaultOf(override.provider);
+  } else if (candidates.length > 1) {
+    throw new RouteAmbiguousError(
+      operation,
+      candidates,
+      role !== undefined ? `roles.${role}` : `routes.${operation}`,
+    );
+  } else {
+    fallback = defaultOf(
+      candidates[0] ?? providers.find((p) => p.adapter.defaultRoutes?.[operation])?.id,
+    );
+  }
   let route: Route;
   /** The settings field of an override that changes the pair and sets no estimate. */
   let missingEstimate: string | undefined;
@@ -603,19 +641,22 @@ export function knownOperations(settings: Pick<Settings, "routes">): string[] {
 /**
  * The routes of the settings, by operation. An operation no configured provider serves is absent,
  * and reading it throws its `RouteUnavailableError` (exit 2 `route_unavailable`), so a command
- * that plans a call on it stops before any reservation.
+ * that plans a call on it stops before any reservation. An ambiguous operation is absent too, and
+ * reading it throws `RouteAmbiguousError` (exit 2 `settings_invalid`).
  */
 export function resolveRoutes(
   settings: Pick<Settings, "roles" | "routes">,
   providers: readonly RouteProvider[],
 ): Routes {
   const resolved: Record<string, Route> = {};
-  const unavailable = new Map<string, RouteUnavailableError>();
+  const unavailable = new Map<string, RouteUnavailableError | RouteAmbiguousError>();
   for (const operation of knownOperations(settings)) {
     try {
       resolved[operation] = resolveRoute(settings, operation, providers);
     } catch (error) {
-      if (!(error instanceof RouteUnavailableError)) throw error;
+      if (!(error instanceof RouteUnavailableError || error instanceof RouteAmbiguousError)) {
+        throw error;
+      }
       unavailable.set(operation, error);
     }
   }
@@ -623,6 +664,9 @@ export function resolveRoutes(
     get(target, key, receiver) {
       if (typeof key === "string" && !Object.hasOwn(target, key)) {
         const error = unavailable.get(key);
+        if (error instanceof RouteAmbiguousError) {
+          throw new RouteAmbiguousError(error.operation, error.candidates, error.field);
+        }
         if (error !== undefined) throw new RouteUnavailableError(error.operation, error.message);
       }
       return Reflect.get(target, key, receiver) as unknown;

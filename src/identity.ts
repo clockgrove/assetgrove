@@ -214,6 +214,11 @@ export interface IdentityScore {
   confidence?: number;
   /** Whether the score reached the threshold. A failed call never passes. */
   passed: boolean;
+  /**
+   * Present when the scoring call failed: the answer is unknown, not "off-model". The candidate
+   * is kept and recorded as unscored, and its reason is advisory.
+   */
+  unscored?: true;
   /** Whether this score filtered the candidate out (only in enforce mode). */
   filtered: boolean;
   /** Present when enforce was asked for but the score ran in shadow mode: why. */
@@ -513,11 +518,11 @@ function memoisedCheck(
 }
 
 /**
- * Scores one candidate against an identity record. A provider failure becomes a failed score
- * with the error as its reason (it filters in enforce mode, fail closed); a budget refusal or
- * invalid input is thrown as usual. In enforce mode the record is first checked against its own
- * references (once per caller and lock); a record that disagrees with them scores in shadow mode
- * only, and a check that could not run filters every candidate (fail closed).
+ * Scores one candidate against an identity record. A provider failure becomes an unscored
+ * result (unknown, not off-model: the candidate is kept); a budget refusal or invalid input is
+ * thrown as usual. In enforce mode the record is first checked against its own references (once
+ * per caller and lock); a record that disagrees with them scores in shadow mode only, and a check
+ * that could not run throws a ProviderError, so nothing is scored against an unchecked record.
  */
 export async function scoreIdentity(options: {
   caller: Caller;
@@ -541,18 +546,9 @@ export async function scoreIdentity(options: {
       ? await memoisedCheck(caller, record, options.references, options.edges)
       : undefined);
   const trusted = check === undefined || (check.checked && check.consistent);
-  // A check that could not run is a provider failure: in enforce mode it fails closed, as a
-  // failed score does, rather than turning filtering off.
-  if (check && !check.checked && options.settings.mode === "enforce") {
-    const score = await scoreOnce(options);
-    return {
-      ...score,
-      passed: false,
-      filtered: true,
-      reason: `${score.reason}; filtered: ${check.reason}, so the record cannot be trusted (fail closed)`,
-      recordCheck: { checked: false, consistent: false, reason: check.reason },
-    };
-  }
+  // A check that could not run leaves nothing to score against: stop rather than guess.
+  if (check && !check.checked && options.settings.mode === "enforce")
+    throw new ProviderError(`the identity record check could not run: ${check.reason}`);
   const settings = trusted ? options.settings : { ...options.settings, mode: "shadow" as const };
   const score = await scoreOnce({ ...options, settings });
   if (trusted) return score;
@@ -721,9 +717,11 @@ async function scoreOnce(options: Parameters<typeof scoreIdentity>[0]): Promise<
     return {
       ...base,
       passed: false,
-      filtered: settings.mode === "enforce",
+      filtered: false,
+      unscored: true,
       reason:
-        `identity scoring against "${record.subject}" lock ${record.version} failed: ${error.message}` +
+        `identity scoring against "${record.subject}" lock ${record.version} failed: ${error.message}; ` +
+        "the candidate is kept unscored" +
         suffix,
       costUsd: failed?.costUsd ?? caller.route(operation).estimatedCostUsd,
       error: error.message,
@@ -731,14 +729,14 @@ async function scoreOnce(options: Parameters<typeof scoreIdentity>[0]): Promise<
   }
 }
 
-/** The QA reason a score shows the person. Shadow-mode reasons are marked and never filter. */
+/** The QA reason a score shows the person. Shadow-mode and unscored reasons are marked and never filter. */
 export function identityReason(score: IdentityScore): Reason {
   return {
     check: IDENTITY_CHECK,
     passed: score.passed,
     reason: score.reason,
     source: "decision",
-    ...(score.mode === "shadow" && { shadow: true as const }),
+    ...((score.mode === "shadow" || score.unscored) && { shadow: true as const }),
   };
 }
 

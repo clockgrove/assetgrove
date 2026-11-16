@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -27,6 +28,15 @@ const GATEWAY = ["AI", "GATEWAY", "API", "KEY"].join("_");
 const OPENAI = ["OPENAI", "API", "KEY"].join("_");
 /** A synthetic key value: the guard matches values of 16 or more characters. */
 const KEY_VALUE = `agk-test-${"0123456789abcdef".split("").reverse().join("")}-synthetic`;
+
+/** A literal shaped like a key: long, one token, no placeholder word. */
+const REAL_SHAPED = "sk-proj-AbC123dEf456GhI789jKl0";
+
+/** The Git blob id of text, as `git hash-object` computes it. */
+const blobOf = (text: string) =>
+  createHash("sha1")
+    .update(`blob ${Buffer.byteLength(text)}\0${text}`)
+    .digest("hex");
 
 /** A temporary Git repository with the given files added to its index. */
 async function repository(files: Record<string, string | Buffer>): Promise<string> {
@@ -124,8 +134,8 @@ test("a clean repository lets pick reach its own checks", async () => {
 
 test("with an empty environment, named assignments are refused and empty ones are not", async () => {
   const repo = await repository({
-    ".env": `${GATEWAY}=abc\n`,
-    "config/providers.json": `${JSON.stringify({ [OPENAI]: "x" }, null, 2)}\n`,
+    ".env": `${GATEWAY}=${REAL_SHAPED}\n`,
+    "config/providers.json": `${JSON.stringify({ [OPENAI]: REAL_SHAPED }, null, 2)}\n`,
     "empty.env": `${GATEWAY}=\n`,
   });
   const found = findTrackedKeys(repo, { env: {} });
@@ -144,15 +154,15 @@ test("with an empty environment, named assignments are refused and empty ones ar
       /\.env/.test(error.message) &&
       /config\/providers\.json/.test(error.message) &&
       !/empty\.env/.test(error.message) &&
-      !error.message.includes("abc"),
+      !error.message.includes(REAL_SHAPED),
   );
 });
 
 test("export lines, YAML members and settings' keyEnv count; references and placeholders do not", async () => {
   const repo = await repository({
-    "deploy.sh": `export ${GATEWAY}="abc"\n`,
-    "ci.yml": `env:\n  ${OPENAI}: sk-something\n`,
-    "custom.env": `MY_PROVIDER_TOKEN=abc\n`,
+    "deploy.sh": `export ${GATEWAY}="${REAL_SHAPED}"\n`,
+    "ci.yml": `env:\n  ${OPENAI}: ${REAL_SHAPED}\n`,
+    "custom.env": `MY_PROVIDER_TOKEN=${REAL_SHAPED}\n`,
     "ref.yml": `env:\n  ${GATEWAY}: \${{ secrets.KEY }}\n`,
     "ref.sh": `export ${GATEWAY}=$${GATEWAY}\n`,
     "doc.md": `export ${GATEWAY}=...   # from the environment only\n${GATEWAY}=<your key>\n`,
@@ -190,7 +200,7 @@ test("outside a Git repository nothing is tracked", () => {
 
 test("a key staged and then edited out of or deleted from the working file is refused", async () => {
   const dir = await repository({
-    "edited.env": `${GATEWAY}=abc\n`,
+    "edited.env": `${GATEWAY}=${REAL_SHAPED}\n`,
     "deleted.txt": `token ${KEY_VALUE}\n`,
   });
   await writeFile(join(dir, "edited.env"), `${GATEWAY}=\n`);
@@ -201,7 +211,7 @@ test("a key staged and then edited out of or deleted from the working file is re
 
 test("a key in the working file of a tracked file is refused before it is staged", async () => {
   const dir = await repository({ "later.env": `${GATEWAY}=\n` });
-  await writeFile(join(dir, "later.env"), `${GATEWAY}=abc\n`);
+  await writeFile(join(dir, "later.env"), `${GATEWAY}=${REAL_SHAPED}\n`);
   assert.equal(findTrackedKeys(dir, { env: {} }).length, 1);
 });
 
@@ -228,4 +238,63 @@ test("when git cannot run inside a repository, the guard refuses with key_tracke
   } finally {
     process.env.PATH = path;
   }
+});
+
+test("names that only look assigned are not hits: expressions, placeholders, short test values", async () => {
+  const repo = await repository({
+    "config.py": `${OPENAI} = os.environ.get("${OPENAI}", "")\n`,
+    ".env.example": `${OPENAI}=your-api-key-here\n`,
+    "README.md": `export ANTHROPIC_API_KEY=sk-ant-...\n`,
+    "fixture.json": `${JSON.stringify({ [OPENAI]: "test" })}\n`,
+    "long.env": `${GATEWAY}=aaaaaaaaaaaaaaaaaaaa\n${OPENAI}=\${HOME}/some/long/path/x\n`,
+  });
+  assert.deepEqual(findTrackedKeys(repo, { env: {} }), []);
+  assert.doesNotThrow(() => checkTrackedKeys(repo, { env: {} }));
+});
+
+test("a placeholder word counts only as a whole word, not inside a key's random text", async () => {
+  const hidden = "sk-proj-AbCxHeRe9dEfyOuR456GhI7";
+  const repo = await repository({
+    "app.env": `${OPENAI}=${hidden}\n`,
+    "sample.env": `${GATEWAY}=sk_REPLACE_with_a_real_key_0001\n`,
+  });
+  assert.deepEqual(
+    findTrackedKeys(repo, { env: {} }).map((h) => h.file),
+    ["app.env"],
+  );
+});
+
+test("a key-shaped literal is refused by name, naming the blob and never the value", async () => {
+  const text = `${OPENAI}=${REAL_SHAPED}\n`;
+  const repo = await repository({ "app.env": text });
+  assert.throws(
+    () => checkTrackedKeys(repo, { env: {} }),
+    (error: unknown) =>
+      error instanceof KeyTrackedError &&
+      error.message.includes(blobOf(text)) &&
+      /keyGuard\.acknowledgedBlobs/.test(error.message) &&
+      /--acknowledge-blobs/.test(error.message) &&
+      !error.message.includes(REAL_SHAPED),
+  );
+});
+
+test("an acknowledged blob clears the by-name hit until the file is edited", async () => {
+  const text = `${OPENAI}=${REAL_SHAPED}\n`;
+  const repo = await repository({ "app.env": text });
+  const settings = { providers: {}, keyGuard: { acknowledgedBlobs: [blobOf(text).toUpperCase()] } };
+  assert.doesNotThrow(() => checkTrackedKeys(repo, { env: {}, settings }));
+  await writeFile(join(repo, "app.env"), `${text}# edited\n`);
+  assert.throws(() => checkTrackedKeys(repo, { env: {}, settings }), KeyTrackedError);
+  // Settings that predate the field tolerate its absence.
+  assert.throws(() => checkTrackedKeys(repo, { env: {}, settings: { providers: {} } }));
+});
+
+test("an acknowledged blob never clears the exact-value rule", async () => {
+  const text = `the gateway key is ${KEY_VALUE}\n`;
+  const repo = await repository({ "notes.txt": text });
+  const settings = { providers: {}, keyGuard: { acknowledgedBlobs: [blobOf(text)] } };
+  assert.throws(
+    () => checkTrackedKeys(repo, { env: { [GATEWAY]: KEY_VALUE }, settings }),
+    KeyTrackedError,
+  );
 });

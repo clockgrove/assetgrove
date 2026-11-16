@@ -117,6 +117,7 @@ const settingsSchema = z.strictObject({
     .strictObject({ marginUsd: usd.optional(), marginPct: z.number().finite().min(0).optional() })
     .optional(),
   spend: z.strictObject({ acknowledgedHolds: z.array(hex) }).optional(),
+  keyGuard: z.strictObject({ acknowledgedBlobs: z.array(hex) }).optional(),
   commands: z
     .strictObject({
       approved: z.array(
@@ -169,6 +170,8 @@ export interface Settings {
   environment: { allow: string[] };
   reconcile: NonNullable<SettingsFile["reconcile"]>;
   spend: { acknowledgedHolds: string[] };
+  /** Git blob ids of files whose by-name key assignments a person has checked are not live keys. */
+  keyGuard: { acknowledgedBlobs: string[] };
   commands: NonNullable<SettingsFile["commands"]>;
   promptPolicy: { allow: string[] };
   /** The C2PA signing certificate chain and key files; absent, a development certificate signs. */
@@ -386,6 +389,7 @@ function complete(
     environment: { allow: file.environment?.allow ?? [] },
     reconcile: file.reconcile ?? {},
     spend: { acknowledgedHolds: file.spend?.acknowledgedHolds ?? [] },
+    keyGuard: { acknowledgedBlobs: file.keyGuard?.acknowledgedBlobs ?? [] },
     commands: file.commands ?? { approved: [] },
     promptPolicy: { allow: file.promptPolicy?.allow ?? [] },
     ...(file.contentCredentials && { contentCredentials: file.contentCredentials }),
