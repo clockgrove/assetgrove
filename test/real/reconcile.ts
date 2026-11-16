@@ -40,7 +40,7 @@ export interface EarlierReconcile {
   provider: string;
   ledger: string;
   entries: EarlierEntry[];
-  /** Entries the gateway was asked about: agreed, mismatched and pending ones. */
+  /** Entries whose amounts were compared with the gateway's reported cost: agreed and mismatched. */
   compared: number;
   agreed: number;
   pending: number;
@@ -141,7 +141,7 @@ export async function reconcileEarlier(
     provider: options.provider,
     ledger: budget.ledger.path,
     entries,
-    compared: agreed + pending + mismatched,
+    compared: agreed + mismatched,
     agreed,
     pending,
     mismatched,

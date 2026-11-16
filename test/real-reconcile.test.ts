@@ -11,7 +11,7 @@ import { digestOf } from "../src/confirm/records.ts";
 import type { Script } from "../src/gateway/scripted.ts";
 import { defaultRoutes, type Routes } from "../src/routes.ts";
 import { withConfirmedSpend } from "./fixtures/clearance.ts";
-import { realBudget, RECONCILE_MARGIN_USD, WORK_ITEM } from "./real/budget.ts";
+import { realBudget, WORK_ITEM } from "./real/budget.ts";
 import { assertAgreed, reconcileEarlier, reconcileLines, skipReasonOf } from "./real/reconcile.ts";
 
 const temps: string[] = [];
@@ -77,9 +77,12 @@ function writeLedger(dir: string, calls: FixtureCall[]): void {
 }
 
 /** What the scripted gateway reports now, by request ID: a cost, not yet (undefined) or never (null). */
+/** A margin set in this test's settings, to show agreement within the settings' margin. */
+const MARGIN_USD = 0.0001;
+
 const reported: Record<string, number | null | undefined> = {
   gen_old_a: 0.02,
-  gen_old_b: 0.04 + RECONCILE_MARGIN_USD / 2,
+  gen_old_b: 0.04 + MARGIN_USD / 2,
   gen_old_c: 0.05,
   gen_recent_d: undefined,
   gen_fresh_e: 0.03,
@@ -129,9 +132,23 @@ test("earlier entries are compared with the gateway: agreed within the margin, p
   const dir = join(temp(), "ledger");
   writeLedger(dir, fixture);
   const rb = budgetIn(dir);
-  assert.equal(rb.settings.reconcile.marginUsd, RECONCILE_MARGIN_USD);
+  // The real-check settings keep the product's reconcile margin (none): a rounding gap is a mismatch.
+  assert.equal(rb.settings.reconcile.marginUsd, undefined);
   const gw = rb.provider(PROVIDER, gateway);
-  const r = await reconcileEarlier(rb, gw.provider.billing, { provider: gw.id, before: RUN_START });
+  const strict = await reconcileEarlier(rb, gw.provider.billing, {
+    provider: gw.id,
+    before: RUN_START,
+  });
+  assert.equal(strict.entries.find((e) => e.id === "old-b")?.status, "mismatched");
+  // Within a margin the settings set, old-b's gap agrees.
+  const withMargin = {
+    ledger: rb.ledger,
+    settings: { reconcile: { ...rb.settings.reconcile, marginUsd: MARGIN_USD } },
+  };
+  const r = await reconcileEarlier(withMargin, gw.provider.billing, {
+    provider: gw.id,
+    before: RUN_START,
+  });
 
   assert.deepEqual(
     r.entries.map((e) => [e.id, e.status]),
@@ -146,14 +163,14 @@ test("earlier entries are compared with the gateway: agreed within the margin, p
   );
   assert.deepEqual(
     { compared: r.compared, agreed: r.agreed, pending: r.pending, mismatched: r.mismatched },
-    { compared: 4, agreed: 2, pending: 1, mismatched: 1 },
+    { compared: 3, agreed: 2, pending: 1, mismatched: 1 },
   );
   assert.equal(r.notComparable, 2);
 
   const lines = reconcileLines(r);
   assert.equal(
     lines[0],
-    "reconcile (earlier runs, scripted): 4 ledger entries compared with the gateway's usage, " +
+    "reconcile (earlier runs, scripted): 3 ledger entries compared with the gateway's usage, " +
       "2 agreed, 1 pending, 1 mismatched; 2 more not comparable",
   );
   const mismatch = lines.find((l) => l.startsWith("mismatch:")) ?? "";
@@ -181,8 +198,15 @@ test("with the mismatch gone the check passes; a pending entry never counts as a
   );
   const rb = budgetIn(dir);
   const gw = rb.provider(PROVIDER, gateway);
-  const r = await reconcileEarlier(rb, gw.provider.billing, { provider: gw.id, before: RUN_START });
-  assert.deepEqual([r.compared, r.agreed, r.pending, r.mismatched], [3, 2, 1, 0]);
+  const withMargin = {
+    ledger: rb.ledger,
+    settings: { reconcile: { ...rb.settings.reconcile, marginUsd: MARGIN_USD } },
+  };
+  const r = await reconcileEarlier(withMargin, gw.provider.billing, {
+    provider: gw.id,
+    before: RUN_START,
+  });
+  assert.deepEqual([r.compared, r.agreed, r.pending, r.mismatched], [2, 2, 1, 0]);
   assert.equal(skipReasonOf(r), undefined);
   assertAgreed(r);
 });
@@ -226,7 +250,7 @@ test("a first run on an empty cache skips with that reason, and so does one with
     provider: PROVIDER,
     before: RUN_START,
   });
-  assert.deepEqual([p.compared, p.agreed, p.pending, p.mismatched], [1, 0, 1, 0]);
+  assert.deepEqual([p.compared, p.agreed, p.pending, p.mismatched], [0, 0, 1, 0]);
   assert.equal(
     skipReasonOf(p),
     "none of the 2 earlier scripted ledger entries has a reported cost to compare yet: 1 pending, 1 not comparable",
