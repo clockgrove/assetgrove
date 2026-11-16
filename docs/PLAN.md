@@ -18,7 +18,7 @@ This plan delivers [the 1.0 PRD](PRD.md) in four phases, taken from its [Scope o
 - The rest of the core: the extension contract, core routes (Vercel AI Gateway, Anthropic, OpenAI and any OpenAI-compatible endpoint), generic sprite-atlas hand-off, runs that resume and never pay twice, versioned shared files, `init` with the style bible, and the skills in the Agent Skills format. See [What we build on](PRD.md#what-we-build-on) and [Trust, safety and legal](PRD.md#trust-safety-and-legal).
 - Linux, macOS and Windows in CI.
 
-**Gate:** everything above checked, the data-dependent bars in [Success measures and the 1.0 exit](PRD.md#success-measures-and-the-10-exit) set, and a release candidate, version 0.1.0, ready to publish to npm.
+**Gate:** everything above checked, the data-dependent bars in [Success measures and the 1.0 exit](PRD.md#success-measures-and-the-10-exit) set, each harness shown not to confirm a spend by itself when no person is present, and a release candidate, version 0.1.0, ready to publish to npm. Confirmation by a person in each harness is checked at the Phase 2 gate, before anyone outside is invited.
 
 ## Phase 2: asset management and search
 
@@ -34,7 +34,7 @@ This plan delivers [the 1.0 PRD](PRD.md) in four phases, taken from its [Scope o
 - The optional search add-on, with its own skill.
 - The set-level audit.
 
-**Gate:** on a labelled test library, every asset has a card, reviews and change requests round-trip through new versions, and search meets the bars set for it before the run. Published as 0.2, with search as its own package; outside developers are invited from here.
+**Gate:** on a labelled test library, every asset has a card, reviews and change requests round-trip through new versions, and search meets the bars set for it before the run. A person has confirmed a spend and a pick in each harness (Claude Code locally and in a remote session, Codex and GitHub Copilot CLI), with each harness's key recipe followed, as [testing-hosts.md](testing-hosts.md) lists. Published as 0.2, with search as its own package; outside developers are invited from here.
 
 ## Phase 3: extensions
 
