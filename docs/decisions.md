@@ -325,7 +325,7 @@ The owner confirmed these bars, and they are committed here before the measuring
 
 **Queries with too few relevant images are dropped.** A query judged to have fewer than `MIN_RELEVANT = 3` relevant images is left out of the by-words score and reported on the bench's `dropped` line and by the judge run; it stays in the manifest. Three is the least that lets P@5 tell a ranking that finds most of what exists from one that finds a single lucky hit.
 
-**The bench refuses rule-made or unjudged labels.** `runBench` (and so `run.ts`) refuses to score by words while any written query still holds a rule-made `relevant` list, has no candidate pool, or has a candidate not yet judged.
+**The bench refuses rule-made or unjudged labels.** `runBench` (and so `run.ts`) refuses to score by words while any written query still holds a rule-made `relevant` list, has no candidate pool, was pooled by another embedder or revision than the one the bench scores with (`pooledBy`; a pool ranked by the scripted embedder is not the SigLIP2 top results, so most of their top 5 would be unjudged), or has a candidate not yet judged. It also refuses judgements by the offline `scripted-judge` outside the fixture run (`run.ts --fixture`, `scriptedJudgements`): on the real manifest that judge reads the pack and category as words, a name match. `--max-calls` must be a non-negative integer.
 
 **Bars read against the old labels.** The `words-shipped-p5` bar and the image-similarity threshold rule were set against the old labels: the spike's file-name relevance and the file-name same-asset pairs. They are re-read against the first run on the judged labels. Moving to judged labels changes neither number.
 

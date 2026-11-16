@@ -97,7 +97,9 @@ describe("relevance judgements", () => {
     assert.equal(judged, total);
     assert.equal(left, 0);
     assert.deepEqual(planned, [total]);
-    assert.deepEqual(wordsLabelProblems(manifest), []);
+    assert.deepEqual(wordsLabelProblems(manifest, { scriptedJudgements: true }), []);
+    // Outside the offline fixture a scripted judgement is a word match: refused.
+    assert.match(wordsLabelProblems(manifest).join("\n"), /judgements by scripted-judge/);
     assert.deepEqual(checkManifest(manifest), []);
     for (const q of manifest.writtenQueries)
       for (const j of q.judgements!) {
@@ -155,6 +157,13 @@ describe("relevance judgements", () => {
     const next = await judgeRelevance({ manifest, source, judge, maxCalls: 2 });
     assert.equal(next.judged, 2);
     assert.equal(next.left, out.left - 2);
+    // A cap that is not a non-negative integer is refused before any call.
+    for (const bad of [-1, 1.5, Number.NaN])
+      await assert.rejects(
+        judgeRelevance({ manifest, source, judge, maxCalls: bad }),
+        /non-negative integer/,
+      );
+    assert.equal(next.left, (await judgeRelevance({ manifest, source, judge, maxCalls: 0 })).left);
   });
 
   it("show the model the query, the question and a small sprite scaled up as forVision does", async () => {
@@ -250,6 +259,11 @@ describe("the judge command", () => {
       const out = await cli("--provider", "scripted", "--max-calls", "5");
       assert.match(out, /^making 5 judge calls/m);
       assert.match(out, /stopped at the cap/);
+      // A negative or non-numeric cap is refused before any call.
+      const capped = await readFile(path, "utf8");
+      for (const bad of ["--max-calls=-1", "--max-calls=lots"])
+        await assert.rejects(cli("--provider", "scripted", bad), /non-negative integer/);
+      assert.equal(await readFile(path, "utf8"), capped);
       const after = JSON.parse(await readFile(path, "utf8")) as typeof m;
       assert.equal(after.writtenQueries.flatMap((q) => q.judgements ?? []).length, 5);
       assert.match(await cli("--provider", "scripted"), /every candidate is judged/);

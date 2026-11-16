@@ -70,6 +70,11 @@ export interface BenchOptions {
   /** Count of timed queries per speed measure. */
   timedQueries?: number;
   freshnessFiles?: number;
+  /**
+   * Accept relevance judged by the offline scripted judge: the fixture run and tests only. The
+   * real manifest's judgements must come from a model shown the image.
+   */
+  scriptedJudgements?: boolean;
 }
 
 export function machine(): Machine {
@@ -255,8 +260,12 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   const newStore = o.newStore ?? (() => new MemoryStore());
   const padTo = o.padTo ?? 10_000;
   const timed = o.timedQueries ?? 50;
-  // By words reads only judged relevance: refuse a manifest whose labels are rule-made or unjudged.
-  const labelProblems = wordsLabelProblems(manifest);
+  // By words reads only judged relevance: refuse a manifest whose labels are rule-made, unjudged,
+  // scripted outside the fixture, or pooled by another embedder than the one scored here.
+  const labelProblems = wordsLabelProblems(manifest, {
+    embedder,
+    scriptedJudgements: o.scriptedJudgements === true,
+  });
   if (labelProblems.length > 0)
     throw new Error(
       `the written queries cannot be scored by words:\n${labelProblems.slice(0, 10).join("\n")}`,

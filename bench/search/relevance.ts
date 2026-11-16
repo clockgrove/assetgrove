@@ -11,7 +11,13 @@ import { VercelGateway } from "../../src/gateway/vercel.ts";
 import { indexLibrary, RANKINGS, rankingsFor } from "./bench.ts";
 import { forVision } from "./card-text.ts";
 import type { ImageSource } from "./fetch.ts";
-import { unjudged, type Judgement, type Manifest, type WrittenQuery } from "./manifest.ts";
+import {
+  SCRIPTED_JUDGE_MODEL,
+  unjudged,
+  type Judgement,
+  type Manifest,
+  type WrittenQuery,
+} from "./manifest.ts";
 
 /**
  * Top results taken from each ranking into a query's pool. The bench scores the top 5; 10 leaves
@@ -122,7 +128,10 @@ export class ScriptedJudge implements RelevanceJudge {
     const caption = new Set(words(Buffer.from(r.image).toString("utf8")));
     const asked = words(r.query);
     const hit = asked.filter((w) => caption.has(w)).length;
-    return { probability: asked.length === 0 ? 0 : hit / asked.length, model: "scripted-judge" };
+    return {
+      probability: asked.length === 0 ? 0 : hit / asked.length,
+      model: SCRIPTED_JUDGE_MODEL,
+    };
   }
 }
 
@@ -188,6 +197,8 @@ export async function judgeRelevance(o: JudgeOptions): Promise<{ judged: number;
   const record = judgePromptRecord(prompt, question);
   const key = createHash("sha256").update(record).digest("hex").slice(0, 12);
   const maxCalls = o.maxCalls ?? Number.POSITIVE_INFINITY;
+  if (!(maxCalls === Number.POSITIVE_INFINITY || (Number.isInteger(maxCalls) && maxCalls >= 0)))
+    throw new Error(`the call cap must be a non-negative integer, not ${maxCalls}`);
   const todo = o.manifest.writtenQueries.flatMap((q) => unjudged(q).map((image) => ({ q, image })));
   const calls = Math.min(todo.length, maxCalls);
   o.onPlan?.(calls, todo.length);

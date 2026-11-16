@@ -116,18 +116,51 @@ export function unjudged(q: WrittenQuery): string[] {
   return (q.candidates ?? []).filter((c) => !judged.has(c));
 }
 
+/** The model name the offline `ScriptedJudge` records: a word match, never a judgement of an image. */
+export const SCRIPTED_JUDGE_MODEL = "scripted-judge";
+
+export interface WordsLabelOptions {
+  /**
+   * The embedder the bench scores with. A query pooled by another embedder or revision is refused:
+   * its pool is not the top results of the rankings the bench then scores.
+   */
+  embedder?: { id: string; revision: string };
+  /**
+   * Accept judgements by the offline scripted judge. Only the offline fixture run and tests set it:
+   * on the real manifest its "image" is words about the pack and category, a name match.
+   */
+  scriptedJudgements?: boolean;
+}
+
 /**
  * Why the manifest cannot be scored by words: a query that still holds a rule-made `relevant`
- * list, has no candidate pool, or has candidates not yet judged. Empty means it can be.
+ * list, has no candidate pool, was pooled by another embedder than the bench's, has candidates not
+ * yet judged, or holds scripted judgements outside the offline fixture. Empty means it can be.
  */
-export function wordsLabelProblems(m: Manifest): string[] {
+export function wordsLabelProblems(m: Manifest, o: WordsLabelOptions = {}): string[] {
   const problems: string[] = [];
   for (const q of m.writtenQueries) {
-    if (q.relevant !== undefined)
+    if (q.relevant !== undefined) {
       problems.push(`written query ${q.id} holds rule-made relevance labels (relevant)`);
-    else if (q.candidates === undefined) problems.push(`written query ${q.id} is not pooled`);
-    else if (unjudged(q).length > 0)
+      continue;
+    }
+    if (q.candidates === undefined) {
+      problems.push(`written query ${q.id} is not pooled`);
+      continue;
+    }
+    if (
+      o.embedder !== undefined &&
+      (q.pooledBy?.embedder !== o.embedder.id || q.pooledBy?.revision !== o.embedder.revision)
+    )
+      problems.push(
+        `written query ${q.id} was pooled by ${q.pooledBy ? `${q.pooledBy.embedder}@${q.pooledBy.revision}` : "an unrecorded embedder"}, not the bench's ${o.embedder.id}@${o.embedder.revision}`,
+      );
+    if (unjudged(q).length > 0)
       problems.push(`written query ${q.id} has ${unjudged(q).length} candidates not judged`);
+    if (!o.scriptedJudgements && (q.judgements ?? []).some((j) => j.model === SCRIPTED_JUDGE_MODEL))
+      problems.push(
+        `written query ${q.id} holds judgements by ${SCRIPTED_JUDGE_MODEL}, a word match, not a judgement of the image`,
+      );
   }
   return problems;
 }

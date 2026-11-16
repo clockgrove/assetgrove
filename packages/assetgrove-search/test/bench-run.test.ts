@@ -39,6 +39,7 @@ describe("bench on the 20-image fixture", () => {
       bars,
       padTo: 10_000,
       timedQueries: 5,
+      scriptedJudgements: true,
     });
     assert.deepEqual(report.entries.map((e) => e.bar).sort(), [...bars.keys()].sort());
     for (const e of report.entries) {
@@ -74,6 +75,7 @@ describe("bench on the 20-image fixture", () => {
         padTo: 0,
         timedQueries: 1,
         freshnessFiles: 1,
+        scriptedJudgements: true,
       });
     };
     await assert.rejects(
@@ -87,6 +89,34 @@ describe("bench on the 20-image fixture", () => {
     await assert.rejects(
       run((m) => m.writtenQueries[2]!.judgements!.pop()),
       /wq-3 has 1 candidates not judged/,
+    );
+    // A pool ranked by another embedder or revision is not the top results the bench scores.
+    await assert.rejects(
+      run((m) => (m.writtenQueries[0]!.pooledBy!.embedder = "siglip2")),
+      /wq-1 was pooled by siglip2@1, not the bench's scripted@1/,
+    );
+    await assert.rejects(
+      run((m) => (m.writtenQueries[1]!.pooledBy!.revision = "0")),
+      /wq-2 was pooled by scripted@0/,
+    );
+    await assert.rejects(
+      run((m) => delete m.writtenQueries[2]!.pooledBy),
+      /wq-3 was pooled by an unrecorded embedder/,
+    );
+  });
+
+  it("refuses scripted judgements outside the offline fixture run", async () => {
+    await assert.rejects(
+      runBench({
+        manifest: await readManifest(fixtureUrl),
+        source: fixtureSource(),
+        embedder: new ScriptedEmbedder(),
+        bars: await readBars(),
+        padTo: 0,
+        timedQueries: 1,
+        freshnessFiles: 1,
+      }),
+      /wq-1 holds judgements by scripted-judge, a word match/,
     );
   });
 });
@@ -308,7 +338,14 @@ describe("the by-look library", () => {
     const source: ImageSource = {
       bytes: async (image) => base.bytes({ ...image, id: captions.get(image.id) ?? image.id }),
     };
-    const opts = { manifest, embedder: new ScriptedEmbedder(), bars, padTo: 0, timedQueries: 1 };
+    const opts = {
+      manifest,
+      embedder: new ScriptedEmbedder(),
+      bars,
+      padTo: 0,
+      timedQueries: 1,
+      scriptedJudgements: true,
+    };
     const alone = await runBench({ ...opts, source: base, freshnessFiles: 1 });
     const inFull = await runBench({ ...opts, source, lookLibrary: look, freshnessFiles: 1 });
     const get = (r: typeof alone, id: string) => r.entries.find((e) => e.bar === id)!;
@@ -337,6 +374,7 @@ describe("the by-look library", () => {
         padTo: 0,
         timedQueries: 1,
         freshnessFiles: 1,
+        scriptedJudgements: true,
       }),
       /not in the look library/,
     );
@@ -365,6 +403,7 @@ describe("bench on LanceStore", () => {
         padTo: 200,
         timedQueries: 2,
         freshnessFiles: 10,
+        scriptedJudgements: true,
       });
       assert.deepEqual(report.entries.map((e) => e.bar).sort(), [...bars.keys()].sort());
       assert.equal(report.entries.find((e) => e.bar === "filters-rebuild")?.pass, true);

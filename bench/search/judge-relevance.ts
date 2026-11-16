@@ -114,7 +114,10 @@ if (values.sample) {
   }
 } else {
   const provider = values.provider;
-  const maxCalls = Number(values["max-calls"]);
+  const cap = values["max-calls"] as string;
+  // A cap that is not a whole number of calls is refused: a negative one would slice from the end.
+  if (!/^\d+$/.test(cap)) throw new Error(`--max-calls must be a non-negative integer, not ${cap}`);
+  const maxCalls = Number(cap);
   let judge: RelevanceJudge | undefined;
   let source: ImageSource | undefined;
   if (provider === "scripted") {

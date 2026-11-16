@@ -61,7 +61,7 @@ if (values.fixture) {
   manifest = await readManifest(values.manifest as string);
   // Shipped mode needs a written card text per image: refuse rather than measure without them.
   // By words needs every pooled candidate judged, and no rule-made label left.
-  const problems = [...checkManifest(manifest), ...wordsLabelProblems(manifest)];
+  const problems = [...checkManifest(manifest), ...wordsLabelProblems(manifest, { embedder })];
   if (problems.length > 0) {
     console.error(`the manifest is not ready to measure:\n${problems.slice(0, 10).join("\n")}`);
     process.exit(1);
@@ -84,7 +84,17 @@ const newStore = async (): Promise<Store> => {
   return s;
 };
 try {
-  const report = await runBench({ manifest, source, embedder, bars, padTo, lookLibrary, newStore });
+  const report = await runBench({
+    manifest,
+    source,
+    embedder,
+    bars,
+    padTo,
+    lookLibrary,
+    newStore,
+    // Only the offline fixture is judged by the scripted judge.
+    scriptedJudgements: values.fixture === true,
+  });
   for (const line of formatReport(report)) console.log(line);
 } finally {
   for (const s of stores) s.close();
