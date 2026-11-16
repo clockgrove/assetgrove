@@ -5,7 +5,7 @@
 import "./fixtures/env.ts";
 import { approve, approveProfile, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, readFile, readdir, symlink, writeFile } from "node:fs/promises";
@@ -23,6 +23,7 @@ import type { ReviewRecord } from "../src/library/review.ts";
 import { DIGITAL_SOURCE_TYPES, readDigitalSourceType } from "../src/metadata.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { AssetSpec, TargetProfile } from "../src/types.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
@@ -91,7 +92,7 @@ async function pickedStill(
   validator?: string,
 ): Promise<Picked> {
   const world = await syntheticWorld();
-  execFileSync("git", ["init", "-q", world.targetDir]);
+  gitTarget(world.targetDir);
   const profile: Partial<TargetProfile> = {
     layout: {
       media: "props/{{spec.assetId}}.{{output.extension}}",
