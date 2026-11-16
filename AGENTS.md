@@ -26,3 +26,11 @@ Assetgrove is a public repository. These rules apply to every contributor, human
 ## Tests
 
 Tests use a scripted generation provider and never call a real model by default. Real-provider checks are opt-in and skip cleanly without a key.
+
+The merge queue runs the whole suite on Linux, macOS and Windows; a pull request runs Linux only. Write code and tests that hold on all three:
+
+- Compare files and folders by real path, never by the path as typed. macOS keeps its temp folder behind a symlink (`/var` is `/private/var`) and Windows can hand back an 8.3 short name, so a typed path and Git's top level differ for the same folder.
+- A test that makes a temp folder takes its real path first (`realpathSync(await mkdtemp(...))`) when it will compare paths or ask Git about the folder.
+- Don't assume `/` in a path the system returns, a POSIX signal name on a killed process, or that a folder named for one system exists on another.
+
+Reason: a failure only macOS or Windows shows is not seen until the merge queue, and each one costs a queue run and a fix.
