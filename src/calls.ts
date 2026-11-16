@@ -434,7 +434,12 @@ export class Caller {
     }
     const record = this.records[this.records.length - 1] as CallRecord;
     try {
-      record.decision = decisionLog(question, result, Math.round(performance.now() - started));
+      record.decision = decisionLog(
+        question,
+        result,
+        Math.round(performance.now() - started),
+        `${operation} (${record.model})`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.log(
@@ -456,6 +461,7 @@ function decisionLog(
   question: DecisionQuestion,
   result: DecisionResult,
   latencyMs: number,
+  call: string,
 ): DecisionLog {
   const { answer } = result;
   if (question.type === "score" && answer.type === "score") {
@@ -499,5 +505,7 @@ function decisionLog(
       latencyMs,
     };
   }
-  throw new ProviderError(`the decision answer is a ${answer.type}, not a ${question.type}`);
+  throw new ProviderError(
+    `the provider answered ${call}'s ${question.type} question with a ${answer.type}: a provider's decide() answers the type each question asks (docs/generation-knobs.md, provider scripts)`,
+  );
 }
