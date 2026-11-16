@@ -29,6 +29,7 @@ import { defaultRoutes } from "../src/routes.ts";
 import { importSheet, writeFamilies } from "../src/sheet/import.ts";
 import type { Grouping } from "../src/sheet/types.ts";
 import type { Provenance, TargetProfile } from "../src/types.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { syntheticCharacter } from "./fixtures/glb.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import {
@@ -324,6 +325,7 @@ const MARKING_VALIDATOR = [
 /** Stages one candidate through the CLI with `profile`, and returns a `pick` of it. */
 async function stagedPick(change: (profile: TargetProfile) => void) {
   const world = await syntheticWorld();
+  gitTarget(world.targetDir);
   world.profile.validator = { command: MARKING_VALIDATOR };
   change(world.profile);
   approveProfile(world.profile, { targetDir: world.targetDir });
@@ -418,7 +420,11 @@ test("invalid preset options exit 2 with nothing written", async () => {
     const r = await run();
     assert.equal(r.code, 2, `${JSON.stringify(handoff)}: ${r.stderr}`);
     assert.equal(doc(r)["error"].code, "invalid_input");
-    assert.deepEqual(await readdir(world.targetDir), [], JSON.stringify(handoff));
+    assert.deepEqual(
+      await readdir(world.targetDir),
+      [".git", ".gitattributes"],
+      JSON.stringify(handoff),
+    );
   }
 });
 
@@ -428,7 +434,7 @@ async function staged3d(change: (profile: TargetProfile) => void, registry?: Pre
   const runDir = join(dir, "run");
   const targetDir = join(dir, "target");
   await mkdir(runDir, { recursive: true });
-  await mkdir(targetDir, { recursive: true });
+  gitTarget(targetDir);
   const glb = syntheticCharacter();
   await writeFile(join(runDir, "fox.glb"), glb);
   const candidate: StagedCandidate = {
@@ -481,7 +487,7 @@ async function confirmedImport(
 ) {
   const dir = await target();
   const targetDir = join(dir, "target");
-  await mkdir(targetDir);
+  gitTarget(targetDir);
   const profile = syntheticProfile({ validator: { command: MARKING_VALIDATOR } });
   change(profile);
   approveProfile(profile, { targetDir });
@@ -594,7 +600,7 @@ test("a character-3d pick and a write-families run go through the same pipeline"
     );
     assert.equal(outcome.exitCode, 2);
     assert.equal(outcome.error?.code, "invalid_input");
-    assert.deepEqual(await readdir(targetDir), []);
+    assert.deepEqual(await readdir(targetDir), [".git", ".gitattributes"]);
   }
 
   // Both stop at a failed check, before the validator.

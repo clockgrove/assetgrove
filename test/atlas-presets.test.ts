@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -244,6 +245,7 @@ test("a profile selecting atlas-json hands off a sprite-strip pick with the scri
   delete world.profile.validator;
   world.profile.handoff = [{ preset: "atlas-json", options: { shape: "array" } }];
   approveProfile(world.profile, { targetDir: world.targetDir });
+  gitTarget(world.targetDir);
   const spec = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
   const profile = join(world.dir, "profile.json");

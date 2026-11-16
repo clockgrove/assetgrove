@@ -18,6 +18,7 @@ import {
   writeReview,
 } from "../src/library/review.ts";
 import type { AssetSpec } from "../src/types.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
@@ -97,7 +98,7 @@ async function library(
   gitattributes = LFS,
 ): Promise<Library> {
   const world = await syntheticWorld();
-  execFileSync("git", ["init", "-q", world.targetDir]);
+  gitTarget(world.targetDir);
   await writeFile(join(world.targetDir, ".gitattributes"), gitattributes);
   Object.assign(world.profile, {
     layout: {

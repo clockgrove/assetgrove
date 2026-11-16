@@ -97,13 +97,17 @@ function existingDir(dir: string): string {
   return at;
 }
 
-/** Whether `dir` or an ancestor holds a `.git` entry (a directory, or a worktree's file). */
-function insideGit(dir: string): boolean {
-  if (gitDirSet()) return true;
+/**
+ * The directory at or above `dir` that holds a `.git` entry (a directory, or a worktree's file);
+ * `dir` itself when GIT_DIR is set; undefined outside Git. Git runs from there, not from a
+ * deeper directory that Windows cannot enter past 260 characters.
+ */
+function insideGit(dir: string): string | undefined {
+  if (gitDirSet()) return dir;
   let at = dir;
   for (;;) {
-    if (existsSync(join(at, ".git"))) return true;
-    if (dirname(at) === at) return false;
+    if (existsSync(join(at, ".git"))) return at;
+    if (dirname(at) === at) return undefined;
     at = dirname(at);
   }
 }
@@ -128,8 +132,8 @@ function unscannable(step: string, result: ReturnType<typeof spawnSync>): KeyTra
  * entry is at or above it. Inside one, a git that cannot answer is a refusal, never a pass.
  */
 function topLevel(dir: string): string | undefined {
-  const at = existingDir(dir);
-  if (!insideGit(at)) return undefined;
+  const at = insideGit(existingDir(dir));
+  if (at === undefined) return undefined;
   const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: at, encoding: "utf8" });
   if (result.error || result.status !== 0 || !result.stdout.trim()) {
     throw unscannable("rev-parse", result);

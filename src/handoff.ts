@@ -7,6 +7,7 @@ import {
   resolveSigner,
 } from "./credentials.ts";
 import type { ContentSigner, SignerRecord } from "./credentials.ts";
+import { requireLfsMedia } from "./gitlfs.ts";
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
@@ -71,6 +72,8 @@ export interface PickOptions {
   confirmation?: ConfirmationRecord;
   /** The version the confirmed pick replaces (sha256), or null for a first pick (TargetWrite.replaces). */
   replaces?: string | null;
+  /** Refuse, before writing, media Git does not send to LFS (TargetWrite.requireLfs). */
+  requireLfs?: boolean;
 }
 
 export interface PickResult {
@@ -215,6 +218,11 @@ function libraryFiles(plan: LibraryPlan): string[] {
 
 /** What a hand-off writes: one media file with its fields and provenance. */
 export interface TargetWrite {
+  /**
+   * Before anything is written, ask Git (`check-attr filter`) whether the media and its image
+   * sidecars go to LFS: outside a work tree exit 2 `git_required`, else `lfs_required`.
+   */
+  requireLfs?: boolean;
   profile: TargetProfile;
   spec: AssetSpec;
   bibleVersion: string;
@@ -552,6 +560,20 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   if (provenancePath && provenanceBytes !== undefined)
     writes.push([provenancePath, provenanceBytes]);
   // Before anything is written: the asset id is free and the library's own files are readable.
+  if (write.requireLfs) {
+    requireLfsMedia([
+      mediaPath,
+      ...(write.output.sidecars ?? [])
+        .map((sidecar, i) => [sidecar, sidecarRels[i] as string] as const)
+        .filter(
+          ([sidecar]) =>
+            !sidecar.mediaType.startsWith("text/") &&
+            sidecar.mediaType !== "application/json" &&
+            !sidecar.mediaType.endsWith("+json"),
+        )
+        .map(([, rel]) => targetPath(guard, rel)),
+    ]);
+  }
   const library = await prepareLibraryWrite({
     profile,
     spec,
@@ -897,6 +919,7 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     ...(options.registry && { registry: options.registry }),
     ...(options.confirmation && { confirmation: options.confirmation }),
     ...(options.replaces !== undefined && { replaces: options.replaces }),
+    ...(options.requireLfs && { requireLfs: true }),
     candidateReview: {
       path: join(options.runDir, "reviews", `${candidate.id}.review.json`),
       root: resolve(options.runDir),

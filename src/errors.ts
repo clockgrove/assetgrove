@@ -24,6 +24,8 @@ export const EXIT = {
   invalid_input: 2,
   settings_invalid: 2,
   key_tracked: 2,
+  git_required: 2,
+  lfs_required: 2,
   format_unsupported: 2,
   extension_unavailable: 2,
   extension_refused: 2,

@@ -5,6 +5,7 @@
  * every resume, and by `Caller` for every paid call.
  */
 import "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import {
   HEADLESS_OPERATOR,
   approve,
@@ -312,6 +313,7 @@ test("a direct Caller paid call without a clearance exits 8", async () => {
 /** A bible, spec, profile and run options for plan and apply, with a free scripted provider. */
 async function planFiles() {
   const dir = await tempDir("assetgrove-confirm-plan-");
+  gitTarget(dir);
   const init = await cli([
     "init",
     "--directory",
@@ -432,6 +434,7 @@ test("plan then apply with unchanged inputs asks once; after a bible change or a
 test("with headless settings stage and pick run and record method headless and the operator; pick without --candidate exits 2", async () => {
   const { world, flags } = await stageRequest();
   approve(passingScript);
+  gitTarget(world.targetDir);
   approveProfile(world.profile, { targetDir: world.targetDir });
   const staged = await cli([
     "stage",
@@ -470,6 +473,7 @@ test("with headless settings stage and pick run and record method headless and t
 test("attended pick: no TTY exits 8 pending; confirm <id> chooses the candidate and the repeat writes it", async () => {
   const { world, flags } = await stageRequest();
   approve(passingScript);
+  gitTarget(world.targetDir);
   approveProfile(world.profile, { targetDir: world.targetDir });
   const staged = await cli([
     "stage",

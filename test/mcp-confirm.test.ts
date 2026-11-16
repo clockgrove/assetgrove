@@ -24,6 +24,7 @@ import { runCommand } from "../src/commands/runner.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { decodeImage, encodePng } from "../src/image/raster.ts";
 import { loadSettings } from "../src/settings.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -116,6 +117,7 @@ let rounds = 0;
 async function stageWorld() {
   const world = await syntheticWorld();
   temporary.push(world.dir);
+  gitTarget(world.targetDir);
   const spec = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
   const profile = join(world.dir, "profile.json");
