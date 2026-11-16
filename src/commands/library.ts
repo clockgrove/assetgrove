@@ -278,24 +278,38 @@ async function prepareJudge(args: JudgeStaleArgs, ctx: RunContext) {
   const cache = new StalenessCache(ctx.settings.stateDir);
   const state = await readLibrary(profile, targetDir);
   // The exact count, by the rule drift uses, before --asset narrows what is judged.
-  const otherVersion = (await libraryDrift(state, bible)).otherVersion.length;
+  const others = (await libraryDrift(state, bible)).otherVersion;
+  const otherVersion = others.length;
   let subjects = staleSubjects(state, bible);
   const named = args.asset ?? [];
-  for (const id of named)
-    if (!subjects.some((s) => s.asset === id))
+  for (const id of named) {
+    if (subjects.some((s) => s.asset === id)) continue;
+    if (others.some((o) => o.asset === id && o.sha256 === null))
       throw new InputError(
-        `"${id}" is not an asset made under another bible version than ${bible}`,
+        `"${id}" was made under another bible version than ${bible}, but its card has no lock.sha256 to cache a judgement by, so it cannot be judged`,
       );
+    throw new InputError(`"${id}" is not an asset made under another bible version than ${bible}`);
+  }
   if (named.length > 0) subjects = subjects.filter((s) => named.includes(s.asset));
-  // An asset whose thumbnail cannot be made here (a Git LFS pointer, an undecodable file, a GLB
-  // with no turntable renders) is not judged: it stays unjudged until its bytes are here.
-  const pending: { subject: StaleSubject; images: LoadedReference[] }[] = [];
+  // An asset whose version the bible's Git history does not hold (or whose diff cannot be made)
+  // has no change to show, and one whose thumbnail cannot be made here (a Git LFS pointer, an
+  // undecodable file, a GLB with no turntable renders) has no image: neither is judged, and each
+  // stays unjudged until its change or its bytes are here.
+  const pending: { subject: StaleSubject; images: LoadedReference[]; change: BibleChange }[] = [];
+  const noHistory: string[] = [];
   const noThumbnail: string[] = [];
+  const changes = new Map<string, BibleChange | undefined>();
   for (const subject of subjects) {
     if (cache.get(subject.sha256, subject.from, bible) !== undefined) continue;
+    if (!changes.has(subject.from)) changes.set(subject.from, bibleChange(biblePath, subject.from));
+    const change = changes.get(subject.from);
+    if (change === undefined) {
+      noHistory.push(subject.asset);
+      continue;
+    }
     const images = await stalenessThumbnail(subject);
     if (images.length === 0) noThumbnail.push(subject.asset);
-    else pending.push({ subject, images });
+    else pending.push({ subject, images, change });
   }
   // One call per asset sha256 and version pair: two cards of the same media share an answer.
   const keys = [...new Set(pending.map(({ subject: s }) => JSON.stringify([s.sha256, s.from])))];
@@ -309,12 +323,13 @@ async function prepareJudge(args: JudgeStaleArgs, ctx: RunContext) {
       bible: sha256Hex(readFileSync(biblePath)),
       pending: sha256Hex(
         canonicalJson(
-          pending.map(({ subject: s, images }) => [
+          pending.map(({ subject: s, images, change }) => [
             s.asset,
             s.sha256,
             s.from,
             s.media,
             images[0]?.sha256 ?? null,
+            sha256Hex(change.diff),
           ]),
         ),
       ),
@@ -332,6 +347,7 @@ async function prepareJudge(args: JudgeStaleArgs, ctx: RunContext) {
     otherVersion,
     subjects,
     pending,
+    noHistory,
     noThumbnail,
     provider,
     work,
@@ -346,8 +362,8 @@ export const libraryJudgeStaleCommand = defineCommand<JudgeStaleArgs>({
 cached, makes one bible-staleness decision: given the bible's diff between the two versions (from
 the bible file's Git history), the asset's kind, subject and tags, and its thumbnail, should it be
 redone? Each answer is cached by the asset's sha256 and the version pair in <stateDir>/staleness/,
-where library drift and asset://<game>/stale/ read it. An asset with no thumbnail on this machine
-is not judged. A paid command: plan step, forecast,
+where library drift and asset://<game>/stale/ read it. An asset with no thumbnail on this machine,
+or whose version the bible's Git history does not hold, is not judged. A paid command: plan step, forecast,
 confirmation and caps. See docs/library.md.`,
   input: {
     type: "object",
@@ -397,12 +413,12 @@ confirmation and caps. See docs/library.md.`,
   plan: async (args, ctx) => (await prepareJudge(args, ctx)).work,
   async run(args, ctx) {
     const {
-      biblePath,
       bible,
       cache,
       otherVersion,
       subjects,
       pending,
+      noHistory,
       noThumbnail,
       provider,
       work,
@@ -424,14 +440,8 @@ confirmation and caps. See docs/library.md.`,
       `${calls} staleness judgements`,
     );
     const caller = new Caller({ provider, budget, routes, log: ctx.log });
-    const changes = new Map<string, BibleChange>();
-    for (const { subject, images } of pending) {
+    for (const { subject, images, change } of pending) {
       if (cache.get(subject.sha256, subject.from, bible) !== undefined) continue;
-      let change = changes.get(subject.from);
-      if (change === undefined) {
-        change = bibleChange(biblePath, subject.from);
-        changes.set(subject.from, change);
-      }
       await judgeStaleness(caller, subject, bible, change, cache, images);
     }
     const judgedNow = new Set(pending.map(({ subject }) => subject));
@@ -444,7 +454,6 @@ confirmation and caps. See docs/library.md.`,
         sha256: s.sha256,
         redo: answer.redo,
         ...(answer.probability !== undefined && { probability: answer.probability }),
-        history: answer.history,
         cached: !judgedNow.has(s),
       };
     });
@@ -454,12 +463,18 @@ confirmation and caps. See docs/library.md.`,
       otherVersion,
       judged,
       stale: stale.map((j) => j.asset),
+      noHistory,
       noThumbnail,
       spentUsd: budget.spentUsd,
     };
     const human = [
       `style bible version: ${bible}`,
       `made under another bible version: ${otherVersion} (${pending.length} judged now, ${judged.length - pending.length} cached)`,
+      ...(noHistory.length > 0
+        ? [
+            `not judged, the bible's Git history holds no text of their version: ${noHistory.join(", ")}`,
+          ]
+        : []),
       ...(noThumbnail.length > 0
         ? [`not judged, no thumbnail on this machine: ${noThumbnail.join(", ")}`]
         : []),

@@ -98,13 +98,11 @@ test("the bible's change between two versions comes from its Git history", () =>
   writeBible("4", "blue");
   try {
     const change = bibleChange(bible, "3");
-    assert.match(change.commit ?? "", /^[0-9a-f]{40}/);
-    assert.match(change.diff, /^-Lanterns glow amber\.$/m);
-    assert.match(change.diff, /^\+Lanterns glow blue\.$/m);
-    const missing = bibleChange(bible, "never");
-    assert.equal(missing.commit, null);
-    assert.match(missing.diff, /holds no text of version "never"/);
-    assert.match(missing.diff, /Lanterns glow blue\./);
+    assert.match(change?.commit ?? "", /^[0-9a-f]{40}/);
+    assert.match(change?.diff ?? "", /^-Lanterns glow amber\.$/m);
+    assert.match(change?.diff ?? "", /^\+Lanterns glow blue\.$/m);
+    // No text of the version in the history: no change to show, so nothing is judged.
+    assert.equal(bibleChange(bible, "never"), undefined);
   } finally {
     writeBible("3", "amber");
   }
@@ -299,6 +297,59 @@ test("an asset with no thumbnail on this machine is left unjudged: no call, noth
     assert.equal(drift["otherVersion"].find((o: Doc) => o.asset === "rock").judgement, "unjudged");
   } finally {
     writeFileSync(rock, bytes);
+    writeBible("3", "amber");
+  }
+});
+
+test("an asset whose version the bible's history does not hold is left unjudged: no call, nothing cached", async () => {
+  // A bible outside Git: its history holds no text of the cards' versions, so no change can be shown.
+  const outside = join(lib.dir, "..", `bible-outside-${process.pid}.md`);
+  writeFileSync(outside, "---\nversion: 9\n---\n# Bible\n\n- Lanterns glow blue.\n");
+  try {
+    const before = judgeCalls();
+    const result = doc(await judge("--bible", outside, "--round", "9"));
+    assert.equal(result["otherVersion"], 6);
+    assert.equal((result["noHistory"] as string[]).length, 6);
+    assert.deepEqual(result["judged"], []);
+    assert.deepEqual(result["stale"], []);
+    assert.equal(judgeCalls(), before, "no call is made without the bible's change");
+    const drift = doc(await cli(["library", "drift", ...target, "--bible", outside, "--json"]));
+    assert.ok(drift["otherVersion"].every((o: Doc) => o.judgement === "unjudged"));
+  } finally {
+    await rm(outside, { force: true });
+  }
+});
+
+test("--asset naming a card with no lock.sha256 is refused for that reason, not as current", async () => {
+  writeBible("4", "blue");
+  const find = (dir: string): string | undefined => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === ".git" || e.name === ".assetgrove") continue;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        const hit = find(p);
+        if (hit) return hit;
+      } else if (e.name === "rock.md") return p;
+    }
+    return undefined;
+  };
+  const card = find(lib.dir)!;
+  const text = readFileSync(card, "utf8");
+  assert.match(text, /^lock: .*\n/m);
+  writeFileSync(card, text.replace(/^lock: .*\n/m, ""));
+  try {
+    const drift = doc(await cli(["library", "drift", ...target, "--json"]));
+    assert.equal(drift["otherVersion"].find((o: Doc) => o.asset === "rock").sha256, null);
+    const refused = await judge("--asset", "rock", "--dry-run");
+    assert.equal(refused.code, 2, refused.stdout + refused.stderr);
+    assert.match(refused.stdout + refused.stderr, /no lock\.sha256/);
+    const current = await judge("--asset", "nothing-here", "--dry-run");
+    assert.match(
+      current.stdout + current.stderr,
+      /is not an asset made under another bible version/,
+    );
+  } finally {
+    writeFileSync(card, text);
     writeBible("3", "amber");
   }
 });

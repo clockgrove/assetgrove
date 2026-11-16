@@ -115,7 +115,8 @@ export function compileFilter(terms: FilterTerm[]): string | undefined {
 
 /**
  * The order `<` and `>` filters compare values in: numeric collation, so "2" comes before "10" and
- * "v3" before "v10". It is core's `newer()` (src/library/write.ts), the order of the stale view.
+ * "v3" before "v10". It is core's `newer()` (src/library/write.ts), which orders the root log's
+ * `bible` lines; the stale view has no version order (#366: versions are compared for equality).
  */
 export function compareVersions(a: string, b: string): number {
   return a.localeCompare(b, "en", { numeric: true });

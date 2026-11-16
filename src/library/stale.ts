@@ -57,10 +57,10 @@ export interface StalenessAnswer {
   /** The probability the model gave that it should be redone, when it reported one. */
   probability?: number;
   /**
-   * True when the call was given the bible's diff from its Git history; false when the history
-   * held no text of `from` and the call was given the current bible instead.
+   * True: the call was given the bible's diff from its Git history (an asset whose version the
+   * history does not hold, or whose diff cannot be made, is left unjudged).
    */
-  history: boolean;
+  history: true;
   /** True: the call was shown the asset's thumbnail (an asset with none is left unjudged). */
   thumbnail: true;
   model: string;
@@ -90,6 +90,7 @@ export class StalenessCache {
         value.from !== from ||
         value.to !== to ||
         typeof value.redo !== "boolean" ||
+        value.history !== true ||
         value.thumbnail !== true
       )
         return undefined;
@@ -146,19 +147,19 @@ function cut(text: string): string {
 
 /** The bible's text at an earlier version, from its Git history. */
 export interface BibleChange {
-  /** The commit whose bible text has the earlier version; null when the history holds none. */
-  commit: string | null;
-  /** The unified diff from that text to the current file, or what the call is told instead. */
+  /** The commit whose bible text has the earlier version. */
+  commit: string;
+  /** The unified diff from that text to the current file, or a note that the two texts match. */
   diff: string;
 }
 
 /**
  * The bible's change from version `from` to its current text: the newest commit of the bible
- * file whose text carries `from`, diffed with `git diff` against the working file. When no commit
- * holds that version (the file was never committed at it, or it is outside Git), the change says
- * so and gives the current text.
+ * file whose text carries `from`, diffed with `git diff` against the working file. Undefined when
+ * no commit holds that version (the file was never committed at it, or it is outside Git) or the
+ * diff cannot be made: with no change to show, the asset is not judged.
  */
-export function bibleChange(biblePath: string, from: string): BibleChange {
+export function bibleChange(biblePath: string, from: string): BibleChange | undefined {
   const dir = dirname(biblePath);
   const name = basename(biblePath);
   const json = extname(name).toLowerCase() === ".json";
@@ -169,29 +170,16 @@ export function bibleChange(biblePath: string, from: string): BibleChange {
     const text = git(dir, ["show", `${commit}:./${name}`]);
     if (text === undefined || bibleVersionOfText(text, json) !== from) continue;
     const diff = git(dir, ["diff", "--no-color", "--no-ext-diff", commit, "--", name]);
+    if (diff === undefined) return undefined;
     return {
       commit,
       diff:
-        diff === undefined
-          ? `The diff from version "${from}" could not be made.`
-          : diff.trim() === ""
-            ? "The bible's text is the same as at that version; only its version line may differ."
-            : cut(diff),
+        diff.trim() === ""
+          ? "(none: the bible's text is the same as at that version, and the same as its working file)"
+          : cut(diff),
     };
   }
-  let current = "";
-  try {
-    current = readFileSync(biblePath, "utf8");
-  } catch {
-    // Nothing to show.
-  }
-  return {
-    commit: null,
-    diff: cut(
-      `The bible's Git history holds no text of version "${from}", so its change cannot be shown. ` +
-        `The current bible is:\n${current}`,
-    ),
-  };
+  return undefined;
 }
 
 /** One asset made under another bible version, as the judgement needs it. */
@@ -267,7 +255,7 @@ export function stalenessPrompt(subject: StaleSubject, to: string, change: Bible
     `An asset in a game's library was made under version "${subject.from}" of the game's style bible (its art direction). The bible is now at version "${to}".`,
     `The asset: kind ${subject.kind ?? "unknown"}, subject ${subject.subject ?? "unknown"}, tags ${subject.tags.length > 0 ? subject.tags.join(", ") : "none"}.`,
     "The image is its thumbnail.",
-    `The bible's change between the two versions (a unified diff: - lines are version "${subject.from}", + lines are the current text):`,
+    `The bible's change between the two versions, as a unified diff from Git: only the first character of each line marks it, "-" for text only in version "${subject.from}", "+" for text only in the current bible, a space for text in both (so a Markdown bullet removed reads "-- ", one kept reads " - "):`,
     change.diff,
   ].join("\n");
 }
@@ -312,7 +300,7 @@ export async function judgeStaleness(
     to,
     redo: probability >= 0.5,
     probability: Math.round(probability * 1e4) / 1e4,
-    history: change.commit !== null,
+    history: true,
     thumbnail: true,
     model: record.model,
     at: now().toISOString(),
