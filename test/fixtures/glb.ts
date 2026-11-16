@@ -8,7 +8,8 @@ export interface SyntheticCharacterOptions {
   textureSize?: number;
   materials?: number;
   joints?: number;
-  clips?: Array<{ name: string; durationS: number; loopClosed: boolean }>;
+  /** `still`: every keyframe holds the rest pose, like a bind or T-pose take. */
+  clips?: Array<{ name: string; durationS: number; loopClosed: boolean; still?: boolean }>;
   /** When set, each clip also moves the last joint by this much along z by its last frame. */
   translationDrift?: number;
   heightUnits?: number;
@@ -248,7 +249,9 @@ export function syntheticCharacter(options: SyntheticCharacterOptions = {}): Uin
   const animations: NonNullable<GltfDocument["animations"]> = [];
   for (const clip of options.clips ?? []) {
     const times = [0, clip.durationS / 2, clip.durationS];
-    const angles = [0, 30, clip.loopClosed ? 0 : 20].map((deg) => (deg * Math.PI) / 180);
+    const angles = (clip.still ? [0, 0, 0] : [0, 30, clip.loopClosed ? 0 : 20]).map(
+      (deg) => (deg * Math.PI) / 180,
+    );
     const input = buffer.accessor(floats(times), {
       componentType: FLOAT,
       count: 3,

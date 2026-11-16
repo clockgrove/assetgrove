@@ -559,6 +559,34 @@ export function keepClips(glb: Glb, keep: number[]): void {
 }
 
 /**
+ * The animations whose keyframes change. A still take, such as a bind or T-pose take, holds every
+ * channel at one value from its first keyframe to its last; it is left out. No name is read.
+ */
+export function movingAnimations(glb: Glb, tolerance = 1e-5): number[] {
+  const moving: number[] = [];
+  (glb.json.animations ?? []).forEach((animation, index) => {
+    const moves = animation.samplers.some((sampler) => {
+      const keys = glb.json.accessors?.[sampler.input]?.count ?? 0;
+      if (keys < 2) return false;
+      const values = readAccessor(glb, sampler.output);
+      // A cubic spline stores in-tangent, value, out-tangent per keyframe; only values count.
+      const stride = sampler.interpolation === "CUBICSPLINE" ? 3 : 1;
+      const width = values.length / (keys * stride);
+      const at = stride === 3 ? width : 0;
+      for (let k = 1; k < keys; k++) {
+        for (let c = 0; c < width; c++) {
+          const first = values[at + c]!;
+          if (Math.abs(values[k * stride * width + at + c]! - first) > tolerance) return true;
+        }
+      }
+      return false;
+    });
+    if (moves) moving.push(index);
+  });
+  return moving;
+}
+
+/**
  * Copies one animation of `from` onto `base`: its keyframes become new float accessors at the end
  * of `base`'s binary chunk, and each channel's target node is the node of `base` with the same
  * name (or, when the name is missing or ambiguous and both have as many nodes, the same index).

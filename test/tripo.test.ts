@@ -4,6 +4,7 @@ import { ProviderError } from "../src/errors.ts";
 import type { ProviderSettings } from "../src/settings.ts";
 import { TripoProvider } from "../src/gateway/tripo.ts";
 import { createProvider } from "../src/providers/adapter.ts";
+import { syntheticCharacter } from "./fixtures/glb.ts";
 
 const KEY = "tsk_secret_key_123";
 const GLB = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0]);
@@ -173,6 +174,42 @@ test("rig and retarget bodies", async () => {
     bake_animation: true,
     export_with_geometry: true,
   });
+});
+
+test("a one-clip retarget with an extra bind take and generic names says which animation is the clip", async () => {
+  const glb = syntheticCharacter({
+    joints: 3,
+    clips: [
+      { name: "Armature|Take 001", durationS: 1, loopClosed: true, still: true },
+      { name: "Animation_0", durationS: 1, loopClosed: true },
+    ],
+  });
+  const one = await provider(fake({ glb })).animateModel({
+    model: "tripo",
+    source: "task-0",
+    clips: ["preset:quadruped:walk"],
+  });
+  assert.deepEqual(one.animations, { "preset:quadruped:walk": 1 });
+  // Two moving takes, or several clips in one call: the adapter cannot tell, so it says nothing.
+  const twoMoving = syntheticCharacter({
+    joints: 3,
+    clips: [
+      { name: "a", durationS: 1, loopClosed: true },
+      { name: "b", durationS: 1, loopClosed: false },
+    ],
+  });
+  const unsure = await provider(fake({ glb: twoMoving })).animateModel({
+    model: "tripo",
+    source: "task-0",
+    clips: ["preset:quadruped:walk"],
+  });
+  assert.equal(unsure.animations, undefined);
+  const many = await provider(fake({ glb })).animateModel({
+    model: "tripo",
+    source: "task-0",
+    clips: ["preset:quadruped:walk", "preset:quadruped:run"],
+  });
+  assert.equal(many.animations, undefined);
 });
 
 test("polls queued, running, then success with the injected sleep", async () => {
