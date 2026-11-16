@@ -288,8 +288,8 @@ export interface LibraryResult {
   /** Every library file this hand-off changed, relative to the target, in write order. */
   files: string[];
   /**
-   * Cards and review records that do not parse, relative to the target; their folders' `index.md`
-   * and `log.md` were left as they were. Absent when there are none.
+   * Cards and review records that do not parse, relative to the target; their assets' rows in
+   * `index.md` and `log.md` were kept as those files had them. Absent when there are none.
    */
   unreadable?: { file: string; code: "card_invalid" | "review_invalid" }[];
 }

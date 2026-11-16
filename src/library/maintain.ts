@@ -26,7 +26,9 @@ import type { Card } from "./card.ts";
 import {
   checkIndexPaths,
   checkLogPaths,
+  indexAssetsFor,
   logEntriesFromReview,
+  logLinesFor,
   normalizeLog,
   parseIndex,
   renderIndex,
@@ -390,11 +392,11 @@ export async function readLibrary(
 
   // Projections: every folder from the root to each card, from the cards found.
   const cards = assets.filter((a) => a.card);
-  // A folder holding a card that does not parse keeps its index and log as they are, and one holding
-  // a review record that does not parse keeps its log: rebuilt without that asset's rows, they would
-  // say less than the records do. The file is reported by name above.
-  const heldIndex = new Set(assets.filter((a) => a.unreadable === "card").map((a) => a.dir));
-  const heldLog = new Set(assets.filter((a) => a.unreadable).map((a) => a.dir));
+  // A card that does not parse keeps its asset's rows in its folder's index and log as they are,
+  // and a review record that does not parse keeps its asset's log lines: rebuilt without them, the
+  // projections would say less than the records do. The file is reported by name above.
+  const held = (folder: string, which: (a: Asset) => boolean) =>
+    new Set(assets.filter((a) => a.dir === folder && which(a)).map((a) => a.id));
   const listed = assets.filter((a) => a.card || a.unreadable === "card");
   // An empty library has no projections to keep: no cards, no index.
   const folderSet = new Set<string>(listed.length > 0 ? [config.root] : []);
@@ -414,41 +416,52 @@ export async function readLibrary(
     const children = folderList
       .filter((f) => f !== folder && dirname(f) === folder)
       .map((f) => basename(f));
+    const indexPath = join(folder, "index.md");
+    const keptIndex = indexAssetsFor(
+      await readText(indexPath),
+      held(folder, (a) => a.unreadable === "card"),
+    );
     const index = renderIndex({
       name,
       ...(isRoot && { root: { game: config.game } }),
       folders: children,
-      assets: here.map((c) => {
-        const data = c.card!.parsed.data as { title: string; description?: string };
-        return {
-          id: c.id,
-          title: data.title,
-          ...(data.description !== undefined && { description: data.description }),
-        };
-      }),
+      assets: here
+        .map((c) => {
+          const data = c.card!.parsed.data as { title: string; description?: string };
+          return {
+            id: c.id,
+            title: data.title,
+            ...(data.description !== undefined && { description: data.description }),
+          };
+        })
+        .concat(keptIndex),
     });
-    if (!heldIndex.has(folder))
-      expected.push({
-        path: join(folder, "index.md"),
-        kind: "index",
-        text: index,
-        normalise: (actual) => {
-          const parsed = parseIndex(actual, join(folder, "index.md"));
-          checkIndexPaths(parsed, config.root, folder, join(folder, "index.md"));
-          if (parsed.root && parsed.root.okfVersion !== "0.2") return "";
-          return renderIndex({
-            name,
-            ...(parsed.root && { root: { game: parsed.root.game } }),
-            folders: parsed.folders,
-            assets: parsed.assets.map((a) => ({
-              id: a.id,
-              title: a.title,
-              ...(a.description !== undefined && { description: a.description }),
-            })),
-          });
-        },
-      });
-    if (config.log && !heldLog.has(folder) && (here.length > 0 || (isRoot && bible.length > 0))) {
+    expected.push({
+      path: indexPath,
+      kind: "index",
+      text: index,
+      normalise: (actual) => {
+        const parsed = parseIndex(actual, indexPath);
+        checkIndexPaths(parsed, config.root, folder, indexPath);
+        if (parsed.root && parsed.root.okfVersion !== "0.2") return "";
+        return renderIndex({
+          name,
+          ...(parsed.root && { root: { game: parsed.root.game } }),
+          folders: parsed.folders,
+          assets: parsed.assets.map((a) => ({
+            id: a.id,
+            title: a.title,
+            ...(a.description !== undefined && { description: a.description }),
+          })),
+        });
+      },
+    });
+    const logPath = join(folder, "log.md");
+    const keptLog = logLinesFor(
+      await readText(logPath),
+      held(folder, (a) => a.unreadable !== undefined),
+    );
+    if (config.log && (here.length > 0 || keptLog.length > 0 || (isRoot && bible.length > 0))) {
       const entries: LogEntry[] = isRoot ? [...bible] : [];
       for (const c of here) {
         if (c.review) {
@@ -461,11 +474,11 @@ export async function readLibrary(
         }
       }
       expected.push({
-        path: join(folder, "log.md"),
+        path: logPath,
         kind: "log",
-        text: renderLog(entries),
+        text: renderLog(entries, keptLog),
         normalise: (actual) => {
-          checkLogPaths(actual, config.root, folder, join(folder, "log.md"));
+          checkLogPaths(actual, config.root, folder, logPath);
           return normalizeLog(actual);
         },
       });

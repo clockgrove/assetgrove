@@ -154,7 +154,7 @@ approves it. A human runs pick; agents never do.`,
       for (const file of files) lines.push(`wrote ${file}`);
       for (const { file, code } of result.library.unreadable ?? []) {
         lines.push(
-          `warning: ${file} does not parse (${code}); its folder's index.md and log.md were left as they were until it is fixed and library rebuild runs`,
+          `warning: ${file} does not parse (${code}); its rows in its folder's index.md and log.md were kept as they were until it is fixed and library rebuild runs`,
         );
       }
     }

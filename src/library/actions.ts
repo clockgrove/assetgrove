@@ -177,7 +177,7 @@ export interface AssetWrite {
   state: VersionStatus;
   /** Every file written, absolute, in write order. */
   files: string[];
-  /** Cards and review records that do not parse; their folders' index and log were left as they were. */
+  /** Cards and review records that do not parse; their rows in the index and log were kept as they were. */
   unreadable?: UnreadableRecord[];
 }
 

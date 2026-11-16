@@ -466,7 +466,13 @@ test("rebuild run twice on the round-trip fixture library changes nothing the se
       ...["--profile", join(fixture.dir, ".assetgrove", "profile.json"), "--json"],
     ]);
   const first = await rebuild();
-  assert.ok(doc(first)["rebuilt"] !== undefined, first.stdout + first.stderr);
+  // The root folder (lantern, rock, walk, boat, and escape.md, whose resource leaves the root) is
+  // among the projections rebuilt, as well as props/.
+  assert.deepEqual(
+    [...doc(first)["rebuilt"]].sort(),
+    ["index.md", "log.md", "props/index.md", "props/log.md"],
+    first.stdout + first.stderr,
+  );
   const second = await rebuild();
   assert.deepEqual(doc(second)["rebuilt"], [], second.stdout);
   assert.deepEqual(doc(second)["problems"], doc(first)["problems"]);
@@ -474,15 +480,17 @@ test("rebuild run twice on the round-trip fixture library changes nothing the se
 
 test("a neighbour's card or review record with conflict markers keeps the folder's index and log rows through rebuild and through a pick of another asset, and is named (#349)", async () => {
   const l = await library();
+  // The library root is the asset folder: its log also carries the bible lines.
   const indexPath = join(dir(l), "index.md");
   const logPath = join(dir(l), "log.md");
   let index = "";
   let log = "";
-  // The log is left as it is; the index keeps the neighbour's row (a review record does not feed it).
-  const unchanged = async (code: string) => {
-    if (code === "card_invalid") assert.equal(await text(indexPath), index);
-    else assert.match(await text(indexPath), /\[torch\]\(torch\.md\)/);
-    assert.equal(await text(logPath), log);
+  const rows = (t: string, id: string) => t.split("\n").filter((x) => x.includes(`](${id}.md)`));
+  const bibleLine = /bible synthetic-1 → synthetic-2$/m;
+  // Every row the neighbour had is still there.
+  const kept = async () => {
+    assert.deepEqual(rows(await text(indexPath), "torch"), rows(index, "torch"));
+    assert.deepEqual(rows(await text(logPath), "torch"), rows(log, "torch"));
   };
 
   const conflicted = async (path: string, edit: (original: string) => string) => {
@@ -520,22 +528,33 @@ test("a neighbour's card or review record with conflict markers keeps the folder
     assert.equal(rebuilt.code, 6, rebuilt.stdout + rebuilt.stderr);
     assert.deepEqual(doc(rebuilt)["error"].problems, [{ file: c.file, code: c.code }]);
     assert.ok(!doc(rebuilt)["rebuilt"].some((f: string) => /(index|log)\.md$/.test(f)));
-    await unchanged(c.code);
+    assert.equal(await text(indexPath), index);
+    assert.equal(await text(logPath), log);
 
-    // A pick of another asset in the folder succeeds and names the file it could not read.
+    // A pick of another asset in the folder, the first under a newer bible, succeeds, names the
+    // file it could not read, writes its own rows and the bible line, and keeps the neighbour's.
+    if (n === 0) l.world.bible.version = "synthetic-2";
     const out = await pickStill(l.world, `lamp${n}`);
     assert.deepEqual(
       (out["library"].unreadable as Doc[]).map((u) => [u.file.split(/[\\/]/).at(-1), u.code]),
       [[c.file, c.code]],
     );
-    await unchanged(c.code);
+    await kept();
+    assert.equal(rows(await text(indexPath), `lamp${n}`).length, 1);
+    assert.ok(rows(await text(logPath), `lamp${n}`).length > 0);
+    assert.match(await text(logPath), bibleLine);
+    // Rebuild while the file is still broken keeps all of it.
+    const again = await l.lib("rebuild");
+    assert.equal(again.code, 6, again.stdout + again.stderr);
+    assert.ok(!doc(again)["rebuilt"].some((f: string) => /(index|log)\.md$/.test(f)));
 
     await restore();
     const fixed = await l.lib("rebuild");
     assert.equal(fixed.code, 0, fixed.stdout + fixed.stderr);
-    assert.match(await text(indexPath), new RegExp(`lamp${n}`));
-    assert.match(await text(logPath), new RegExp(`lamp${n}`));
-    assert.match(await text(logPath), /torch/);
+    await kept();
+    assert.equal(rows(await text(indexPath), `lamp${n}`).length, 1);
+    assert.match(await text(logPath), bibleLine);
+    assert.equal((await l.lib("check")).code, 0);
     assert.deepEqual(doc(await l.lib("rebuild"))["rebuilt"], []);
   }
 });
