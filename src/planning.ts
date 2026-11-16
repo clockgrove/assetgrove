@@ -236,7 +236,8 @@ function route(value: Route | undefined, label: string): Route {
     !value.model.trim() ||
     !Number.isFinite(value.estimatedCostUsd) ||
     value.estimatedCostUsd < 0 ||
-    (value.providerTerms !== undefined && typeof value.providerTerms !== "string")
+    (value.providerTerms !== undefined && typeof value.providerTerms !== "string") ||
+    (value.providerTermsAsOf !== undefined && typeof value.providerTermsAsOf !== "string")
   )
     throw new InputError(`invalid ${label} route`);
   if (value.outputGrant !== undefined) requireGrant(value.outputGrant, `the ${label} route`);

@@ -163,6 +163,9 @@ export class Caller {
       costUsd,
       costSource: result.costUsd === undefined ? "estimate" : "provider",
       ...(route.providerTerms !== undefined && { providerTerms: route.providerTerms }),
+      ...(route.providerTermsAsOf !== undefined && {
+        providerTermsAsOf: route.providerTermsAsOf,
+      }),
       ...(route.outputGrant !== undefined && { outputGrant: structuredClone(route.outputGrant) }),
     };
     this.records.push(record);
