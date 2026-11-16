@@ -78,11 +78,13 @@ export function buildFixtureManifest(): Manifest {
     images,
     labels,
     lookQueries: images.map((i) => i.id),
+    // Not pooled or judged: `poolCandidates` and `judgeRelevance` with the scripted providers do
+    // that. "armored knight with sword" is answered by two images only, so it is dropped.
     writtenQueries: [
-      { id: "wq-1", text: "knight with sword", relevant: ["fx-01"] },
-      { id: "wq-2", text: "red potion", relevant: ["fx-09"] },
-      { id: "wq-3", text: "pixel heart", relevant: ["fx-17"] },
-      { id: "wq-4", text: "wooden chest", relevant: ["fx-13"] },
+      { id: "wq-1", text: "ground tile" },
+      { id: "wq-2", text: "pixel sprite" },
+      { id: "wq-3", text: "game icon" },
+      { id: "wq-4", text: "armored knight with sword" },
     ],
     pairs: [
       ["fx-01", "fx-04"],

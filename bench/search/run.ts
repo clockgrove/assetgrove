@@ -17,7 +17,8 @@ import { writeCardTexts, ScriptedVision } from "./card-text.ts";
 import { fetchImages } from "./fetch.ts";
 import { FULL_INVENTORY, readLookLibrary, type LookLibrary } from "./library.ts";
 import { buildFixtureManifest, fixtureSource } from "./fixture.ts";
-import { checkManifest, readManifest } from "./manifest.ts";
+import { checkManifest, readManifest, wordsLabelProblems } from "./manifest.ts";
+import { judgeRelevance, poolCandidates, ScriptedJudge } from "./relevance.ts";
 
 const { values } = parseArgs({
   options: {
@@ -53,10 +54,14 @@ if (values.fixture) {
   manifest = buildFixtureManifest();
   source = fixtureSource();
   await writeCardTexts({ manifest, source, provider: new ScriptedVision() });
+  // Relevance offline: pooled with the scripted embedder, judged by the scripted judge.
+  await poolCandidates({ manifest, source, embedder, store: new MemoryStore() });
+  await judgeRelevance({ manifest, source, judge: new ScriptedJudge() });
 } else {
   manifest = await readManifest(values.manifest as string);
   // Shipped mode needs a written card text per image: refuse rather than measure without them.
-  const problems = checkManifest(manifest);
+  // By words needs every pooled candidate judged, and no rule-made label left.
+  const problems = [...checkManifest(manifest), ...wordsLabelProblems(manifest, { embedder })];
   if (problems.length > 0) {
     console.error(`the manifest is not ready to measure:\n${problems.slice(0, 10).join("\n")}`);
     process.exit(1);
@@ -79,7 +84,17 @@ const newStore = async (): Promise<Store> => {
   return s;
 };
 try {
-  const report = await runBench({ manifest, source, embedder, bars, padTo, lookLibrary, newStore });
+  const report = await runBench({
+    manifest,
+    source,
+    embedder,
+    bars,
+    padTo,
+    lookLibrary,
+    newStore,
+    // Only the offline fixture is judged by the scripted judge.
+    scriptedJudgements: values.fixture === true,
+  });
   for (const line of formatReport(report)) console.log(line);
 } finally {
   for (const s of stores) s.close();

@@ -9,7 +9,13 @@ import type { Row, Store } from "../../packages/assetgrove-search/src/store.ts";
 import { passes, type Bar } from "./bars.ts";
 import type { ImageSource } from "./fetch.ts";
 import type { LookLibrary } from "./library.ts";
-import type { Label, Manifest } from "./manifest.ts";
+import {
+  droppedQueries,
+  relevantOf,
+  wordsLabelProblems,
+  type Label,
+  type Manifest,
+} from "./manifest.ts";
 import { allPairs, mean, percentile, precisionAt5, rrf, similarityThreshold } from "./metrics.ts";
 
 export interface BenchEntry {
@@ -44,6 +50,8 @@ export interface BenchReport {
   embedder: { id: string; revision: string; scripted: boolean };
   images: number;
   paddedTo: number;
+  /** Written queries left out of the by-words score: fewer than `MIN_RELEVANT` judged relevant. */
+  dropped: { id: string; text: string; relevant: number }[];
 }
 
 export interface BenchOptions {
@@ -62,6 +70,11 @@ export interface BenchOptions {
   /** Count of timed queries per speed measure. */
   timedQueries?: number;
   freshnessFiles?: number;
+  /**
+   * Accept relevance judged by the offline scripted judge: the fixture run and tests only. The
+   * real manifest's judgements must come from a model shown the image.
+   */
+  scriptedJudgements?: boolean;
 }
 
 export function machine(): Machine {
@@ -96,6 +109,36 @@ async function shipped(
     store.query({ text, limit: TOP }),
   ]);
   return rrf(lists.map((l) => l.map((h) => h.row.key))).slice(0, limit);
+}
+
+/** The rankings the bench scores by words, each a list of image keys, best first. */
+export const RANKINGS = ["image-vector", "card-text-vector", "full-text", "fused"] as const;
+export type Ranking = (typeof RANKINGS)[number];
+
+/**
+ * The top `depth` of every ranking the bench scores, for one written query: the image vector, the
+ * card-text vector, the full text, and the three fused as shipped mode fuses them. The relevance
+ * pool is taken from these, so it favours none of them.
+ */
+export async function rankingsFor(
+  store: Store,
+  emb: Embedder,
+  text: string,
+  depth: number,
+): Promise<Record<Ranking, string[]>> {
+  const [q] = await emb.embedTexts([text]);
+  const vec = q as Float32Array;
+  const keys = (hits: { row: Row }[]) => hits.map((h) => h.row.key);
+  return {
+    "image-vector": keys(
+      await store.query({ vector: { column: "imageVec", value: vec }, limit: depth }),
+    ),
+    "card-text-vector": keys(
+      await store.query({ vector: { column: "textVec", value: vec }, limit: depth }),
+    ),
+    "full-text": keys(await store.query({ text, limit: depth })),
+    fused: await shipped(store, emb, text, depth),
+  };
 }
 
 async function imageOnly(store: Store, emb: Embedder, text: string, limit: number) {
@@ -159,35 +202,20 @@ export async function freshnessScan(
   return changed.filter(Boolean).length;
 }
 
-export async function runBench(o: BenchOptions): Promise<BenchReport> {
-  const { manifest, embedder } = o;
-  const newStore = o.newStore ?? (() => new MemoryStore());
-  const padTo = o.padTo ?? 10_000;
-  const timed = o.timedQueries ?? 50;
+/**
+ * Indexes the labelled library into `store`: image vector from the pixels, text vector from the
+ * card text, written in the package indexer's batches and optimized afterwards. Returns the rows
+ * and each image's indexing time (its embedding plus its share of its batch's write).
+ */
+export async function indexLibrary(
+  manifest: Manifest,
+  source: ImageSource,
+  embedder: Embedder,
+  store: Store,
+): Promise<{ rows: Row[]; indexMs: number[] }> {
   const label = new Map<string, Label>(manifest.labels.map((l) => [l.image, l]));
-  const entries: BenchEntry[] = [];
-  const mach = machine();
-  const entry = (id: string, measured: number, n: number, speed = false) => {
-    const bar = o.bars.get(id);
-    if (!bar) throw new Error(`bar ${id} is not in the decisions record`);
-    const e: BenchEntry = {
-      bar: id,
-      measured: Math.round(measured * 1000) / 1000,
-      target: `${bar.op} ${bar.value}${bar.unit === "ms" ? " ms" : ""}`,
-      pass: passes(bar, measured),
-      unit: bar.unit,
-      n,
-    };
-    if (speed) e.reference = mach.referenceBox;
-    entries.push(e);
-  };
-
-  // Index the library: image vector from the pixels, text vector from the card text.
-  const store = await newStore();
   const rows: Row[] = [];
   const indexMs: number[] = [];
-  // Rows are written in batches, as the package's indexer writes them; each image's indexing time
-  // is its embedding plus its share of its batch's write.
   let pending: { row: Row; ms: number }[] = [];
   const flush = async () => {
     const t0 = performance.now();
@@ -200,7 +228,7 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     const l = label.get(image.id) as Label;
     const text = image.card?.text ?? "";
     const t0 = performance.now();
-    const [imageVec] = await embedder.embedImages([await o.source.bytes(image)]);
+    const [imageVec] = await embedder.embedImages([await source.bytes(image)]);
     const [textVec] = await embedder.embedTexts([text]);
     const row: Row = {
       key: image.id,
@@ -224,6 +252,46 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   await flush();
   // A writer optimizes after a batch: on LanceStore this builds the full-text index shipped mode uses.
   await store.optimize();
+  return { rows, indexMs };
+}
+
+export async function runBench(o: BenchOptions): Promise<BenchReport> {
+  const { manifest, embedder } = o;
+  const newStore = o.newStore ?? (() => new MemoryStore());
+  const padTo = o.padTo ?? 10_000;
+  const timed = o.timedQueries ?? 50;
+  // By words reads only judged relevance: refuse a manifest whose labels are rule-made, unjudged,
+  // scripted outside the fixture, or pooled by another embedder than the one scored here.
+  const labelProblems = wordsLabelProblems(manifest, {
+    embedder,
+    scriptedJudgements: o.scriptedJudgements === true,
+  });
+  if (labelProblems.length > 0)
+    throw new Error(
+      `the written queries cannot be scored by words:\n${labelProblems.slice(0, 10).join("\n")}`,
+    );
+  const dropped = droppedQueries(manifest);
+  const droppedIds = new Set(dropped.map((q) => q.id));
+  const entries: BenchEntry[] = [];
+  const mach = machine();
+  const entry = (id: string, measured: number, n: number, speed = false) => {
+    const bar = o.bars.get(id);
+    if (!bar) throw new Error(`bar ${id} is not in the decisions record`);
+    const e: BenchEntry = {
+      bar: id,
+      measured: Math.round(measured * 1000) / 1000,
+      target: `${bar.op} ${bar.value}${bar.unit === "ms" ? " ms" : ""}`,
+      pass: passes(bar, measured),
+      unit: bar.unit,
+      n,
+    };
+    if (speed) e.reference = mach.referenceBox;
+    entries.push(e);
+  };
+
+  // Index the library: image vector from the pixels, text vector from the card text.
+  const store = await newStore();
+  const { rows, indexMs } = await indexLibrary(manifest, o.source, embedder, store);
 
   // By look, in the look library: the full library the by-look bars were set on (docs/decisions.md).
   const look = o.lookLibrary ?? { images: manifest.images, labels: manifest.labels };
@@ -293,10 +361,11 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   const p5 = async (run: (text: string) => Promise<string[]>): Promise<number[]> => {
     const out: number[] = [];
     for (const q of manifest.writtenQueries) {
-      // A query nothing in this subset answers (empty `relevant`) cannot score; skip it.
-      if (q.relevant.length === 0) continue;
+      // A query judged to have fewer than MIN_RELEVANT relevant images is dropped and reported.
+      if (droppedIds.has(q.id)) continue;
       const top = await run(q.text);
-      out.push(precisionAt5(top, q.relevant));
+      // An image ranked here that was never judged counts as not relevant (the pooling rule).
+      out.push(precisionAt5(top, relevantOf(q)));
     }
     return out;
   };
@@ -408,14 +477,16 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     embedder: embedderInfo,
     images: rows.length,
     paddedTo: padTo,
+    dropped: dropped.map((q) => ({ id: q.id, text: q.text, relevant: relevantOf(q).length })),
   };
 }
 
-/** One JSON line per bar, then the threshold, then the machine. */
+/** One JSON line per bar, then the threshold, the dropped written queries, then the machine. */
 export function formatReport(r: BenchReport): string[] {
   return [
     ...r.entries.map((e) => JSON.stringify(e)),
     JSON.stringify({ threshold: r.threshold }),
+    JSON.stringify({ dropped: r.dropped }),
     JSON.stringify({
       embedder: r.embedder,
       machine: r.machine,
