@@ -1,12 +1,16 @@
 /**
- * The holes check of a strip: a background removal that took part of the figure for background
- * leaves see-through holes inside it (a pale blaze, a facial marking, a tail ring). Pixels find
- * every see-through area the figure's outline encloses; whether one is a hole or a natural opening
- * between two parts (between the legs, between an arm and the body) is a judgement pixels cannot
- * make, since both are transparent and ringed by the figure's soft edge. A vision model makes it,
- * one call per frame that has such an area, with the areas marked on the frame.
+ * The holes check of a strip: did background removal cut away part of the figure? The commonest
+ * failure is a border flood that eats a pale belly or muzzle open to the outside, so where the
+ * image before removal exists (a sheet import keeps each frame's crop), one typed Boolean decision
+ * per frame sees the frame before and after removal, the removed parts over magenta, and answers
+ * "Is any part of the character missing after background removal?". Where it does not (a strip
+ * given on its own), pixels find the see-through areas the figure's outline encloses, at least a
+ * share of the figure's area, and one decision per frame with such an area asks whether any of
+ * them is a hole cut into the character rather than a natural opening between two parts.
  */
 import type { Caller } from "../calls.ts";
+import { ProviderError } from "../errors.ts";
+import type { DecisionQuestion } from "../gateway/provider.ts";
 import { createRaster, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256 } from "../request.ts";
@@ -103,18 +107,25 @@ export function enclosedAreas(
   return { areas, marked };
 }
 
-/** The frame as the model sees it: enlarged over a green backdrop, enclosed areas in magenta. */
-export function holeView(frame: Raster, marked: Uint8Array): Raster {
+/**
+ * The frame as the model sees it: enlarged over a green backdrop, the marked pixels (enclosed areas)
+ * over magenta. `under` sets the backdrop of every pixel instead (magenta, for the frame after removal).
+ */
+export function holeView(
+  frame: Raster,
+  marked: Uint8Array,
+  under: readonly number[] = BACKDROP,
+): Raster {
   const zoom = Math.max(1, Math.ceil(VIEW_PX / Math.max(frame.width, frame.height)));
   const out = createRaster(frame.width * zoom, frame.height * zoom);
   for (let y = 0; y < out.height; y++) {
     for (let x = 0; x < out.width; x++) {
       const p = Math.floor(y / zoom) * frame.width + Math.floor(x / zoom);
       const a = (frame.data[p * 4 + 3] ?? 0) / 255;
-      const under = marked[p] ? MARK : BACKDROP;
+      const back = marked[p] ? MARK : under;
       const o = (y * out.width + x) * 4;
       for (let k = 0; k < 3; k++) {
-        out.data[o + k] = Math.round((frame.data[p * 4 + k] ?? 0) * a + (under[k] ?? 0) * (1 - a));
+        out.data[o + k] = Math.round((frame.data[p * 4 + k] ?? 0) * a + (back[k] ?? 0) * (1 - a));
       }
       out.data[o + 3] = 255;
     }
@@ -131,76 +142,87 @@ export function buildHolesPrompt(input: {
   return [
     `This is frame ${input.frame} of a "${input.family}" animation of ${input.subject}, enlarged, over a plain green backdrop. A program removed the character's original background.`,
     `Magenta marks the ${input.areas === 1 ? "place" : `${input.areas} places`} where the picture is see-through although the character's outline surrounds it.`,
-    "For each magenta area decide: is it a natural opening between separate parts (between two legs, between a leg or an arm and the body, between the tail and the body), where the backdrop really shows through; or a hole in the middle of one part (the face, a marking, an eye, the torso, the tail, a stripe), where the removal wrongly cut the character away?",
-    'Reply with ONLY JSON: {"holes":true|false,"areas":[{"where":"...","kind":"opening"|"hole"}],"confidence":0..1}',
-    '"holes" is true when any area is a hole. Give your confidence in that answer.',
+    "A magenta area is either a natural opening between separate parts (between two legs, between a leg or an arm and the body, between the tail and the body), where the backdrop really shows through; or a hole in the middle of one part (the face, a marking, an eye, the torso, the tail, a stripe), where the removal wrongly cut the character away.",
   ].join("\n");
 }
 
-export interface HolesReply {
-  label: "holes" | "openings" | "unreadable";
-  confidence: number;
-  /** Where the model saw each hole. */
-  where: string[];
-  reason: string;
+/** The enclosed-area view's question. */
+export const ENCLOSED_QUESTION: DecisionQuestion = {
+  type: "boolean",
+  instructions:
+    "Is any magenta area a hole cut into one part of the character, rather than a natural opening between separate parts?",
+  whenTrue: "at least one magenta area is a hole in the middle of one part",
+  whenFalse: "every magenta area is a natural opening between separate parts",
+};
+
+/** The prompt of the before-and-after view. */
+export function buildBeforeAfterPrompt(input: {
+  subject: string;
+  family: string;
+  frame: number;
+}): string {
+  return [
+    `Image 1 is frame ${input.frame} of a "${input.family}" animation of ${input.subject}, enlarged, as it was drawn, before a program removed its background.`,
+    "Image 2 is the same frame after the removal, enlarged the same way, over a plain magenta backdrop: everything the program took for background shows magenta.",
+    "The original background and the natural gaps between separate parts (between two legs, between a leg or an arm and the body, between the tail and the body) should be gone. The character itself should be whole: a pale belly, muzzle, blaze, marking, eye, ear, whisker, tail tip or held prop that image 1 shows must still be there in image 2.",
+  ].join("\n");
 }
 
-export function parseHolesReply(text: string): HolesReply {
-  const unreadable = (reason: string): HolesReply => ({
-    label: "unreadable",
-    confidence: 0,
-    where: [],
-    reason,
-  });
-  const body = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  let value: unknown;
-  try {
-    value = JSON.parse(body);
-  } catch {
-    return unreadable("the reply was not valid JSON");
-  }
-  if (typeof value !== "object" || value === null) return unreadable("the reply was not an object");
-  const { holes, confidence, areas } = value as Record<string, unknown>;
-  if (typeof holes !== "boolean") return unreadable("the reply had no holes true or false");
-  if (typeof confidence !== "number" || !(confidence >= 0 && confidence <= 1)) {
-    return unreadable("the reply had no confidence between 0 and 1");
-  }
-  const listed = Array.isArray(areas) ? areas : [];
-  const where = listed.flatMap((a) => {
-    if (typeof a !== "object" || a === null) return [];
-    const { where: w, kind } = a as Record<string, unknown>;
-    return kind === "hole" ? [typeof w === "string" && w !== "" ? w : "unnamed"] : [];
-  });
-  const openings = listed.filter(
-    (a) => typeof a === "object" && a !== null && (a as { kind?: unknown }).kind === "opening",
-  ).length;
-  return {
-    label: holes ? "holes" : "openings",
-    confidence,
-    where,
-    reason: holes
-      ? `hole(s): ${where.join("; ") || "unnamed"}`
-      : `${openings || "every"} area(s) an opening between parts`,
-  };
+/** The before-and-after view's question (#376). */
+export const BEFORE_AFTER_QUESTION: DecisionQuestion = {
+  type: "boolean",
+  instructions: "Is any part of the character missing after background removal?",
+  whenTrue:
+    "a part of the character that image 1 shows is magenta in image 2, wholly or in part (a bite out of the outline counts)",
+  whenFalse: "only the background and the natural gaps between separate parts were removed",
+};
+
+/** The pixels at or above the alpha cut: the frame's figure area. */
+export function figureArea(frame: Raster, threshold: number): number {
+  let area = 0;
+  for (let i = 3; i < frame.data.length; i += 4) if ((frame.data[i] ?? 0) >= threshold) area++;
+  return area;
 }
 
-/** The frames (1-based) a holes check would send to the model, and their areas. */
+/** The smallest enclosed area judged on a frame: `minShare` of its figure area, at least 1 px. */
+export function holeMinPx(frame: Raster, options: { threshold: number; minShare: number }): number {
+  return Math.max(1, Math.ceil(options.minShare * figureArea(frame, options.threshold)));
+}
+
+/** A frame's image before background removal and the same crop after it (sheet resolution). */
+export interface HoleSource {
+  before: Raster;
+  after: Raster;
+}
+
+/** One frame a holes check sends to the model, and how it is shown. */
+export type HoleCandidate =
+  | { frame: number; view: "before-after"; source: HoleSource }
+  | { frame: number; view: "enclosed"; areas: EnclosedArea[]; marked: Uint8Array; minPx: number };
+
+/**
+ * The frames (1-based) a holes check would send to the model. A frame with its image before
+ * removal is always sent; any other only with an enclosed see-through area of at least its
+ * share of the figure's area.
+ */
 export function holeCandidates(
   frames: Raster[],
-  options: { threshold: number; minPx: number },
-): Array<{ frame: number; areas: EnclosedArea[]; marked: Uint8Array }> {
-  return frames.flatMap((f, i) => {
-    const found = enclosedAreas(f, options);
-    return found.areas.length === 0 ? [] : [{ frame: i + 1, ...found }];
+  options: { threshold: number; minShare: number; sources?: ReadonlyArray<HoleSource | undefined> },
+): HoleCandidate[] {
+  return frames.flatMap((f, i): HoleCandidate[] => {
+    const source = options.sources?.[i];
+    if (source) return [{ frame: i + 1, view: "before-after" as const, source }];
+    const minPx = holeMinPx(f, options);
+    const found = enclosedAreas(f, { threshold: options.threshold, minPx });
+    return found.areas.length === 0
+      ? []
+      : [{ frame: i + 1, view: "enclosed" as const, ...found, minPx }];
   });
 }
 
 export function planHoles(
   frames: Raster[],
-  options: { threshold: number; minPx: number },
+  options: { threshold: number; minShare: number; sources?: ReadonlyArray<HoleSource | undefined> },
   routes: Routes,
 ): { calls: number; model: string; estimatedCostUsd: number } {
   const calls = holeCandidates(frames, options).length;
@@ -211,15 +233,9 @@ export function planHoles(
   };
 }
 
-function viewReference(view: Raster, frame: number): LoadedReference {
+function viewReference(view: Raster, role: string, path: string): LoadedReference {
   const bytes = encodePng(view);
-  return {
-    role: `frame ${frame}, enclosed see-through areas in magenta`,
-    path: `holes-frame-${frame}.png`,
-    mediaType: "image/png",
-    bytes,
-    sha256: sha256(bytes),
-  };
+  return { role, path, mediaType: "image/png", bytes, sha256: sha256(bytes) };
 }
 
 export async function checkHoles(options: {
@@ -227,9 +243,11 @@ export async function checkHoles(options: {
   family: string;
   subject: string;
   threshold: number;
-  minPx: number;
+  minShare: number;
   cutoff: number;
   call: Caller;
+  /** Per strip frame, its image before background removal, where one exists. */
+  sources?: ReadonlyArray<HoleSource | undefined>;
   now?: () => Date;
 }): Promise<{ reasons: AnimationReason[]; decisions: HoleDecision[] }> {
   const now = options.now ?? (() => new Date());
@@ -237,47 +255,88 @@ export async function checkHoles(options: {
   const decisions: HoleDecision[] = [];
   const candidates = holeCandidates(options.frames, options);
   for (const c of candidates) {
-    const frame = options.frames[c.frame - 1] as Raster;
-    const prompt = buildHolesPrompt({
-      subject: options.subject,
-      family: options.family,
-      frame: c.frame,
-      areas: c.areas.length,
-    });
-    const text = await options.call.vision("holes", prompt, [
-      viewReference(holeView(frame, c.marked), c.frame),
-    ]);
-    const record = options.call.records[options.call.records.length - 1];
-    const parsed = parseHolesReply(text);
-    const flagged =
-      parsed.label === "unreadable" ||
-      (parsed.label === "holes" && parsed.confidence >= options.cutoff);
-    const area = c.areas.reduce((s, a) => s + a.area, 0);
+    const asked =
+      c.view === "before-after"
+        ? {
+            prompt: buildBeforeAfterPrompt({
+              subject: options.subject,
+              family: options.family,
+              frame: c.frame,
+            }),
+            images: [
+              viewReference(
+                holeView(c.source.before, new Uint8Array(0)),
+                `frame ${c.frame} before background removal`,
+                `holes-frame-${c.frame}-before.png`,
+              ),
+              viewReference(
+                holeView(c.source.after, new Uint8Array(0), MARK),
+                `frame ${c.frame} after background removal, over magenta`,
+                `holes-frame-${c.frame}-after.png`,
+              ),
+            ],
+            question: BEFORE_AFTER_QUESTION,
+          }
+        : {
+            prompt: buildHolesPrompt({
+              subject: options.subject,
+              family: options.family,
+              frame: c.frame,
+              areas: c.areas.length,
+            }),
+            images: [
+              viewReference(
+                holeView(options.frames[c.frame - 1] as Raster, c.marked),
+                `frame ${c.frame}, enclosed see-through areas in magenta`,
+                `holes-frame-${c.frame}.png`,
+              ),
+            ],
+            question: ENCLOSED_QUESTION,
+          };
+    const { result, record } = await options.call.decide(
+      "holes",
+      asked.prompt,
+      asked.images,
+      asked.question,
+    );
+    if (result.answer.type !== "boolean") {
+      throw new ProviderError("the holes decision gave no true or false");
+    }
+    const probability = Math.min(1, Math.max(0, result.answer.probability));
+    const label = probability >= 0.5 ? "holes" : "none";
+    const flagged = probability >= options.cutoff;
+    const said =
+      c.view === "before-after"
+        ? label === "holes"
+          ? "part of the character is missing after background removal"
+          : "nothing of the character is missing after background removal"
+        : label === "holes"
+          ? "a see-through area inside the outline is a hole cut into the character"
+          : "every see-through area inside the outline is an opening between parts";
     decisions.push({
       frame: c.frame,
-      areas: c.areas,
-      model: record?.model ?? "",
-      requestId: record?.requestId ?? "",
-      label: parsed.label,
-      confidence: parsed.confidence,
+      view: c.view,
+      areas: c.view === "enclosed" ? c.areas : [],
+      model: record.model,
+      requestId: record.requestId,
+      label,
+      probability,
       cutoff: options.cutoff,
       flagged,
-      reason: parsed.reason,
-      costUsd: record?.costUsd ?? 0,
+      reason: said,
+      costUsd: record.costUsd,
       at: now().toISOString(),
     });
-    const head = `frame ${c.frame}: ${c.areas.length} see-through area(s) inside the outline, ${area} px`;
+    const head =
+      c.view === "before-after"
+        ? `frame ${c.frame}, before and after background removal`
+        : `frame ${c.frame}: ${c.areas.length} see-through area(s) inside the outline, ${c.areas.reduce((s, a) => s + a.area, 0)} px`;
     reasons.push({
       check: "holes",
       passed: !flagged,
-      source: "vision",
+      source: "decision",
       frames: [c.frame],
-      reason:
-        parsed.label === "unreadable"
-          ? `${head}; the holes reply was unreadable (${parsed.reason})`
-          : parsed.label === "holes"
-            ? `${head}; ${parsed.reason} (confidence ${parsed.confidence} ${flagged ? "≥" : "<"} cutoff ${options.cutoff})`
-            : `${head}; ${parsed.reason} (${parsed.confidence})`,
+      reason: `${head}; ${said} (probability ${probability.toFixed(2)} ${flagged ? "≥" : "<"} cutoff ${options.cutoff})`,
     });
   }
   if (candidates.length === 0) {
@@ -285,7 +344,7 @@ export async function checkHoles(options: {
       check: "holes",
       passed: true,
       source: "deterministic",
-      reason: `no frame has a see-through area of ${options.minPx} px or more inside the figure's outline`,
+      reason: `no frame has a see-through area inside the figure's outline of ${options.minShare} of its figure area or more; with no image before background removal, a cut that reaches the outline is not judged`,
     });
   }
   return { reasons, decisions };

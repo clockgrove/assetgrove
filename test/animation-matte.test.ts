@@ -11,7 +11,9 @@ import {
   checkHoles,
   enclosedAreas,
   holeView,
-  parseHolesReply,
+  BEFORE_AFTER_QUESTION,
+  ENCLOSED_QUESTION,
+  holeMinPx,
   planHoles,
 } from "../src/animation/holes.ts";
 import { animationQa } from "../src/animation/qa.ts";
@@ -147,34 +149,39 @@ test("the judged view is enlarged, opaque, green outside and magenta in the encl
   assert.deepEqual(getPixel(view, 24 * zoom, 30 * zoom), [116, 88, 73, 255]);
 });
 
-test("holes replies are parsed strictly", () => {
-  const hole = parseHolesReply(
-    '```json\n{"holes":true,"areas":[{"where":"the white blaze","kind":"hole"},{"where":"legs","kind":"opening"}],"confidence":0.9}\n```',
-  );
-  assert.deepEqual([hole.label, hole.confidence, hole.where], ["holes", 0.9, ["the white blaze"]]);
-  assert.equal(
-    parseHolesReply('{"holes":false,"areas":[{"where":"legs","kind":"opening"}],"confidence":0.8}')
-      .label,
-    "openings",
-  );
-  assert.equal(parseHolesReply("no").label, "unreadable");
-  assert.equal(parseHolesReply('{"holes":"yes","confidence":1}').label, "unreadable");
-  assert.equal(parseHolesReply('{"holes":true,"confidence":3}').label, "unreadable");
+test("the holes prompts name the frame", () => {
   assert.match(
     buildHolesPrompt({ subject: "a fox", family: "walk", frame: 4, areas: 2 }),
     /frame 4/,
   );
+  assert.equal(
+    BEFORE_AFTER_QUESTION.instructions,
+    "Is any part of the character missing after background removal?",
+  );
+  assert.equal(BEFORE_AFTER_QUESTION.type, "boolean");
+  assert.equal(ENCLOSED_QUESTION.type, "boolean");
 });
 
-function caller(replies: string[]) {
-  const seen: Array<{ prompt: string; images: number }> = [];
+function caller(probabilities: number[]) {
+  const seen: Array<{ prompt: string; images: number; question: string; operation?: string }> = [];
   const provider = new ScriptedProvider({
     image: () => {
       throw new Error("no image calls expected");
     },
-    vision: (request, index) => {
-      seen.push({ prompt: request.prompt, images: request.images.length });
-      return { text: replies[index] ?? "", costUsd: 0.003 };
+    vision: () => {
+      throw new Error("holes is a typed decision, not a vision call");
+    },
+    decide: (request, index) => {
+      seen.push({
+        prompt: request.prompt,
+        images: request.images.length,
+        question: request.question.instructions,
+        ...(request.operation !== undefined && { operation: request.operation }),
+      });
+      return {
+        answer: { type: "boolean", probability: probabilities[index] ?? 0 },
+        costUsd: 0.001,
+      };
     },
   });
   const call = new Caller({
@@ -186,59 +193,50 @@ function caller(replies: string[]) {
   return { call, seen };
 }
 
-const base = { family: "idle", subject: "a fox", threshold: 128, minPx: 3, cutoff: 0.7 };
+const base = { family: "idle", subject: "a fox", threshold: 128, minShare: 0.001, cutoff: 0.5 };
 
 test("only frames with an enclosed area are judged; a hole fails that frame for holes", async () => {
   const frames = [disc(), disc({ hole: true }), disc({ hole: true })];
   const plan = planHoles(frames, base, defaultRoutes);
-  assert.deepEqual([plan.calls, plan.estimatedCostUsd], [2, 0.02]);
-  const { call, seen } = caller([
-    JSON.stringify({
-      holes: true,
-      areas: [{ where: "the pale blaze", kind: "hole" }],
-      confidence: 0.95,
-    }),
-    JSON.stringify({ holes: false, areas: [{ where: "x", kind: "opening" }], confidence: 0.9 }),
-  ]);
+  assert.deepEqual([plan.calls, plan.estimatedCostUsd], [2, 2 * defaultRoutes.holes.estimatedCostUsd]);
+  const { call, seen } = caller([0.95, 0.1]);
   const { reasons, decisions } = await checkHoles({ ...base, frames, call });
   assert.equal(seen.length, 2);
+  assert.equal(seen[0]!.operation, "holes");
   assert.match(seen[0]!.prompt, /frame 2 of a "idle" animation/);
+  assert.equal(seen[0]!.question, ENCLOSED_QUESTION.instructions);
   assert.equal(seen[0]!.images, 1);
   assert.deepEqual(
     reasons.map((r) => [r.check, r.passed, r.source, r.frames]),
     [
-      ["holes", false, "vision", [2]],
-      ["holes", true, "vision", [3]],
+      ["holes", false, "decision", [2]],
+      ["holes", true, "decision", [3]],
     ],
   );
   assert.match(
     reasons[0]!.reason,
-    /^frame 2: 1 see-through area\(s\) inside the outline, 15 px; hole\(s\): the pale blaze/,
+    /^frame 2: 1 see-through area\(s\) inside the outline, 15 px; a see-through area inside the outline is a hole cut into the character \(probability 0\.95 ≥ cutoff 0\.5\)/,
   );
   assert.deepEqual(
-    decisions.map((d) => [d.frame, d.label, d.flagged, d.areas.length]),
+    decisions.map((d) => [d.frame, d.view, d.label, d.probability, d.flagged, d.areas.length]),
     [
-      [2, "holes", true, 1],
-      [3, "openings", false, 1],
+      [2, "enclosed", "holes", 0.95, true, 1],
+      [3, "enclosed", "none", 0.1, false, 1],
     ],
   );
 });
 
-test("an unsure hole passes below the cutoff; an unreadable reply fails", async () => {
+test("a hole answer flags on the answer alone; a person's cutoff applies to the probability", async () => {
   const frames = [disc({ hole: true }), disc({ hole: true })];
-  const { call } = caller([
-    JSON.stringify({ holes: true, areas: [], confidence: 0.5 }),
-    "not json",
-  ]);
-  const { reasons } = await checkHoles({ ...base, frames, call });
-  assert.deepEqual(
-    reasons.map((r) => r.passed),
-    [true, false],
-  );
-  assert.match(reasons[1]!.reason, /unreadable/);
+  const { call } = caller([0.6, 0.6]);
+  const { reasons } = await checkHoles({ ...base, frames: [frames[0]!], call });
+  assert.equal(reasons[0]!.passed, false);
+  const strict = await checkHoles({ ...base, cutoff: 0.8, frames: [frames[1]!], call });
+  assert.equal(strict.reasons[0]!.passed, true);
+  assert.match(strict.reasons[0]!.reason, /probability 0\.60 < cutoff 0\.8/);
 });
 
-test("a strip without enclosed areas makes no call and passes holes on pixels", async () => {
+test("a strip without enclosed areas or images before removal makes no call and says what it could not judge", async () => {
   const { call, seen } = caller([]);
   const { reasons, decisions } = await checkHoles({ ...base, frames: [disc(), disc()], call });
   assert.equal(seen.length, 0);
@@ -247,4 +245,92 @@ test("a strip without enclosed areas makes no call and passes holes on pixels", 
     reasons.map((r) => [r.check, r.passed, r.source]),
     [["holes", true, "deterministic"]],
   );
+  assert.match(reasons[0]!.reason, /a cut that reaches the outline is not judged/);
+});
+
+/** A disc with a bite out of its lower edge, open to the outside: never enclosed. */
+function bitten(): Raster {
+  const r = disc();
+  for (let y = 30; y < 48; y++) for (let x = 20; x < 28; x++) setPixel(r, x, y, [0, 0, 0, 0]);
+  return r;
+}
+
+/** The disc as it was drawn on its sheet: opaque over a pale background. */
+function drawn(): Raster {
+  const r = createRaster(48, 48);
+  const figure = disc();
+  for (let p = 0; p < 48 * 48; p++) {
+    const a = (figure.data[p * 4 + 3] ?? 0) / 255;
+    for (let k = 0; k < 3; k++)
+      r.data[p * 4 + k] = Math.round((figure.data[p * 4 + k] ?? 0) * a + 240 * (1 - a));
+    r.data[p * 4 + 3] = 255;
+  }
+  return r;
+}
+
+test("with the image before removal, a bite open to the outside is shown and asked about, one decision per frame", async () => {
+  const frames = [disc(), bitten()];
+  // Never enclosed: the old gate would not have asked and would have passed the strip on pixels.
+  assert.deepEqual(enclosedAreas(bitten(), { threshold: 128, minPx: 1 }).areas, []);
+  const sources = [
+    { before: drawn(), after: disc() },
+    { before: drawn(), after: bitten() },
+  ];
+  assert.equal(planHoles(frames, { ...base, sources }, defaultRoutes).calls, 2);
+  const { call, seen } = caller([0.05, 0.9]);
+  const { reasons, decisions } = await checkHoles({ ...base, frames, sources, call });
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1]!.question, "Is any part of the character missing after background removal?");
+  assert.equal(seen[1]!.images, 2);
+  assert.match(seen[1]!.prompt, /before a program removed its background/);
+  assert.deepEqual(
+    reasons.map((r) => [r.passed, r.source, r.frames]),
+    [
+      [true, "decision", [1]],
+      [false, "decision", [2]],
+    ],
+  );
+  assert.match(
+    reasons[1]!.reason,
+    /^frame 2, before and after background removal; part of the character is missing after background removal \(probability 0\.90 ≥ cutoff 0\.5\)/,
+  );
+  assert.deepEqual(
+    decisions.map((d) => [d.view, d.label]),
+    [
+      ["before-after", "none"],
+      ["before-after", "holes"],
+    ],
+  );
+});
+
+test("the after view shows the removed parts over magenta", () => {
+  const view = holeView(bitten(), new Uint8Array(0), [255, 0, 255]);
+  const zoom = view.width / 48;
+  assert.deepEqual(getPixel(view, 23 * zoom, 40 * zoom), [255, 0, 255, 255]);
+  assert.deepEqual(getPixel(view, 0, 0), [255, 0, 255, 255]);
+});
+
+/** A square figure of `side` px in a `size` px frame, with a `hole` px hole in its middle row. */
+function square(size: number, side: number, hole: number): Raster {
+  const r = createRaster(size, size);
+  const o = Math.floor((size - side) / 2);
+  for (let y = o; y < o + side; y++)
+    for (let x = o; x < o + side; x++) setPixel(r, x, y, [116, 88, 73, 255]);
+  const mid = Math.floor(size / 2);
+  for (let i = 0; i < hole; i++) setPixel(r, mid + i, mid, [0, 0, 0, 0]);
+  return r;
+}
+
+test("the smallest judged area is a share of the figure's area, not a fixed pixel count", async () => {
+  // A 2 px eye hole in a 32 px frame is judged (the old 3 px minimum skipped it)...
+  const small = square(32, 20, 2);
+  assert.equal(holeMinPx(small, base), 1);
+  assert.equal(planHoles([small], base, defaultRoutes).calls, 1);
+  // ...and a 3 px speck of matte noise in a 512 px frame is not (it cost a paid call before).
+  const large = square(512, 400, 3);
+  assert.equal(holeMinPx(large, base), 160);
+  assert.equal(planHoles([large], base, defaultRoutes).calls, 0);
+  const { call, seen } = caller([]);
+  await checkHoles({ ...base, frames: [large], call });
+  assert.equal(seen.length, 0);
 });

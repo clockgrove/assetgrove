@@ -1,6 +1,8 @@
 import { mkdir, appendFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Caller } from "../calls.ts";
+import { ProviderError } from "../errors.ts";
+import type { DecisionQuestion } from "../gateway/provider.ts";
 import { encodePng, type Raster } from "../image/raster.ts";
 import { sha256 } from "../request.ts";
 import type { Routes } from "../routes.ts";
@@ -28,44 +30,21 @@ export function buildFlickerPrompt(input: {
     ...(input.subjectDescription ? [`The character: ${input.subjectDescription}`] : []),
     "Both frames are shown over the same plain light grey backdrop. The pose is expected to change between frames. Ignore the pose.",
     "Each frame may be painted on its own, so brush strokes, fur strands, texture grain, single small strokes or specks, and the fine, ragged edges of markings can differ between frames. That is texture, not identity.",
-    "Judge whether the character's identity stays the same: which markings it has, where they sit and their overall shape; its colours; its proportions; its accessories.",
-    'Reply with ONLY JSON: {"label":"same"|"texture"|"flicker","confidence":0..1,"reason":"..."}',
-    '"same": the identity and the texture match. "texture": the identity matches and only painterly texture or the fine edges of markings differ. "flicker": the identity changes: a marking appears, disappears, moves or takes a clearly different overall shape, a colour changes, the proportions change, or an accessory changes.',
-    "Give your confidence in the label you chose.",
+    "The character's identity is which markings it has, where they sit and their overall shape; its colours; its proportions; its accessories.",
   ].join("\n");
 }
 
-export interface FlickerReply {
-  label: "same" | "texture" | "flicker" | "unreadable";
-  confidence: number;
-  reason: string;
-}
-
-export function parseFlickerReply(text: string): FlickerReply {
-  const unreadable = (reason: string): FlickerReply => ({
-    label: "unreadable",
-    confidence: 0,
-    reason,
-  });
-  const body = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  let value: unknown;
-  try {
-    value = JSON.parse(body);
-  } catch {
-    return unreadable("the reply was not valid JSON");
-  }
-  if (typeof value !== "object" || value === null) return unreadable("the reply was not an object");
-  const { label, confidence, reason } = value as Record<string, unknown>;
-  if (label !== "same" && label !== "texture" && label !== "flicker") {
-    return unreadable("the reply had no valid label");
-  }
-  if (typeof confidence !== "number" || !(confidence >= 0 && confidence <= 1)) {
-    return unreadable("the reply had no confidence between 0 and 1");
-  }
-  return { label, confidence, reason: typeof reason === "string" ? reason : "" };
+/** The question each pair is asked: a typed Boolean, so its probability is the model's own. */
+export function flickerQuestion(pair: [number, number]): DecisionQuestion {
+  const [a, b] = pair;
+  return {
+    type: "boolean",
+    instructions: `Does the character's identity change between frame ${a} and frame ${b}, setting aside pose and brush texture?`,
+    whenTrue:
+      "a marking appears, disappears, moves or takes a clearly different overall shape, a colour changes, the proportions change, or an accessory changes",
+    whenFalse:
+      "the identity is the same; at most the pose, painterly texture or the fine edges of markings differ",
+  };
 }
 
 export function planFlicker(
@@ -123,42 +102,41 @@ export async function checkFlicker(options: {
         subjectDescription: options.subjectDescription,
       }),
     });
-    const text = await options.call.vision("flicker", prompt, [
-      frameReference(first, a),
-      frameReference(second, b),
-    ]);
-    const record = options.call.records[options.call.records.length - 1];
-    const parsed = parseFlickerReply(text);
-    const flagged =
-      parsed.label === "unreadable" ||
-      (parsed.label === "flicker" && parsed.confidence >= options.cutoff);
+    const { result, record } = await options.call.decide(
+      "flicker",
+      prompt,
+      [frameReference(first, a), frameReference(second, b)],
+      flickerQuestion(pair),
+    );
+    if (result.answer.type !== "boolean") {
+      throw new ProviderError("the flicker decision gave no true or false");
+    }
+    const probability = Math.min(1, Math.max(0, result.answer.probability));
+    const label = probability >= 0.5 ? "flicker" : "same";
+    const flagged = probability >= options.cutoff;
+    const said =
+      label === "flicker"
+        ? "the identity changes, setting aside pose and brush texture"
+        : "the identity holds, setting aside pose and brush texture";
     decisions.push({
       pair,
-      model: record?.model ?? "",
-      requestId: record?.requestId ?? "",
-      label: parsed.label,
-      confidence: parsed.confidence,
+      model: record.model,
+      requestId: record.requestId,
+      label,
+      probability,
       cutoff: options.cutoff,
       flagged,
-      reason: parsed.reason,
-      costUsd: record?.costUsd ?? 0,
+      reason: said,
+      costUsd: record.costUsd,
       at: now().toISOString(),
     });
-    const head = `frame ${a} → frame ${b}`;
-    const detail =
-      parsed.label === "unreadable"
-        ? `${head}: the flicker reply was unreadable (${parsed.reason})`
-        : parsed.label === "flicker"
-          ? `${head}: flicker (confidence ${parsed.confidence} ${flagged ? "≥" : "<"} cutoff ${options.cutoff}): ${parsed.reason}`
-          : parsed.label === "texture"
-            ? `${head}: same identity, only painterly texture differs (${parsed.confidence}): ${parsed.reason}`
-            : `${head}: same (${parsed.confidence})`;
+    const p = probability.toFixed(2);
     reasons.push({
       check: "identity-flicker",
       passed: !flagged,
-      source: "vision",
+      source: "decision",
       frames: [a, b],
-      reason: detail,
+      reason: `frame ${a} → frame ${b}: ${label === "flicker" ? "flicker" : "same"} (probability ${p} ${flagged ? "≥" : "<"} cutoff ${options.cutoff}): ${said}`,
     });
   }
   return { reasons, decisions };
