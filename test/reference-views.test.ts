@@ -306,3 +306,31 @@ test("referenceViews refuses a declared view that is not one, and a judged answe
     /not an option/,
   );
 });
+
+test("a judged view whose model reports no probability records none, not certainty", async () => {
+  const bytes = encodePng(drawSubject(32, 2));
+  const ref = {
+    role: "hero",
+    path: "refs/b.png",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  };
+  const caller = new Caller({
+    provider: new ScriptedProvider({
+      image: () => ({ images: [] }),
+      vision: () => ({ text: "" }),
+      referenceView: () => ({ answer: { type: "choice", choice: "front" } }),
+    }),
+    budget: new Budget(1),
+    routes: defaultRoutes,
+  });
+  const cache = new ReferenceViewCache();
+  const [judged] = await referenceViews(caller, [ref], cache);
+  assert.equal(judged!.view, "front");
+  assert.equal(judged!.probability, undefined);
+  const decision = caller.records.at(-1)!.decision!;
+  assert.equal(decision.label, "front");
+  assert.equal(decision.value, undefined);
+  assert.equal(decision.raw, undefined);
+});

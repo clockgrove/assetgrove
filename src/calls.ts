@@ -394,7 +394,7 @@ export class Caller {
     }
     const d = record.decision;
     this.log(
-      `${operation} ${record.model}: ${d.label} (value ${d.value.toFixed(3)}` +
+      `${operation} ${record.model}: ${d.label} (value ${d.value !== undefined ? d.value.toFixed(3) : "not reported"}` +
         `${d.confidence !== undefined ? `, confidence ${d.confidence.toFixed(2)}` : ""}` +
         `, ${d.latencyMs} ms, $${record.costUsd.toFixed(6)} ${record.costSource})`,
     );
@@ -437,12 +437,12 @@ function decisionLog(
   if (question.type === "choice" && answer.type === "choice") {
     if (!Object.hasOwn(question.options, answer.choice))
       throw new ProviderError(`the decision chose "${answer.choice}", which is not an option`);
-    const p = answer.probabilities?.[answer.choice] ?? result.confidence ?? 1;
+    // Only a probability the model reported is recorded: none reported is not certainty.
+    const p = answer.probabilities?.[answer.choice] ?? result.confidence;
     return {
       question: "choice",
       label: answer.choice,
-      value: Math.min(1, Math.max(0, p)),
-      raw: p,
+      ...(p !== undefined && { value: Math.min(1, Math.max(0, p)), raw: p }),
       ...(answer.probabilities !== undefined && { probabilities: answer.probabilities }),
       ...(result.confidence !== undefined && { confidence: result.confidence }),
       ...(result.decisionSource !== undefined && { decisionSource: result.decisionSource }),
