@@ -565,7 +565,12 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
       mediaPath,
       ...(write.output.sidecars ?? [])
         .map((sidecar, i) => [sidecar, sidecarRels[i] as string] as const)
-        .filter(([sidecar]) => sidecar.mediaType.startsWith("image/"))
+        .filter(
+          ([sidecar]) =>
+            !sidecar.mediaType.startsWith("text/") &&
+            sidecar.mediaType !== "application/json" &&
+            !sidecar.mediaType.endsWith("+json"),
+        )
         .map(([, rel]) => targetPath(guard, rel)),
     ]);
   }

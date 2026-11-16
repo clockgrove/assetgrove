@@ -296,6 +296,12 @@ function gitSteps(root: string): InitStep[] {
         detail:
           "Git LFS is not installed. Install it (https://git-lfs.com), then run init again; library media goes through LFS and pick refuses media Git would not send there.",
       },
+      {
+        id: "notice.lfs-metering",
+        status: "notice",
+        detail:
+          "Your Git host meters LFS storage and bandwidth. The library's current LFS size is unknown without git-lfs (taken as 0.00 MiB).",
+      },
     ];
   }
   const steps: InitStep[] = [{ id: "git-lfs", status: "done", detail: `${version} is installed.` }];

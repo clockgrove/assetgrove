@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { InputError } from "../src/errors.ts";
+import { appendAnnotation, emptyReview, parseReview, writeReview } from "../src/library/review.ts";
 import {
   BLOCK,
   GitRequiredError,
@@ -78,6 +79,7 @@ test("with core.autocrlf true, written records come back byte-identical", () => 
     "hero.review.json": '{\n  "versions": []\n}\n',
     "hero.png.provenance.json": '{\n  "model": "scripted"\n}\n',
   };
+  files["hero.review.json"] = writeReview(emptyReview("hero.review.json"));
   for (const [name, text] of Object.entries(files)) writeFileSync(join(lib, name), text);
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "library");
@@ -91,23 +93,36 @@ test("two branches that each append a line merge without conflict and keep both 
   const root = library();
   const lib = join(root, "assets/source");
   writeFileSync(join(lib, "log.md"), "# Log\n");
-  writeFileSync(join(lib, "hero.review.json"), "[\n");
+  const base = emptyReview("hero.review.json");
+  writeFileSync(join(lib, "hero.review.json"), writeReview(base));
+  const note = (value: string) => ({
+    type: "Annotation" as const,
+    motivation: "commenting" as const,
+    created: "2026-01-01T00:00:00Z",
+    target: "hero.png",
+    body: { type: "TextualBody" as const, value },
+  });
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "base");
   git(root, "checkout", "-q", "-b", "left");
-  for (const name of ["log.md", "hero.review.json"])
-    writeFileSync(join(lib, name), `${readFileSync(join(lib, name), "utf8")}left\n`);
+  writeFileSync(join(lib, "log.md"), "# Log\nleft\n");
+  writeFileSync(join(lib, "hero.review.json"), writeReview(appendAnnotation(base, note("left"))));
   git(root, "commit", "-q", "-am", "left");
   git(root, "checkout", "-q", "main");
   git(root, "checkout", "-q", "-b", "right");
-  for (const name of ["log.md", "hero.review.json"])
-    writeFileSync(join(lib, name), `${readFileSync(join(lib, name), "utf8")}right\n`);
+  writeFileSync(join(lib, "log.md"), "# Log\nright\n");
+  writeFileSync(join(lib, "hero.review.json"), writeReview(appendAnnotation(base, note("right"))));
   git(root, "commit", "-q", "-am", "right");
   git(root, "merge", "-q", "--no-edit", "left");
   for (const name of ["log.md", "hero.review.json"]) {
     const text = readFileSync(join(lib, name), "utf8");
-    assert.ok(text.includes("left\n") && text.includes("right\n"), name);
+    if (name === "log.md") assert.ok(text.includes("left\n") && text.includes("right\n"), name);
   }
+  const merged = parseReview(readFileSync(join(lib, "hero.review.json"), "utf8"), "merged");
+  assert.deepEqual(merged.annotations.map((a) => JSON.stringify(a.body)).sort(), [
+    '{"type":"TextualBody","value":"left"}',
+    '{"type":"TextualBody","value":"right"}',
+  ]);
 });
 
 test(
