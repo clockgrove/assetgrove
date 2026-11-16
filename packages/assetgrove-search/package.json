@@ -10,6 +10,14 @@
   },
   "type": "module",
   "main": "src/index.ts",
+  "assetgrove": {
+    "api": 1,
+    "entry": "./src/extension.ts"
+  },
+  "files": [
+    "src",
+    "skills"
+  ],
   "publishConfig": {
     "access": "public"
   },

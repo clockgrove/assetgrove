@@ -27,6 +27,10 @@ export interface LanceStoreOptions {
   platform?: { platform: string; arch: string };
   /** For tests: how LanceDB is imported. */
   importLance?: () => Promise<LanceModules>;
+  /** Object-store options handed to LanceDB, and nothing else. */
+  storageOptions?: Record<string, string>;
+  /** The location is an object-store URI, not a local folder: table presence comes from the connection. */
+  remote?: boolean;
 }
 
 const importLanceDefault = async (): Promise<LanceModules> => ({
@@ -95,6 +99,8 @@ export class LanceStore implements Store {
   readonly dir: string;
   private readonly m: LanceModules;
   private readonly dimension: number;
+  private readonly storageOptions: Record<string, string> | undefined;
+  private readonly remote: boolean;
   private readonly rowsName: string;
   private readonly sourcesName: string;
   private readonly builtName: string;
@@ -105,6 +111,8 @@ export class LanceStore implements Store {
     this.dir = dir;
     this.m = m;
     this.dimension = options.embedder.dimension;
+    this.storageOptions = options.storageOptions;
+    this.remote = options.remote ?? false;
     this.rowsName = rowsTableName(options.embedder);
     this.sourcesName = sourcesTableName(options.embedder);
     this.builtName = builtTableName(options.embedder);
@@ -157,7 +165,10 @@ export class LanceStore implements Store {
 
   private async connection(): Promise<Lance.Connection> {
     // Strong consistency: every read sees what another process committed.
-    this.db ??= await this.m.lancedb.connect(this.dir, { readConsistencyInterval: 0 });
+    this.db ??= await this.m.lancedb.connect(this.dir, {
+      readConsistencyInterval: 0,
+      ...(this.storageOptions && { storageOptions: this.storageOptions }),
+    });
     return this.db;
   }
 
@@ -169,10 +180,12 @@ export class LanceStore implements Store {
    */
   private async table(name: string, mode: Mode): Promise<Lance.Table | undefined> {
     const folder = join(this.dir, `${name}.lance`);
-    const present = await stat(join(folder, "_versions")).then(
-      () => true,
-      () => false,
-    );
+    const present = this.remote
+      ? (await (await this.connection()).tableNames()).includes(name)
+      : await stat(join(folder, "_versions")).then(
+          () => true,
+          () => false,
+        );
     if (present) {
       const open = this.tables.get(name);
       if (open) return open;
@@ -182,13 +195,15 @@ export class LanceStore implements Store {
     }
     this.tables.delete(name);
     if (mode === "read") return undefined;
-    await rm(folder, { recursive: true, force: true });
-    if (name === this.rowsName) {
-      this.tables.delete(this.sourcesName);
-      await rm(join(this.dir, `${this.sourcesName}.lance`), { recursive: true, force: true });
+    if (!this.remote) {
+      await rm(folder, { recursive: true, force: true });
+      if (name === this.rowsName) {
+        this.tables.delete(this.sourcesName);
+        await rm(join(this.dir, `${this.sourcesName}.lance`), { recursive: true, force: true });
+      }
+      // A deleted store folder leaves the connection pointing at nothing; connect afresh.
+      this.db = undefined;
     }
-    // A deleted store folder leaves the connection pointing at nothing; connect afresh.
-    this.db = undefined;
     const t = await (
       await this.connection()
     ).createEmptyTable(name, this.schemas(name), { mode: "overwrite" });

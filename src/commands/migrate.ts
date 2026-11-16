@@ -6,7 +6,7 @@ import { InputError } from "../errors.ts";
 import { formatLine, readFormat, type FormatKind } from "../formats.ts";
 import { defineCommand } from "./types.ts";
 
-const KINDS = ["target-profile", "style-bible", "style-preset", "recipe"] as const;
+const KINDS = ["target-profile", "style-bible", "style-preset", "recipe", "settings"] as const;
 
 interface MigrateArgs {
   file?: string;
@@ -33,7 +33,8 @@ otherwise validated; loading it does that.`,
       file: { type: "string", description: "the file to migrate", placeholder: "<file>" },
       kind: {
         type: "string",
-        description: "the kind of file: target-profile, style-bible, style-preset or recipe",
+        description:
+          "the kind of file: target-profile, style-bible, style-preset, recipe or settings",
         placeholder: "<kind>",
       },
     },

@@ -1,4 +1,4 @@
-import { settingsPath } from "./fixtures/env.ts";
+import { resetSettings, settingsPath, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -11,6 +11,7 @@ import { parseDocument } from "yaml";
 import { routeDataFlows } from "../src/dataflows.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { HARNESSES, keyRecipe } from "../src/keys.ts";
+import { searchSteps } from "../src/init.ts";
 import { loadSettings } from "../src/settings.ts";
 
 const cliPath = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -284,4 +285,66 @@ test("the skills init writes meet the Agent Skills rules and are identical", asy
   for (const path of paths) await checkSkill(path);
   const [claude, agents] = await Promise.all(paths.map((p) => readFile(p, "utf8")));
   assert.equal(claude, agents);
+});
+
+test("init reports a step when the search package is installed but not listed, and none once it is", async () => {
+  const dir = tempDir();
+  const pkg = join(dir, "node_modules", "@clockgrove", "assetgrove-search");
+  await mkdir(pkg, { recursive: true });
+  await writeFile(
+    join(pkg, "package.json"),
+    JSON.stringify({ name: "@clockgrove/assetgrove-search", version: "0.0.0" }),
+  );
+  try {
+    writeSettings({});
+    const unlisted = await cli(initArgs(dir));
+    assert.equal(unlisted.code, 0, unlisted.stderr);
+    const step = unlisted.json.steps.find((s) => s.id === "search");
+    assert.equal(step?.status, "needs-person");
+    assert.match(step!.detail, /@clockgrove\/assetgrove-search/);
+    assert.ok(step!.detail.includes(settingsPath), step!.detail);
+
+    // Listed, it loads (src/extensions/registry.ts) and init asks nothing more of the person.
+    const listed = { ...loadSettings(), extensions: ["@clockgrove/assetgrove-search"] };
+    assert.deepEqual(searchSteps(dir, listed), []);
+
+    const bare = await cli(initArgs(tempDir()));
+    assert.equal(
+      bare.json.steps.find((s) => s.id === "search"),
+      undefined,
+    );
+  } finally {
+    resetSettings();
+  }
+});
+
+test("with a remote store configured, init's output carries the shared-index notice", async () => {
+  try {
+    writeSettings({
+      search: {
+        store: {
+          uri: "s3://team-bucket/assets",
+          credentialsEnv: { accessKeyId: "AG_KEY_ID", secretAccessKey: "AG_SECRET" },
+        },
+      },
+    });
+    const result = await cli(initArgs(tempDir()));
+    assert.equal(result.code, 0, result.stderr);
+    const notice = result.json.steps.find((s) => s.id === "notice.shared-index");
+    assert.equal(notice?.status, "notice");
+    assert.match(
+      notice!.detail,
+      /a shared index exposes embeddings to whoever can read the bucket/i,
+    );
+    assert.match(notice!.detail, /s3:\/\/team-bucket\/assets/);
+
+    writeSettings({});
+    const none = await cli(initArgs(tempDir()));
+    assert.equal(
+      none.json.steps.find((s) => s.id === "notice.shared-index"),
+      undefined,
+    );
+  } finally {
+    resetSettings();
+  }
 });

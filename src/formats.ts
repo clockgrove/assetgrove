@@ -11,7 +11,7 @@ export const FORMAT_VERSIONS = {
   "style-bible": 1,
   "style-preset": 1,
   recipe: 1,
-  settings: 1,
+  settings: 2,
   blocklist: 1,
 } as const satisfies Record<string, number>;
 
@@ -51,6 +51,8 @@ export function unregisterMigration(kind: string, from: number): void {
 
 // A /1 profile is valid as /2: the library block is optional and has defaults.
 registerMigration("target-profile", 1, (value) => value);
+// A /1 settings file is valid as /2: the search block is optional.
+registerMigration("settings", 1, (value) => value);
 
 /** The format line a current file of `kind` carries. */
 export function formatLine(kind: FormatKind): string {

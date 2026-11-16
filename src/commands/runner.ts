@@ -3,6 +3,7 @@ import type { ParseArgsOptionsConfig } from "node:util";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import { SettingsError } from "../env.ts";
 import { EXIT, InputError } from "../errors.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { checkTrackedKeys } from "../guard.ts";
 import { redact } from "../redact.ts";
 import { executeRun } from "../runs/execute.ts";
@@ -148,11 +149,18 @@ function sendsKey(spec: CommandSpec, args: Args): boolean {
  * that can send a key first refuses an environment its settings do not allow (exit 2
  * `settings_invalid`); a paid command then refuses a key in a tracked file of the working
  * directory's repository (exit 2 `key_tracked`); pick and write-families refuse a key in a tracked
- * file of their target's repository. The command's log is redacted.
+ * file of their target's repository. A command that needs the search slot exits 2
+ * `extension_unavailable` while no loaded extension fills it, and checks the environment too.
+ * The command's log is redacted.
  */
 export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext): Promise<Outcome> {
   try {
     const guard = { settings: ctx.settings, ...(ctx.env && { env: ctx.env }) };
+    if (spec.requires === "search") {
+      (ctx.extensions ?? CORE_REGISTRY).requireSearch(spec.name);
+      // The object store's variables could redirect index data (design section 7.2).
+      checkContextEnvironment(ctx);
+    }
     if (sendsKey(spec, args)) checkContextEnvironment(ctx);
     if (isPaid(spec)) checkTrackedKeys(process.cwd(), guard);
     await validateArgs(spec, args);
@@ -272,4 +280,12 @@ export function commandUsage(spec: CommandSpec): string {
     "Options:",
     ...options.map(([flag, text]) => `  ${flag.padEnd(width)}  ${text}`),
   ].join("\n");
+}
+
+/** The commands a context offers: every core command, and each slot command whose slot is filled. */
+export function availableCommands(
+  all: readonly CommandSpec[],
+  extensions: { search?: unknown } | undefined,
+): CommandSpec[] {
+  return all.filter((c) => c.requires !== "search" || extensions?.search !== undefined);
 }

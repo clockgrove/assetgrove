@@ -14,3 +14,5 @@ export * from "./library.ts";
 export * from "./lock.ts";
 export * from "./platform.ts";
 export * from "./where.ts";
+export * from "./extension.ts";
+export type * from "./contract.ts";

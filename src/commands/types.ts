@@ -112,6 +112,11 @@ export interface CommandSpec<A = Record<string, unknown>> {
   positionals?: { name: string; variadic?: boolean }[];
   effect: Effect;
   confirm?: "spend" | "pick" | "write" | "settings";
+  /**
+   * The extension slot the command needs (design section 7.1): while it is empty, help and the
+   * tool list leave the command out and a call exits 2 `extension_unavailable`.
+   */
+  requires?: "search";
   /** False when the command prints no JSON document (it takes no --json). Defaults to true. */
   json?: false;
   /** The free plan step of a paid command: no provider call, no ledger entry (design section 6). */

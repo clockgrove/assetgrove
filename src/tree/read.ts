@@ -331,6 +331,17 @@ function runFile(runDir: string, name: string): string | undefined {
   return path;
 }
 
+/** A run's candidate files: each candidate of `run.json` that names a file inside the run folder. */
+export function runCandidateFiles(project: Project, run: string): { id: string; file: string }[] {
+  const dir = join(project.runsDir, run);
+  const out: { id: string; file: string }[] = [];
+  for (const c of candidates(readJsonObject(join(dir, "run.json")))) {
+    const file = c.file === undefined ? undefined : runFile(dir, c.file);
+    if (file !== undefined) out.push({ id: c.id, file });
+  }
+  return out;
+}
+
 function readBytes(path: string | undefined): Uint8Array | undefined {
   if (path === undefined) return undefined;
   try {
