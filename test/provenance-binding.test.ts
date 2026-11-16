@@ -505,7 +505,7 @@ test("an unbound record is refused on media whose mark has no calls sha256, edit
   );
   const path = join(dir, "a.png");
   await writeFile(path, bytes);
-  const edited = {
+  const edited: Doc = {
     ...importedStripRecord([
       { operation: "edit", model: "x/y", outputGrant: { commercial: true } },
     ]),
