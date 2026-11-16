@@ -102,9 +102,10 @@ async function script(
 ) {
   const path = join(dir, `script-${options.mask === false ? "plain" : "mask"}.mjs`);
   const events = `${path}.events`;
+  const answer = `${path}.template.json`;
   await writeFile(
     path,
-    `import { appendFileSync } from "node:fs";
+    `import { appendFileSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { decodeImage, encodePng, setPixel } from ${JSON.stringify(RASTER)};
 export default {
@@ -123,9 +124,10 @@ export default {
   },
   vision: () => ({ text: "ok" }),
   promptPolicy: () => ({ answer: { type: "boolean", probability: 0 } }),
-  ${options.template !== undefined ? `motionTemplate: () => ({ answer: { type: "choice", choice: ${JSON.stringify(options.template)} }, costUsd: 0.001 }),` : ""}
+  ${options.template !== undefined ? `motionTemplate: () => ({ answer: { type: "choice", choice: JSON.parse(readFileSync(${JSON.stringify(answer)}, "utf8")) }, costUsd: 0.001 }),` : ""}
 };`,
   );
+  if (options.template !== undefined) await writeFile(answer, JSON.stringify(options.template));
   approve(path);
   const calls = async (): Promise<
     Array<{ prompt: string; references: number; mask: string | null }>
