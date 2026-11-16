@@ -66,7 +66,7 @@ Also available:
 
 - `output.gait`;
 - `output.missingClips`, as `{ family, why }`: families the library has no close clip for, which do not fail the candidate;
-- `output.unmatchedClips`, as `{ family, why }`, when present: library clips that were requested but not returned, each of which fails its `clip-<family>` check;
+- `output.unmatchedClips`, as `{ family, why }`, when present: library clips whose animation could not be tied to the request (the provider did not say which animation is the clip, or the clip's animation animates a node the first clip's model does not have), each of which fails its `clip-<family>` check;
 - `output.identity`, the identity score.
 
 ## What a candidate is
@@ -85,7 +85,7 @@ Also available:
    The profile's triangle budget goes with the call (`maxTriangles`, Tripo's `face_limit`), because Tripo otherwise returns about 400K triangles.
 
 2. **Rig** (`rig3d` route): the provider's auto-rig for the gait. The route's `rigTypes` maps a gait to the provider's rig type.
-3. **Clips** (`clips3d` route): the provider's library clips, retargeted onto the rig. The route's `library` maps gait → family → `{ clip, loop }`. A family with no library entry is reported as missing for the candidate. It is never faked, and the candidate is not refused for it. Each returned animation is renamed after its family. For a looping family, the last key of every channel is set to its first, which closes the loop.
+3. **Clips** (`clips3d` route): the provider's library clips, retargeted onto the rig. The route's `library` maps gait → family → `{ clip, loop }`. A family with no library entry is reported as missing for the candidate. It is never faked, and the candidate is not refused for it. Assetgrove makes one `clips3d` call per library clip, so each result is tied to the clip it was asked for. The clip's animation is the one the adapter names in the result's `animations` mapping (library clip → animation index in the returned `.glb`). An adapter that cannot say leaves the mapping out, and then the result's only animation is the clip's. Animation names are never read. A family is unmatched when its result holds several animations and no mapping says which is the clip, when the mapping points past the returned animations, or when the animation targets a node the first clip's model lacks. An unmatched family is listed in `unmatchedClips` and fails its `clip-<family>` check. The first tied animation's model is the base, and each later tied animation is copied onto it with its keyframes, mapping each animated node to the base node of the same name (or, when names are missing or ambiguous and both models have as many nodes, the same index). The animations stay in the order of the spec's families, and each is renamed after its family. For a looping family, the last key of every channel is set to its first, which closes the loop.
 4. **Normalise.** The scene gets a single root node that:
    - turns the model from the route's `forward` (the provider's facing, `+z` by default; Tripo's models face `+x`, as measured on one four-legged character) to the profile's `forward`;
    - scales it to `heightM`;
@@ -328,7 +328,7 @@ A model that has been through look-dev carries its groom maps, tint and eye mask
 
 ## Spend
 
-`stage` reserves every call against the cap before the first one: the reference-view calls (once per request), then generation, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $1.001 per candidate, so 4 candidates reserve $4.004 against the $5 cap. Each call settles at the cost Tripo reports (its credits × the provider entry's `usdPerCredit`) or, with no rate set, at its estimate. Every candidate's provenance carries its own `costUsd`.
+`stage` reserves every call against the cap before the first one: the reference-view calls (once per request), then generation, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $0.801 per candidate plus $0.20 for each library clip the spec asks for, since each clip is its own call. A spec with one clip reserves $1.001 per candidate, so 4 candidates reserve $4.004 against the $5 cap; a spec with three clips reserves $1.401 per candidate, so 4 candidates reserve $5.604 and need a higher cap. Each call settles at the cost Tripo reports (its credits × the provider entry's `usdPerCredit`) or, with no rate set, at its estimate. Every candidate's provenance carries its own `costUsd`.
 
 ## Hand-off
 

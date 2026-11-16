@@ -46,6 +46,7 @@ import { profileSha256, riggedCandidate } from "./rig/candidate.ts";
 import { declaresRig, loadRig, rigProfileOf } from "./rig/template.ts";
 import {
   clips,
+  appendAnimation,
   closeLoop,
   keepClips,
   measure,
@@ -160,31 +161,6 @@ function prompt(spec: AssetSpec, bible: StyleBible, character: CharacterSpec): s
   ].join("\n");
 }
 
-/** Maps the provider's returned animations to the planned families, in request order. */
-function matchClips(glb: Glb, planned: Array<ClipPlan & { clip: string }>) {
-  const available = clips(glb);
-  const matched = new Map<number, string>();
-  const unmatched: Array<{ family: string; why: string }> = [];
-  planned.forEach((p, i) => {
-    let index: number | undefined;
-    if (available.length === planned.length) index = available[i]?.index;
-    else {
-      const tail = p.clip.split(":").at(-1) ?? p.clip;
-      index = available.find(
-        (a) => !matched.has(a.index) && a.name.toLowerCase().includes(tail.toLowerCase()),
-      )?.index;
-      if (index === undefined && planned.length === 1) index = available[0]?.index;
-    }
-    if (index === undefined || matched.has(index)) {
-      unmatched.push({
-        family: p.family,
-        why: `the provider returned no animation for library clip ${p.clip}`,
-      });
-    } else matched.set(index, p.family);
-  });
-  return { matched, unmatched };
-}
-
 export const character3dGenerator: Generator = {
   kind: CHARACTER_3D_KIND,
 
@@ -203,7 +179,8 @@ export const character3dGenerator: Generator = {
       rigProfileOf(profile);
     } else {
       add(RIG_OPERATION);
-      if (clipPlan(character, routes[CLIPS_OPERATION]).planned.length > 0) add(CLIPS_OPERATION);
+      // One retarget call per planned library clip.
+      clipPlan(character, routes[CLIPS_OPERATION]).planned.forEach(() => add(CLIPS_OPERATION));
     }
     // Identity never filters a 3D character, so no record check is forecast.
     const identity = identitySettings3d(profile);
@@ -271,27 +248,61 @@ export const character3dGenerator: Generator = {
       const rigType = rigRoute.rigTypes?.[character.gait] ?? character.gait;
       const rigged = await call.rig3d(RIG_OPERATION, made.handle, rigType);
       const plan = clipPlan(character, call.route(CLIPS_OPERATION));
-      let source = rigged;
-      if (plan.planned.length > 0) {
-        source = await call.clips3d(
-          CLIPS_OPERATION,
-          rigged.handle,
-          plan.planned.map((p) => p.clip),
-        );
+      const parse = (bytes: Uint8Array): Glb => {
+        try {
+          return parseGlb(bytes);
+        } catch (error) {
+          throw new ProviderError(
+            `the provider returned no usable glTF: ${(error as Error).message}`,
+          );
+        }
+      };
+      // One clip per call: the animation of the result is tied to the clip that was asked for.
+      let glb: Glb | undefined;
+      const delivered: typeof plan.planned = [];
+      const unmatched: Array<{ family: string; why: string }> = [];
+      for (const p of plan.planned) {
+        const result = await call.clips3d(CLIPS_OPERATION, rigged.handle, [p.clip]);
+        const from = parse(result.glb);
+        const count = from.json.animations?.length ?? 0;
+        const given = result.animations?.[p.clip];
+        let index: number | undefined;
+        if (given !== undefined) {
+          if (Number.isInteger(given) && given >= 0 && given < count) index = given;
+          else {
+            unmatched.push({
+              family: p.family,
+              why: `the provider pointed at animation ${given} for library clip ${p.clip} but returned ${count}`,
+            });
+            continue;
+          }
+        } else if (count === 1) index = 0;
+        else {
+          unmatched.push({
+            family: p.family,
+            why: `the provider returned ${count} animations for library clip ${p.clip} and did not say which is the clip`,
+          });
+          continue;
+        }
+        if (!glb) {
+          glb = from;
+          keepClips(glb, [index]);
+        } else {
+          try {
+            appendAnimation(glb, from, index);
+          } catch (error) {
+            if (!(error instanceof InputError)) throw error;
+            unmatched.push({ family: p.family, why: error.message });
+            continue;
+          }
+        }
+        delivered.push(p);
       }
-
-      let glb: Glb;
-      try {
-        glb = parseGlb(source.glb);
-      } catch (error) {
-        throw new ProviderError(
-          `the provider returned no usable glTF: ${(error as Error).message}`,
-        );
+      if (!glb) {
+        glb = parse(rigged.glb);
+        keepClips(glb, []);
       }
-      const { matched, unmatched } = matchClips(glb, plan.planned);
-      keepClips(glb, [...matched.keys()]);
-      renameClips(glb, new Map([...matched.values()].map((family, i) => [i, family])));
-      const delivered = plan.planned.filter((p) => [...matched.values()].includes(p.family));
+      renameClips(glb, new Map(delivered.map((p, i) => [i, p.family])));
       // Only families the library has no close clip for are excused; a library clip that was
       // requested but not returned fails its clip check.
       const missing = plan.missing;
