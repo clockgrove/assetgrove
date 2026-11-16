@@ -572,6 +572,15 @@ const rows: Row[] = [
   { tool: "approve", prepare: async () => ({ address: await pickedCard() }), exitCode: 8 },
   { tool: "card_edit", prepare: async () => ({ address: await pickedCard(), title: "A row" }) },
   {
+    tool: "request_change",
+    prepare: async () => ({
+      address: await pickedCard(),
+      region: ["0,0,8,8 : a row"],
+      candidates: 1,
+      runs: join(paths.world(), "runs"),
+    }),
+  },
+  {
     tool: "compare",
     prepare: async () => {
       const dir = join(work, "compare");

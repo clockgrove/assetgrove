@@ -184,7 +184,9 @@ export class Caller {
     prompt: string,
     references: LoadedReference[],
     seed?: number,
+    options: { mask?: LoadedReference } = {},
   ): Promise<ImageInput> {
+    const { mask } = options;
     const route = this.route(operation);
     const sendSeed = route.supportsSeed ? seed : undefined;
     const parameters: Record<string, unknown> = {
@@ -192,12 +194,14 @@ export class Caller {
       ...(sendSeed !== undefined && { seed: sendSeed }),
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       references: references.map((r) => ({ role: r.role, path: r.path, sha256: r.sha256 })),
+      ...(mask !== undefined && { mask: { path: mask.path, sha256: mask.sha256 } }),
     };
     const result = await this.record(
       "image",
       operation,
       prompt,
-      references,
+      // The mask is hashed with the references, so a different mask is a different call.
+      mask === undefined ? references : [...references, mask],
       parameters,
       sendSeed,
       (r, provider) =>
@@ -205,6 +209,7 @@ export class Caller {
           model: r.model,
           prompt,
           references: references.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
+          ...(mask !== undefined && { mask: { mediaType: mask.mediaType, bytes: mask.bytes } }),
           ...(r.size !== undefined && { size: r.size }),
           ...(sendSeed !== undefined && { seed: sendSeed }),
           ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),

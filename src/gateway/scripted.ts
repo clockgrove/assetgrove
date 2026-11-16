@@ -16,7 +16,7 @@ import type {
   VisionResult,
 } from "./provider.ts";
 
-import { PROMPT_POLICY_OPERATION } from "../routes.ts";
+import { BRIEF_POLICY_OPERATION, PROMPT_POLICY_OPERATION } from "../routes.ts";
 
 /**
  * A scripted generation provider for tests and offline runs. It never calls a model: each call is
@@ -45,6 +45,14 @@ export interface Script {
   };
   /** Answers embedding calls (images and text in one space); a script without it cannot answer one. */
   embed?(request: EmbedRequest, index: number): Scripted<EmbedResult>;
+  /**
+   * Answers the brief policy's model check (the `brief-policy` decisions; `briefPolicyAsked` in
+   * src/policy/brief.ts reads the field and target from the prompt). A script without it finds
+   * no departure (probability 0); its calls do not count toward `decide`'s index.
+   */
+  briefPolicy?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -56,6 +64,11 @@ export interface Script {
    * ledger and need a declared limit, and tests can prove the limits offline.
    */
   paid?: boolean;
+  /**
+   * Test only: narrows the capabilities the scripted adapter declares for this module (for example,
+   * without `mask`).
+   */
+  capabilities?: string[];
   /** Test only: the provider's limit reading, as a real adapter reads its balance. */
   limitReading?(): LimitReading | Promise<LimitReading>;
   /** Test only: how the provider's usage is reconciled, as a real adapter declares it. */
@@ -89,6 +102,7 @@ export class ScriptedProvider implements GenerationProvider {
   private visionCount = 0;
   private decideCount = 0;
   private policyCount = 0;
+  private briefPolicyCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -106,6 +120,10 @@ export class ScriptedProvider implements GenerationProvider {
       ...(read !== undefined && { readLimit: async () => read() }),
       ...(cost !== undefined && { callCost: async (requestId: string) => cost(requestId) }),
     };
+  }
+
+  declares(capability: string): boolean {
+    return this.script.capabilities?.includes(capability) ?? true;
   }
 
   async generateImage(request: ImageRequest): Promise<ImageResult> {
@@ -130,6 +148,13 @@ export class ScriptedProvider implements GenerationProvider {
         ? this.script.promptPolicy(request)
         : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
       return { requestId: `scripted-prompt-policy-${index}`, ...answer };
+    }
+    if (request.operation === BRIEF_POLICY_OPERATION) {
+      const index = this.briefPolicyCount++;
+      const answer = this.script.briefPolicy
+        ? this.script.briefPolicy(request)
+        : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
+      return { requestId: `scripted-brief-policy-${index}`, ...answer };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

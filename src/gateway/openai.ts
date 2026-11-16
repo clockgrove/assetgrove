@@ -12,10 +12,25 @@ import type {
   VisionRequest,
   VisionResult,
 } from "./provider.ts";
+import { decodeImage, createRaster, encodePng, setPixel } from "../image/raster.ts";
+import { maskInside } from "../regions.ts";
 import { decideStructured, requestIdOf, userMessage } from "./structured.ts";
 
 /** OpenAI's API, at the SDK's own path; settings may not change it. */
 export const OPENAI_BASE_URL = "https://api.openai.com/v1";
+
+/**
+ * Converts a mask in Assetgrove's convention (opaque, light pixels are the region) to OpenAI's:
+ * the region is transparent, which the model edits, and everything else is opaque.
+ */
+export function openAiMask(bytes: Uint8Array): Uint8Array {
+  const mask = decodeImage(bytes);
+  const out = createRaster(mask.width, mask.height);
+  for (let y = 0; y < mask.height; y++)
+    for (let x = 0; x < mask.width; x++)
+      setPixel(out, x, y, maskInside(mask, x, y) ? [0, 0, 0, 0] : [0, 0, 0, 255]);
+  return encodePng(out);
+}
 
 type Client = ReturnType<typeof createOpenAI>;
 
@@ -68,9 +83,13 @@ export class OpenAIProvider implements GenerationProvider {
         // One request per reservation: an SDK retry would resend a paid call.
         maxRetries: 0,
         prompt:
-          req.references.length === 0
+          req.references.length === 0 && req.mask === undefined
             ? req.prompt
-            : { text: req.prompt, images: req.references.map((r) => r.bytes) },
+            : {
+                text: req.prompt,
+                images: req.references.map((r) => r.bytes),
+                ...(req.mask !== undefined && { mask: openAiMask(req.mask.bytes) }),
+              },
         ...(req.size !== undefined && { size: req.size as `${number}x${number}` }),
         ...(req.seed !== undefined && { seed: req.seed }),
         ...(req.providerOptions !== undefined && {

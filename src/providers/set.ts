@@ -15,6 +15,7 @@ import type {
   VisionRequest,
   VisionResult,
 } from "../gateway/provider.ts";
+import { ScriptedProvider } from "../gateway/scripted.ts";
 import type { Script } from "../gateway/scripted.ts";
 import { enforcePromptPolicy } from "../policy/text.ts";
 import { resolveRoutes, roleOf, OPERATION_ROLES } from "../routes.ts";
@@ -105,6 +106,15 @@ export class ProviderSet implements GenerationProvider {
   /** The configured provider of a settings id. */
   get(id: string): ConfiguredProvider | undefined {
     return this.configured.find((c) => c.id === id);
+  }
+
+  /** Whether the route's configured provider declares a capability (a script may narrow it). */
+  declares(route: Route, capability: string): boolean {
+    const configured = route.provider !== undefined ? this.get(route.provider) : undefined;
+    if (configured === undefined) return false;
+    if (!(configured.adapter.capabilities as string[]).includes(capability)) return false;
+    const { provider } = configured;
+    return provider instanceof ScriptedProvider ? provider.declares(capability) : true;
   }
 
   /** The provider that serves a route. */

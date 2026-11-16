@@ -247,8 +247,9 @@ export interface WorkPlanParts {
   /** The plan step's near matches (src/search/near-match.ts); kept out of the digest. */
   near?: NearMatchOutcome;
   /**
-   * Content the request covers that is not a file it names (search's pending work), name to
-   * sha256 hex: added to `inputs`, so other content is another request.
+   * Content the request covers that is not a file it names (search's pending work, the sha256 of
+   * the version a change request edits), name to sha256 hex: added to `inputs`, so they are in
+   * the digest and other content is another request.
    */
   hashes?: Record<string, string>;
 }
