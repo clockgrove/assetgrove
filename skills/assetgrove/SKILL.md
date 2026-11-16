@@ -27,6 +27,10 @@ Only a person:
 - fixes an identity record that `identity-check` reports as disagreeing;
 - raises a spend limit. Never raise one yourself; ask the human.
 
+## Search
+
+`find`, `search index`, `search status` and `search setup` need the optional `@clockgrove/assetgrove-search` package, listed by a person under `extensions` in the developer settings; until then help and the tool list leave them out and a call exits 2 `extension_unavailable`. That package ships its own `assetgrove-search` skill describing them.
+
 ## Suggested flow
 
 1. `stage --dry-run --json` to check the planned calls and the cost forecast.

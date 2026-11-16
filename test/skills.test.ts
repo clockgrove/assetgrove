@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parseDocument } from "yaml";
 import { commandNames, commands } from "../src/commands/registry.ts";
 import { cliFlags, toolInputSchema } from "../src/commands/runner.ts";
+import type { CommandSpec } from "../src/commands/types.ts";
 import { writeProjectFiles } from "../src/init.ts";
 
 /** The Agent Skills rules every SKILL.md must meet, so each harness loads it. */
@@ -55,6 +56,14 @@ test("the skill init writes meets the rules, where every harness reads skills", 
 });
 
 const skillDir = fileURLToPath(new URL("../skills/assetgrove/", import.meta.url));
+/** The search package's skill: the reference of the commands that need the search slot. */
+const searchSkillDir = fileURLToPath(
+  new URL("../packages/assetgrove-search/skills/assetgrove-search/", import.meta.url),
+);
+
+/** Core's commands, which core's skill describes; the search-only ones are the package's. */
+const coreCommands = commands.filter((c) => c.requires === undefined);
+const searchCommands = commands.filter((c) => c.requires === "search");
 
 /** The `--flag` names a text mentions. */
 function flags(text: string): Set<string> {
@@ -62,11 +71,11 @@ function flags(text: string): Set<string> {
 }
 
 /** SKILL.md and every Markdown file of its folder it links, by path relative to the folder. */
-async function shippedSkill(): Promise<Map<string, string>> {
-  const entry = await readFile(join(skillDir, "SKILL.md"), "utf8");
+async function shippedSkill(dir = skillDir): Promise<Map<string, string>> {
+  const entry = await readFile(join(dir, "SKILL.md"), "utf8");
   const files = new Map([["SKILL.md", entry]]);
   for (const m of entry.matchAll(/\]\(((?:[\w-]+\/)*[\w-]+\.md)(?:#[^)]*)?\)/g))
-    files.set(m[1]!, await readFile(join(skillDir, m[1]!), "utf8"));
+    files.set(m[1]!, await readFile(join(dir, m[1]!), "utf8"));
   return files;
 }
 
@@ -76,7 +85,10 @@ async function shippedSkill(): Promise<Map<string, string>> {
  * lacks, a section that does not name its command's MCP tool, and, outside the sections, a flag
  * no command takes.
  */
-function referenceProblems(texts: Iterable<string>): string[] {
+function referenceProblems(
+  texts: Iterable<string>,
+  described: readonly CommandSpec[] = coreCommands,
+): string[] {
   const problems: string[] = [];
   const sections = new Map<string, string>();
   const rest: string[] = [];
@@ -94,7 +106,7 @@ function referenceProblems(texts: Iterable<string>): string[] {
       else sections.set(current, `${sections.get(current)!}${line}\n`);
     }
   }
-  for (const spec of commands) {
+  for (const spec of described) {
     const section = sections.get(spec.name);
     if (section === undefined) {
       problems.push(`no section for ${spec.name}`);
@@ -132,8 +144,17 @@ function referenceProblems(texts: Iterable<string>): string[] {
       }
     }
   }
-  for (const name of sections.keys())
-    if (!commandNames.includes(name)) problems.push(`a section for ${name}, not a command`);
+  const names = described.map((c) => c.name);
+  for (const name of sections.keys()) {
+    const other = commands.find((c) => c.name === name);
+    if (other !== undefined && !names.includes(name))
+      problems.push(
+        other.requires !== undefined
+          ? `the skill describes ${name}, which needs the ${other.requires} package; its reference describes it`
+          : `the skill describes ${name}, a core command; core's reference describes it`,
+      );
+    else if (!commandNames.includes(name)) problems.push(`a section for ${name}, not a command`);
+  }
   const known = new Set([
     "--json",
     "--help",
@@ -180,4 +201,29 @@ test("the reference check fails when a command has no section or a section lacks
   const noLine = reference.replace(/^MCP tool: `ops`.*\n/m, "");
   assert.notEqual(noLine, reference);
   assert.ok(withOut(noLine).includes("the ops section does not name its tool"));
+});
+
+test("the search package's skill describes every search-only command with exactly its flags", async () => {
+  assert.deepEqual(
+    searchCommands.map((c) => c.name),
+    ["find", "search index", "search status", "search setup"],
+  );
+  await checkSkill(join(searchSkillDir, "SKILL.md"));
+  const skill = await shippedSkill(searchSkillDir);
+  assert.ok(skill.has("references/commands.md"), "SKILL.md links the command reference");
+  assert.deepEqual(referenceProblems(skill.values(), searchCommands), []);
+});
+
+test("core's skill describes no search-only command, and the check refuses one there", async () => {
+  const core = await shippedSkill();
+  for (const text of core.values())
+    for (const spec of searchCommands)
+      assert.ok(!text.includes(`### \`${spec.name}\``), `core's skill describes ${spec.name}`);
+  const search = (await shippedSkill(searchSkillDir)).get("references/commands.md")!;
+  const findSection = /### `find`[\s\S]*?(?=\n### )/.exec(search)![0];
+  const problems = referenceProblems([...core.values(), findSection]);
+  assert.ok(
+    problems.some((p) => p.includes("find, which needs the search package")),
+    problems.join("; "),
+  );
 });
