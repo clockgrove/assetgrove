@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { bindProvenance, callsSha256 } from "../provenance-binding.ts";
+import { bindProvenance } from "../provenance-binding.ts";
 import { writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Budget, runCap } from "../budget.ts";
@@ -181,12 +181,9 @@ provider call. Variations are not QA-filtered and are never marked approved.
         const decoded = decodeImage(image.bytes);
         const extension = extensionOf(image.mediaType);
         const name = `v${index + 1}`;
-        const calls = caller.records;
-        // The mark carries the sha256 of the record's calls (src/provenance-binding.ts).
-        const bytes = embedDigitalSourceType(image.bytes, image.mediaType, sourceType, {
-          callsSha256: callsSha256({ calls }),
-        });
+        const bytes = embedDigitalSourceType(image.bytes, image.mediaType, sourceType);
         await writeFile(join(dir, `${name}.${extension}`), bytes);
+        const calls = caller.records;
         const provenance: Provenance = {
           ...candidate.provenance,
           route: calls.map((c) => c.route).join(" + "),

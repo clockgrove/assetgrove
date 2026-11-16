@@ -9,7 +9,7 @@
  * copied into `<assetId>.review/<sha256>.<ext>`. Every candidate appears on `compare.png`, with its
  * `outsideChange`. Picking one appends the version with `answers` naming the requests.
  */
-import { bindProvenance, callsSha256 } from "../provenance-binding.ts";
+import { bindProvenance } from "../provenance-binding.ts";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -718,10 +718,7 @@ version is appended with answers naming the requests. The run that made the asse
           const id = `c${index + 1}`;
           const extension = extensionOf(made.mediaType);
           const file = `${id}.${extension}`;
-          // The mark carries the sha256 of the record's calls (src/provenance-binding.ts).
-          const bytes = embedDigitalSourceType(made.bytes, made.mediaType, sourceType, {
-            callsSha256: callsSha256(made.provenance),
-          });
+          const bytes = embedDigitalSourceType(made.bytes, made.mediaType, sourceType);
           await writeFile(join(dir, file), bytes);
           await writeFile(
             join(dir, `${id}.provenance.json`),
