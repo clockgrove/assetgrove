@@ -17,11 +17,12 @@ Assetgrove is TypeScript on Node 24, managed with pnpm. Node runs the `.ts` sour
 
 ## Packaging
 
-The package is `@clockgrove/assetgrove`. It ships compiled JavaScript, because Node refuses to strip types inside `node_modules`.
+There are two packages, `@clockgrove/assetgrove` (core) and `@clockgrove/assetgrove-search` (the optional search add-on), each packed to its own tarball. Both ship compiled JavaScript, because Node refuses to strip types inside `node_modules`.
 
 - `tsc -p tsconfig.build.json` builds `dist/`, with `rewriteRelativeImportExtensions` turning `.ts` imports into `.js`. The repository itself runs the sources directly.
 - The package ships `package.json`, the README, the LICENSE, `dist/`, `skills/` and `policy/` (the prompt-policy data), and nothing else; `test/package.test.ts` checks the `npm pack --dry-run --json` listing.
-- The version is `0.1.0`, the Phase 1 release candidate.
+- Search ships `package.json`, `README.md`, `LICENSE`, compiled `dist/` (its `prepack` builds it from `src/`) and `skills/`, and nothing else; its `assetgrove.entry` is `./dist/extension.js`. `packages/assetgrove-search/test/package.test.ts` checks the listing and imports the packed entry with type stripping off.
+- Both packages are at `0.2.0`, the Phase 2 release candidate (Phase 1's was `0.1.0`).
 - The package must install and run from its tarball on every system. `test/package.test.ts` packs this checkout, or installs the tarball `ASSETGROVE_TEST_TARBALL` names, and runs the installed `assetgrove --help --json`, `--version`, the extension API and a dry-run `stage`.
 - The release workflow is dispatch only. It packs once, records the tarball's sha256, runs `npm publish --dry-run`, refuses a version or tag that already exists, attests the tarball, verifies it on Linux, macOS and Windows and uploads the tarball, its hash and its attestation. Publishing waits for the owner's approval and runs only for a package already on the registry, so the first publish (0.1.0) is the owner's manual step in [release.md](release.md).
 

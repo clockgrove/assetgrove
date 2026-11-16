@@ -219,6 +219,31 @@ test(
       assert.equal(doc.ok, true);
       assert.ok(doc.plan.calls > 0);
 
+      // Core works without search: installed alone, find exits 2 extension_unavailable, naming
+      // the package that would fill the slot. The fixture's settings list no extension.
+      await assert.rejects(
+        exec(
+          process.execPath,
+          ["--no-experimental-strip-types", bin, "find", "lantern", "--json"],
+          {
+            cwd: install,
+            env,
+          },
+        ),
+        (error: { code?: number; stdout?: string }) => {
+          assert.equal(error.code, 2);
+          const found = JSON.parse(error.stdout ?? "") as {
+            ok: boolean;
+            error: { code: string; message: string };
+          };
+          assert.equal(found.ok, false);
+          assert.equal(found.error.code, "extension_unavailable");
+          assert.match(found.error.message, /@clockgrove\/assetgrove-search/);
+          return true;
+        },
+      );
+      assert.equal(existsSync(join(install, "node_modules/@clockgrove/assetgrove-search")), false);
+
       const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
       const version = await run(["--version"]);
       assert.equal(version.stdout.trim(), pkg.version);

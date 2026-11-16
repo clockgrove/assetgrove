@@ -1,6 +1,6 @@
 # Release
 
-Assetgrove is published to npm as `@clockgrove/assetgrove`. The release workflow (`release.yml`) builds, verifies and attests one tarball; the owner publishes that exact tarball. Its decisions are under [Packaging](decisions.md#packaging).
+Assetgrove is published to npm as `@clockgrove/assetgrove`, and from 0.2.0 its optional search as `@clockgrove/assetgrove-search` (`packages/assetgrove-search`). The release workflow (`release.yml`) builds, verifies and attests each tarball; the owner publishes those exact tarballs. Its decisions are under [Packaging](decisions.md#packaging).
 
 ## What the release workflow does
 
@@ -49,3 +49,13 @@ A version on npm cannot be published again. If a step after 5 shows a fault, fix
 ## Later releases
 
 Raise `version` in `package.json` on `main`, then dispatch `release.yml` with publish. **verify** runs as above; **publish** waits for the owner's approval in the `npm-release` environment and publishes the verified tarball.
+
+## The 0.2.0 release candidate (Phase 2)
+
+Both packages are at `0.2.0`. `pnpm gate --json` lists the Phase 2 gate: each entry's kind (`automated`, `dispatch` or `manual-owner`) and, for each entry that is not automated, the evidence it needs.
+
+- **Core** packs as above. Installed alone it passes `test/package.test.ts`, and its `find` exits 2 `extension_unavailable`: core works without search.
+- **Search** packs with `pnpm pack` in `packages/assetgrove-search`. Its `prepack` compiles `src/` to `dist/` (Node does not strip types under `node_modules`), and the tarball holds only `package.json`, `README.md`, `LICENSE`, `dist/` and `skills/`; `assetgrove.entry` is `./dist/extension.js`. `packages/assetgrove-search/test/package.test.ts` checks the listing and imports the packed entry with type stripping off.
+- **Skills:** the gate installs `assetgrove` and `assetgrove-search` with `npx skills add` from the repository into a temporary folder and checks every file arrived.
+- **Search bars:** the gate reads the latest successful `search-bench.yml` run on `main` that uploaded `search-bench-report`. It fails unless the commit that last changed the bars table in [decisions.md](decisions.md#search-bars-design-section-79) is older than that run, and fails on any bar the report counts as missed; speed bars measured off the reference box are the `search-speed-bars` entry, checked by hand.
+- **Publish:** steps 2 to 7 above, once for each tarball (`clockgrove-assetgrove-0.2.0.tgz` and `clockgrove-assetgrove-search-0.2.0.tgz`), the search tarball's listing as the bullet above says, then one tag `v0.2.0`.

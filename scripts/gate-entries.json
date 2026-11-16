@@ -10,25 +10,37 @@
     {
       "id": "test",
       "kind": "automated",
-      "title": "The offline suite passes (skills reference, names, environment allow-list, package)",
+      "title": "The offline suite passes (skills reference, names, environment allow-list, package, library round trip)",
       "command": ["pnpm", "test"]
     },
     {
       "id": "package",
       "kind": "automated",
-      "title": "package.json is the 0.1.0 release candidate and ships dist, skills and policy",
+      "title": "Both package.json files are the 0.2.0 release candidate: core ships dist, skills and policy; search ships dist and skills",
       "check": "package"
     },
     {
       "id": "skill-install",
       "kind": "automated",
-      "title": "`npx skills add` from the repository installs SKILL.md and its references",
+      "title": "`npx skills add` from the repository installs assetgrove and assetgrove-search, each SKILL.md with its references",
       "check": "skill-install"
+    },
+    {
+      "id": "library-roundtrip",
+      "kind": "automated",
+      "title": "On the scripted provider, a library of stills, a strip and a 3D asset has every record, and change requests on a box region, a mask file, a frame and a 3D view are picked and approved; library check passes and rebuild reproduces every projection",
+      "command": ["node", "--test", "test/library-roundtrip.test.ts"]
+    },
+    {
+      "id": "core-without-search",
+      "kind": "automated",
+      "title": "The packed core, installed alone, passes the package test and its find exits 2 extension_unavailable",
+      "command": ["node", "--test", "test/package.test.ts"]
     },
     {
       "id": "ci-main",
       "kind": "automated",
-      "title": "CI is green on main for the commit, with the test job on Linux, macOS and Windows",
+      "title": "CI is green on main for the commit, with the test and search jobs on Linux, macOS and Windows",
       "check": "ci-main",
       "workflow": "ci.yml",
       "jobs": [
@@ -36,20 +48,40 @@
         "test (ubuntu-26.04, 1/1)",
         "test (macos-26, 1/1)",
         "test (windows-2025, 1/1)",
+        "search (ubuntu-26.04)",
+        "search (macos-26)",
+        "search (windows-2025)",
         "ci"
       ]
     },
     {
+      "id": "search-bars",
+      "kind": "dispatch",
+      "title": "Search meets its bars on the labelled library with written card texts, measured after the bars were committed",
+      "workflow": "search-bench.yml",
+      "check": "search-bench",
+      "evidence": "The latest successful search-bench.yml bench run on main, dispatched after the commit that set the bars in docs/decisions.md: its search-bench-report lists every quality bar and the filters check as passing, on the written card texts and judged relevance the manifest records."
+    },
+    {
       "id": "real-checks",
       "kind": "dispatch",
-      "title": "The real checks pass within their budget",
-      "workflow": "real-checks.yml"
+      "title": "The real checks pass once within their budget, including one hosted-embedding check",
+      "workflow": "real-checks.yml",
+      "evidence": "The real-checks run on this commit: every check passed within its budget, the hosted-embedding check among them, and its summary lists each skip with the provider's reason."
     },
     {
       "id": "release-verify",
       "kind": "dispatch",
-      "title": "The release workflow packs, attests and verifies the tarball on three systems",
-      "workflow": "release.yml"
+      "title": "The release workflow packs, attests and verifies both 0.2.0 tarballs on three systems",
+      "workflow": "release.yml",
+      "evidence": "The release run on this commit: @clockgrove/assetgrove and @clockgrove/assetgrove-search 0.2.0 each packed once, its sha256 recorded, attested, installed and tested on Linux, macOS and Windows, with the core tested installed alone; both tarballs uploaded with their hashes and attestations."
+    },
+    {
+      "id": "r2-roundtrip",
+      "kind": "dispatch",
+      "title": "One dispatched round trip indexes into and searches the owner's Cloudflare R2 bucket",
+      "workflow": "search-remote.yml",
+      "evidence": "A search-remote.yml run on this commit, with the bucket's scoped key as a repository secret: it indexes the labelled library into the R2 bucket, finds by words, look and filter from a fresh checkout, rebuilds the index and removes what it wrote."
     },
     {
       "id": "harness-unattended",
@@ -80,6 +112,36 @@
       "kind": "manual-owner",
       "title": "A project already using Assetgrove passes its own checks against the release candidate",
       "evidence": "That project's owner reports its checks run against this commit's tarball after migrate, settings and approvals; nothing is filed in its repository from here."
+    },
+    {
+      "id": "search-speed-bars",
+      "kind": "manual-owner",
+      "title": "The speed bars hold on the reference box",
+      "evidence": "`node bench/search/run.ts --embedder siglip2` on the 24-thread reference box at this commit: its report shows text-query-p95, image-query-p95, search-10k, indexing and freshness-2000 passing with reference true, and the machine line."
+    },
+    {
+      "id": "host-confirmations",
+      "kind": "manual-owner",
+      "title": "A person has confirmed a spend and a pick in each harness, with each harness's key recipe followed",
+      "evidence": "testing-hosts.md run against this commit in Claude Code locally and in a remote session, Codex and GitHub Copilot CLI: in each, the person confirmed one spend and one pick through the form, the confirmation records name the client, and the key recipe's ids from keys.md were followed. The harness versions are recorded."
+    },
+    {
+      "id": "data-bars-read",
+      "kind": "manual-owner",
+      "title": "The data-dependent 1.0 bars are read once against real records",
+      "evidence": "The QA precision and recall, set-consistency spread and change-request bars read against the records Phase 2 produced (library stats), and docs/decisions.md corrected where the records show a bar is wrong, with the owner's decision."
+    },
+    {
+      "id": "publish",
+      "kind": "manual-owner",
+      "title": "The owner publishes both 0.2.0 tarballs the release run verified",
+      "evidence": "npm view shows @clockgrove/assetgrove@0.2.0 and @clockgrove/assetgrove-search@0.2.0, each the verified tarball (sha256 and attestation checked as docs/release.md says), and the commit is tagged v0.2.0."
+    },
+    {
+      "id": "invitations",
+      "kind": "manual-owner",
+      "title": "Outside developers are invited",
+      "evidence": "The owner's record of the outside developers invited to 0.2.0 and where their feedback goes; nothing is sent from here."
     }
   ]
 }

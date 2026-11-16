@@ -1,12 +1,15 @@
-// The Phase 1 gate: `pnpm gate [--json]`. Reads scripts/gate-entries.json and reports one entry per
-// gate id on the checked-out commit. Automated entries are checked here, by a command or a built-in
-// check; dispatch entries are read from their workflow's latest run on the commit; manual-owner
-// entries are listed with the evidence a person owes. GitHub is only read, through `gh api`.
+// The release gate (Phase 1, extended for Phase 2): `pnpm gate [--json]`. Reads
+// scripts/gate-entries.json and reports one entry per gate id on the checked-out commit. Automated
+// entries are checked here, by a command or a built-in check; dispatch entries are read from their
+// workflow's latest run on the commit (or by a built-in check, for the search bench, which runs
+// once); manual-owner entries are listed with the evidence a person owes. GitHub is only read,
+// through `gh api` and `gh run download`.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseBars } from "../bench/search/bars.ts";
 
 export type Kind = "automated" | "dispatch" | "manual-owner";
 export type Status = "pass" | "fail" | "missing" | "pending" | "owed";
@@ -49,6 +52,29 @@ export type Runner = (argv: string[], cwd: string) => RunResult;
 
 export const KINDS: readonly Kind[] = ["automated", "dispatch", "manual-owner"];
 export const SKILLS_CLI = "skills@1.8.1";
+export const VERSION = "0.2.0";
+
+/** The release candidate's packages: each manifest, its name and the files it ships. */
+export const PACKAGES = [
+  { dir: ".", name: "@clockgrove/assetgrove", files: ["dist", "policy", "skills"] },
+  {
+    dir: "packages/assetgrove-search",
+    name: "@clockgrove/assetgrove-search",
+    files: ["dist", "skills"],
+  },
+] as const;
+
+/** The skills the gate installs with `npx skills add` from the repository, and where each lives. */
+export const SKILLS = [
+  { name: "assetgrove", dir: "skills/assetgrove" },
+  { name: "assetgrove-search", dir: "packages/assetgrove-search/skills/assetgrove-search" },
+] as const;
+
+/** The bench report artifact the search bench's bench step uploads, and its file. */
+export const BENCH_ARTIFACT = "search-bench-report";
+export const BENCH_REPORT = "search-bench.txt";
+/** Where the search bars are recorded. */
+export const BARS_FILE = "docs/decisions.md";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -108,6 +134,8 @@ interface WorkflowRun {
   status: string;
   conclusion: string | null;
   html_url: string;
+  created_at?: string;
+  head_sha?: string;
 }
 
 function latestRun(ctx: Ctx, workflow: string, query = ""): WorkflowRun | undefined {
@@ -130,18 +158,24 @@ function runOutcome(run: WorkflowRun | undefined, workflow: string): Outcome {
 }
 
 function checkPackage(ctx: Ctx): Outcome {
-  const pkg = JSON.parse(readFileSync(join(ctx.root, "package.json"), "utf8")) as {
-    name?: string;
-    version?: string;
-    files?: string[];
-  };
   const faults: string[] = [];
-  if (pkg.name !== "@clockgrove/assetgrove") faults.push(`name is ${pkg.name}`);
-  if (pkg.version !== "0.1.0") faults.push(`version is ${pkg.version}, not 0.1.0`);
-  const files = JSON.stringify([...(pkg.files ?? [])].sort());
-  if (files !== JSON.stringify(["dist", "policy", "skills"])) faults.push(`files is ${files}`);
+  for (const wanted of PACKAGES) {
+    const pkg = JSON.parse(readFileSync(join(ctx.root, wanted.dir, "package.json"), "utf8")) as {
+      name?: string;
+      version?: string;
+      files?: string[];
+    };
+    const where = `${wanted.dir}/package.json`;
+    if (pkg.name !== wanted.name) faults.push(`${where}: name is ${pkg.name}`);
+    if (pkg.version !== VERSION) faults.push(`${where}: version is ${pkg.version}, not ${VERSION}`);
+    const files = JSON.stringify([...(pkg.files ?? [])].sort());
+    if (files !== JSON.stringify(wanted.files)) faults.push(`${where}: files is ${files}`);
+  }
   return faults.length === 0
-    ? { status: "pass", detail: "@clockgrove/assetgrove 0.1.0, files dist, skills, policy" }
+    ? {
+        status: "pass",
+        detail: PACKAGES.map((p) => `${p.name} ${VERSION}, files ${p.files.join(", ")}`).join("; "),
+      }
     : { status: "fail", detail: faults.join("; ") };
 }
 
@@ -153,31 +187,39 @@ function filesUnder(dir: string): string[] {
 }
 
 function checkSkillInstall(ctx: Ctx): Outcome {
-  const source = join(ctx.root, "skills/assetgrove");
   const target = mkdtempSync(join(tmpdir(), "assetgrove-gate-skill-"));
   try {
-    const argv = ["npx", "-y", SKILLS_CLI, "add", ctx.root];
-    argv.push("--skill", "assetgrove", "--agent", "claude-code", "--copy", "-y");
-    const out = ctx.run(argv, target);
-    if (out.status !== 0) {
-      return { status: "fail", detail: `skills add exited ${out.status}: ${tail(out.stderr, 5)}` };
-    }
-    const installed = join(target, ".claude/skills/assetgrove");
-    const missing = filesUnder(source).filter((name) => {
-      try {
-        return !readFileSync(join(installed, name)).equals(readFileSync(join(source, name)));
-      } catch {
-        return true;
+    const arrived: string[] = [];
+    for (const skill of SKILLS) {
+      const source = join(ctx.root, skill.dir);
+      const argv = ["npx", "-y", SKILLS_CLI, "add", ctx.root];
+      argv.push("--skill", skill.name, "--agent", "claude-code", "--copy", "-y");
+      const out = ctx.run(argv, target);
+      if (out.status !== 0) {
+        return {
+          status: "fail",
+          detail: `skills add ${skill.name} exited ${out.status}: ${tail(out.stderr, 5)}`,
+        };
       }
-    });
-    if (missing.length === 0) {
-      const count = filesUnder(source).length;
-      return {
-        status: "pass",
-        detail: `${count} files arrived intact in ${relative(target, installed)}`,
-      };
+      const installed = join(target, ".claude/skills", skill.name);
+      const missing = filesUnder(source).filter((name) => {
+        try {
+          return !readFileSync(join(installed, name)).equals(readFileSync(join(source, name)));
+        } catch {
+          return true;
+        }
+      });
+      if (missing.length > 0) {
+        return {
+          status: "fail",
+          detail: `${skill.name}: missing or changed after install: ${missing.join(", ")}`,
+        };
+      }
+      arrived.push(
+        `${skill.name}: ${filesUnder(source).length} files intact in ${relative(target, installed)}`,
+      );
     }
-    return { status: "fail", detail: `missing or changed after install: ${missing.join(", ")}` };
+    return { status: "pass", detail: arrived.join("; ") };
   } finally {
     rmSync(target, { recursive: true, force: true });
   }
@@ -200,10 +242,132 @@ function checkCiMain(ctx: Ctx, entry: GateEntry): Outcome {
     : { status: "fail", detail: `jobs not green: ${failed.join(", ")}`, run: run.html_url };
 }
 
+interface BarsCommit {
+  commit: string;
+  at: string;
+}
+
+/** The newest commit whose search-bars table differs from its parent's: when the bars were set. */
+export function barsCommit(ctx: { root: string; run: Runner }): BarsCommit {
+  const log = ctx.run(["git", "log", "--format=%H %cI", "--", BARS_FILE], ctx.root);
+  if (log.status !== 0) throw new Error(`git log ${BARS_FILE} failed: ${tail(log.stderr, 3)}`);
+  const bars = (rev: string): string => {
+    const out = ctx.run(["git", "show", `${rev}:${BARS_FILE}`], ctx.root);
+    return out.status === 0 ? JSON.stringify(parseBars(out.stdout)) : "[]";
+  };
+  for (const line of log.stdout.split(/\r?\n/).filter((l) => l.trim() !== "")) {
+    const [commit = "", at = ""] = line.trim().split(" ");
+    const here = bars(commit);
+    if (here !== "[]" && here !== bars(`${commit}^`)) return { commit, at };
+  }
+  throw new Error(`no commit sets the search bars in ${BARS_FILE}`);
+}
+
+interface BenchLine {
+  bar?: string;
+  pass?: boolean;
+  measured?: number;
+  target?: string;
+  reference?: boolean;
+}
+
+/**
+ * The search bench: the latest successful search-bench.yml run on main that uploaded a bench
+ * report. The bars must be committed before that run, and every bar it counts must pass; a speed
+ * bar measured off the reference box does not count here (a manual entry covers the reference box).
+ */
+function checkSearchBench(ctx: Ctx, entry: GateEntry): Outcome {
+  const workflow = entry.workflow ?? "search-bench.yml";
+  const slug = slugOf(ctx.root);
+  const { workflow_runs: runs = [] } = ghJson<{ workflow_runs?: WorkflowRun[] }>(
+    ctx,
+    `repos/${slug}/actions/workflows/${workflow}/runs?branch=main&status=success&per_page=20`,
+  );
+  const run = runs.find((candidate) => {
+    const { artifacts = [] } = ghJson<{ artifacts?: { name: string }[] }>(
+      ctx,
+      `repos/${slug}/actions/runs/${candidate.id}/artifacts`,
+    );
+    return artifacts.some((artifact) => artifact.name === BENCH_ARTIFACT);
+  });
+  if (!run) return { status: "missing", detail: `no successful ${workflow} bench run on main` };
+  const set = barsCommit(ctx);
+  if (!run.created_at || !(Date.parse(set.at) < Date.parse(run.created_at))) {
+    return {
+      status: "fail",
+      detail: `the bars' commit ${set.commit} (${set.at}) is not older than the bench run it reads (${run.created_at ?? "no time"}); run the bench again after the bars are committed`,
+      run: run.html_url,
+    };
+  }
+  // A time comparison alone is not enough: a merge-queue commit's committer time is when it was
+  // queued, so the run must also have checked out a commit that holds the bars.
+  if (!run.head_sha) {
+    return {
+      status: "fail",
+      detail: `the bench run ${run.id} names no head commit, so the gate cannot tell it measured the bars' commit ${set.commit}`,
+      run: run.html_url,
+    };
+  }
+  const held = ctx.run(["git", "merge-base", "--is-ancestor", set.commit, run.head_sha], ctx.root);
+  if (held.status !== 0) {
+    return {
+      status: "fail",
+      detail:
+        held.status === 1
+          ? `the bench run's commit ${run.head_sha} does not hold the bars' commit ${set.commit}; run the bench again on a main that holds the bars`
+          : `git merge-base --is-ancestor ${set.commit} ${run.head_sha} failed (fetch main's history): ${tail(held.stderr, 3)}`,
+      run: run.html_url,
+    };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "assetgrove-gate-bench-"));
+  try {
+    const download = ["gh", "run", "download", String(run.id), "--repo", slug];
+    download.push("-n", BENCH_ARTIFACT, "-D", dir);
+    const out = ctx.run(download, ctx.root);
+    if (out.status !== 0) {
+      return {
+        status: "fail",
+        detail: `gh run download ${run.id} failed: ${tail(out.stderr, 3)}`,
+        run: run.html_url,
+      };
+    }
+    let text: string;
+    try {
+      text = readFileSync(join(dir, BENCH_REPORT), "utf8");
+    } catch {
+      return {
+        status: "fail",
+        detail: `the run's report has no ${BENCH_REPORT}`,
+        run: run.html_url,
+      };
+    }
+    const lines = text
+      .split(/\r?\n/)
+      .filter((line) => line.trim().startsWith("{"))
+      .map((line) => JSON.parse(line) as BenchLine)
+      .filter((line) => typeof line.bar === "string");
+    if (lines.length === 0)
+      return { status: "fail", detail: "the bench report lists no bar", run: run.html_url };
+    const counted = lines.filter((line) => line.reference !== false);
+    const missed = counted.filter((line) => line.pass !== true);
+    const at = `bars set in ${set.commit.slice(0, 12)} (${set.at}), before the run (${run.created_at})`;
+    return missed.length === 0
+      ? { status: "pass", detail: `${counted.length} bars met; ${at}`, run: run.html_url }
+      : {
+          status: "fail",
+          detail: `bars missed: ${missed.map((m) => `${m.bar} ${m.measured} (${m.target})`).join(", ")}; ${at}`,
+          run: run.html_url,
+        };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const CHECKS: Record<string, (ctx: Ctx, entry: GateEntry) => Outcome> = {
   package: checkPackage,
   "skill-install": checkSkillInstall,
   "ci-main": checkCiMain,
+  "search-bench": checkSearchBench,
 };
 
 function evaluate(ctx: Ctx, entry: GateEntry): Outcome {
@@ -212,6 +376,11 @@ function evaluate(ctx: Ctx, entry: GateEntry): Outcome {
       return { status: "owed", detail: "a person supplies the evidence" };
     case "dispatch":
       if (!entry.workflow) return { status: "fail", detail: "entry names no workflow" };
+      if (entry.check) {
+        const check = CHECKS[entry.check];
+        if (!check) return { status: "fail", detail: `unknown check ${entry.check}` };
+        return check(ctx, entry);
+      }
       return runOutcome(latestRun(ctx, entry.workflow), entry.workflow);
     case "automated": {
       if (entry.command) {

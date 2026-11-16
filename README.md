@@ -17,7 +17,7 @@ Animation is generated as a whole contact sheet per cycle, sliced and registered
 
 ## Install in a game repository
 
-Assetgrove is published as `@clockgrove/assetgrove` once its owner publishes the 0.1.0 release candidate ([docs/release.md](docs/release.md)); until then, check this repository out at a pinned commit and run `node src/cli.ts` with Node 24. The package runs on Node 24 on Linux, macOS and Windows and ships its CLI, its skills and its prompt-policy data. The game never imports Assetgrove at runtime.
+Assetgrove is published as `@clockgrove/assetgrove` once its owner publishes the 0.2.0 release candidate ([docs/release.md](docs/release.md)); until then, check this repository out at a pinned commit and run `node src/cli.ts` with Node 24. The package runs on Node 24 on Linux, macOS and Windows and ships its CLI, its skills and its prompt-policy data. The game never imports Assetgrove at runtime.
 
 ```sh
 pnpm add -D --save-exact @clockgrove/assetgrove@<version>
