@@ -47,9 +47,14 @@ async function record(
 ): Promise<string> {
   if (!report.recommended)
     throw new InputError("nothing to record: none meets the bar, so no threshold is recommended");
-  if (args.bible === undefined) throw new InputError("--record needs --bible <BIBLE.md>");
-  const doc = await loadBible(args.bible);
   const at = report.media["2d"]?.recommended;
+  // Enforce drops paid candidates at the recorded cut, so a cut whose eval failed the bar (a set
+  // the model cannot separate recommends the reject-everything cut) is never recorded.
+  if (!at?.bar.met)
+    throw new InputError(
+      `nothing recorded: at the recommended threshold ${report.recommended.threshold} the enforce bar is not met${at ? ` (${at.bar.failures.join("; ")})` : ""}`,
+    );
+  const doc = await loadBible(args.bible as string);
   return recordIdentityThreshold(doc.dir, {
     question: report.question,
     model: report.model,
@@ -90,6 +95,16 @@ async function prepare(args: IdentityEvalArgs, ctx: RunContext) {
     casesPath: args.cases,
     profile,
   });
+  // Checked before any call: a record is the bible's own, so every case must be judged against it.
+  if (args.record) {
+    if (args.bible === undefined) throw new InputError("--record needs --bible <BIBLE.md>");
+    const own = (await loadBible(args.bible)).path;
+    const others = set.bibles.filter((path) => path !== own);
+    if (others.length > 0)
+      throw new InputError(
+        `--record records a threshold for ${args.bible} alone, but cases name other bibles: ${others.join(", ")}`,
+      );
+  }
   const jobs = [
     jobOf(set.operation, provider.routes[set.operation] as Route, set.cases),
     jobOf(

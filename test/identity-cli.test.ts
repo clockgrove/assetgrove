@@ -218,6 +218,79 @@ test("identity-eval reports accuracy per threshold, the recommendation and agree
   assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 4);
 });
 
+test("identity-eval --record refuses before any call without --bible or with a case of another bible, and never records a cut that fails the bar", async () => {
+  const f = await fixture();
+  const thresholds = join(f.bible, "..", "identity-thresholds.json");
+  const before = await readFile(thresholds, "utf8");
+  const output = (e: unknown) => {
+    const { stdout = "", stderr = "" } = e as { stdout?: string; stderr?: string };
+    return stdout + stderr;
+  };
+  const evalArgs = (casesFile: string, log: string, bible = true) => [
+    CLI,
+    "identity-eval",
+    ...(bible ? ["--bible", f.bible] : []),
+    "--cases",
+    casesFile,
+    "--log",
+    log,
+    "--record",
+    "--provider-script",
+    SCRIPT,
+    "--json",
+  ];
+  const same = [
+    { image: "sheet.png", subject: "bram", same: true, bible: "art/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: false, bible: "art/BIBLE.md" },
+  ];
+  await writeFile(join(f.root, "named.json"), JSON.stringify(same));
+  const noBible = join(f.root, "no-bible.jsonl");
+  await assert.rejects(
+    exec(process.execPath, evalArgs(join(f.root, "named.json"), noBible, false), {
+      env: env("4,0"),
+    }),
+    (e: unknown) => /--record needs --bible/.test(output(e)),
+  );
+  await assert.rejects(readFile(noBible, "utf8"), "no case was scored");
+
+  const other = join(f.root, "other");
+  await mkdir(other, { recursive: true });
+  await writeFile(join(other, "BIBLE.md"), await readFile(f.bible, "utf8"));
+  await writeFile(
+    join(other, "bram-turnaround.png"),
+    await readFile(join(f.root, "art", "bram-turnaround.png")),
+  );
+  await writeFile(
+    join(f.root, "mixed.json"),
+    JSON.stringify([same[0], { ...same[1], bible: "other/BIBLE.md" }]),
+  );
+  const mixed = join(f.root, "mixed.jsonl");
+  await assert.rejects(
+    exec(process.execPath, evalArgs(join(f.root, "mixed.json"), mixed), { env: env("4,0") }),
+    (e: unknown) => /cases name other bibles/.test(output(e)),
+  );
+  await assert.rejects(readFile(mixed, "utf8"), "no case was scored");
+
+  // The model cannot separate the cases: the only cut within the false-accept bar rejects
+  // everything, so the bar (false rejects too) fails and nothing is recorded.
+  await writeFile(
+    join(f.root, "cases.json"),
+    JSON.stringify([
+      { image: "sheet.png", subject: "bram", same: true },
+      { image: "sheet.png", subject: "bram", same: true },
+      { image: "sheet.png", subject: "bram", same: false },
+      { image: "sheet.png", subject: "bram", same: false },
+    ]),
+  );
+  await assert.rejects(
+    exec(process.execPath, evalArgs(join(f.root, "cases.json"), join(f.root, "eval.jsonl")), {
+      env: env("2,2,2,2"),
+    }),
+    (e: unknown) => /enforce bar is not met/.test(output(e)),
+  );
+  assert.equal(await readFile(thresholds, "utf8"), before);
+});
+
 test("plan --identity-mode enforce, then apply: a strip below the threshold is filtered and the person sees why", async () => {
   const f = await fixture();
   const fixtureModule = fileURLToPath(new URL("./fixtures/synthetic.ts", import.meta.url));

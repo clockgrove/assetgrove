@@ -311,6 +311,8 @@ export async function planEvaluation(options: {
   operation: string;
   /** The files the cases read (images, bibles, identity references), `cases/<path from the cases file>`. */
   reads: Record<string, string>;
+  /** The path of every bible a case is judged against. */
+  bibles: string[];
 }> {
   const set = await loadEvalSet(options);
   const files = new Set<string>();
@@ -329,6 +331,7 @@ export async function planEvaluation(options: {
     identities: set.identities.size,
     operation: set.operation,
     reads,
+    bibles: [...new Set(set.prepared.map(({ doc }) => doc.path))],
   };
 }
 
