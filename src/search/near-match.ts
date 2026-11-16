@@ -13,7 +13,7 @@ import type { SearchHit } from "../extension/api.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import type { GenerationBrief } from "../planning.ts";
 import { sniffMediaType, subjectOf } from "../request.ts";
-import type { AssetSpec } from "../types.ts";
+import type { AssetSpec, StyleBible } from "../types.ts";
 import { writeFindSheet } from "./sheet.ts";
 
 /** The most near matches a plan lists. */
@@ -28,19 +28,32 @@ export interface NearMatchOutcome {
 }
 
 /**
- * The reference images that show the thing requested: the spec's key pose and, when the Markdown
- * bible at `biblePath` locks the spec's subject, its approved turnaround. The bible's style anchors
- * (positive and negative) are left out: they show the look of the whole game, not this asset.
+ * The reference images that show the thing requested: the spec's key pose; when the Markdown
+ * bible at `biblePath` locks the spec's subject, its approved turnaround; and the JSON style
+ * bible's references tagged with the spec's subject (and its look, when the reference names one),
+ * the ones generation itself sends for the subject. The Markdown bible's style anchors (positive
+ * and negative), the perspective sample and other subjects' references are left out: they show
+ * the look of the whole game, not this asset.
  */
 export async function subjectReferencePaths(
   spec: { value: AssetSpec; dir: string },
   biblePath?: string,
+  styleBible?: { value: StyleBible; dir: string },
 ): Promise<string[]> {
   const paths: string[] = [];
+  const subject = subjectOf(spec.value);
+  for (const r of Array.isArray(styleBible?.value.references) ? styleBible.value.references : []) {
+    if (
+      r.subject === subject &&
+      r.role !== "perspective" &&
+      (r.look === undefined || r.look === spec.value.look)
+    )
+      paths.push(resolve(styleBible!.dir, r.path));
+  }
   if (biblePath !== undefined) {
     try {
       const doc = await loadBible(biblePath);
-      const lock = doc.data.identities[subjectOf(spec.value)];
+      const lock = doc.data.identities[subject];
       if (lock) paths.push(resolve(doc.dir, lock.turnaround));
     } catch {
       // A bible that does not load has no identity to compare; the plan step reports it itself.

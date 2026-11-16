@@ -84,7 +84,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   const bibleFiles = styleBibleReads("bible", bible);
   const near = await nearMatchesFor(
     spec.value,
-    await subjectReferencePaths(spec, args.lockBible),
+    await subjectReferencePaths(spec, args.lockBible, bible),
     ctx,
     args.brief === undefined ? undefined : (await readJson<GenerationBrief>(args.brief)).value,
   );

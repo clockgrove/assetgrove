@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import type { SearchSlot } from "../src/extension/api.ts";
 import type { RunContext } from "../src/commands/types.ts";
+import type { StyleBible } from "../src/types.ts";
 import { buildWorkPlan, paidBy } from "../src/runs/plan.ts";
 import { spendRequest } from "../src/runs/execute.ts";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
@@ -130,7 +131,7 @@ test("a reference with an unusual extension is still used", async () => {
   }
 });
 
-test("the request's references are its key pose and identity turnaround, not the bible's anchors", async () => {
+test("the request's references are its key pose, identity turnaround and subject-tagged bible references, not the anchors", async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-near-bible-")));
   try {
     const dir = join(root, ".assetgrove/art-direction");
@@ -166,6 +167,34 @@ test("the request's references are its key pose and identity turnaround, not the
     assert.deepEqual(
       await subjectReferencePaths({ value: { kind: "still", assetId: "den" }, dir: root }),
       [],
+    );
+    // The JSON style bible's references tagged with the subject (and its look, when they name one).
+    const styleBible = {
+      value: {
+        references: [
+          { path: "den.png", role: "prop", subject: "den" },
+          { path: "den-night.png", role: "prop", subject: "den", look: "night" },
+          { path: "lamp.png", role: "prop", subject: "lamp" },
+          { path: "persp.png", role: "perspective", subject: "den" },
+        ],
+      } as unknown as StyleBible,
+      dir,
+    };
+    assert.deepEqual(
+      await subjectReferencePaths(
+        { value: { kind: "still", assetId: "den" }, dir: root },
+        undefined,
+        styleBible,
+      ),
+      [join(dir, "den.png")],
+    );
+    assert.deepEqual(
+      await subjectReferencePaths(
+        { value: { kind: "still", assetId: "den", look: "night" }, dir: root },
+        undefined,
+        styleBible,
+      ),
+      [join(dir, "den.png"), join(dir, "den-night.png")],
     );
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -63,7 +63,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   });
   const jobs = jobsOf(plan.perCandidate, routes, candidates);
   const bibleFiles = styleBibleReads("bible", bible);
-  const near = await nearMatchesFor(spec.value, await subjectReferencePaths(spec), ctx);
+  const near = await nearMatchesFor(
+    spec.value,
+    await subjectReferencePaths(spec, undefined, bible),
+    ctx,
+  );
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
     near,
     promptAllow: ctx.settings.promptPolicy.allow,
