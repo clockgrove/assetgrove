@@ -184,9 +184,10 @@ test("luminance, speckle and markings count the pale outline pixels the mask hol
   assert.equal(outline?.pixels, n);
 });
 
-test("a gap the figure encloses counts on neither side, so a faithful edit overlaps fully", () => {
-  // The body has a hole the ground shows through (between the legs, seen at three-quarter).
-  const hole = (x: number, y: number) => x >= 56 && x < 72 && y >= 80 && y < 100;
+/** The render with a hole the ground shows through (between the legs, seen at three-quarter). */
+const hole = (x: number, y: number) => x >= 52 && x < 76 && y >= 72 && y < 104;
+
+function renderWithHole(): { raster: Raster; mask: Uint8Array } {
   const { raster, mask } = render();
   for (let y = 0; y < SIZE; y++)
     for (let x = 0; x < SIZE; x++)
@@ -194,9 +195,20 @@ test("a gap the figure encloses counts on neither side, so a faithful edit overl
         mask[y * SIZE + x] = 0;
         raster.data.set([...GREY, 255], (y * SIZE + x) * 4);
       }
+  return { raster, mask };
+}
+
+test("a gap the figure encloses is scored: a faithful edit overlaps fully", () => {
+  const { raster, mask } = renderWithHole();
   const edited = edit(identity);
   for (let y = 0; y < SIZE; y++)
     for (let x = 0; x < SIZE; x++)
       if (hole(x, y)) edited.data.set([250, 250, 250, 255], (y * SIZE + x) * 4);
   assert.ok(register(edited, raster, mask).overlap > 0.99);
+});
+
+test("an edit that paints the gap between the legs solid is named by a low overlap", () => {
+  const { raster, mask } = renderWithHole();
+  const overlap = register(edit(identity), raster, mask).overlap;
+  assert.ok(overlap < 0.9, `overlap ${overlap}`);
 });

@@ -530,16 +530,27 @@ export function register(
   const height = render.height;
   const sized =
     edited.width === size && edited.height === height ? edited : resize(edited, size, height);
-  // The edit's figure is all that its border-connected background is not, so a gap the figure
-  // encloses (between the legs) counts as figure there and the edit cannot tell it apart. The
-  // overlap is scored against the exact mask on every pixel but those gaps, which count on
-  // neither side; the filled silhouette only sets the fit's starting box and area.
+  // The edit's silhouette is all that its border-connected background is not. Its figure, as
+  // scored, is that silhouette less every enclosed region of the border colour (a gap between
+  // the legs), so the overlap with the exact mask is taken on every pixel and an edit that paints
+  // a gap solid is named. The filled silhouettes only set the fit's starting boxes and areas.
   const filled = filledSilhouette(mask, size, height);
   const target = maskBox(filled, size);
   const background = editedBackground(sized, undefined, 24, 0);
-  const foreground = new Uint8Array(background.length);
-  for (let i = 0; i < foreground.length; i++) foreground[i] = background[i] ? 0 : 1;
-  const source = maskBox(foreground, sized.width);
+  const silhouette = new Uint8Array(background.length);
+  for (let i = 0; i < silhouette.length; i++) silhouette[i] = background[i] ? 0 : 1;
+  const bg = borderColour(sized);
+  const foreground = new Uint8Array(silhouette.length);
+  for (let i = 0; i < foreground.length; i++) {
+    const o = i * 4;
+    const near =
+      Math.abs(sized.data[o]! - bg[0]) +
+        Math.abs(sized.data[o + 1]! - bg[1]) +
+        Math.abs(sized.data[o + 2]! - bg[2]) <=
+      24;
+    foreground[i] = silhouette[i] && !near ? 1 : 0;
+  }
+  const source = maskBox(silhouette, sized.width);
   if (!target || !source) return { image: sized, overlap: 0 };
 
   // A render pixel (x, y) reads the edit at (ox + sx * x, oy + sy * y).
@@ -556,9 +567,7 @@ export function register(
     let either = 0;
     for (let y = 0; y < height; y += stride) {
       for (let x = 0; x < size; x += stride) {
-        const i = y * size + x;
-        if (filled[i] && !mask[i]) continue;
-        const m = mask[i]!;
+        const m = mask[y * size + x]!;
         const f = sampleAt(p, x, y);
         if (m && f) both++;
         if (m || f) either++;
@@ -584,7 +593,7 @@ export function register(
     return { n, cx: cx / n, cy: cy / n };
   };
   const t = stats(filled, size);
-  const f = stats(foreground, sized.width);
+  const f = stats(silhouette, sized.width);
   const area = Math.sqrt(f.n / t.n);
   const starts: Fit[] = [
     [sx, sy, source.x0 - target.x0 * sx, source.y0 - target.y0 * sy],
