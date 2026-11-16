@@ -1,11 +1,45 @@
 /** Writes the manifest's card texts from the images with a vision model. */
 import { createHash } from "node:crypto";
+import { PNG } from "pngjs";
 import type { ImageSource } from "./fetch.ts";
 import { containsStem, stem, type Manifest } from "./manifest.ts";
 
 export const CARD_PROMPT =
   "Describe this game asset image in one or two plain sentences for a searchable card: what it " +
   "shows, its subject, materials, colours and style. Do not mention a file name or an asset id.";
+
+/**
+ * Added to the prompt of a real run. A sprite's transparent background reaches the model as a plain
+ * colour, and a spot-check found texts describing "a white background" the asset does not have.
+ */
+export const BACKGROUND_NOTE =
+  "A plain white or transparent background is not part of the asset: do not describe the background. " +
+  "The image may be a small sprite scaled up.";
+
+/** The long side, in pixels, a smaller PNG is scaled up to before the vision call. */
+export const MIN_VISION_SIDE = 256;
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+/**
+ * The bytes the vision model is shown. A PNG whose long side is under MIN_VISION_SIDE is scaled up by
+ * a whole factor with nearest neighbour, so a 16-pixel sprite keeps its hard pixels and the model can
+ * read it: a spot-check found wrong texts only on images that small. Other bytes pass unchanged.
+ */
+export function forVision(bytes: Uint8Array): Uint8Array {
+  if (!PNG_SIGNATURE.every((byte, i) => bytes[i] === byte)) return bytes;
+  const small = PNG.sync.read(Buffer.from(bytes));
+  const factor = Math.ceil(MIN_VISION_SIDE / Math.max(small.width, small.height));
+  if (factor <= 1) return bytes;
+  const large = new PNG({ width: small.width * factor, height: small.height * factor });
+  for (let y = 0; y < large.height; y++) {
+    for (let x = 0; x < large.width; x++) {
+      const from = (Math.floor(y / factor) * small.width + Math.floor(x / factor)) * 4;
+      small.data.copy(large.data, (y * large.width + x) * 4, from, from + 4);
+    }
+  }
+  return new Uint8Array(PNG.sync.write(large));
+}
 
 export interface VisionProvider {
   describe(
@@ -80,7 +114,7 @@ export async function writeCardTexts(o: WriteOptions): Promise<number> {
   const call = async (image: Manifest["images"][number], p: string) => {
     if (++calls > maxCalls)
       throw new Error(`stopped after ${maxCalls} vision calls (the run's cap)`);
-    return o.provider.describe(await o.source.bytes(image), p);
+    return o.provider.describe(forVision(await o.source.bytes(image)), p);
   };
   let written = 0;
   for (const image of o.manifest.images) {
