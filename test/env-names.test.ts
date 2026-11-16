@@ -33,6 +33,18 @@ const ALLOWED = [
   "ALL_PROXY",
   "ANTHROPIC_BASE_URL",
   "OPENAI_BASE_URL",
+  // Refused unless allowed: Lance's object store reads them (src/env.ts, design section 7.2).
+  "AWS_ENDPOINT_URL",
+  "AWS_ENDPOINT_URL_S3",
+  "AWS_REGION",
+  "AWS_DEFAULT_REGION",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_PROFILE",
+  "AWS_CONFIG_FILE",
+  "AWS_SHARED_CREDENTIALS_FILE",
+  "AWS_ALLOW_HTTP",
   // Set to true unless set, so cbor-x never loads its native addon (src/pure-cbor.ts).
   "CBOR_NATIVE_ACCELERATION_DISABLED",
 ];

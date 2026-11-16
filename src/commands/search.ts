@@ -7,7 +7,10 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { keyValue } from "../env.ts";
+import type { Env } from "../env.ts";
 import { InputError, ProviderError } from "../errors.ts";
+import { registerKeyEnv } from "../redact.ts";
 import { EXIT } from "../errors.ts";
 import type { SearchContext, SearchQuery, SearchSlot, SearchSource } from "../extension/api.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
@@ -66,10 +69,20 @@ async function searchCall(
     game: reader.game,
     settings,
     library: reader,
-    env: ctx.env ?? process.env,
+    env: credentialEnv(settings, ctx.env),
     log: ctx.log,
   };
   return { slot, context, reader };
+}
+
+/**
+ * The store's credential variables, named by `search.store.credentialsEnv`, and nothing else of
+ * the environment; their values are redacted from every log from here on.
+ */
+function credentialEnv(settings: SearchSettings, env?: Env): Record<string, string | undefined> {
+  const names = Object.values(settings.store?.credentialsEnv ?? {});
+  registerKeyEnv(names);
+  return Object.fromEntries(names.map((name) => [name, keyValue(name, env)]));
 }
 
 /** The reader of a call that needs no project: every read refuses with why there is none. */

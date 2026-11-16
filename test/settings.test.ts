@@ -589,21 +589,3 @@ test("a store endpoint that is http, or carries userinfo or a query, is refused"
     );
   }
 });
-
-test("a search folder inside a project is refused", () => {
-  const repo = gitRepo();
-  assert.throws(
-    () =>
-      loadSettings({
-        env: {
-          ASSETGROVE_CONFIG: settingsFile({
-            format: SEARCH_FORMAT,
-            search: { folders: [join(repo, "art")] },
-          }),
-          HOME: tempDir(),
-        },
-        cwd: repo,
-      }),
-    invalid(/search\.folders\.0/),
-  );
-});

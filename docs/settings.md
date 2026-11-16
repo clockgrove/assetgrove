@@ -89,7 +89,7 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 | `contentCredentials`   | `certificate` (a PEM chain, signer first) and `privateKey` (a PEM PKCS#8 key: ECDSA P-256 or P-384, Ed25519 or RSA), absolute paths outside every project, that sign the C2PA manifests hand-off writes. See [Content credentials](#content-credentials). | the local development certificate                                                             |
 | `confirmedBy.<path>`   | Who confirmed a field: `method`, `at`, `client`.                                                                                                                                                                                                          | none                                                                                          |
 
-`search` is optional; absent, `Settings.search` is absent too. The local store is always `<stateDir>/search`. Present, `search` is filled with `embedder: "local"` (or `"scripted"`), `model: "siglip2-base"`, `candidates: true`, `nearMatch: true` and `folders: []`. `search.store` adds a shared remote store: `uri` is an `s3://`, `gs://` or `az://` URI; `options` takes only `endpoint` (https, no user name, password or query) and `region`, default `{}`; `credentialsEnv` names the variables that hold the store's `accessKeyId`, `secretAccessKey` and optional `sessionToken`, never the values; `writer` (default `false`) is true on the one machine that builds the shared index, and `false` makes the store read-only on this machine. The URI, the options and the credential variable names come only from settings. `folders` are absolute paths outside every project, indexed beside the library.
+`search` is optional; absent, `Settings.search` is absent too. The local store is always `<stateDir>/search`. Present, `search` is filled with `embedder: "local"` (or `"scripted"`), `model: "siglip2-base"`, `candidates: true`, `nearMatch: true` and `folders: []`. `search.store` adds a shared remote store: `uri` is an `s3://`, `gs://` or `az://` URI; `options` takes only `endpoint` (https, no user name, password or query) and `region`, default `{}`; `credentialsEnv` names the variables that hold the store's `accessKeyId`, `secretAccessKey` and optional `sessionToken`, never the values; `writer` (default `false`) is true on the one machine that builds the shared index, and `false` makes the store read-only on this machine. The URI, the options and the credential variable names come only from settings. `folders` are absolute paths whose images are indexed beside the library.
 
 ## Content credentials
 
@@ -109,7 +109,7 @@ Loading throws `SettingsError`, with the code `settings_invalid`, when:
 - `contentCredentials.certificate` or `contentCredentials.privateKey` is relative or inside a project;
 - `search.store.uri` is not an `s3://`, `gs://` or `az://` URI, or `search.store.options` has any field but `endpoint` and `region`;
 - a `search.store.options.endpoint` is not https or carries a user name, a password or a query string;
-- a `search.folders` entry is relative or inside a project;
+- a `search.folders` entry is relative;
 - a `baseURL` carries a user name, a password or a query string (the message shows only its origin and path);
 - a `baseURL` is neither https nor http on a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`);
 - `free` is set on a provider without a loopback `baseURL`;
