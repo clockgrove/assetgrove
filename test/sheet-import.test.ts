@@ -606,6 +606,22 @@ test("sheet generation decides a family no template names before the sheet, and 
   assert.equal(again.families[0]!.animation.templateSource, "declared");
   const declared = await importTargets(importDir);
   assert.equal(declared[0]!.template, "none");
+
+  // A family named like an Object.prototype member has no recorded answer: it is written
+  // undecided, not refused, and animation-qa --import reads no inherited value either.
+  const inherited = await writeFamilies({
+    importDir,
+    grouping: {
+      ...grouping,
+      status: "confirmed",
+      families: grouping.families.map((f) => ({ ...f, name: "constructor" })),
+    },
+    targetDir,
+  });
+  assert.equal(inherited.families[0]!.animation.templateSource, "undecided");
+  const own = (await importTargets(importDir)).find((t) => t.family === "constructor")!;
+  assert.equal(own.judgedTemplate, undefined);
+  assert.equal(own.template, undefined);
 });
 
 test("write-families gives the spec's fields to the family it asked for under another name, or refuses", async () => {

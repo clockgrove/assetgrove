@@ -352,7 +352,7 @@ test("write-families writes the onion skin and loop preview and reports animatio
   );
 });
 
-test("animation-qa: --spec declares the template, so a --no-vision run of a family no template names needs no key", async () => {
+test("animation-qa: --no-vision needs no key; an undeclared family's template checks are pending, a declared one is checked", async () => {
   const { root } = await setup(
     { alpha: { mode: "binary" }, color: { rule: "full" } },
     { count: 8, style: "flat", motion: "walk" },
@@ -369,9 +369,25 @@ test("animation-qa: --spec declares the template, so a --no-vision run of a fami
     ...["--profile", join(root, "profile.json"), "--out", join(root, "qa"), "--no-vision"],
     "--json",
   ];
-  // Nothing declares or names walk-right: the motion-template decision needs a key.
+  // Nothing declares or names walk-right: --no-vision makes no call, so the template stays
+  // undecided and its three checks are pending, never passing.
   const undeclared = await cli(args);
-  assert.equal(undeclared.code, 4, undeclared.stdout + undeclared.stderr);
+  assert.equal(undeclared.code, 5, undeclared.stdout + undeclared.stderr);
+  const pendingFamily = doc(undeclared).families[0];
+  assert.equal(pendingFamily.templateSource, "undecided");
+  assert.equal(pendingFamily.passed, false);
+  assert.deepEqual(pendingFamily.pending.map((p: { check: string }) => p.check).sort(), [
+    "footprint-drift",
+    "ground-contact",
+    "loop-seam",
+  ]);
+  assert.deepEqual(
+    pendingFamily.reasons.filter((x: { passed: boolean }) => !x.passed),
+    [],
+  );
+  assert.deepEqual(doc(undeclared).templateDecisions, []);
+  assert.equal(doc(undeclared).spentUsd, 0);
+  assert.match(undeclared.stdout + undeclared.stderr, /checks pending for walk-right/);
   const declared = await cli([...args, "--spec", join(root, "spec.json")]);
   assert.equal(declared.code, 0, declared.stdout + declared.stderr);
   const family = doc(declared).families[0];

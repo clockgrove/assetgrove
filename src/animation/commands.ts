@@ -120,9 +120,11 @@ export async function importTargets(importDir: string): Promise<StripTarget[]> {
   return families.map((family) => ({
     family,
     ...(declared.has(family) && { template: declared.get(family) as string }),
-    ...(record.judgedTemplates?.[family] !== undefined && {
-      judgedTemplate: record.judgedTemplates[family],
-    }),
+    // Own keys only: a family named like an Object.prototype member has no recorded answer.
+    ...(record.judgedTemplates !== undefined &&
+      Object.hasOwn(record.judgedTemplates, family) && {
+        judgedTemplate: record.judgedTemplates[family],
+      }),
     path: join(importDir, "preview", `${family}.png`),
     frame: record.frame,
     anchor: record.anchor,
@@ -264,6 +266,11 @@ export async function runAnimationQa(options: {
   provider?: { provider: GenerationProvider; name: string };
   /** Run the identity-flicker and holes checks. Default: when a provider is given. */
   vision?: boolean;
+  /**
+   * Decide an undeclared family's motion template by a call. Default: when a provider is given.
+   * When false, such a family stays undecided and its template checks are pending.
+   */
+  decide?: boolean;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   now?: () => Date;
@@ -273,8 +280,8 @@ export async function runAnimationQa(options: {
   /** The motion-template decisions this run made, as logged to `motion-template.jsonl`. */
   templateDecisions: TemplateDecisionLine[];
 }> {
-  const decide = options.provider !== undefined;
-  const vision = decide && options.vision !== false;
+  const vision = options.provider !== undefined && options.vision !== false;
+  const decide = options.provider !== undefined && options.decide !== false;
   const plan = await planAnimationQa(
     options.targets,
     options.routes,
@@ -307,7 +314,7 @@ export async function runAnimationQa(options: {
     const { raster, origin } = await readStrip(t.path);
     let chooser = choosers.get(t.profile);
     if (!chooser) {
-      chooser = new TemplateChooser(templatesFor(t.profile), call);
+      chooser = new TemplateChooser(templatesFor(t.profile), decide ? call : undefined);
       choosers.set(t.profile, chooser);
     }
     const choice = await chooser.choose({

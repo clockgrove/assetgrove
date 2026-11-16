@@ -744,7 +744,7 @@ export async function writeFamilies(
   thresholdsFor(record.profile);
   const declaredTemplates = new Map<string, string>();
   for (const f of grouping.families) {
-    const declared = f.template ?? record.templates?.[f.name];
+    const declared = f.template ?? ownValue(record.templates, f.name);
     if (declared !== undefined) declaredTemplates.set(f.name, declared);
   }
   const choices = new Map(
@@ -754,7 +754,7 @@ export async function writeFamilies(
         f.name,
         templates,
         declaredTemplates.get(f.name),
-        record.judgedTemplates?.[f.name],
+        ownValue(record.judgedTemplates, f.name),
       ),
     ]),
   );
@@ -1104,4 +1104,12 @@ export function previewHtml(
     ...rows,
     "",
   ].join("\n");
+}
+
+/**
+ * A family's own entry in a record's map, never an inherited one: a family named `constructor`
+ * or `toString` has no entry unless the record wrote one.
+ */
+function ownValue(map: Record<string, string> | undefined, family: string): string | undefined {
+  return map !== undefined && Object.hasOwn(map, family) ? map[family] : undefined;
 }

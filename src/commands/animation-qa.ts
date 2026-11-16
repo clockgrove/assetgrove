@@ -85,8 +85,9 @@ async function prepare(args: AnimationQaArgs, ctx: RunContext) {
     )
       t.template = spec.template;
   }
-  // The motion-template decisions are not vision checks: --no-vision still makes them.
-  const plan = await planAnimationQa(targets, routes, capUsd, vision, true);
+  // --no-vision makes no call at all: a family whose template needs a decision stays undecided,
+  // its template checks pending.
+  const plan = await planAnimationQa(targets, routes, capUsd, vision, vision);
   const flickers = plan.perFamily.reduce((sum, f) => sum + f.flickerCalls, 0);
   const holes = plan.perFamily.reduce((sum, f) => sum + f.holeCalls, 0);
   const decisions = plan.perFamily.reduce((sum, f) => sum + f.templateCalls, 0);
@@ -127,8 +128,9 @@ sheet <family>.onion.png and the looping preview <family>.webp into --out.
 --spec reads the asset spec's gait, template (and its subject, unless --subject is given); the
 gait picks the motion template's footprint rule for it, over the profile's animation.gait.
 A family no spec or grouping declares a template for, and that no template is named for, costs
-one motion-template decision per run, logged to motion-template.jsonl; --no-vision skips only
-the vision checks, so such a run still needs a key (declare template for one that needs none).
+one motion-template decision per run, logged to motion-template.jsonl. --no-vision makes no call
+and needs no key: such a family stays undecided, its ground-contact, footprint-drift and
+loop-seam checks pending ("not run: template undecided"), and the run exits 5 naming them.
 With none chosen, ground contact, footprint drift and the loop seam are not applicable.
 --import decides and checks a family write-families left undecided (its checks pending there).
 --dry-run prints the planned calls, the cost forecast and the spend left under the daily and
@@ -229,6 +231,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
       ledger: spendLedger(ctx, args.workItem),
       provider: { provider: providers, name: providers.billing.providerId },
       vision,
+      decide: vision,
     });
     const lines: string[] = [];
     for (const r of results) {
@@ -257,14 +260,23 @@ Exits 5 when any check fails; every failed check names its frame.`,
       })),
     };
     const human = lines.join("\n");
-    const failed = results.filter((r) => !r.report.passed).map((r) => r.report.family);
-    if (failed.length > 0) {
-      return refusal(
-        "qa_found_nothing",
-        `animation QA failed for ${failed.join(", ")}`,
-        fields,
-        human,
-      );
+    const failed = results
+      .filter((r) => r.report.reasons.some((x) => !x.passed && !x.shadow))
+      .map((r) => r.report.family);
+    const pending = results
+      .filter((r) => !r.report.passed && !failed.includes(r.report.family))
+      .map((r) => r.report.family);
+    if (failed.length > 0 || pending.length > 0) {
+      const message = [
+        ...(failed.length > 0 ? [`animation QA failed for ${failed.join(", ")}`] : []),
+        ...(pending.length > 0
+          ? [
+              `checks pending for ${pending.join(", ")} (template undecided: run without ` +
+                "--no-vision to decide it, or declare template)",
+            ]
+          : []),
+      ].join("; ");
+      return refusal("qa_found_nothing", message, fields, human);
     }
     return { exitCode: 0, fields, human };
   },
