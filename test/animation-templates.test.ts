@@ -93,6 +93,23 @@ test("thresholds: defaults, profile overrides and refusals", () => {
     () => thresholdsFor({ animation: { thresholds: { flickerCutoff: 2 } } }),
     /flickerCutoff/,
   );
+  // The decisions flag on their answer alone; the smallest judged hole is a share of the figure.
+  assert.deepEqual(
+    [
+      DEFAULT_THRESHOLDS.flickerCutoff,
+      DEFAULT_THRESHOLDS.holeCutoff,
+      DEFAULT_THRESHOLDS.holeMinShare,
+    ],
+    [0.5, 0.5, 0.001],
+  );
+  assert.throws(
+    () => thresholdsFor({ animation: { thresholds: { holeMinPx: 3 } as never } }),
+    /holeMinPx was removed: the smallest judged area is now holeMinShare/,
+  );
+  assert.throws(
+    () => thresholdsFor({ animation: { thresholds: { holeMinShare: 2 } } }),
+    /holeMinShare must be within 0\.\.1/,
+  );
 });
 
 test("gaits: a template's gait rules are data, validated with the field named", () => {
