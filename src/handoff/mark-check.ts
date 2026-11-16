@@ -35,13 +35,19 @@ export interface ExpectedMark {
   models: readonly string[];
 }
 
+/** One problem with a written file's mark, and the hand-off code of the branch that found it. */
+export interface MarkProblem {
+  code: "mark_missing" | "mark_invalid";
+  message: string;
+}
+
 /** The problems with one written file's mark; empty when it carries it. */
 export function markProblems(
   path: string,
   bytes: Uint8Array | undefined,
   mediaType: string,
   expected: ExpectedMark,
-): string[] {
+): MarkProblem[] {
   if (bytes === undefined || expected.digitalSourceType === "undeclared") return [];
   let source: DigitalSourceType | undefined;
   let models: string | undefined;
@@ -49,13 +55,28 @@ export function markProblems(
     source = readDigitalSourceType(bytes, mediaType);
     models = readMarkedModels(bytes, mediaType);
   } catch {
-    return [`${path} is not a readable ${mediaType} file, so its AI mark cannot be read`];
+    return [
+      {
+        code: "mark_invalid",
+        message: `${path} is not a readable ${mediaType} file, so its AI mark cannot be read`,
+      },
+    ];
   }
-  if (source === undefined) return [`${path} lacks the AI mark (the IPTC digital source type)`];
+  if (source === undefined)
+    return [
+      { code: "mark_missing", message: `${path} lacks the AI mark (the IPTC digital source type)` },
+    ];
   if (source !== expected.digitalSourceType)
-    return [`${path} marks source type ${source}, expected ${expected.digitalSourceType}`];
+    return [
+      {
+        code: "mark_invalid",
+        message: `${path} marks source type ${source}, expected ${expected.digitalSourceType}`,
+      },
+    ];
   const wanted = modelText(expected.models);
   if (wanted !== undefined && models !== wanted)
-    return [`${path} lacks the provenance's models in its AI mark`];
+    return [
+      { code: "mark_invalid", message: `${path} lacks the provenance's models in its AI mark` },
+    ];
   return [];
 }

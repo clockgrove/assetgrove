@@ -904,12 +904,14 @@ async function fileProblems(
   expected: { digitalSourceType: DigitalSourceType; models: readonly string[]; adopted?: boolean },
   preset: string,
 ): Promise<HandoffProblem[]> {
-  const problems: HandoffProblem[] = markProblems(path, bytes, type, expected).map((problem) => ({
-    preset,
-    problem,
-    file: path,
-    code: problem.includes(" lacks ") ? "mark_missing" : "mark_invalid",
-  }));
+  const problems: HandoffProblem[] = markProblems(path, bytes, type, expected).map(
+    ({ code, message }) => ({
+      preset,
+      problem: message,
+      file: path,
+      code,
+    }),
+  );
   if (bytes !== undefined && canCarryCredentials(type)) {
     const found = await credentialProblem(path, bytes, type, {
       digitalSourceType: expected.digitalSourceType,
