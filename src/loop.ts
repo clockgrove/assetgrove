@@ -510,7 +510,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   } catch {
     // A spec with no bible references (a 3D character from its turnaround) has none to show.
   }
-  const contact = await writeContact(runDir, spec, run.candidates, references);
+  const contact = await writeContact(runDir, spec, run.candidates, references, profile);
   if (contact !== undefined) run.contactSheet = contact;
   await writeRun(runDir, run);
   return { run, runDir };

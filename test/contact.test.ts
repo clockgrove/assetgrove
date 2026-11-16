@@ -11,7 +11,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { splitStrip } from "../src/animation/strip.ts";
-import { renderContact, writeContact } from "../src/contact.ts";
+import { keyIndexes, renderContact, writeContact } from "../src/contact.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { imageGenerators } from "../src/generators/image.ts";
@@ -179,6 +179,81 @@ test("a sprite-strip sheet has one key-frame row per candidate; a character-3d s
     [],
   );
   assert.deepEqual(Array.from(three.data), Array.from(expected.raster.data));
+});
+
+test("a strip's key frames always include the frames QA flagged, the rest spread evenly", async () => {
+  // Evenly, a 12-frame strip shows frames 1, 3, 5, 8, 10, 12: a broken 2 or 6 is never shown.
+  assert.deepEqual(keyIndexes(12), [0, 2, 4, 7, 9, 11]);
+  assert.deepEqual(keyIndexes(12, 6, [1, 5]), [0, 1, 4, 5, 8, 11]);
+  assert.deepEqual(keyIndexes(4, 6, [2]), [0, 1, 2, 3]);
+  // Every flagged frame is shown, even more than the row's six.
+  assert.deepEqual(keyIndexes(12, 6, [0, 1, 2, 3, 4, 5, 6]), [0, 1, 2, 3, 4, 5, 6]);
+
+  const dir = await tempDir();
+  const frameW = 16;
+  const strip = createRaster(frameW * 12, 16);
+  // Frame n (1-based) is n px wide, so each cell shows which frame it is.
+  for (let f = 0; f < 12; f++)
+    for (let y = 4; y < 12; y++)
+      for (let x = 0; x <= f && x < frameW; x++)
+        setPixel(strip, f * frameW + x, y, [200, 40, 40, 255]);
+  await writeFile(join(dir, "c1.png"), encodePng(strip));
+  const file = await writeContact(
+    dir,
+    { kind: "sprite-strip", assetId: "fern", frames: { count: 12, width: frameW, height: 16 } },
+    [
+      {
+        id: "c1",
+        file: "c1.png",
+        mediaType: "image/png",
+        fields: { frames: { width: frameW, height: 16 } },
+        reasons: [
+          { passed: true, frames: [1, 12] },
+          { passed: false, frames: [2] },
+          { passed: false, frames: [6, 7] },
+        ],
+      },
+    ],
+    [],
+  );
+  const sheet = decodePng(new Uint8Array(await readFile(join(dir, file as string))));
+  const frames = splitStrip(strip, { width: frameW, height: 16 });
+  const expected = renderContact(
+    [{ number: 1, images: [0, 1, 5, 6, 7, 11].map((i) => frames[i]!) }],
+    [],
+  );
+  assert.deepEqual(Array.from(sheet.data), Array.from(expected.raster.data));
+});
+
+test("a staged strip's row shows the frames animation QA flags on it, through stage", async () => {
+  // 12 frames, frame 2 drawn off to one side: evenly, the row would show frames 1, 3, 5, 8, 10, 12
+  // and never frame 2. Animation QA flags 1, 2 and 3 (footprint drift, silhouette change).
+  const w = await world();
+  const spec: AssetSpec = { ...shelterSpec, frames: { count: 12 } };
+  const provider = scriptedProvider({
+    drawFrame: (frame) => drawSubject(96, frame === 2 ? 30 : 0),
+  });
+  const { run, runDir } = await stage(options(w, spec, { candidates: 1, provider }));
+  const candidate = run.candidates[0]!;
+  // No reason of the staged candidate names a frame: the flags come from animation QA alone.
+  assert.ok(candidate.reasons.every((r) => !("frames" in r)));
+  const strip = decodePng(new Uint8Array(await readFile(join(runDir, candidate.file))));
+  const { width, height } = candidate.fields["frames"] as { width: number; height: number };
+  const frames = splitStrip(strip, { width, height });
+  assert.equal(frames.length, 12);
+  const sheet = decodePng(new Uint8Array(await readFile(join(runDir, "contact.png"))));
+  const refs = (
+    await Promise.all(
+      w.bible.references
+        .filter((r) => r.subject === "fern")
+        .map((r) => readFile(join(w.bibleDir, r.path))),
+    )
+  ).map((b) => decodePng(new Uint8Array(b)));
+  const expected = renderContact(
+    [{ number: 1, images: [0, 1, 2, 3, 7, 11].map((i) => frames[i]!) }],
+    refs,
+  );
+  assert.deepEqual(Array.from(sheet.data), Array.from(expected.raster.data));
 });
 
 test("the sheet is pixel-identical when only bible text changes", async () => {

@@ -82,6 +82,7 @@ interface ImportArgs {
   frames?: number;
   grid?: number;
   components?: boolean;
+  maxHalo?: number;
   noPropose?: boolean;
   lockBible?: string;
   identityMode?: string;
@@ -215,6 +216,13 @@ below the threshold, off skips scoring.`,
         placeholder: "<columns>",
       },
       components: { type: "boolean", description: "slice by connected components" },
+      maxHalo: {
+        type: "number",
+        minimum: 0,
+        description:
+          "the matte checks' limit, 0 to 1: the share of a frame's edge pixels that may keep the background colour (default 0.005)",
+        placeholder: "<fraction>",
+      },
       noPropose: { type: "boolean", description: "skip the grouping model" },
       lockBible: {
         type: "string",
@@ -317,6 +325,7 @@ below the threshold, off skips scoring.`,
       importsDir: resolve(args.imports ?? ".assetgrove/imports"),
       slice,
       ...(propose !== undefined && { propose }),
+      ...(args.maxHalo !== undefined && { matte: { maxHaloFraction: args.maxHalo } }),
       ...(lock && {
         identity: {
           caller: await caller(),

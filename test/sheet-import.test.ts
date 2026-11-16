@@ -393,6 +393,90 @@ test("sheet generation: one request for the whole cycle within the cap, then the
   assert.deepEqual(manifest.semantic, { role: "actor", entity: "grove.fern" });
 });
 
+test("write-families gives the spec's fields to the family it asked for under another name, or refuses", async () => {
+  const world = await syntheticWorld();
+  const sheet = syntheticSheet({
+    families: [{ name: "walk-right", count: 6, facing: 1, walk: true }],
+    columns: 3,
+  });
+  const spec: AssetSpec = {
+    kind: "sprite-sheet",
+    assetId: "fern",
+    animationFamily: "walk",
+    frames: { count: 6 },
+    fields: { accessibilityLabel: "Fern walking" },
+  };
+  // The grouping model names the family as its own prompt's example does: "walk-right".
+  const proposed = {
+    families: [{ name: "walk-right", frames: [1, 2, 3, 4, 5, 6], reason: "a right walk" }],
+    unassigned: [],
+  };
+  const generate = async (importId: string) => {
+    const { importsDir, targetDir } = await dirs();
+    const provider = new ScriptedProvider({
+      image: () => ({ images: [{ mediaType: "image/png", bytes: sheet.png }], costUsd: 0.21 }),
+      vision: () => ({ text: JSON.stringify(proposed), costUsd: 0.01 }),
+    });
+    const generated = await generateSheet({
+      spec,
+      specDir: world.dir,
+      bible: world.bible,
+      bibleDir: world.bibleDir,
+      profile: painterlyProfile(),
+      routes: defaultRoutes,
+      provider,
+      providerName: "scripted",
+      importsDir,
+      importId,
+    });
+    return { ...generated, targetDir };
+  };
+
+  // One family with frames of its own (and its mirror): the fields go to it, and it says so.
+  const one = await generate("one");
+  const written = await writeFamilies({
+    importDir: one.importDir,
+    grouping: {
+      ...one.grouping,
+      status: "confirmed",
+      families: [
+        ...one.grouping.families,
+        { name: "walk-left", mirrorOf: "walk-right", reason: "mirrored" },
+      ],
+    },
+    targetDir: one.targetDir,
+  });
+  const [right, left] = written.families;
+  assert.match(
+    right!.fieldsNote ?? "",
+    /the spec asked for family "walk" and no confirmed family has that name, so its target fields go to "walk-right"/,
+  );
+  assert.equal(left!.fieldsNote, undefined);
+  const manifest = async (f: (typeof written.families)[number]) =>
+    JSON.parse(await readFile(f.result.manifestPath, "utf8"));
+  assert.equal((await manifest(right!)).accessibilityLabel, "Fern walking");
+  assert.equal((await manifest(left!)).accessibilityLabel, undefined);
+
+  // Two families of their own, neither named "walk": refused, naming them, nothing written.
+  const two = await generate("two");
+  await assert.rejects(
+    writeFamilies({
+      importDir: two.importDir,
+      grouping: {
+        status: "confirmed",
+        families: [
+          { name: "walk-right", frames: [1, 2, 3], reason: "first half" },
+          { name: "walk-up", frames: [4, 5, 6], reason: "second half" },
+        ],
+        unassigned: [],
+      },
+      targetDir: two.targetDir,
+    }),
+    /refused: the spec asked for family "walk", and no confirmed family has that name; the confirmed families are "walk-right", "walk-up"/,
+  );
+  assert.equal(await exists(join(two.targetDir, "assets")), false);
+});
+
 test("sheet generation refuses a sheet with another frame count and keeps it", async () => {
   const world = await syntheticWorld();
   const { importsDir } = await dirs();

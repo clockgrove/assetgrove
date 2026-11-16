@@ -276,6 +276,77 @@ interface GridSpec {
   origin: Point;
 }
 
+/** How many rows the figures sit in, clustered by their centres' heights as detectGrid does. */
+function figureRows(figures: Component[]): number | undefined {
+  if (figures.length === 0) return undefined;
+  const boxes = figures.map((f) => f.box);
+  return (
+    Math.max(
+      ...cluster(
+        boxes.map((b) => centre(b).y),
+        0.5 * median(boxes.map((b) => b.height)),
+      ),
+    ) + 1
+  );
+}
+
+/**
+ * The figure-sized components that are whole figures, not a detached prop or part beside one: at
+ * least half the size of a typical large component (the median of the larger half), so neither a
+ * prop in every cell nor a few touching figures merged into one move the reference.
+ */
+function wholeFigures(figures: Component[]): Component[] {
+  if (figures.length === 0) return [];
+  const sizes = figures.map((f) => f.pixels.length).sort((a, b) => a - b);
+  const reference = median(sizes.slice(Math.floor(sizes.length / 2)));
+  return figures.filter((f) => f.pixels.length >= 0.45 * reference);
+}
+
+/**
+ * How a given grid cuts the sheet's figure-sized components: the cells whose box holds the centres
+ * of two or more whole figures (so the grid has too few cells), and the share of the figures' area
+ * in components a cell edge cuts straight through, crossing at half the component's width or more
+ * (so the cells are too short). Figures that touch across an edge at a narrower contact, and the
+ * odd figure that hangs into the cell below, leave that share low.
+ */
+function gridFit(
+  sheetWidth: number,
+  figures: Component[],
+  grid: GridSpec,
+): { crowded: string[]; slicedShare: number } {
+  const { columns, rows, cell, origin } = grid;
+  const crowding = new Map<string, number>();
+  for (const f of wholeFigures(figures)) {
+    const c = centre(f.box);
+    const column = Math.floor((c.x - origin.x) / cell.width);
+    const row = Math.floor((c.y - origin.y) / cell.height);
+    if (column < 0 || column >= columns || row < 0 || row >= rows) continue;
+    const key = `row ${row + 1}, column ${column + 1}`;
+    crowding.set(key, (crowding.get(key) ?? 0) + 1);
+  }
+  const crowded = [...crowding].filter(([, n]) => n > 1).map(([key]) => key);
+  let total = 0;
+  let sliced = 0;
+  for (const f of figures) {
+    total += f.pixels.length;
+    const at = new Set(f.pixels);
+    let cutThrough = false;
+    for (let k = 1; k < rows && !cutThrough; k++) {
+      const y = origin.y + k * cell.height;
+      if (y <= f.box.y || y >= f.box.y + f.box.height) continue;
+      const crossing = new Map<number, number>();
+      for (let x = f.box.x; x < f.box.x + f.box.width; x++) {
+        if (!at.has(y * sheetWidth + x) || !at.has((y - 1) * sheetWidth + x)) continue;
+        const column = Math.floor((x - origin.x) / cell.width);
+        crossing.set(column, (crossing.get(column) ?? 0) + 1);
+      }
+      for (const n of crossing.values()) if (n >= 0.5 * f.box.width) cutThrough = true;
+    }
+    if (cutThrough) sliced += f.pixels.length;
+  }
+  return { crowded, slicedShare: total > 0 ? sliced / total : 0 };
+}
+
 function detectGrid(sheet: Raster, figures: Component[]): GridSpec | undefined {
   if (figures.length < 2) return undefined;
   const boxes = figures.map((f) => f.box);
@@ -688,15 +759,73 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
 
   let sliced: Sliced;
   if (options.grid) {
-    const cellWidth = options.grid.cellWidth ?? Math.floor(sheet.width / options.grid.columns);
-    const cellHeight = options.grid.cellHeight ?? cellWidth;
+    const { columns } = options.grid;
+    const cellWidth = options.grid.cellWidth ?? Math.floor(sheet.width / columns);
     const origin = options.grid.origin ?? { x: 0, y: 0 };
-    sliced = sliceGivenGrid(ctx, {
-      columns: options.grid.columns,
-      rows: options.grid.rows ?? Math.ceil((sheet.height - origin.y) / cellHeight),
-      cell: { width: cellWidth, height: cellHeight },
+    const height = sheet.height - origin.y;
+    const figures = sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff);
+    const cut = (rows: number): GridSpec => ({
+      columns,
+      rows,
+      cell: { width: cellWidth, height: Math.floor(height / rows) },
       origin,
     });
+    // How tall a cell is: given; else the sheet's height over its rows. The rows are given, or
+    // follow from the count alone (count figures in rows of `columns`), or, with neither, are the
+    // rows the figures sit in (their centres clustered by height, as detectGrid does) when the
+    // figures fill that many rows one per cell and that cut leaves them whole, else square cells
+    // when those leave them whole. Whatever the figures' centres say, a cut is judged on the cut
+    // itself (gridFit): a count whose cells hold two whole figures, or whose edges cut through
+    // most of the figures, is refused; with no count and no cut that holds, the sheet is refused
+    // and the count asked for, never cut into half-figures.
+    let grid: GridSpec;
+    if (options.grid.rows !== undefined || options.grid.cellHeight !== undefined) {
+      const cellHeight = options.grid.cellHeight ?? Math.floor(height / (options.grid.rows ?? 1));
+      grid = {
+        columns,
+        rows: options.grid.rows ?? Math.ceil(height / cellHeight),
+        cell: { width: cellWidth, height: cellHeight },
+        origin,
+      };
+    } else if (options.count !== undefined) {
+      const rows = Math.max(1, Math.ceil(options.count / columns));
+      grid = cut(rows);
+      const fit = gridFit(sheet.width, figures, grid);
+      const problems: string[] = [];
+      if (fit.crowded.length > 0)
+        problems.push(
+          `${fit.crowded.length} cell${fit.crowded.length === 1 ? "" : "s"} of ${columns} × ${rows} hold two or more whole figures (${fit.crowded.slice(0, 3).join("; ")}${fit.crowded.length > 3 ? "; …" : ""}), so the sheet holds more than ${options.count}`,
+        );
+      if (fit.slicedShare > 0.5)
+        problems.push(
+          `${options.count} figures in rows of ${columns} make cells ${grid.cell.height} px tall, whose edges cut through ${Math.round(fit.slicedShare * 100)}% of the figures' area, so the sheet holds fewer`,
+        );
+      if (problems.length > 0) {
+        const sliced = sliceGivenGrid(ctx, grid);
+        throw new SliceError(sliced.figures.length, options.count, problems);
+      }
+    } else {
+      const clustered = figureRows(wholeFigures(figures));
+      const candidates: number[] = [];
+      if (clustered !== undefined) {
+        const whole = wholeFigures(figures).length;
+        if (whole > columns * (clustered - 1) && whole <= columns * clustered)
+          candidates.push(clustered);
+      }
+      candidates.push(Math.max(1, Math.ceil(height / Math.min(cellWidth, height))));
+      const chosen = candidates.map(cut).find((g) => {
+        const fit = gridFit(sheet.width, figures, g);
+        return fit.slicedShare <= 0.5 && fit.crowded.length === 0;
+      });
+      if (!chosen)
+        throw new InputError(
+          `a grid of ${columns} columns alone does not say how tall a cell is on this sheet: ` +
+            `neither the rows the figures sit in nor square cells hold them one whole figure per cell; ` +
+            `give the frame count (--frames) so the rows follow from it`,
+        );
+      grid = chosen;
+    }
+    sliced = sliceGivenGrid(ctx, grid);
   } else {
     const grid = options.components
       ? undefined

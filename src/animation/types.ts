@@ -91,8 +91,8 @@ export interface AnimationThresholds {
   flickerCutoff: number;
   /**
    * The share of a frame's soft edge pixels (0 < alpha < 255) whose colour is far from every
-   * opaque colour near them, counting transparent pixels that keep a colour too, above which the
-   * frame has a colour halo. Default 0.22.
+   * opaque colour near them, above which the frame has a colour halo. Default 0.22. Fully
+   * transparent pixels that keep a colour are not counted: they are a passing note.
    */
   edgeHaloShare: number;
   /** The smallest see-through area inside the figure's outline, in px, that the holes check judges. Default 3. */

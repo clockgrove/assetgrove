@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { edgeHaloReasons, frameHalo } from "../src/animation/halo.ts";
+import {
+  clearTransparentColour,
+  edgeHaloReasons,
+  frameHalo,
+  haloShare,
+} from "../src/animation/halo.ts";
 import {
   buildHolesPrompt,
   checkHoles,
@@ -66,14 +71,46 @@ test("a soft edge in the figure's own colours passes edge-halo; an orange fringe
   assert.match(failed[0]!.reason, /^frame 2: \d+ of \d+ soft edge pixels/);
 });
 
-test("transparent pixels that keep a colour count as halo", () => {
+test("transparent pixels that keep a colour are a note, never an edge-halo failure", () => {
+  // A matting tool that keeps the original RGB under alpha 0: thousands of coloured transparent
+  // pixels around a clean figure.
   const frame = disc();
-  for (let x = 0; x < 48; x++) setPixel(frame, x, 0, [230, 240, 238, 0]);
+  let kept = 0;
+  for (let y = 0; y < frame.height; y++)
+    for (let x = 0; x < frame.width; x++) {
+      const i = (y * frame.width + x) * 4;
+      if (frame.data[i + 3] === 0) {
+        frame.data.set([230, 240, 238], i);
+        kept++;
+      }
+    }
   const h = frameHalo(frame);
-  assert.equal(h.colouredTransparent, 48);
-  const [reason] = edgeHaloReasons([frame], thresholds);
-  assert.equal(reason!.passed, false);
-  assert.match(reason!.reason, /48 transparent pixels keep a colour/);
+  assert.equal(h.colouredTransparent, kept);
+  assert.ok(kept > 1000);
+  const reasons = edgeHaloReasons([frame, disc()], thresholds);
+  assert.deepEqual(
+    reasons.map((r) => [r.check, r.passed, r.frames]),
+    [
+      ["edge-halo", true, undefined],
+      ["transparent-colour", true, [1]],
+    ],
+  );
+  assert.match(
+    reasons[1]!.reason,
+    new RegExp(`^frame 1: ${kept} fully transparent pixels keep a colour`),
+  );
+  const cleared = clearTransparentColour(frame);
+  assert.equal(frameHalo(cleared).colouredTransparent, 0);
+  assert.equal(frame.data[3], 0);
+  assert.notEqual(frame.data[0], 0, "the input frame is left as it was");
+});
+
+test("the edge-halo share is over soft edge pixels alone", () => {
+  // 200 soft edge pixels of which 40 are halo is 20%, under the limit, whatever number of
+  // coloured transparent pixels sits beside them (60 used to make it 23% and fail).
+  const h = { edgePixels: 200, haloPixels: 40, colouredTransparent: 60 };
+  assert.equal(haloShare(h), 0.2);
+  assert.equal(haloShare({ edgePixels: 200, haloPixels: 50, colouredTransparent: 0 }), 0.25);
 });
 
 test("the deterministic report has an edge-halo check, so a fringed strip fails for it", () => {

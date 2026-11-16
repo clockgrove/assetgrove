@@ -1,19 +1,22 @@
 /**
  * The contact sheet of a run (design section 10): `<run>/contact.png`, one numbered row per staged
- * candidate. A still sits beside its references, a sprite strip shows a row of key frames and a 3D
+ * candidate. A still sits beside its references, a sprite strip shows a row of key frames (every
+ * frame QA flagged, then frames spread evenly) and a 3D
  * character its turntable frames. Numbers only: no text from any shared file or request input is
  * drawn, so the sheet changes only when an image does. It reuses the raster code of the sheet
  * import (src/sheet/import.ts).
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { animationQa } from "./animation/qa.ts";
 import { splitStrip } from "./animation/strip.ts";
 import { drawDigits, textWidth } from "./image/digits.ts";
 import { createRaster, decodeImage, encodePng } from "./image/raster.ts";
 import type { Raster } from "./image/raster.ts";
 import { resampleTo } from "./image/resample.ts";
 import { blit } from "./sheet/import.ts";
-import type { AssetSpec } from "./types.ts";
+import { resolveStyle } from "./style.ts";
+import type { AssetSpec, TargetProfile } from "./types.ts";
 
 export const CONTACT_SHEET_FILE = "contact.png";
 
@@ -122,10 +125,69 @@ export function renderContact(rows: ContactRow[], references: Raster[]): Contact
   return { raster: out, cells };
 }
 
-/** `count` indexes spread evenly over `length` items, first and last included. */
-export function keyIndexes(length: number, count = MAX_KEY_FRAMES): number[] {
-  if (length <= count) return Array.from({ length }, (_, i) => i);
-  return Array.from({ length: count }, (_, i) => Math.round((i * (length - 1)) / (count - 1)));
+/**
+ * The indexes of the key frames shown for `length` items: every `flagged` index (the frames a
+ * check flagged, which the person must see to judge the strip), then the rest of `count` spread
+ * evenly over the frames not flagged, first and last included. Sorted; more than `count` only when
+ * more frames are flagged.
+ */
+export function keyIndexes(
+  length: number,
+  count = MAX_KEY_FRAMES,
+  flagged: Iterable<number> = [],
+): number[] {
+  const shown = new Set([...flagged].filter((i) => Number.isInteger(i) && i >= 0 && i < length));
+  const rest = Array.from({ length }, (_, i) => i).filter((i) => !shown.has(i));
+  const slots = Math.max(0, count - shown.size);
+  if (rest.length <= slots) rest.forEach((i) => shown.add(i));
+  else if (slots === 1) shown.add(rest[0] as number);
+  else
+    for (let k = 0; k < slots; k++)
+      shown.add(rest[Math.round((k * (rest.length - 1)) / (slots - 1))] as number);
+  return [...shown].sort((a, b) => a - b);
+}
+
+/** The 0-based frames a strip's reasons flagged: every frame a failing reason names. */
+export function flaggedFrames(reasons: ContactCandidate["reasons"]): number[] {
+  return [...new Set((reasons ?? []).filter((r) => !r.passed).flatMap((r) => r.frames ?? []))].map(
+    (f) => f - 1,
+  );
+}
+
+/**
+ * The 0-based frames animation QA's deterministic checks flag on a staged strip, under the run's
+ * profile: the frames a person must see on the contact sheet. None when the checks cannot run
+ * (no profile, or a profile whose animation thresholds are invalid).
+ */
+export function stripQaFlags(
+  frames: Raster[],
+  spec: AssetSpec,
+  profile: TargetProfile | undefined,
+): number[] {
+  const first = frames[0];
+  if (!profile || !first) return [];
+  const frame = { width: first.width, height: first.height };
+  try {
+    const report = animationQa(
+      {
+        frames,
+        frame,
+        // The spec's anchor, else the bottom centre of the frame, as animation-qa takes it.
+        anchor: spec.anchor ?? { x: Math.floor(frame.width / 2), y: frame.height - 1 },
+        family: spec.animationFamily ?? "strip",
+        ...((spec.frames?.durationMs ?? profile.frames.durationMs) !== undefined && {
+          durationMs: (spec.frames?.durationMs ?? profile.frames.durationMs) as number,
+        }),
+        ...(spec.gait !== undefined && { gait: spec.gait }),
+      },
+      profile,
+      // QA measures alpha only, so the palette rule plays no part.
+      resolveStyle(profile.style && { ...profile.style, color: { rule: "full" } }),
+    );
+    return flaggedFrames(report.reasons);
+  } catch {
+    return [];
+  }
 }
 
 function tryDecode(bytes: Uint8Array): Raster | undefined {
@@ -143,6 +205,8 @@ export interface ContactCandidate {
   mediaType: string;
   fields: Record<string, unknown>;
   artifacts?: string[];
+  /** The candidate's QA reasons; a failing one's 1-based `frames` are always shown for a strip. */
+  reasons?: Array<{ passed: boolean; frames?: number[] }>;
 }
 
 /** A candidate's number: the digits of its id (`c3` is 3). */
@@ -156,6 +220,7 @@ async function candidateImages(
   runDir: string,
   spec: AssetSpec,
   candidate: ContactCandidate,
+  profile: TargetProfile | undefined,
 ): Promise<Raster[]> {
   if (spec.kind === "character-3d") {
     // Turntable frames are the view renders; the clip frames are not part of the turntable.
@@ -176,7 +241,8 @@ async function candidateImages(
   const height = frames?.height ?? spec.frames?.height ?? image.height;
   if (width === undefined || height !== image.height || image.width % width !== 0) return [image];
   const all = splitStrip(image, { width, height });
-  return keyIndexes(all.length).map((i) => all[i] as Raster);
+  const flagged = [...flaggedFrames(candidate.reasons), ...stripQaFlags(all, spec, profile)];
+  return keyIndexes(all.length, MAX_KEY_FRAMES, flagged).map((i) => all[i] as Raster);
 }
 
 /** Writes `<runDir>/contact.png` for rows and references; returns the file name and the layout. */
@@ -201,10 +267,12 @@ export async function writeContact(
   spec: AssetSpec,
   candidates: ContactCandidate[],
   references: Uint8Array[],
+  /** The run's profile: a staged strip's row then always shows the frames animation QA flags. */
+  profile?: TargetProfile,
 ): Promise<string | undefined> {
   const rows: ContactRow[] = [];
   for (const [index, candidate] of candidates.entries()) {
-    const images = await candidateImages(runDir, spec, candidate);
+    const images = await candidateImages(runDir, spec, candidate, profile);
     if (images.length > 0) rows.push({ number: candidateNumber(candidate.id, index + 1), images });
   }
   const refs = references.map(tryDecode).filter((r): r is Raster => r !== undefined);

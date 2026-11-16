@@ -264,3 +264,203 @@ test("touching figures that merged into one are named when too few are found", (
     },
   );
 });
+
+/** A sheet of `columns` × `rows` cells of cellW × cellH, each holding one tall figure. */
+function tallCellSheet(columns: number, rows: number, cellW: number, cellH: number): Raster {
+  const sheet = createRaster(columns * cellW, rows * cellH);
+  for (let i = 0; i < sheet.data.length; i += 4) sheet.data.set([250, 250, 250, 255], i);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < columns; c++)
+      for (let y = Math.round(cellH * 0.1); y < Math.round(cellH * 0.9); y++)
+        for (let x = Math.round(cellW * 0.3); x < Math.round(cellW * 0.7); x++)
+          sheet.data.set(
+            [60 + 20 * c, 40, 30 + 40 * r, 255],
+            ((r * cellH + y) * sheet.width + c * cellW + x) * 4,
+          );
+  return sheet;
+}
+
+test("an explicit grid of columns alone takes its cell height from the count or the figures' rows", () => {
+  // generate-sheet's own layout for 8 frames: 4 columns, 2 rows of cells twice as tall as wide.
+  const sheet = tallCellSheet(4, 2, 64, 128);
+  for (const options of [{ grid: { columns: 4 }, count: 8 }, { grid: { columns: 4 } }]) {
+    const result = sliceSheet(sheet, options);
+    assert.equal(result.figures.length, 8, JSON.stringify(options));
+    assert.deepEqual(result.grid, {
+      columns: 4,
+      rows: 2,
+      cell: { width: 64, height: 128 },
+      origin: { x: 0, y: 0 },
+    });
+    // Every figure is whole: about 80% of its 128 px cell tall, never cut in half.
+    for (const figure of result.figures)
+      assert.ok(figure.box.height >= 100, `${figure.box.height}`);
+  }
+});
+
+/** A sheet of 128 px square cells, a 40 px figure in each listed cell at the given top. */
+function boxSheet(
+  columns: number,
+  rows: number,
+  figures: Array<{ row: number; column: number; top: number; height?: number }>,
+): Raster {
+  const sheet = createRaster(columns * 128, rows * 128);
+  for (let i = 0; i < sheet.data.length; i += 4) sheet.data.set([250, 250, 250, 255], i);
+  for (const { row, column, top, height = 40 } of figures)
+    for (let y = row * 128 + top; y < row * 128 + top + height; y++)
+      for (let x = column * 128 + 44; x < column * 128 + 84; x++)
+        sheet.data.set([60 + 20 * column, 40, 30 + 80 * row, 255], (y * sheet.width + x) * 4);
+  return sheet;
+}
+
+const cells = (columns: number, rows: number) =>
+  Array.from({ length: columns * rows }, (_, i) => ({
+    row: Math.floor(i / columns),
+    column: i % columns,
+    top: 80,
+  }));
+
+const square = (columns: number, rows: number) => ({
+  columns,
+  rows,
+  cell: { width: 128, height: 128 },
+  origin: { x: 0, y: 0 },
+});
+
+test("an explicit grid of columns alone takes its rows from a count, whatever rows the figures' centres cluster into", () => {
+  // A jump: two figures of each row drawn 70 px higher, so the centres cluster into 4 rows.
+  const jump = boxSheet(
+    4,
+    2,
+    cells(4, 2).map((c) => ({ ...c, top: c.column % 2 === 1 ? 10 : 80 })),
+  );
+  // One raised figure in a single row: the centres cluster into 2 rows.
+  const raised = boxSheet(
+    4,
+    1,
+    cells(4, 1).map((c) => ({ ...c, top: c.column === 2 ? 10 : 80 })),
+  );
+  // A figure that reaches down to touch the one below it: 7 sheet-wide components.
+  const touching = boxSheet(4, 2, [
+    ...cells(4, 2)
+      .filter((c) => !(c.row === 0 && c.column === 1))
+      .map((c) => ({ ...c, top: 20, height: 96 })),
+    { row: 0, column: 1, top: 20, height: 108 + 20 },
+  ]);
+  for (const [name, sheet, columns, rows] of [
+    ["jump", jump, 4, 2],
+    ["raised", raised, 4, 1],
+    ["touching", touching, 4, 2],
+  ] as const) {
+    for (const options of [{ grid: { columns }, count: columns * rows }, { grid: { columns } }]) {
+      const result = sliceSheet(sheet, options);
+      const label = `${name} ${JSON.stringify(options)}`;
+      assert.equal(result.figures.length, columns * rows, label);
+      // With a count the rows come from it; without one, figures that do not fill their clustered
+      // rows one per cell fall back to square cells, never a silent cut into thin rows.
+      assert.deepEqual(result.grid, square(columns, rows), label);
+      result.figures.forEach((figure, i) => {
+        assert.equal(figure.cell.row, Math.floor(i / columns), label);
+        assert.equal(figure.cell.column, i % columns, label);
+      });
+    }
+  }
+});
+
+test("an explicit grid of columns alone refuses a count the cells do not hold", () => {
+  // 8 figures in 4 columns and 2 rows: 4 would drop a row, 12 would cut each figure into slivers.
+  const sheet = tallCellSheet(4, 2, 64, 128);
+  for (const [count, reason] of [
+    [4, /4 cells of 4 × 1 hold two or more whole figures/],
+    [12, /make cells 85 px tall, whose edges cut through 100% of the figures' area/],
+  ] as const) {
+    assert.throws(
+      () => sliceSheet(sheet, { grid: { columns: 4 }, count }),
+      (error: unknown) =>
+        error instanceof SliceError && error.expected === count && reason.test(error.message),
+      `count ${count}`,
+    );
+  }
+});
+
+/** A sheet of `width` × `height` on a pale background with the given dark rectangles. */
+function rectSheet(
+  width: number,
+  height: number,
+  rects: Array<{ x: number; y: number; w: number; h: number }>,
+): Raster {
+  const sheet = createRaster(width, height);
+  for (let i = 0; i < sheet.data.length; i += 4) sheet.data.set([250, 250, 250, 255], i);
+  rects.forEach(({ x, y, w, h }, i) => {
+    for (let py = y; py < y + h; py++)
+      for (let px = x; px < x + w; px++)
+        sheet.data.set([40 + (i % 5) * 10, 40, 60, 255], (py * width + px) * 4);
+  });
+  return sheet;
+}
+
+test("an explicit grid of columns alone keeps a correct count when a cell also holds a piece of a neighbour, a prop or a touching figure", () => {
+  // 4 × 2 cells of 128 px. Row 1, column 2's figure hangs 40 px into the cell below without
+  // touching the figure there.
+  const hanging = rectSheet(
+    512,
+    256,
+    cells(4, 2).map(({ row, column }) =>
+      row === 0 && column === 1
+        ? { x: column * 128 + 4, y: 68, w: 40, h: 100 }
+        : { x: column * 128 + 44, y: row * 128 + (row === 0 ? 20 : 26), w: 40, h: 100 },
+    ),
+  );
+  // Each cell holds a figure and a detached prop of about 0.4 of its area below it.
+  const props = rectSheet(
+    512,
+    256,
+    cells(4, 2).flatMap(({ row, column }) => [
+      { x: column * 128 + 44, y: row * 128 + 8, w: 40, h: 72 },
+      { x: column * 128 + 44, y: row * 128 + 90, w: 40, h: 30 },
+    ]),
+  );
+  // Three of the four columns' figures touch the one below at a 6 px foot.
+  const touching = rectSheet(
+    512,
+    256,
+    cells(4, 2).flatMap(({ row, column }) => [
+      { x: column * 128 + 44, y: row * 128 + 20, w: 40, h: 96 },
+      ...(row === 0 && column < 3 ? [{ x: column * 128 + 60, y: 116, w: 6, h: 32 }] : []),
+    ]),
+  );
+  for (const [name, sheet] of [
+    ["hanging", hanging],
+    ["props", props],
+    ["touching", touching],
+  ] as const) {
+    for (const options of [{ grid: { columns: 4 }, count: 8 }, { grid: { columns: 4 } }]) {
+      const label = `${name} ${JSON.stringify(options)}`;
+      const result = sliceSheet(sheet, options);
+      assert.equal(result.figures.length, 8, label);
+      assert.deepEqual(result.grid, square(4, 2), label);
+    }
+  }
+});
+
+test("an explicit grid of columns alone with no count refuses a sheet no cut holds whole, rather than cutting square half-figures", () => {
+  // 4 × 2 cells of 128 × 256, one figure raised so the centres cluster into 3 rows: square cells
+  // would cut every figure in two.
+  const sheet = rectSheet(
+    512,
+    512,
+    cells(4, 2).map(({ row, column }) => ({
+      x: column * 128 + 44,
+      y: row * 256 + (row === 0 && column === 2 ? 4 : 120),
+      w: 40,
+      h: 120,
+    })),
+  );
+  assert.throws(
+    () => sliceSheet(sheet, { grid: { columns: 4 } }),
+    /does not say how tall a cell is on this sheet.*give the frame count \(--frames\)/,
+  );
+  const result = sliceSheet(sheet, { grid: { columns: 4 }, count: 8 });
+  assert.equal(result.figures.length, 8);
+  assert.deepEqual(result.grid?.cell, { width: 128, height: 256 });
+});

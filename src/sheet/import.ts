@@ -86,11 +86,29 @@ export { applyStyle };
 
 /**
  * The import half of the sheet path as a recipe over the transformation core: slice the sheet into
- * figures, then remove each figure's background to the style profile.
+ * figures, then remove each figure's background to the style profile, under the given limits.
  */
-export function sheetImportRecipe(slice: SliceOptions = {}): Recipe {
+export function sheetImportRecipe(slice: SliceOptions = {}, matte: MatteLimits = {}): Recipe {
   const params = JSON.parse(JSON.stringify(slice)) as Record<string, unknown>;
-  return { name: "sheet-import", steps: [{ op: "slice", params }, { op: "matte" }] };
+  return {
+    name: "sheet-import",
+    steps: [
+      { op: "slice", params },
+      matte.maxHaloFraction === undefined
+        ? { op: "matte" }
+        : { op: "matte", params: { maxHaloFraction: matte.maxHaloFraction } },
+    ],
+  };
+}
+
+/**
+ * The limits of the matte's halo and leftover-background checks on the sheet path. The limit is a
+ * person's policy for their target's style (a style whose figures carry a pale rim near the
+ * sheet's background colour needs a wider one); unset, the matte's own default (0.5%) applies.
+ */
+export interface MatteLimits {
+  /** The share of edge pixels (and of visible pixels) that may keep the background colour, 0..1. */
+  maxHaloFraction?: number;
 }
 
 export interface ImportedFrame {
@@ -121,7 +139,15 @@ export interface ImportRecord {
    * The asset spec's family and its target fields (`fields`), when a spec asked for the sheet. The family of that name
    * written by `writeFamilies` carries the fields to the target's templates, as a `pick` does.
    */
-  spec?: { animationFamily: string; fields: Record<string, unknown> };
+  spec?: {
+    animationFamily: string;
+    fields: Record<string, unknown>;
+    /**
+     * The confirmed family the fields went to, set by `writeFamilies` when no family is named
+     * `animationFamily` and the grouping has exactly one family with frames of its own.
+     */
+    writtenAs?: string;
+  };
   sheet: SheetSource;
   profile: TargetProfile;
   bibleVersion: string;
@@ -181,6 +207,8 @@ export interface ImportOptions {
   importsDir: string;
   importId?: string;
   slice?: SliceOptions;
+  /** The matte checks' limit; the matte's default when unset. */
+  matte?: MatteLimits;
   /** Defaults to the profile's frame size. */
   frame?: Size;
   /** Defaults to the bottom centre of the frame. */
@@ -293,6 +321,12 @@ export async function importSheet(
 ): Promise<{ record: ImportRecord; importDir: string; grouping: Grouping }> {
   const now = options.now ?? (() => new Date());
   const { profile } = options;
+  const maxHalo = options.matte?.maxHaloFraction;
+  if (maxHalo !== undefined && !(maxHalo >= 0 && maxHalo <= 1)) {
+    throw new InputError(
+      `the matte limit --max-halo must be a fraction from 0 to 1, not ${maxHalo}`,
+    );
+  }
   const style = resolveStyle(profile.style, options.bible?.palette);
   const frame = options.frame ?? { width: profile.frames.width, height: profile.frames.height };
   const anchor = options.anchor ?? defaultAnchor(frame);
@@ -328,7 +362,7 @@ export async function importSheet(
   const importDir = resolve(options.importsDir, importId);
   let ran: ReturnType<typeof runRecipe>;
   try {
-    ran = runRecipe(sheetImportRecipe(options.slice), [sheetItem], { style });
+    ran = runRecipe(sheetImportRecipe(options.slice, options.matte), [sheetItem], { style });
   } catch (error) {
     // A generated sheet was paid for: keep it and how it was made, so it can be imported by hand.
     if (error instanceof SliceError && options.generation) {
@@ -567,7 +601,10 @@ export function familyHandoff(
     ...(record.gait !== undefined && { gait: record.gait }),
     animationFamily: family,
     // The requesting spec's target fields (atlas slot, labels, semantics) belong to the family it asked for.
-    ...(record.spec?.animationFamily === family && { fields: record.spec.fields }),
+    ...(record.spec !== undefined &&
+      (record.spec.writtenAs ?? record.spec.animationFamily) === family && {
+        fields: record.spec.fields,
+      }),
     frames: {
       count,
       width: frame.width,
@@ -611,9 +648,48 @@ export interface WrittenFamily {
   result: TargetWriteResult;
   /** The motion-template and loop and continuity checks on the written strip (pixels only). */
   animation: AnimationReport;
+  /**
+   * Set when the requesting spec's target fields went to this family although its name is not the
+   * spec's `animationFamily`: why (it is the grouping's one family with frames of its own).
+   */
+  fieldsNote?: string;
   /** The onion-skin sheet and the looping preview, in the import's preview directory. */
   onionPath: string;
   loopPreviewPath: string;
+}
+
+/**
+ * The confirmed family that receives the requesting spec's target fields (atlas slot, labels,
+ * semantics): the one named the spec's `animationFamily`; else, when the grouping has exactly one
+ * family with frames of its own, that one, with a note saying so. Any other grouping is refused,
+ * naming its families, so a manifest never loses its target fields silently. Sets
+ * `record.spec.writtenAs` when the fields go to another name. Undefined without a spec.
+ */
+export function specFamilyOf(
+  record: ImportRecord,
+  grouping: Grouping,
+): { name: string; note?: string } | undefined {
+  const spec = record.spec;
+  if (spec === undefined) return undefined;
+  const names = grouping.families.map((f) => f.name);
+  if (names.includes(spec.animationFamily)) {
+    delete spec.writtenAs;
+    return { name: spec.animationFamily };
+  }
+  const own = grouping.families.filter((f) => f.mirrorOf === undefined);
+  if (own.length === 1) {
+    const name = (own[0] as Grouping["families"][number]).name;
+    spec.writtenAs = name;
+    return {
+      name,
+      note: `the spec asked for family "${spec.animationFamily}" and no confirmed family has that name, so its target fields go to "${name}", the grouping's one family with frames of its own`,
+    };
+  }
+  throw new InputError(
+    `refused: the spec asked for family "${spec.animationFamily}", and no confirmed family has that name; ` +
+      `the confirmed families are ${names.map((n) => `"${n}"`).join(", ") || "none"}. ` +
+      `Rename the family the spec asked for to "${spec.animationFamily}" in grouping.json, so its target fields (${Object.keys(spec.fields).join(", ") || "none"}) are written with it`,
+  );
 }
 
 /**
@@ -639,6 +715,7 @@ export async function writeFamilies(
   templatesFor(record.profile);
   thresholdsFor(record.profile);
   const byId = new Map(record.frames.map((f) => [f.id, f]));
+  const specFamily = specFamilyOf(record, grouping);
 
   const failedMatte = record.frames.filter((f) => f.checks.some((c) => !c.passed));
   const plan = grouping.families.map((family) => ({
@@ -911,6 +988,8 @@ export async function writeFamilies(
       frames: s.frames,
       mirrored: s.mirrored,
       jitterPx: s.jitterPx,
+      ...(specFamily?.note !== undefined &&
+        specFamily.name === s.family.name && { fieldsNote: specFamily.note }),
       result,
       animation,
       onionPath,

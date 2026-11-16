@@ -5,7 +5,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { keyIndexes, writeContactRows } from "../contact.ts";
+import { MAX_KEY_FRAMES, keyIndexes, writeContactRows } from "../contact.ts";
 import { InputError, ProviderError } from "../errors.ts";
 import { checkIdentityRecord } from "../identity.ts";
 import type { IdentityRecordCheck } from "../identity.ts";
@@ -35,7 +35,7 @@ import type { Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, StyleBible, TargetProfile } from "../types.ts";
 import { importSheet } from "./import.ts";
 import { SliceError } from "./slice.ts";
-import type { ImportIdentity } from "./import.ts";
+import type { ImportIdentity, MatteLimits } from "./import.ts";
 import type { ImportRecord } from "./import.ts";
 import type { Grouping, SliceOptions } from "./types.ts";
 import { templateFor, templatesFor } from "../animation/templates.ts";
@@ -65,6 +65,8 @@ export interface GenerateSheetOptions {
   /** The run directory that gets the numbered contact sheet (`contact.png`) of the sheet's frames. */
   runDir?: string;
   slice?: SliceOptions;
+  /** The matte checks' limit on the generated sheet's frames; the matte's default when unset. */
+  matte?: MatteLimits;
   /**
    * Scores the generated sheet against a character's identity lock (see `ImportOptions`), through
    * this run's own budgeted caller; the scoring call is part of the reserved estimate.
@@ -285,6 +287,7 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
       ...(options.importId !== undefined && { importId: options.importId }),
       // The sheet must hold exactly the frames the spec asks for, or the import is refused.
       slice: { ...options.slice, count: grid.count },
+      ...(options.matte !== undefined && { matte: options.matte }),
       ...(options.identity !== undefined && {
         identity: { ...options.identity, caller: call, ...(recordCheck && { recordCheck }) },
       }),
@@ -320,7 +323,13 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
         decodeImage(new Uint8Array(await readFile(join(imported.importDir, f.file)))),
       ),
     );
-    const shown = keyIndexes(frames.length).map((i) => frames[i] as Raster);
+    // Frames whose background checks failed are always on the row the person picks from.
+    const flagged = imported.record.frames.flatMap((f, i) =>
+      f.checks.some((c) => !c.passed) ? [i] : [],
+    );
+    const shown = keyIndexes(frames.length, MAX_KEY_FRAMES, flagged).map(
+      (i) => frames[i] as Raster,
+    );
     const references = keyPose.map((k) => decodeImage(k.bytes));
     contactSheet = (
       await writeContactRows(options.runDir, [{ number: 1, images: shown }], references)
