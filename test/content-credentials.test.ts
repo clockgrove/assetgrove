@@ -179,13 +179,13 @@ function tampering(replace: (bytes: Uint8Array) => Promise<Uint8Array>): PresetR
   return { presets: new Map([...PRESETS, ["tamper", tamper]]) };
 }
 
-test("a missing, invalid or mismatched manifest fails the mark check naming the file", async () => {
+test("a missing, invalid (wrong claim or broken signature) or mismatched manifest fails the mark check naming the file", async () => {
   const png = FORMATS[0];
   const signer = await developmentSigner(temp("other-signer"));
   const marked = embedDigitalSourceType(png.bytes(), "image/png", generated, {
     models: provenance.models,
   });
-  const cases: Array<[string, (bytes: Uint8Array) => Promise<Uint8Array>]> = [
+  const cases: Array<[string, (bytes: Uint8Array) => Promise<Uint8Array>, RegExp?]> = [
     // Stripped: the IPTC mark stays, the manifest is gone.
     ["credentials_missing", async () => marked],
     // Pixels changed after signing: the hard binding no longer matches.
@@ -210,8 +210,24 @@ test("a missing, invalid or mismatched manifest fails the mark check naming the 
           "0.1.0",
         ),
     ],
+    // A broken signature: one byte of the COSE signature in the c2pa.signature box flipped.
+    [
+      "credentials_invalid",
+      async (bytes) => {
+        const buffer = Buffer.from(bytes);
+        const label = buffer.indexOf("c2pa.signature");
+        const content = buffer.indexOf("cbor", label);
+        assert.ok(label > 0 && content > label, "the signature box");
+        // The COSE_Sign1 ends with its signature: flip a byte inside it.
+        const end = content - 4 + buffer.readUInt32BE(content - 4);
+        const changed = bytes.slice();
+        changed[end - 8] = changed[end - 8]! ^ 0xff;
+        return changed;
+      },
+      /invalid \(claimSignature\.mismatch\)/,
+    ],
   ];
-  for (const [code, replace] of cases) {
+  for (const [code, replace, says] of cases) {
     const target = temp(code);
     const write = handoff(target, png, { registry: tampering(replace) });
     write.profile.handoff = [{ preset: "manifest" }, { preset: "tamper" }];
@@ -231,6 +247,7 @@ test("a missing, invalid or mismatched manifest fails the mark check naming the 
     assert.ok(problem, `${code}: ${JSON.stringify(outcome.error?.problems)}`);
     assert.equal(problem.file, `${MEDIA}.png`);
     assert.match(problem.problem ?? "", /assets\/source\/fern\/shelter\.png/);
+    if (says) assert.match(problem.problem ?? "", says);
   }
 });
 
