@@ -64,7 +64,12 @@ import {
 } from "../runs/plan.ts";
 import type { PlanJob } from "../runs/plan.ts";
 import { ledgerFor } from "../spend.ts";
-import { registrationPin, templateFor, templatesFor } from "../animation/templates.ts";
+import {
+  registrationPin,
+  templateFor,
+  templatesFor,
+  thresholdsFor,
+} from "../animation/templates.ts";
 import type { LoadedReference, Provenance } from "../types.ts";
 import { dryRunOutcome, formatWork, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -653,6 +658,7 @@ version is appended with answers naming the requests. The run that made the asse
                 anchor,
                 family,
                 pin,
+                groundTolerance: thresholdsFor(source.profile).groundTolerance,
                 subject: source.spec.subject ?? source.spec.assetId ?? asset.assetId,
                 index: f,
                 from: { neighbour: f > 1 ? f - 1 : Math.min(2, count) },

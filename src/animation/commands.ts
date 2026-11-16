@@ -395,6 +395,7 @@ export async function runFixFrame(options: {
       target.profile,
       target.gait,
     ),
+    groundTolerance: thresholdsFor(target.profile).groundTolerance,
     subject: target.subject,
     index: options.index,
     from: keyPose ? { keyPose } : (options.from as { neighbour: number }),
