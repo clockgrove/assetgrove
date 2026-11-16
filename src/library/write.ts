@@ -173,28 +173,22 @@ const SKIP_DIR = (name: string) =>
  * `node_modules` or `<id>.review` folders.
  */
 export function scanCards(root: string): FoundCard[] {
-  return walkCards(root, false).cards;
-}
-
-/** A card or review record that exists but does not parse, with `library check`'s code for it. */
-export interface UnreadableRecord {
-  /** The file, absolute. */
-  file: string;
-  code: "card_invalid" | "review_invalid";
+  return scanLibrary(root).cards;
 }
 
 /**
- * Every card under the library root that `library check` reads, and the cards it reports as
- * `card_invalid`: one that does not parse, or whose resource or sources leave the root.
+ * A library file that exists but does not parse, with `library check`'s code for it: a card or
+ * review record, whose rows the projections keep as they are, or an `index.md` left unwritten
+ * because the rows it holds for an unreadable card could not be read.
  */
-export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: UnreadableRecord[] } {
-  return walkCards(root, true);
+export interface UnreadableRecord {
+  /** The file, absolute. */
+  file: string;
+  code: "card_invalid" | "review_invalid" | "index_invalid";
 }
 
-function walkCards(
-  root: string,
-  checkPaths: boolean,
-): { cards: FoundCard[]; unreadable: UnreadableRecord[] } {
+/** Every card under the library root, and the cards there that do not parse. */
+export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: UnreadableRecord[] } {
   const found: FoundCard[] = [];
   const unreadable: UnreadableRecord[] = [];
   const walk = (dir: string): void => {
@@ -221,16 +215,6 @@ function walkCards(
       if (!/^---\r?\n/.test(text) || !text.includes("Game Asset")) continue;
       try {
         const card = parseCard(text, path);
-        if (checkPaths) {
-          // As `library check` reads a card: one whose resource or sources leave the root is invalid.
-          const paths = [
-            String(card.data["resource"]),
-            ...((card.data["sources"] ?? []) as { id: string; resource: string }[])
-              .filter((s) => s.id !== "bible")
-              .map((s) => s.resource),
-          ];
-          for (const target of paths) libraryPath(root, dir, target, path);
-        }
         const data = card.data as {
           title: string;
           description?: string;
@@ -271,7 +255,7 @@ function heldIds(
 ): Set<string> {
   const ids = new Set<string>();
   for (const { file, code } of unreadable) {
-    if (dirname(file) !== folder) continue;
+    if (dirname(file) !== folder || code === "index_invalid") continue;
     if (projection === "index" && code !== "card_invalid") continue;
     const name = basename(file);
     ids.add(name.slice(0, -(code === "card_invalid" ? ".md" : ".review.json").length));
@@ -854,6 +838,12 @@ export async function writeIndexes(
     const path = join(folder, "index.md");
     // A card that does not parse keeps the row the index has for it.
     const kept = indexAssetsFor(await readText(path), heldIds(unreadable, folder, "index"));
+    if (kept === undefined) {
+      // The rows of an unreadable card are in an index that does not parse either: rewritten, the
+      // index would lose them, so it is left as it is and reported.
+      unreadable.push({ file: path, code: "index_invalid" });
+      continue;
+    }
     const text = renderIndex({
       name: isRoot ? config.game : basename(folder),
       ...(isRoot && { root: { game: config.game } }),

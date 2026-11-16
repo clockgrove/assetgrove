@@ -268,14 +268,21 @@ export function logLinesFor(text: string | undefined, ids: Set<string>): LogLine
   return kept;
 }
 
-/** The asset rows of an index that name one of the asset ids, as entries `renderIndex` takes. */
-export function indexAssetsFor(text: string | undefined, ids: Set<string>): IndexAsset[] {
+/**
+ * The asset rows of an index that name one of the asset ids, as entries `renderIndex` takes;
+ * `undefined` when there are ids to keep and the index does not parse, so their rows cannot be read
+ * and the index must be left as it is.
+ */
+export function indexAssetsFor(
+  text: string | undefined,
+  ids: Set<string>,
+): IndexAsset[] | undefined {
   if (ids.size === 0 || text === undefined) return [];
   let parsed: ParsedIndex;
   try {
     parsed = parseIndex(text, "index.md");
   } catch {
-    return [];
+    return undefined;
   }
   return parsed.assets
     .filter((a) => ids.has(a.id) && a.target === `${a.id}.md`)

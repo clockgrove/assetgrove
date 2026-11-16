@@ -558,3 +558,51 @@ test("a neighbour's card or review record with conflict markers keeps the folder
     assert.deepEqual(doc(await l.lib("rebuild"))["rebuilt"], []);
   }
 });
+
+test("an unreadable card whose folder's index.md does not parse either leaves that index as it is, reported, through rebuild and a pick of another asset (#349)", async () => {
+  const l = await library();
+  const indexPath = join(dir(l), "index.md");
+  const cardPath = join(dir(l), "torch.md");
+  const index = await text(indexPath);
+  const card = await text(cardPath);
+  assert.match(index, /\]\(torch\.md\)/);
+  assert.match(index, /^game: /m);
+  await writeFile(
+    cardPath,
+    card.replace(
+      /^title: (.*)$/m,
+      "<<<<<<< ours\ntitle: $1\n=======\ntitle: Torch from b\n>>>>>>> theirs",
+    ),
+  );
+  const brokenIndex = index.replace(
+    /^game: (.*)$/m,
+    "<<<<<<< ours\ngame: $1\n=======\ngame: Other\n>>>>>>> theirs",
+  );
+  await writeFile(indexPath, brokenIndex);
+  const codes = (list: Doc[]) => list.map((u) => [u.file.split(/[\\/]/).at(-1), u.code]).sort();
+
+  const rebuilt = await l.lib("rebuild");
+  assert.equal(rebuilt.code, 6, rebuilt.stdout + rebuilt.stderr);
+  assert.deepEqual(codes(doc(rebuilt)["error"].problems), [
+    ["index.md", "index_invalid"],
+    ["torch.md", "card_invalid"],
+  ]);
+  assert.ok(!doc(rebuilt)["rebuilt"].some((f: string) => /index\.md$/.test(f)));
+  assert.equal(await text(indexPath), brokenIndex);
+
+  const out = await pickStill(l.world, "lamp");
+  assert.deepEqual(codes(out["library"].unreadable as Doc[]), [
+    ["index.md", "index_invalid"],
+    ["torch.md", "card_invalid"],
+  ]);
+  assert.equal(await text(indexPath), brokenIndex);
+
+  // Fixed, both files rebuild: the torch row is still there and the lamp row is added.
+  await writeFile(cardPath, card);
+  await writeFile(indexPath, index);
+  const fixed = await l.lib("rebuild");
+  assert.equal(fixed.code, 0, fixed.stdout + fixed.stderr);
+  assert.match(await text(indexPath), /\]\(torch\.md\)/);
+  assert.match(await text(indexPath), /\]\(lamp\.md\)/);
+  assert.equal((await l.lib("check")).code, 0);
+});

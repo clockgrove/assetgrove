@@ -421,41 +421,47 @@ export async function readLibrary(
       await readText(indexPath),
       held(folder, (a) => a.unreadable === "card"),
     );
-    const index = renderIndex({
-      name,
-      ...(isRoot && { root: { game: config.game } }),
-      folders: children,
-      assets: here
-        .map((c) => {
-          const data = c.card!.parsed.data as { title: string; description?: string };
-          return {
-            id: c.id,
-            title: data.title,
-            ...(data.description !== undefined && { description: data.description }),
-          };
-        })
-        .concat(keptIndex),
-    });
-    expected.push({
-      path: indexPath,
-      kind: "index",
-      text: index,
-      normalise: (actual) => {
-        const parsed = parseIndex(actual, indexPath);
-        checkIndexPaths(parsed, config.root, folder, indexPath);
-        if (parsed.root && parsed.root.okfVersion !== "0.2") return "";
-        return renderIndex({
-          name,
-          ...(parsed.root && { root: { game: parsed.root.game } }),
-          folders: parsed.folders,
-          assets: parsed.assets.map((a) => ({
-            id: a.id,
-            title: a.title,
-            ...(a.description !== undefined && { description: a.description }),
-          })),
-        });
-      },
-    });
+    if (keptIndex === undefined) {
+      // The rows of an unreadable card are in an index that does not parse either: rewritten, the
+      // index would lose them, so it is left as it is and reported.
+      problem(indexPath, "index_invalid");
+    } else {
+      const index = renderIndex({
+        name,
+        ...(isRoot && { root: { game: config.game } }),
+        folders: children,
+        assets: here
+          .map((c) => {
+            const data = c.card!.parsed.data as { title: string; description?: string };
+            return {
+              id: c.id,
+              title: data.title,
+              ...(data.description !== undefined && { description: data.description }),
+            };
+          })
+          .concat(keptIndex),
+      });
+      expected.push({
+        path: indexPath,
+        kind: "index",
+        text: index,
+        normalise: (actual) => {
+          const parsed = parseIndex(actual, indexPath);
+          checkIndexPaths(parsed, config.root, folder, indexPath);
+          if (parsed.root && parsed.root.okfVersion !== "0.2") return "";
+          return renderIndex({
+            name,
+            ...(parsed.root && { root: { game: parsed.root.game } }),
+            folders: parsed.folders,
+            assets: parsed.assets.map((a) => ({
+              id: a.id,
+              title: a.title,
+              ...(a.description !== undefined && { description: a.description }),
+            })),
+          });
+        },
+      });
+    }
     const logPath = join(folder, "log.md");
     const keptLog = logLinesFor(
       await readText(logPath),
