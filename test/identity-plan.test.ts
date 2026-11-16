@@ -268,6 +268,11 @@ test("a failing decision keeps the candidate unscored in enforce mode and in sha
   assert.equal(reason.passed, false);
   assert.equal(reason.shadow, true);
   assert.match(reason.reason, /failed: .*offline.*kept unscored/);
+  // A failed call is unknown, not an identity failure: it stays out of the shadow agreement.
+  const mixed = await run([-1, 3.6]);
+  assert.equal(mixed.run.identity?.scores, 1);
+  assert.equal(mixed.run.identity?.unscored, 1);
+  assert.equal(mixed.run.identity?.agreement.identityOnlyFailed, 0);
   const shadow = await run([-1]);
   assert.equal(shadow.run.candidates.length, 1);
   assert.equal(shadow.run.candidates[0]!.reasons.at(-1)?.passed, false);

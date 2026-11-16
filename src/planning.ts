@@ -1254,6 +1254,7 @@ export async function applyPlan(
   const cast = check?.question === "cast" && loadedIdentity ? await loadCast(doc) : undefined;
   let recordCheck: IdentityRecordCheck | undefined;
   const pairs: Array<{ qa: boolean; identity: boolean }> = [];
+  let unscored = 0;
   const run: RunRecord = {
     runId,
     ...(options.runId !== undefined && { runDir }),
@@ -1419,7 +1420,9 @@ export async function applyPlan(
               ...(recordCheck && { recordCheck }),
             })
           : undefined;
-      if (identity) pairs.push({ qa: qaPassed, identity: identity.passed });
+      // A failed scoring call is unknown, not off-model: it stays out of the shadow agreement.
+      if (identity?.unscored) unscored++;
+      else if (identity) pairs.push({ qa: qaPassed, identity: identity.passed });
       const identityReasons: Reason[] = identity ? [identityReason(identity)] : [];
       // The style verdict filters only where the QA model is measured stable; otherwise advisory.
       const styleState = filteringState(
@@ -1548,6 +1551,7 @@ export async function applyPlan(
         threshold: check.threshold,
         agreement: agreement(pairs),
         scores: pairs.length,
+        ...(unscored > 0 && { unscored }),
         ...(recordCheck && { recordCheck }),
       };
     run.spentUsd = budget.spentUsd;

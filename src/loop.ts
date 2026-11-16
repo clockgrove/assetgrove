@@ -237,8 +237,10 @@ export interface RunRecord {
     mode: "shadow" | "enforce";
     threshold: number;
     agreement: IdentityAgreement;
-    /** How many candidates were scored. */
+    /** How many candidates were scored; an unscored candidate is not counted here or in `agreement`. */
     scores: number;
+    /** How many candidates' scoring calls failed, so they were kept unscored; absent when none. */
+    unscored?: number;
     /** Enforce mode: the record's own check, run once before the first paid generation. */
     recordCheck?: IdentityRecordCheck;
   };
