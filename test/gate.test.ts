@@ -270,7 +270,6 @@ const PHASE_2 = [
   "real-checks",
   "release-verify",
   "host-confirmations",
-  "data-bars-read",
   "publish",
   "invitations",
 ];

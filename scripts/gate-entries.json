@@ -126,12 +126,6 @@
       "evidence": "testing-hosts.md run against this commit in Claude Code locally and in a remote session, Codex and GitHub Copilot CLI: in each, the person confirmed one spend and one pick through the form, the confirmation records name the client, and the key recipe's ids from keys.md were followed. The harness versions are recorded."
     },
     {
-      "id": "data-bars-read",
-      "kind": "manual-owner",
-      "title": "The data-dependent 1.0 bars are read once against real records",
-      "evidence": "The QA precision and recall, set-consistency spread and change-request bars read against the records Phase 2 produced (library stats), and docs/decisions.md corrected where the records show a bar is wrong, with the owner's decision."
-    },
-    {
       "id": "publish",
       "kind": "manual-owner",
       "title": "The owner publishes both 0.2.0 tarballs the release run verified",

@@ -400,7 +400,7 @@ A blocklist misses paraphrases, so every request also gets one model decision, a
 
 ## The data-dependent 1.0 bars
 
-Three of the 1.0 measures need a number that only real use can test. The numbers are fixed here, before Phases 2 and 3 produce the records they judge, so a result cannot shape its own bar. They are read once against real records at the Phase 2 gate and corrected there if the records show a bar is wrong; after that they hold to 1.0.
+Three of the 1.0 measures need a number that only real use can test. The numbers are fixed here, before Phases 2 and 3 produce the records they judge, so a result cannot shape its own bar. They are read once against real records at the 1.0 gate, when real use has reached each bar's minimum count (`minShownJudged`, `minFilteredSampled`, `minSetSize`, `minRequests`), and corrected there if the records show a bar is wrong.
 
 ```json
 {
