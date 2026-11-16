@@ -5,6 +5,8 @@ export interface Embedder {
   /** The pinned revision of the weights (a commit), or a version for scripted embedders. */
   readonly revision: string;
   readonly dimension: number;
+  /** True when each embedding call costs money (a hosted embedder); near matches then embed nothing about the request. */
+  readonly paid?: boolean;
   /** Each image is encoded file bytes (any format the decoder reads). Returns unit vectors. */
   embedImages(images: Uint8Array[]): Promise<Float32Array[]>;
   /** Returns unit vectors. */

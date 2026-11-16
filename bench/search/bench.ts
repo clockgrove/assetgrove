@@ -16,7 +16,7 @@ import {
   type Label,
   type Manifest,
 } from "./manifest.ts";
-import { allPairs, mean, percentile, precisionAt5, rrf, similarityThreshold } from "./metrics.ts";
+import { mean, percentile, precisionAt5, rrf } from "./metrics.ts";
 
 export interface BenchEntry {
   bar: string;
@@ -43,8 +43,6 @@ export interface Machine {
 
 export interface BenchReport {
   entries: BenchEntry[];
-  /** The computed image-similarity threshold, or null when no threshold reaches 0.9. */
-  threshold: number | null;
   machine: Machine;
   /** The embedder that made the vectors; a scripted one never measures real look or words. */
   embedder: { id: string; revision: string; scripted: boolean };
@@ -402,11 +400,6 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   }
   entry("filters-rebuild", checks === 0 ? 0 : good / checks, checks);
 
-  // The image-similarity threshold.
-  const ids = manifest.images.map((i) => i.id);
-  const vecs = new Map(rows.map((r) => [r.key, r.imageVec as Float32Array]));
-  const threshold = similarityThreshold(allPairs(ids, vecs, manifest.pairs));
-
   // Freshness fixture (also timed inside search-10k).
   const dir = await mkdtemp(join(tmpdir(), "bench-fresh-"));
   try {
@@ -472,7 +465,6 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   };
   return {
     entries,
-    threshold,
     machine: mach,
     embedder: embedderInfo,
     images: rows.length,
@@ -481,11 +473,10 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   };
 }
 
-/** One JSON line per bar, then the threshold, the dropped written queries, then the machine. */
+/** One JSON line per bar, then the dropped written queries, then the machine. */
 export function formatReport(r: BenchReport): string[] {
   return [
     ...r.entries.map((e) => JSON.stringify(e)),
-    JSON.stringify({ threshold: r.threshold }),
     JSON.stringify({ dropped: r.dropped }),
     JSON.stringify({
       embedder: r.embedder,

@@ -33,7 +33,6 @@ describe("manifest checks", () => {
       (m: Awaited<ReturnType<typeof readManifest>>) => m.lookQueries.push("nope"),
       (m: Awaited<ReturnType<typeof readManifest>>) =>
         m.writtenQueries.push({ id: "w", text: "x", candidates: ["nope"] }),
-      (m: Awaited<ReturnType<typeof readManifest>>) => m.pairs.push(["fx-01", "nope"]),
     ]) {
       const m = await readManifest(fixtureUrl);
       edit(m);
@@ -85,7 +84,6 @@ describe("manifest checks", () => {
     assert.deepEqual(checkManifest(m, { cardsPending: true }), []);
     assert.ok(m.images.length >= 250 && m.images.length <= 350);
     assert.ok(m.writtenQueries.length >= 60);
-    assert.ok(m.pairs.length > 0);
   });
 });
 

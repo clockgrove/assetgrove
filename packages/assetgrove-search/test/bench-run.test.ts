@@ -17,7 +17,7 @@ import { buildFixtureManifest, fixtureSource } from "../../../bench/search/fixtu
 import { fetchImages, type ImageSource } from "../../../bench/search/fetch.ts";
 import { readLookLibrary, type LookLibrary } from "../../../bench/search/library.ts";
 import { droppedQueries, readManifest, relevantOf } from "../../../bench/search/manifest.ts";
-import { allPairs, precisionAt5, similarityThreshold } from "../../../bench/search/metrics.ts";
+import { precisionAt5 } from "../../../bench/search/metrics.ts";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,7 +29,7 @@ import { cleanup, tempDir } from "./helpers/fixture.ts";
 const fixtureUrl = new URL("../../../bench/search/fixture/manifest.json", import.meta.url);
 
 describe("bench on the 20-image fixture", () => {
-  it("runs offline, prints one entry per bar, the threshold and the machine, padded to 10,000", async () => {
+  it("runs offline, prints one entry per bar, the dropped queries and the machine, padded to 10,000", async () => {
     const manifest = await readManifest(fixtureUrl);
     const bars = await readBars();
     const report = await runBench({
@@ -50,17 +50,15 @@ describe("bench on the 20-image fixture", () => {
     assert.equal(report.entries.find((e) => e.bar === "filters-rebuild")?.pass, true);
     assert.equal(report.paddedTo, 10_000);
     assert.ok(report.machine.threads >= 1 && report.machine.cpu.length > 0);
-    assert.equal(typeof report.threshold, "number");
     // The fixture's fourth query is judged to have two relevant images: dropped and reported.
     assert.deepEqual(report.dropped, [
       { id: "wq-4", text: "armored knight with sword", relevant: 2 },
     ]);
     assert.equal(report.entries.find((e) => e.bar === "words-shipped-p5")?.n, 3);
     const lines = formatReport(report).map((l) => JSON.parse(l));
-    assert.equal(lines.length, bars.size + 3);
-    assert.ok("threshold" in lines[bars.size]);
-    assert.deepEqual(lines[bars.size + 1].dropped, report.dropped);
-    assert.ok("machine" in lines[bars.size + 2]);
+    assert.equal(lines.length, bars.size + 2);
+    assert.deepEqual(lines[bars.size].dropped, report.dropped);
+    assert.ok("machine" in lines[bars.size + 1]);
   });
 
   it("refuses to score by words while a query holds rule-made, unpooled or unjudged labels", async () => {
@@ -117,30 +115,6 @@ describe("bench on the 20-image fixture", () => {
         freshnessFiles: 1,
       }),
       /wq-1 holds judgements by scripted-judge, a word match/,
-    );
-  });
-});
-
-describe("similarity threshold", () => {
-  it("is the lowest similarity at which same-asset precision reaches 0.9", () => {
-    const pairs = [
-      ...[0.99, 0.97, 0.95, 0.93, 0.91, 0.9, 0.88, 0.86, 0.84].map((sim) => ({ sim, same: true })),
-      { sim: 0.8, same: false },
-      { sim: 0.5, same: false },
-    ];
-    // At 0.84: 9 of 9 same. At 0.8: 9 of 10 = 0.9, still counts. At 0.5: 9 of 11 < 0.9.
-    assert.equal(similarityThreshold(pairs), 0.8);
-    assert.equal(similarityThreshold([{ sim: 0.9, same: false }]), null);
-    assert.equal(
-      allPairs(
-        ["a", "b"],
-        new Map([
-          ["a", Float32Array.of(1, 0)],
-          ["b", Float32Array.of(1, 0)],
-        ]),
-        [["b", "a"]],
-      )[0]?.same,
-      true,
     );
   });
 });
@@ -208,11 +182,6 @@ describe("by-words precision", () => {
 });
 
 describe("manifest building", () => {
-  it("finds recolour pairs", async () => {
-    const m = await readManifest(new URL("../../../bench/search/manifest.json", import.meta.url));
-    assert.ok(m.pairs.length >= 20);
-  });
-
   it("calls the vision model only up to the cap, and saves each text as it is written", async () => {
     const manifest = buildFixtureManifest();
     let saved = 0;
@@ -356,9 +325,8 @@ describe("the by-look library", () => {
     assert.equal(get(inFull, "look-pixel16").measured, 0);
     assert.equal(get(inFull, "look-pixel16").n, 4);
     assert.ok(get(inFull, "look-recall10").measured < get(alone, "look-recall10").measured);
-    // By words and the threshold still run on the labelled images alone.
+    // By words still runs on the labelled images alone.
     assert.equal(get(inFull, "words-shipped-p5").measured, get(alone, "words-shipped-p5").measured);
-    assert.equal(inFull.threshold, alone.threshold);
     assert.equal(inFull.images, manifest.images.length);
   });
 

@@ -3,8 +3,7 @@
  * - by-look labels (`labels`: pack, category, 16-px) come from the pack's own folders and sizes;
  * - card texts are written from the images by a vision model (`write-card-texts.ts`);
  * - by-words relevance is a decision model's judgement of each pooled candidate image against the
- *   query (`judge-relevance.ts`), never a match on file names;
- * - same-asset pairs are file names that match once a colour word is removed (`assetKey`).
+ *   query (`judge-relevance.ts`), never a match on file names.
  * docs/decisions.md (Search bars) records each.
  */
 import { readFile } from "node:fs/promises";
@@ -184,11 +183,6 @@ export interface Manifest {
   /** Image ids used as look queries. */
   lookQueries: string[];
   writtenQueries: WrittenQuery[];
-  /**
-   * Pairs of images that are the same asset: file names that match once a colour word is
-   * removed (`assetKey`). Only the image-similarity threshold reads them.
-   */
-  pairs: [string, string][];
 }
 
 export async function readManifest(path: string | URL): Promise<Manifest> {
@@ -274,10 +268,6 @@ export function checkManifest(m: Manifest, o: { cardsPending?: boolean } = {}): 
       if (!(j.probability >= 0 && j.probability <= 1))
         problems.push(`written query ${q.id}: probability ${j.probability} is not in 0..1`);
     }
-  }
-  for (const [a, b] of m.pairs) {
-    known(a, "pair");
-    known(b, "pair");
   }
   return problems;
 }

@@ -7085,37 +7085,5 @@
       "id": "q66",
       "text": "wooden signpost"
     }
-  ],
-  "pairs": [
-    ["kn-15871e4009", "kn-1dbf1685b9"],
-    ["kn-2107affc97", "kn-1bb4a469de"],
-    ["kn-2b04120ed1", "kn-504dc1f097"],
-    ["kn-58250e7413", "kn-0ebdb383b0"],
-    ["kn-3d4dd3c641", "kn-8e99d1b104"],
-    ["kn-3d4dd3c641", "kn-073c737ea5"],
-    ["kn-8e99d1b104", "kn-073c737ea5"],
-    ["kn-91400fd306", "kn-73b7e47ab9"],
-    ["kn-91400fd306", "kn-413601fd99"],
-    ["kn-91400fd306", "kn-2c9683df11"],
-    ["kn-73b7e47ab9", "kn-413601fd99"],
-    ["kn-73b7e47ab9", "kn-2c9683df11"],
-    ["kn-413601fd99", "kn-2c9683df11"],
-    ["kn-62d47efbe7", "kn-4d07213a05"],
-    ["kn-33310df489", "kn-4dfd4b9555"],
-    ["kn-33310df489", "kn-35fd308eb5"],
-    ["kn-33310df489", "kn-0a92fe002a"],
-    ["kn-4dfd4b9555", "kn-35fd308eb5"],
-    ["kn-4dfd4b9555", "kn-0a92fe002a"],
-    ["kn-35fd308eb5", "kn-0a92fe002a"],
-    ["kn-429a67b6b4", "kn-562c4e10e1"],
-    ["kn-4c3e98ecbc", "kn-3295d6a952"],
-    ["kn-4f555ee0b6", "kn-1a832fd208"],
-    ["kn-3294fa91a2", "kn-43797f2162"],
-    ["kn-1e5ba2c4df", "kn-6965ff296f"],
-    ["kn-3f5a047504", "kn-7ba89c60b6"],
-    ["kn-0dc9557cc0", "kn-1008582996"],
-    ["kn-0dc9557cc0", "kn-13eca7a3e9"],
-    ["kn-1008582996", "kn-13eca7a3e9"],
-    ["kn-0c40a319cc", "kn-16263d6630"]
   ]
 }

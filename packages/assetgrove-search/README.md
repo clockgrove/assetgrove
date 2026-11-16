@@ -4,11 +4,6 @@ Optional search package for Assetgrove (design section 7). Core never imports it
 
 ## Near matches before paid generation
 
-With the package loaded and `search.nearMatch` on, the plan step of `plan`, `stage`, `apply` and `generate-sheet` lists up to three picked assets of exactly the spec's kind and subject in `WorkPlan.nearMatches`, with a sheet. The spend form names them; the request digest leaves them out.
+With the package loaded and `search.nearMatch` on, the plan step of `plan`, `stage`, `apply` and `generate-sheet` lists up to three picked assets in `WorkPlan.nearMatches`, with a sheet, ranked closest to the request: its kind, subject and brief as words, fused with image similarity to its references (the spec's key pose, its subject's identity turnaround and, for `stage` and `generate-sheet`, the JSON style bible's references tagged with the spec's subject and look; never the bible's style anchors). Only the kind filters. No similarity number cuts the list, because any number would be calibrated on one library's art; the person looking at the spend confirmation is the one who can judge whether one serves. The spend form names them; the request digest leaves them out.
 
-**An empty list does not mean no near matches exist.** The image-similarity threshold (`src/image-threshold.json`) is not yet measured and ships as `null`:
-
-- A request **with references** lists no near matches, because none can be shown to clear the threshold.
-- A request **without references** ranks same-kind, same-subject picks by words; the threshold is not applied.
-
-The bench run of orchestrator step o-2 measures the threshold; its commit sets the number in `image-threshold.json` and `docs/decisions.md`, and a test keeps the two equal.
+With a paid (hosted) embedder nothing is embedded before the person confirms: neither the request nor library files not yet indexed. The list searches the index as it stands (reported not fresh), by stored vectors and full text only, and a reference counts only when an indexed file has the same bytes.
