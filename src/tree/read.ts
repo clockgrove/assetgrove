@@ -29,13 +29,14 @@ import type { Address } from "./address.ts";
 import {
   checkedCard,
   isStale,
+  judgement,
   loadAssets,
   mediaPath,
   readAssetReview,
   sourcePath,
 } from "./project.ts";
 import type { Asset, Project } from "./project.ts";
-import { READ_LIMIT, base64Length, thumbnail } from "./thumbs.ts";
+import { READ_LIMIT, base64Length, stripShape, thumbnail } from "./thumbs.ts";
 import type { ThumbShape } from "./thumbs.ts";
 
 /** The most children one folder read returns. */
@@ -358,35 +359,13 @@ function readBytes(path: string | undefined): Uint8Array | undefined {
   }
 }
 
-/** A strip's frame from provenance parameters (`frame`, `frameCount`); the whole image when absent. */
-function shapeFrom(kind: unknown, parameters: unknown): ThumbShape {
-  if (kind !== "sprite-strip" || parameters === null || typeof parameters !== "object") {
-    return "image";
-  }
-  // An import records them at the top of its parameters; a generated strip under `postprocess`.
-  const top = parameters as { frame?: JsonObject; frameCount?: unknown; postprocess?: unknown };
-  const post = (
-    top.postprocess !== null && typeof top.postprocess === "object" ? top.postprocess : {}
-  ) as { frame?: JsonObject; frameCount?: unknown };
-  const frame = top.frame ?? post.frame;
-  const frameCount = top.frameCount ?? post.frameCount;
-  if (
-    typeof frame?.["width"] === "number" &&
-    typeof frame["height"] === "number" &&
-    typeof frameCount === "number"
-  ) {
-    return { strip: { width: frame["width"], height: frame["height"], count: frameCount } };
-  }
-  return "image";
-}
-
 /** How a library asset's image is cut for its thumbnail, from its own provenance record. */
 function shapeOf(project: Project, asset: Asset): ThumbShape {
   if (asset.kind !== "sprite-strip") return "image";
   const path = sourcePath(project, asset, "provenance");
   // The record may be the file itself or embedded in a manifest, as `library check` finds it.
   const record = path === undefined ? undefined : findProvenance(readJsonObject(path));
-  return shapeFrom(asset.kind, record?.parameters);
+  return stripShape(asset.kind, record?.parameters);
 }
 
 function stillAsset(view: View, id: string): Asset {
@@ -462,7 +441,9 @@ function folderDoc(
 
 async function readRoot(view: View, at: Address, r: Reader): Promise<void> {
   const { game } = view;
-  const stale = [...view.assets.values()].filter((a) => isStale(a, view.bible)).length;
+  const judged = [...view.assets.values()].map((a) => judgement(view.project, a, view.bible));
+  const stale = judged.filter((j) => j === "redo").length;
+  const otherVersion = judged.filter((j) => j !== undefined).length;
   const runs = runIds(view.project).length;
   const children: Child[] = [
     ...VIEWS.map((v) => folderChild(game, [v])),
@@ -473,6 +454,7 @@ async function readRoot(view: View, at: Address, r: Reader): Promise<void> {
     kinds: groups(view, "by-kind").size,
     subjects: groups(view, "by-subject").size,
     tags: groups(view, "by-tag").size,
+    otherVersion,
     stale,
     runs,
   };
@@ -495,13 +477,16 @@ async function readView(view: View, at: Address, r: Reader): Promise<void> {
   if (rest.length > 0) throw new InputError(`${r.address}: no such address`);
   if (name === "stale") {
     if (value !== undefined) throw new InputError(`${r.address}: no such address`);
+    const judged = [...view.assets.values()].map((a) => judgement(view.project, a, view.bible));
     const children = [...view.assets.values()]
-      .filter((a) => isStale(a, view.bible))
+      .filter((a) => isStale(view.project, a, view.bible))
       .map((a) => assetChild(view, a))
       .sort(byName);
     r.json(
       folderDoc(r.address, page(r.address, children, at.after), {
         ...(view.bible !== undefined && { bible: view.bible }),
+        otherVersion: judged.filter((j) => j !== undefined).length,
+        unjudged: judged.filter((j) => j === "unjudged").length,
       }),
     );
     return;
@@ -587,7 +572,7 @@ async function readRuns(view: View, at: Address, r: Reader): Promise<void> {
     ...(found.artifacts.length > 0 && { artifacts: found.artifacts }),
   });
   const bytes = readBytes(file);
-  const shape = shapeFrom(spec["kind"], found.parameters);
+  const shape = stripShape(spec["kind"], found.parameters);
   if (bytes && found.mediaType?.startsWith("image/")) {
     r.thumb([bytes], shape);
   } else {
@@ -618,7 +603,11 @@ async function readAsset(view: View, at: Address, r: Reader): Promise<ReadResult
     ];
     r.json({
       ...folderDoc(r.address, page(r.address, children, at.after), {
-        asset: { ...machine(asset), stale: isStale(asset, view.bible) },
+        asset: {
+          ...machine(asset),
+          otherVersion: judgement(view.project, asset, view.bible) !== undefined,
+          stale: isStale(view.project, asset, view.bible),
+        },
       }),
       sharedText: cardText(asset),
     });

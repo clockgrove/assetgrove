@@ -28,6 +28,11 @@ export const REFERENCE_VIEW_OPERATION = "reference-view";
 export const MODEL3D_FACING_OPERATION = "model3d-facing";
 /** Whether a look-dev identity marking is kept (#365): one typed choice decision per marking and render. */
 export const LOOKDEV_MARKING_OPERATION = "lookdev-marking";
+/**
+ * Whether a library asset made under another style bible version should be redone: one Boolean
+ * decision per asset and version pair, made only by `library judge-stale` (src/library/stale.ts).
+ */
+export const STALENESS_OPERATION = "bible-staleness";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -257,6 +262,20 @@ export const defaultRoutes: Routes = {
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
   },
+  // Whether an asset made under another bible version should be redone (#366): one Boolean
+  // decision per asset and version pair, shown its thumbnail; same model and bound as identity.
+  [STALENESS_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
+    providerTermsAsOf: "2026-11-16",
+  },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
     model: "openai/gpt-6.1-terra",
@@ -480,6 +499,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [REFERENCE_VIEW_OPERATION]: "decisions",
   [MODEL3D_FACING_OPERATION]: "decisions",
   [LOOKDEV_MARKING_OPERATION]: "decisions",
+  [STALENESS_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

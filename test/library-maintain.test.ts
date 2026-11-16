@@ -320,7 +320,7 @@ test("rebuild rewrites a hand-edited machine field and keeps the person's fields
   assert.match(next, /^title: Hand title$/m);
 });
 
-test("a bible version change adds one root-log line on the first write, none on the second, and rebuild keeps it; drift lists stale and modified assets", async () => {
+test("a bible version change adds one root-log line on the first write, none on the second, and rebuild keeps it; drift lists assets made under another version and modified ones", async () => {
   const l = await library(["lantern"]);
   const logPath = join(dir(l), "log.md");
   const bibleLines = async () => (await text(logPath)).split("\n").filter((x) => / bible /.test(x));
@@ -348,10 +348,13 @@ test("a bible version change adds one root-log line on the first write, none on 
   await writeFile(bible, JSON.stringify({ version: "synthetic-2" }));
   const drift = await l.lib("drift", "--bible", bible);
   assert.equal(drift.code, 0, drift.stdout + drift.stderr);
+  // Made under another version is an exact count; which of those are stale is judged, not read
+  // from the order of the versions, so nothing is stale until library judge-stale answers.
   assert.deepEqual(
-    doc(drift)["stale"].map((s: Doc) => s.asset),
-    ["lantern"],
+    doc(drift)["otherVersion"].map((s: Doc) => [s.asset, s.bible, s.judgement]),
+    [["lantern", "synthetic-1", "unjudged"]],
   );
+  assert.deepEqual(doc(drift)["stale"], []);
   assert.deepEqual(doc(drift)["modified"], []);
 
   // A changed file is modified; a pointer is compared by its oid.

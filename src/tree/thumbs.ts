@@ -95,6 +95,32 @@ export function keyFrames(strip: Raster, frame: StripFrame): Raster[] {
 
 export type ThumbShape = "image" | "row" | { strip: StripFrame };
 
+/** A strip's frame from provenance parameters (`frame`, `frameCount`); the whole image when absent. */
+export function stripShape(kind: unknown, parameters: unknown): ThumbShape {
+  if (kind !== "sprite-strip" || parameters === null || typeof parameters !== "object") {
+    return "image";
+  }
+  // An import records them at the top of its parameters; a generated strip under `postprocess`.
+  const top = parameters as {
+    frame?: Record<string, unknown>;
+    frameCount?: unknown;
+    postprocess?: unknown;
+  };
+  const post = (
+    top.postprocess !== null && typeof top.postprocess === "object" ? top.postprocess : {}
+  ) as { frame?: Record<string, unknown>; frameCount?: unknown };
+  const frame = top.frame ?? post.frame;
+  const frameCount = top.frameCount ?? post.frameCount;
+  if (
+    typeof frame?.["width"] === "number" &&
+    typeof frame["height"] === "number" &&
+    typeof frameCount === "number"
+  ) {
+    return { strip: { width: frame["width"], height: frame["height"], count: frameCount } };
+  }
+  return "image";
+}
+
 /**
  * A PNG thumbnail of `sources` (one image, a strip of known frames or a row of frames) whose base64 fits `budget`
  * bytes, or undefined when none fits or a source does not decode.

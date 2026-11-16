@@ -16,7 +16,9 @@ import type { Card } from "../library/card.ts";
 import { libraryPath } from "../library/paths.ts";
 import { checkReviewPaths, parseReview } from "../library/review.ts";
 import type { ReviewRecord } from "../library/review.ts";
-import { libraryConfig, newer, scanCards } from "../library/write.ts";
+import { StalenessCache, judgementOf, madeUnderOtherVersion } from "../library/stale.ts";
+import type { Judgement } from "../library/stale.ts";
+import { libraryConfig, scanCards } from "../library/write.ts";
 import type { LibraryConfig } from "../library/write.ts";
 import { DEFAULT_RUNS } from "../runs/plan.ts";
 import type { TargetProfile } from "../types.ts";
@@ -30,6 +32,8 @@ export interface Project {
   runsDir: string;
   /** Where thumbnails are cached (`<stateDir>/thumbs/`). */
   thumbsDir: string;
+  /** The cached staleness answers (`<stateDir>/staleness/`), read only: a read never judges. */
+  staleness: StalenessCache;
 }
 
 /** The directory the tree serves: `target`, else the Git top level of `cwd`, else `cwd`. */
@@ -53,6 +57,7 @@ export async function openProject(dir: string, stateDir: string): Promise<Projec
     library: libraryConfig(profile, dir),
     runsDir: resolve(dir, DEFAULT_RUNS),
     thumbsDir: join(stateDir, "thumbs"),
+    staleness: new StalenessCache(stateDir),
   };
 }
 
@@ -160,7 +165,27 @@ export function readAssetReview(project: Project, asset: Asset): ReviewRecord | 
   return record;
 }
 
-/** Whether the asset was made under a bible older than the style bible's own version, as `library drift` says. */
-export function isStale(asset: Asset, bible: string | undefined): boolean {
-  return asset.bible !== undefined && bible !== undefined && newer(bible, asset.bible);
+/** Whether the asset was made under another bible version than the style bible's own: equality. */
+export function otherVersion(asset: Asset, bible: string | undefined): boolean {
+  return madeUnderOtherVersion(asset.bible, bible);
+}
+
+/**
+ * The cached staleness judgement of an asset made under another bible version (`redo`, `keep` or
+ * `unjudged`), or undefined when it was made under the current one. Never calls a model.
+ */
+export function judgement(
+  project: Project,
+  asset: Asset,
+  bible: string | undefined,
+): Judgement | undefined {
+  if (!otherVersion(asset, bible)) return undefined;
+  const lock = asset.card.data["lock"] as { sha256?: unknown } | undefined;
+  const sha256 = typeof lock?.sha256 === "string" ? lock.sha256 : undefined;
+  return judgementOf(project.staleness, sha256, asset.bible!, bible!);
+}
+
+/** Whether the asset is stale, as `library drift` says: judged (and cached) to need redoing. */
+export function isStale(project: Project, asset: Asset, bible: string | undefined): boolean {
+  return judgement(project, asset, bible) === "redo";
 }

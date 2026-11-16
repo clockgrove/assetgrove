@@ -7,7 +7,7 @@
  * and the server sends list_changed after a pick it served.
  */
 import "./fixtures/env.ts";
-import { approve } from "./fixtures/env.ts";
+import { approve, stateDir } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { REFUSED_VARIABLES } from "../src/env.ts";
+import { StalenessCache } from "../src/library/stale.ts";
 import { READ_LIMIT } from "../src/tree/thumbs.ts";
 import { GAME, RUN_ID, fixtureLibrary, libraryProfile } from "./fixtures/library.ts";
 import { gitTarget } from "./fixtures/git.ts";
@@ -27,6 +28,17 @@ const script = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
 approve(script);
 
 const lib = fixtureLibrary({ bulk: 205 });
+// fern was made under bible 2 and judged (as library judge-stale caches it) to need redoing under 3.
+new StalenessCache(stateDir).set({
+  sha256: lib.versions["fern"]!.at(-1)!,
+  from: "2",
+  to: "3",
+  redo: true,
+  history: true,
+  thumbnail: true,
+  model: "test",
+  at: "2026-11-16T00:00:00.000Z",
+});
 gitTarget(lib.dir);
 const clients: Client[] = [];
 after(async () => {

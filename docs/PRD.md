@@ -173,7 +173,7 @@ Everything Assetgrove makes becomes a library a developer and their agent can br
   - each new version comes back with a compare contact sheet against the version before, since image models treat masks as guidance;
   - reviews, comments, decisions and change requests kept as W3C Web Annotation in `<asset>.review.json` beside the asset (candidates' in their run folder);
   - variations of one candidate, and another round with a note.
-- **Locks and drift:** an asset lock per picked asset, and a drift report when the style bible changes, read from each card's bible version and listed in the tree's `stale` view.
+- **Locks and drift:** an asset lock per picked asset, and a drift report when the style bible changes, counting the assets made under another bible version and listing in the tree's `stale` view those `library judge-stale` judged to need redoing.
 - **Storage:**
   - committed: picks, their cards and reviews, the style bible and its references, with media in Git LFS;
   - kept out of Git: candidates and run scratch;

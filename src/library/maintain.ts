@@ -10,8 +10,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { parse as parseYaml } from "yaml";
-import { splitFrontMatter } from "../bible.ts";
 import type { Provenance, TargetProfile } from "../types.ts";
 import { sha256Hex } from "./canonical.ts";
 import {
@@ -37,6 +35,8 @@ import {
 import type { LogEntry } from "./folder.ts";
 import { describesUnrecordedEdit } from "./adopt.ts";
 import { MediaMissingError, readMedia } from "./lfs.ts";
+import { bibleVersionOfText, judgementOf, madeUnderOtherVersion } from "./stale.ts";
+import type { Judgement, StaleSubject, StalenessCache } from "./stale.ts";
 import { libraryPath } from "./paths.ts";
 import {
   checkReviewPaths,
@@ -51,7 +51,6 @@ import {
   assetgroveVersion,
   bibleLines,
   libraryConfig,
-  newer,
   readText,
   within,
   writeAtomic,
@@ -597,9 +596,24 @@ export interface DriftEntry {
   reason: string;
 }
 
+/** An asset made under another bible version than the current one, with its cached judgement. */
+export interface OtherVersionEntry {
+  asset: string;
+  file: string;
+  /** The bible version the card names. */
+  bible: string;
+  /** The card's `lock.sha256`, which the judgement is cached by; null when the card has none. */
+  sha256: string | null;
+  /** The cached answer: `redo`, `keep`, or `unjudged` while `library judge-stale` has not judged it. */
+  judgement: Judgement;
+}
+
 export interface LibraryDrift {
   bibleVersion: string | null;
-  stale: (DriftEntry & { bible: string })[];
+  /** Every asset whose card's bible differs from the current version (equality, not order). */
+  otherVersion: OtherVersionEntry[];
+  /** The assets of `otherVersion` judged to need redoing (cached yes answers). */
+  stale: (DriftEntry & { bible: string; probability?: number })[];
   modified: DriftEntry[];
 }
 
@@ -611,46 +625,89 @@ export function bibleVersionOf(path: string): string | undefined {
   } catch {
     return undefined;
   }
-  try {
-    const data = path.endsWith(".json")
-      ? JSON.parse(text)
-      : parseYaml(splitFrontMatter(text).front);
-    const version = (data as { version?: unknown } | null)?.version;
-    return typeof version === "string" || typeof version === "number" ? String(version) : undefined;
-  } catch {
-    return undefined;
-  }
+  return bibleVersionOfText(text, path.endsWith(".json"));
 }
 
-/** Stale and modified assets, computed from each card; nothing is stored. */
+interface CardData {
+  resource: string;
+  bible?: string;
+  kind?: unknown;
+  subject?: unknown;
+  tags?: unknown;
+  lock?: { sha256?: string; bible?: string };
+}
+
+/**
+ * The assets made under another bible version than `bibleVersion` (the card's `bible` differs,
+ * compared for equality), each as the staleness judgement needs it; a card with no
+ * `lock.sha256` cannot be judged and is left out.
+ */
+export function staleSubjects(state: LibraryState, bibleVersion: string): StaleSubject[] {
+  const out: StaleSubject[] = [];
+  for (const asset of state.assets) {
+    if (!asset.card) continue;
+    const data = asset.card.parsed.data as unknown as CardData;
+    const cardBible = data.bible ?? data.lock?.bible;
+    const sha256 = data.lock?.sha256;
+    if (!madeUnderOtherVersion(cardBible, bibleVersion) || sha256 === undefined) continue;
+    const text = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+    const kind = text(data.kind);
+    const subject = text(data.subject);
+    const sources = (asset.card.parsed.data["sources"] ?? []) as { id: string; resource: string }[];
+    const provenance = sources.find((s) => s.id === "provenance")?.resource;
+    out.push({
+      asset: asset.id,
+      media: libraryPath(state.config.root, asset.dir, data.resource, asset.cardPath),
+      ...(provenance !== undefined && {
+        provenance: libraryPath(state.config.root, asset.dir, provenance, asset.cardPath),
+      }),
+      sha256,
+      from: String(cardBible),
+      ...(kind && { kind }),
+      ...(subject && { subject }),
+      tags: Array.isArray(data.tags)
+        ? [...new Set(data.tags.filter((t): t is string => typeof t === "string" && t !== ""))]
+        : [],
+    });
+  }
+  return out;
+}
+
+/**
+ * Assets made under another bible version (an exact count), the stale ones among them (the
+ * cached answers of `library judge-stale`; no model is called here) and modified ones, computed
+ * from each card.
+ */
 export async function libraryDrift(
   state: LibraryState,
   bibleVersion: string | undefined,
+  cache?: StalenessCache,
 ): Promise<LibraryDrift> {
+  const otherVersion: OtherVersionEntry[] = [];
   const stale: LibraryDrift["stale"] = [];
   const modified: DriftEntry[] = [];
   for (const asset of state.assets) {
     if (!asset.card) continue;
-    const data = asset.card.parsed.data as {
-      resource: string;
-      bible?: string;
-      lock?: { sha256?: string; bible?: string };
-    };
+    const data = asset.card.parsed.data as unknown as CardData;
     const file = rel(state.config, join(asset.dir, data.resource));
     const cardBible = data.bible ?? data.lock?.bible;
-    if (
-      bibleVersion !== undefined &&
-      cardBible !== undefined &&
-      newer(bibleVersion, String(cardBible))
-    ) {
-      stale.push({
-        asset: asset.id,
-        file,
-        reason: `bible ${cardBible} is older than ${bibleVersion}`,
-        bible: String(cardBible),
-      });
-    }
     const lock = data.lock?.sha256;
+    if (bibleVersion !== undefined && madeUnderOtherVersion(cardBible, bibleVersion)) {
+      const from = String(cardBible);
+      const judgement =
+        cache === undefined ? "unjudged" : judgementOf(cache, lock, from, bibleVersion);
+      otherVersion.push({ asset: asset.id, file, bible: from, sha256: lock ?? null, judgement });
+      if (judgement === "redo") {
+        const probability = cache?.get(lock!, from, bibleVersion)?.probability;
+        stale.push({
+          asset: asset.id,
+          file,
+          reason: `made under bible ${from}; judged to need redoing under ${bibleVersion}`,
+          bible: from,
+          ...(probability !== undefined && { probability }),
+        });
+      }
+    }
     if (lock === undefined) continue;
     try {
       const media = libraryPath(state.config.root, asset.dir, data.resource, asset.cardPath);
@@ -669,5 +726,5 @@ export async function libraryDrift(
       modified.push({ asset: asset.id, file, reason: "missing" });
     }
   }
-  return { bibleVersion: bibleVersion ?? null, stale, modified };
+  return { bibleVersion: bibleVersion ?? null, otherVersion, stale, modified };
 }
