@@ -70,4 +70,6 @@ jobs:
           path: |
             real-checks.xml
             .real-ledger/
+          # The ledger directory's name starts with a dot; without this the upload leaves it out.
+          include-hidden-files: true
           if-no-files-found: warn
