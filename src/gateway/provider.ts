@@ -13,6 +13,11 @@ export interface ImageRequest {
   prompt: string;
   /** Reference images; when present the model edits or follows them. */
   references: ImageInput[];
+  /**
+   * A mask of the region to edit, in Assetgrove's region convention: opaque, light pixels are the
+   * region (src/regions.ts). Sent only to a provider whose adapter declares the `mask` capability.
+   */
+  mask?: ImageInput;
   size?: string;
   seed?: number;
   providerOptions?: Record<string, Record<string, unknown>>;

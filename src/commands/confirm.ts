@@ -45,6 +45,8 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
         jobs: jobs as WorkPlan["jobs"],
         forecastUsd,
         capUsd,
+        ...(typeof body["options"] === "object" &&
+          body["options"] !== null && { options: body["options"] as Record<string, unknown> }),
       });
       return { kind: "spend", id: request.id, body, ...shown };
     }

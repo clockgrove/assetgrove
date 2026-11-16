@@ -280,6 +280,16 @@ It writes `audit.json` and `audit-sheet.png` into its run directory and nothing 
 
 MCP tool: `audit`, arguments `set`, `checks`, `bible`, `target`, `cap`, `workItem`, `runs`, `round`.
 
+### `request-change`
+
+```text
+request-change <address> --region "<x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]... : <note>" [--region ...] [--keep-rest] [--candidates 2] [--bible <path>] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
+```
+
+Asks for a change to the current version of an asset. Each region is a box (pixels, or percent when every value ends in `%`) or `mask=PATH`, with an optional `frame N` or `view N`, `ref PATH` references and a note; paths resolve inside the project root. The job is a masked edit when the `edit` route's adapter declares the `mask` capability (core: `openai` and `scripted`; a single `mask=PATH` region sends that file), else an edit of the whole image with the notes. Regions that all name a `frame` go through `fix-frame`'s path, one edit per frame; `view` regions on a 3D asset (`.glb`) make another round of the 3D kind with the note and need `--bible`. Mixing frame and non-frame regions, a view on an image, or a region without a view on a 3D asset exits 2. Notes pass the prompt policy (a blocklisted note exits 9 before the confirmation), and the spend form shows each region and note. Each region is recorded as an `editing` annotation on the current version, so it turns changes-requested; masks and references are copied to `<assetId>.review/<sha256>.<ext>`. The working file must equal the current version, else exit 2 (adopt the hand edit first); the run that made the asset is read from `--runs`. Writes `c<n>.<ext>` with provenance, `contact.png`, `compare.png` and `run.json` with `changeRequest: {asset, version, answers}`, and reports each candidate's `outsideChange` (above 0.05 adds `changed_outside_region`). A repeat resumes from the journal or returns the finished run (`reused: true`). `pick` of a candidate answers the request; a candidate made on an older version exits 2 `version_changed`.
+
+MCP tool: `request_change`, arguments `address`, `region`, `keepRest`, `candidates`, `bible`, `cap`, `workItem`, `runs`, `round`.
+
 ### `op`
 
 ```text
