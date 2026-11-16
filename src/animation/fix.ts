@@ -11,7 +11,7 @@ import type { Raster } from "../image/raster.ts";
 import { DIGITAL_SOURCE_TYPES, combineDigitalSourceTypes } from "../metadata.ts";
 import { sha256 } from "../request.ts";
 import type { Routes } from "../routes.ts";
-import { measureFrame } from "../sheet/register.ts";
+import { measureFrame, pinX } from "../sheet/register.ts";
 import { sheetImportRecipe } from "../sheet/import.ts";
 import type { ResolvedStyle } from "../style.ts";
 import { pixelHash, runOperation, runRecipe } from "../transform/run.ts";
@@ -83,7 +83,10 @@ export interface FixFrameOptions {
   family: string;
   /**
    * The point the fixed frame is registered by, the one its family's strip was registered by
-   * (`registrationPin`), so a planted family's repaired frame keeps its feet on its neighbours'.
+   * (`registrationPin`). The fixed frame's pin point is put on the reference neighbour's measured
+   * pin point (and its bottom row on the neighbour's), so a planted family's repaired frame keeps
+   * its feet on its neighbours' however the strip was placed; `anchor` is used only for a strip of
+   * one frame.
    */
   pin: "center" | "footprint";
   subject: string;
@@ -320,20 +323,45 @@ export async function fixFrame(
   if (!figure) throw new InputError("the edited frame has no visible figure");
   const scale = Math.sqrt(reference.area / figure.area);
 
-  const registered = runOperation(
-    [item],
-    {
-      op: "register",
-      params: {
-        frame: options.frame,
-        anchor: options.anchor,
-        scale,
-        measureThreshold: threshold,
-        pins: [options.pin],
+  // The fixed frame's pin point goes where its neighbour's is, not on the anchor: a strip stage made
+  // places each frame by its box centre, so its neighbours' pin points are off the anchor, and
+  // footprint-drift compares the fixed frame's feet with theirs. With a key pose, the frame next
+  // to the fixed one stands in for the neighbour; a strip of one frame keeps the anchor.
+  const beside = neighbour ?? (count > 1 ? (index > 1 ? index - 1 : index + 1) : undefined);
+  const placedBy = beside === undefined ? undefined : measureFrame(frames[beside - 1]!, threshold);
+  const register = (anchor: Point) =>
+    runOperation(
+      [item],
+      {
+        op: "register",
+        params: {
+          frame: options.frame,
+          anchor,
+          scale,
+          measureThreshold: threshold,
+          pins: [options.pin],
+        },
       },
-    },
-    { style },
-  );
+      { style },
+    );
+  let registered: ReturnType<typeof register>;
+  if (placedBy === undefined) registered = register(options.anchor);
+  else {
+    // The anchor is a whole pixel and the pin point is measured to the half pixel, so of the
+    // anchor columns either side, keep the one that puts the pin point nearest the neighbour's.
+    const target = pinX(placedBy, options.pin);
+    const near = Math.round(target - 0.5);
+    let best: { registered: ReturnType<typeof register>; off: number } | undefined;
+    for (const x of [near, near - 1, near + 1]) {
+      if (x < 0 || x >= options.frame.width) continue;
+      const tried = register({ x, y: placedBy.baseline });
+      const m = measureFrame((tried.items[0] as ImageItem).raster, threshold);
+      const off =
+        m === undefined ? Number.POSITIVE_INFINITY : Math.abs(pinX(m, options.pin) - target);
+      if (best === undefined || off < best.off) best = { registered: tried, off };
+    }
+    registered = best?.registered ?? register(options.anchor);
+  }
   const styled = runOperation(registered.items, { op: "apply-style" }, { style });
   steps.push(registered.step, styled.step);
   const fixed = (styled.items[0] as ImageItem).raster;

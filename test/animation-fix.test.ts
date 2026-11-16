@@ -13,6 +13,7 @@ import {
 } from "../src/animation/fix.ts";
 import type { FixFrameOptions } from "../src/animation/fix.ts";
 import { animationQa } from "../src/animation/qa.ts";
+import { postprocessFrames } from "../src/postprocess.ts";
 import { joinStrip, splitStrip } from "../src/animation/strip.ts";
 import { registrationPin, templateFor, templatesFor } from "../src/animation/templates.ts";
 import { Budget, BudgetExceededError } from "../src/budget.ts";
@@ -116,8 +117,11 @@ for (const transparent of [false, true]) {
     assert.notDeepEqual(after[2]?.data, before[2]?.data);
     const m = measureFrame(result.frame);
     assert.ok(m);
-    assert.equal(m.baseline, anchor.y);
-    assert.ok(Math.abs(m.centerX - (anchor.x + 0.5)) <= 1);
+    // Placed where its neighbour (frame 2) is: bottom row and centre of mass on the neighbour's.
+    const near = measureFrame(before[1] as Raster);
+    assert.ok(near);
+    assert.equal(m.baseline, near.baseline);
+    assert.ok(Math.abs(m.centerX - near.centerX) <= 1);
 
     const neighbourPng = encodePng(before[1] as Raster);
     const badPng = encodePng(before[2] as Raster);
@@ -418,4 +422,74 @@ test("a fixed frame of a planted family is registered by its feet, so the strip 
   assert.deepEqual(await failures(pin), []);
   // Registered by its centre of mass instead, the repaired frame's feet slide off its neighbours'.
   assert.ok((await failures("center")).includes("footprint-drift"));
+});
+
+/**
+ * A side-view animal at 2 px per unit on a 128 px canvas, drawn where it falls (not placed): a
+ * body, a head that bobs, four planted legs and a long tail out one side, so its centre of mass
+ * and its footprint sit far from its box centre.
+ */
+function tailedAnimal(bob: number): Raster {
+  const r = createRaster(128, 128);
+  const box = (x0: number, y0: number, x1: number, y1: number) =>
+    rect(r, x0 * 2, y0 * 2, (x1 - x0 + 1) * 2, (y1 - y0 + 1) * 2, [90, 80, 70]);
+  box(1, 38, 14, 39); // the long tail
+  box(15, 36, 36, 50); // body
+  box(37, 32 + bob, 42, 40); // head
+  box(17, 51, 19, 62); // legs
+  box(32, 51, 34, 62);
+  return r;
+}
+
+test("a fixed frame of a strip stage placed keeps its feet on its neighbours', so the strip passes footprint-drift", async () => {
+  // Stage places each frame by its box centre, so the feet of this animal are off the anchor.
+  const sniffFrame = { width: 64, height: 64 };
+  const sniffAnchor = { x: 32, y: 63 };
+  const style = resolveStyle({ alpha: { mode: "binary" }, edges: "crisp" });
+  const { strip } = postprocessFrames([0, 1, 2, 1].map(tailedAnimal), {
+    frame: sniffFrame,
+    frameCount: 4,
+    anchor: sniffAnchor,
+    palette: ["#5a5046"],
+  });
+  const qa = (frames: Raster[]) =>
+    animationQa(
+      { frames, frame: sniffFrame, anchor: sniffAnchor, family: "sniff" },
+      {},
+      style,
+    ).reasons.filter(
+      (r) => !r.passed && (r.check === "footprint-drift" || r.check === "ground-contact"),
+    );
+  assert.deepEqual(qa(splitStrip(strip, sniffFrame)), []);
+  const pin = registrationPin(templateFor("sniff", templatesFor()));
+  for (const from of [{ neighbour: 2 }, { neighbour: 4 }] as const) {
+    const provider = new ScriptedProvider({
+      image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(tailedAnimal(2)) }] }),
+      vision: () => ({ text: "" }),
+    });
+    const call = new Caller({
+      provider,
+      providerName: "scripted",
+      budget: new Budget(DEFAULT_FIX_CAP_USD),
+      routes: defaultRoutes,
+    });
+    const result = await fixFrame({
+      ...base(call),
+      strip,
+      frame: sniffFrame,
+      anchor: sniffAnchor,
+      family: "sniff",
+      pin,
+      index: 3,
+      from,
+      style,
+    });
+    assert.deepEqual(qa(splitStrip(result.strip, sniffFrame)), [], JSON.stringify(from));
+    // The repaired frame's feet are where its neighbour's are, not on the anchor column.
+    const fixed = measureFrame(splitStrip(result.strip, sniffFrame)[2]!)!;
+    const near = measureFrame(splitStrip(strip, sniffFrame)[from.neighbour - 1]!)!;
+    assert.ok(Math.abs(fixed.footX - near.footX) <= 1, `${fixed.footX} vs ${near.footX}`);
+    assert.equal(fixed.baseline, near.baseline);
+    assert.ok(Math.abs(fixed.footX - (sniffAnchor.x + 0.5)) > 3, String(fixed.footX));
+  }
 });
