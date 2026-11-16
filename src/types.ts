@@ -345,6 +345,19 @@ export interface Provenance {
   confirmation?: ConfirmationRecord;
   /** Which certificate signed the C2PA content credentials of the images hand-off wrote. */
   contentCredentials?: import("./credentials.ts").SignerRecord;
+  /**
+   * Set when the media was made outside Assetgrove: its record came with no model call and no
+   * binding, and the media's mark names no model (src/provenance-binding.ts).
+   */
+  madeOutsideAssetgrove?: true;
+  /** The record's tie to the bytes it describes, written last by each writer (src/provenance-binding.ts). */
+  binding?: ProvenanceBinding;
+}
+
+/** The sha256 of the exact media bytes a record describes, and of the record without `binding`. */
+export interface ProvenanceBinding {
+  mediaSha256: string;
+  recordSha256: string;
 }
 
 /** How a confirmation was given (design section 7). */

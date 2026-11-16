@@ -87,7 +87,7 @@ a one-candidate run that pick hands off. No model is called and nothing is spent
       const spec = await readJson<AssetSpec>(files.spec);
       result = await lodChain({
         model,
-        provenance: await readProvenance(files.provenance),
+        provenance: await readProvenance(files.provenance, model),
         spec: spec.value,
         specDir: spec.dir,
         profile: profile!.value,

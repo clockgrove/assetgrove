@@ -2,6 +2,7 @@
  * The work behind `assetgrove animation-qa` and `assetgrove fix-frame`, kept apart from argument
  * parsing so tests and the MCP surface can call it directly.
  */
+import { bindProvenance, checkProvenance } from "../provenance-binding.ts";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Budget } from "../budget.ts";
@@ -307,8 +308,10 @@ export async function runFixFrame(options: {
   let provenance: Provenance | undefined;
   if (options.provenancePath !== undefined || (await exists(sidecar))) {
     let value: unknown;
+    let bytes: Buffer | undefined;
     try {
-      value = JSON.parse(await readFile(sidecar, "utf8"));
+      bytes = await readFile(sidecar);
+      value = JSON.parse(bytes.toString("utf8"));
     } catch (error) {
       throw new InputError(`cannot read the provenance ${sidecar}: ${(error as Error).message}`, {
         cause: error,
@@ -322,6 +325,18 @@ export async function runFixFrame(options: {
       ...(options.bible !== undefined && { bibleVersion: options.bible.version }),
       at: (options.now ?? (() => new Date()))().toISOString(),
     });
+    // A strip's own record must be the record of these bytes (a transform record is matched by
+    // the strip's pixels above).
+    if (provenance === value) {
+      provenance = await checkProvenance({
+        media: {
+          path: target.path,
+          bytes: new Uint8Array(await readFile(target.path)),
+          mediaType: "image/png",
+        },
+        provenance: { path: sidecar, bytes: bytes!, value: provenance },
+      });
+    }
   }
   if (provenance && origin !== undefined && provenance.digitalSourceType === undefined) {
     provenance = { ...provenance, digitalSourceType: origin };
@@ -365,11 +380,12 @@ export async function runFixFrame(options: {
   const stripPath = resolve(options.outDir, name);
   const origin2 = fixed.provenance.digitalSourceType;
   const png = encodePng(fixed.strip);
-  await writeFile(
-    stripPath,
-    origin2 === undefined ? png : embedDigitalSourceType(png, "image/png", origin2),
-  );
+  const stripBytes =
+    origin2 === undefined ? png : embedDigitalSourceType(png, "image/png", origin2);
+  await writeFile(stripPath, stripBytes);
   const provenancePath = `${stripPath}.provenance.json`;
+  // The record is bound to the strip it was written with (src/provenance-binding.ts).
+  fixed.provenance = bindProvenance(fixed.provenance, stripBytes);
   await writeFile(provenancePath, `${JSON.stringify(fixed.provenance, null, 2)}\n`);
   const qa = await qaStrip({
     strip: fixed.strip,

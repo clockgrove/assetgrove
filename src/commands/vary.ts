@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { bindProvenance } from "../provenance-binding.ts";
 import { writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Budget, runCap } from "../budget.ts";
@@ -207,7 +208,7 @@ provider call. Variations are not QA-filtered and are never marked approved.
         delete provenance.steps;
         await writeFile(
           join(dir, `${name}.provenance.json`),
-          `${JSON.stringify(provenance, null, 2)}\n`,
+          `${JSON.stringify(bindProvenance(provenance, bytes), null, 2)}\n`,
         );
         const comparison = await compareRasters(before, decoded);
         rows.push({ number: index + 1, comparison });

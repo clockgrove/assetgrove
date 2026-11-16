@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { encodePng } from "../src/image/raster.ts";
@@ -172,6 +172,14 @@ async function world(
   return { dir, files, base, runs, target };
 }
 
+/** A staged candidate's provenance as its run record holds it. */
+async function stagedProvenance(runDir: string, id: string): Promise<unknown> {
+  const run = JSON.parse(await readFile(join(runDir, "run.json"), "utf8")) as {
+    candidates: Array<{ id: string; provenance: unknown }>;
+  };
+  return run.candidates.find((c) => c.id === id)?.provenance;
+}
+
 /** A rigged one-candidate run made by `rig` (the look-dev input), with its provenance in a file. */
 async function riggedModel(w: Awaited<ReturnType<typeof world>>, env: Record<string, string> = {}) {
   const staged = await cli(
@@ -192,7 +200,8 @@ async function riggedModel(w: Awaited<ReturnType<typeof world>>, env: Record<str
   const c = doc(staged)["candidates"][0];
   const stagedModel = join(w.runs, doc(staged)["runId"], c.file);
   const provenance = join(w.dir, "c1.provenance.json");
-  await writeFile(provenance, JSON.stringify(c.provenance));
+  // The run record's own copy: the --json document masks shared text, so it is not the record.
+  await writeFile(provenance, JSON.stringify(await stagedProvenance(dirname(stagedModel), c.id)));
   const rigged = await cli([
     "rig",
     "--model",
@@ -211,7 +220,10 @@ async function riggedModel(w: Awaited<ReturnType<typeof world>>, env: Record<str
   const run = doc(rigged);
   const model = join(run["runDir"], run["candidates"][0].file);
   const riggedProvenance = join(w.dir, "rigged.provenance.json");
-  await writeFile(riggedProvenance, JSON.stringify(run["candidates"][0].provenance));
+  await writeFile(
+    riggedProvenance,
+    JSON.stringify(await stagedProvenance(run["runDir"], run["candidates"][0].id)),
+  );
   return { model, provenance: riggedProvenance, source: run["candidates"][0].provenance };
 }
 

@@ -250,13 +250,16 @@ async function filesUnder(dir: string): Promise<Record<string, string>> {
     const full = join(entry.parentPath, entry.name);
     const text = await readFile(full, "utf8");
     const touched =
-      text.includes('"contentCredentials"') || [...signed.keys()].some((h) => text.includes(h));
+      text.includes('"contentCredentials"') ||
+      text.includes('"binding"') ||
+      [...signed.keys()].some((h) => text.includes(h));
     if (!touched) continue;
     let replaced = text;
     for (const [from, to] of signed) replaced = replaced.replaceAll(from, to);
     const json = JSON.stringify(
       JSON.parse(replaced, (key, value: unknown) =>
-        key === "contentCredentials" ? undefined : value,
+        // The binding covers the signed bytes and record; provenance-binding.test.ts checks it.
+        key === "contentCredentials" || key === "binding" ? undefined : value,
       ),
       null,
       2,

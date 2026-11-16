@@ -9,6 +9,7 @@
  * copied into `<assetId>.review/<sha256>.<ext>`. Every candidate appears on `compare.png`, with its
  * `outsideChange`. Picking one appends the version with `answers` naming the requests.
  */
+import { bindProvenance } from "../provenance-binding.ts";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -721,7 +722,7 @@ version is appended with answers naming the requests. The run that made the asse
           await writeFile(join(dir, file), bytes);
           await writeFile(
             join(dir, `${id}.provenance.json`),
-            `${JSON.stringify(made.provenance, null, 2)}\n`,
+            `${JSON.stringify(bindProvenance(made.provenance, bytes), null, 2)}\n`,
           );
           const numbers = made.comparison ? comparisonFields(made.comparison) : undefined;
           staged.push({
