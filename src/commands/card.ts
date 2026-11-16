@@ -15,7 +15,7 @@ import {
   writeAsset,
 } from "../library/actions.ts";
 import { CardFieldOwnedError, MACHINE_FIELDS, setPersonFields } from "../library/card.ts";
-import { appendAnnotation } from "../library/review.ts";
+import { appendAnnotation, nextStamp } from "../library/review.ts";
 import type { AnnotationInput } from "../library/review.ts";
 import type { SharedText } from "../request.ts";
 import { annotationFields } from "./review.ts";
@@ -119,7 +119,7 @@ confirmation. The card's text is returned only under sharedText.`,
       const input: AnnotationInput = {
         type: "Annotation",
         motivation: changed.length === 1 && changed[0] === "tags" ? "tagging" : "describing",
-        created: new Date().toISOString(),
+        created: nextStamp(asset.record),
         body: [{ type: "TextualBody", purpose: "describing", value: changed.join(", ") }],
         target: { source: asset.resource, "ag:version": version.sha256 },
         "ag:action": "card-edit",

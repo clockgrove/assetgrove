@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { uptime } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { findGitDir } from "../library/lfs.ts";
 
 export const LOCK_FILE = "lock";
@@ -283,32 +283,76 @@ export function gitCommonDir(start: string): string | undefined {
   return findGitDir(start);
 }
 
-/** The real path of `path`, or the path resolved when it does not exist yet. */
+/**
+ * The real path of `path`; while it does not exist yet, the real path of its nearest existing
+ * ancestor joined with the rest, so the answer does not change when the folder is created.
+ */
 function realOrResolved(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
+  const missing: string[] = [];
+  let at = resolve(path);
+  for (;;) {
+    try {
+      return join(realpathSync(at), ...missing.reverse());
+    } catch {
+      const parent = dirname(at);
+      if (parent === at) return resolve(path);
+      missing.push(basename(at));
+      at = parent;
+    }
   }
 }
 
 /**
  * Takes the one library write lock: `assetgrove/library.lock` in the repository's common Git
- * directory, or, for a target in no repository, a file in `stateDir` named for the target.
+ * directory, or, for a library in no repository, a file in `stateDir` named for the library root's
+ * real path. Every writer passes the library root, so a pick and a review of one library outside
+ * Git take the same lock.
  */
 export function acquireLibraryLock(
-  targetDir: string,
+  libraryRoot: string,
   stateDir: string,
   pid: number = process.pid,
 ): RunLock {
-  const common = gitCommonDir(targetDir);
+  const common = gitCommonDir(libraryRoot);
   const path =
     common !== undefined
       ? join(common, "assetgrove", "library.lock")
       : join(
           stateDir,
           "library-locks",
-          `${createHash("sha256").update(realOrResolved(targetDir)).digest("hex").slice(0, 16)}.lock`,
+          `${createHash("sha256").update(realOrResolved(libraryRoot)).digest("hex").slice(0, 16)}.lock`,
         );
   return acquireLock(path, (p) => new LibraryInProgressError(path, p), pid);
+}
+
+/** A lock another live process held for longer than a waiter waits. Exit 2 `run_in_progress`. */
+export class LockWaitError extends Error {
+  readonly code = "run_in_progress";
+  readonly pid: number;
+  readonly lockPath: string;
+  constructor(lockPath: string, pid: number) {
+    super(
+      `refused: process ${pid} has held ${lockPath} too long; repeat the request once it ends` +
+        ` (if process ${pid} is not running, remove ${lockPath} and repeat it)`,
+    );
+    this.name = "LockWaitError";
+    this.pid = pid;
+    this.lockPath = lockPath;
+  }
+}
+
+/**
+ * Takes the lock at `path`, waiting while another holder (in this process or another) has it, for
+ * up to `timeoutMs`; then throws `LockWaitError`. For short writes that should queue, not refuse.
+ */
+export async function waitForLock(path: string, timeoutMs = 30_000): Promise<RunLock> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return acquireLock(path, (pid) => new LockWaitError(path, pid));
+    } catch (error) {
+      if (!(error instanceof LockWaitError) || Date.now() >= deadline) throw error;
+    }
+    await new Promise((settle) => setTimeout(settle, 10 + Math.floor(Math.random() * 20)));
+  }
 }

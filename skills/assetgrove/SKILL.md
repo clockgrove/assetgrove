@@ -67,7 +67,7 @@ The target profile's `handoff` lists presets: `manifest` (default), `atlas-json`
 Decide on the exit and `error.code`, never on the message. What the commands return today:
 
 - 1: an unexpected internal error; also `identity-check` when a record disagrees or could not be checked (no `error`).
-- 2: invalid input, including an unknown option. `asset_id_reserved`: the asset id is `index`, `log` or a view name (`by-kind`, `by-subject`, `by-tag`, `stale`, `runs`, `find`, `like`, `where`). `asset_conflict`: the asset id is already carded at another path in the library. `version_exists`: the picked bytes are an older version of the asset. `version_changed`: the asset's current version is no longer the one the pick confirmed replacing. `card_field_owned`: a card edit named a machine field.
+- 2: invalid input, including an unknown option. `asset_id_reserved`: the asset id is `index`, `log` or a view name (`by-kind`, `by-subject`, `by-tag`, `stale`, `runs`, `find`, `like`, `where`). `asset_conflict`: the asset id is already carded at another path in the library. `version_exists`: the picked bytes are an older version of the asset, or an adopted file is the current version's bytes. `version_changed`: the asset's current version is no longer the one the pick confirmed replacing. `card_field_owned`: a card edit named a machine field.
 - 3: the run's cap or a spend limit across runs (also a dry-run forecast over either).
 - 4: no `AI_GATEWAY_API_KEY` where a gateway call is needed, no `TRIPO_API_KEY` for a `character-3d` stage, or every candidate failed to generate.
 - 5: no candidate passed, or a check failed (`animation-qa`, `materials`, `rig`, `lod`, `look-dev`, a generated sheet with the wrong number of figures).

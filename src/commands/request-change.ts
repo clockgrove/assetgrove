@@ -38,7 +38,7 @@ import { loadAsset, locateAsset, withLibraryLock, writeAsset } from "../library/
 import type { LoadedAsset } from "../library/actions.ts";
 import { sha256Hex } from "../library/canonical.ts";
 import { parseLfsPointer } from "../library/lfs.ts";
-import { appendAnnotation, versionStatus } from "../library/review.ts";
+import { appendAnnotation, nextStamp, versionStatus } from "../library/review.ts";
 import type { Annotation, AnnotationInput, Version, VersionStatus } from "../library/review.ts";
 import { AssetIdError, writeAtomic } from "../library/write.ts";
 import { planStage, readRun, stage, writeRun } from "../loop.ts";
@@ -348,7 +348,7 @@ async function recordRequests(
     if (own.length > 0)
       return { annotations: own, files: [], state: versionStatus(asset.record, current.sha256) };
     const files: string[] = [];
-    const created = new Date().toISOString();
+    const created = nextStamp(asset.record);
     let record = asset.record;
     const ids: string[] = [];
     for (const region of prepared.regions) {

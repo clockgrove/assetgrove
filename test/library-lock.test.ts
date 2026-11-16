@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -47,4 +54,20 @@ test("a target in no repository locks under the state directory", () => {
   assert.match(lock.path, /[0-9a-f]{16}\.lock$/);
   assert.equal(existsSync(lock.path), true);
   lock.release();
+});
+
+test("outside Git, a library root reached through a symlink takes one lock before and after it is created", () => {
+  const top = mkdtempSync(join(tmpdir(), "library-lock-link-"));
+  const real = join(top, "real");
+  mkdirSync(real);
+  symlinkSync(real, join(top, "link"), "junction");
+  const root = join(top, "link", "assets", "source");
+  const state = join(top, "state");
+  const before = acquireLibraryLock(root, state);
+  mkdirSync(root, { recursive: true });
+  assert.equal(childAcquire(root, state), "run_in_progress");
+  before.release();
+  const after = acquireLibraryLock(root, state);
+  assert.equal(after.path, before.path);
+  after.release();
 });

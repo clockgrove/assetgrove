@@ -48,6 +48,7 @@ import {
   commitLibraryWrite,
   libraryWritePaths,
   prepareLibraryWrite,
+  recheckLibraryWrite,
   writeAtomic,
 } from "./library/write.ts";
 import type { CandidateReview, LibraryPlan } from "./library/write.ts";
@@ -683,7 +684,7 @@ function credentialSigner(
  * library write fails, puts back every file it wrote (see `WriteJournal`).
  */
 export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
-  const lock = acquireLibraryLock(prepared.targetDir, prepared.gate.settings.stateDir);
+  const lock = acquireLibraryLock(prepared.library.config.root, prepared.gate.settings.stateDir);
   try {
     return await commitLocked(prepared);
   } finally {
@@ -693,6 +694,8 @@ export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<
 
 async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
   const { writes } = prepared;
+  // Another writer may have committed since this was prepared: check again before any write.
+  await recheckLibraryWrite(prepared.library);
   await prepared.write.adopt?.underLock?.();
   if (prepared.write.adopt === undefined) {
     for (const [path, content] of writes) await writeAtomic(path, content);
