@@ -12,7 +12,8 @@
  */
 import { ProtocolError } from "@modelcontextprotocol/server";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { InputError } from "../errors.ts";
+import { EXIT, InputError } from "../errors.ts";
+import type { ErrorCode } from "../errors.ts";
 import { parseAddress, formatAddress } from "./address.ts";
 import { changed, fingerprint, listTree } from "./list.ts";
 import { openProject } from "./project.ts";
@@ -30,15 +31,22 @@ export const LIST_PAGE = 200;
 /** Tools whose success changes what the library lists. */
 const LIBRARY_WRITERS: ReadonlySet<string> = new Set(["pick", "write_families"]);
 
-/** The JSON-RPC error a refused read answers with: Invalid Params, carrying the CLI's code. */
+/**
+ * The JSON-RPC error a refused read answers with: Invalid Params, carrying the CLI's code. An
+ * error with a code of the exit table (a search slot's refusal, say) keeps it, and its hint, if it
+ * has one, follows the message.
+ */
 function readError(error: unknown, uri: string): ProtocolError {
-  const message = error instanceof Error ? error.message : String(error);
-  const code = error instanceof InputError ? "invalid_input" : "internal_error";
-  return new ProtocolError(-32602, message, {
-    uri,
-    code,
-    exitCode: code === "invalid_input" ? 2 : 1,
-  });
+  const own = (error as { code?: unknown; hint?: unknown } | null) ?? {};
+  const hint = typeof own.hint === "string" ? ` ${own.hint}` : "";
+  const message = (error instanceof Error ? error.message : String(error)) + hint;
+  const code: ErrorCode =
+    error instanceof InputError
+      ? "invalid_input"
+      : typeof own.code === "string" && Object.hasOwn(EXIT, own.code)
+        ? (own.code as ErrorCode)
+        : "internal_error";
+  return new ProtocolError(-32602, message, { uri, code, exitCode: EXIT[code] });
 }
 
 /** The asset file addresses a change to an asset folder also changes. */

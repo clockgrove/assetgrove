@@ -85,6 +85,16 @@ describe("the search extension", () => {
     assert.equal(r.hits.length, 4);
   });
 
+  it("re-embeds everything on a rebuild with a model that is not hosted: the content cache goes too", async () => {
+    const ctx = p.context();
+    await slot.index({}, ctx);
+    const rebuilt = (await slot.index({ rebuild: true }, ctx)) as {
+      local: { written: number; embeddedImages: number };
+    };
+    assert.ok(rebuilt.local.written > 0);
+    assert.ok(rebuilt.local.embeddedImages > 0, "the cache did not answer the rebuild");
+  });
+
   it("reports status and setup for the scripted embedder", async () => {
     const ctx = p.context();
     const s = await slot.status(ctx);

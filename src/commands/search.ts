@@ -173,6 +173,19 @@ interface PaidArgs {
   dryRun?: boolean;
 }
 
+/**
+ * A dry run of a call that spends nothing (the local model, or a hosted find that embeds nothing)
+ * is invalid input, so it never runs the real index or query in its place.
+ */
+function refuseDryRun(name: string, args: PaidArgs, ctx: RunContext): void {
+  if (args.dryRun !== true) return;
+  throw new InputError(
+    hosted(ctx)
+      ? `${name} spends nothing here: it embeds no words and no image, so it has no dry run or estimate`
+      : `${name} spends nothing with the local model, so it has no dry run or estimate; dry runs and estimates need search.embedder "route"`,
+  );
+}
+
 /** The inputs a hosted embedder's paid request takes, as every paid command does. */
 const PAID_PROPERTIES: Record<string, JsonSchemaProperty> = {
   cap: {
@@ -513,7 +526,8 @@ vectors already in the index and does not bring it up to date (fresh false).`,
   async run(args, ctx) {
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;
-    if (hosted(ctx) && findEmbeds(args)) {
+    if (!(hosted(ctx) && findEmbeds(args))) refuseDryRun("find", args, ctx);
+    else {
       const { work, forecast } = await findPlan(args, ctx);
       if (args.dryRun || ctx.run === undefined)
         return dryRunOutcome(work, formatWork("find", work), spendLedger(ctx, args.workItem), {
@@ -544,18 +558,23 @@ export const searchIndexCommand: CommandSpec = defineCommand<IndexArgs>({
 picks, bible references, run candidates and the settings' folders. With a shared store
 (search.store) and writer true it also builds the shared index from pick and reference rows,
 refused (exit 2 invalid_input) while files under the library root differ from HEAD. --rebuild
-starts the local index afresh. An index built by another embedder exits 2 embedder_changed until
+starts the local index afresh; with a hosted embedder it keeps the vectors already paid for. An index built by another embedder exits 2 embedder_changed until
 --rebuild rebuilds it under this one. With the local model it spends nothing and writes the index
 under the state directory. With a hosted embedder (search.embedder "route", the embeddings role)
 it is a paid request: its plan step forecasts one embedding per image view and card text not
 embedded yet, one spend confirmation covers it, each call is reserved against the caps and
-journalled, and content embedded before is never paid for again. The same request run again is
+journalled, and content embedded before is never paid for again. With the local model there is
+nothing to forecast, so --dry-run and estimate refuse it (exit 2 invalid_input). The same request run again is
 run again, not returned as it ended, so a deleted or changed index is built afresh; its journal
 answers every call it made before.`,
   input: {
     type: "object",
     properties: {
-      rebuild: { type: "boolean", description: "delete the local index and build it afresh" },
+      rebuild: {
+        type: "boolean",
+        description:
+          "delete the local index and build it afresh (a hosted embedder keeps its paid vector cache)",
+      },
       target: TARGET,
       ...PAID_PROPERTIES,
     },
@@ -575,7 +594,8 @@ answers every call it made before.`,
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;
     let embedded: SearchForecast | undefined;
-    if (hosted(ctx)) {
+    if (!hosted(ctx)) refuseDryRun("search index", args, ctx);
+    else {
       const { work, forecast } = await hostedPlan(searchIndexCommand, args, ctx, {
         index: args.rebuild === true ? { rebuild: true } : {},
       });

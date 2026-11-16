@@ -1,8 +1,8 @@
 import { InputError } from "../errors.ts";
-import { isPaid } from "./context.ts";
+import { canSpend } from "./context.ts";
 import { commands } from "./registry.ts";
 import { runCommand, toolInputSchema, validateArgs } from "./runner.ts";
-import type { CommandSpec } from "./types.ts";
+import type { CommandSpec, RunContext } from "./types.ts";
 import { defineCommand } from "./types.ts";
 
 interface EstimateArgs {
@@ -12,11 +12,14 @@ interface EstimateArgs {
   providerScript?: string;
 }
 
-/** The paid command an estimate names; a free or unknown command is invalid input. */
-function paidCommand(name: string): CommandSpec {
+/**
+ * The paid command an estimate names; a free or unknown command, or one that spends nothing under
+ * these settings (find and search index with the local model), is invalid input.
+ */
+function paidCommand(name: string, ctx: RunContext): CommandSpec {
   const spec = commands.find((c) => c.name === name || (c.tool !== null && c.tool === name));
   if (spec === undefined) throw new InputError(`unknown command "${name}"`);
-  if (!isPaid(spec) || spec.plan === undefined)
+  if (!canSpend(spec, ctx) || spec.plan === undefined)
     throw new InputError(`${spec.name} spends nothing, so it has no estimate`);
   return spec;
 }
@@ -60,7 +63,7 @@ provider call, adds no ledger entry and writes nothing.`,
   positionals: [{ name: "command" }],
   effect: { readOnly: true, spends: "never", writes: "none" },
   async run(args, ctx) {
-    const spec = paidCommand(args.command);
+    const spec = paidCommand(args.command, ctx);
     const given = args.args ?? {};
     if (typeof given !== "object" || Array.isArray(given))
       throw new InputError("--args must be a JSON object");

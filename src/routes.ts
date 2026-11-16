@@ -440,6 +440,8 @@ export interface RouteProvider {
     id: string;
     capabilities: readonly string[];
     defaultRoutes?: Readonly<Record<string, Route>>;
+    /** Which of its models embed images and text in one space; every model when absent. */
+    embedsModel?: (model: string) => boolean;
   };
   /** The provider's settings entry; `free` lets an override leave out its estimate. */
   settings?: { free?: boolean };
@@ -541,6 +543,12 @@ export function resolveRoute(
     throw new RouteUnavailableError(
       operation,
       `route unavailable: ${what} names provider "${provider.id}", whose ${provider.adapter.id} adapter has no ${capability} capability; set ${fields} in the developer settings to a provider that has it`,
+    );
+  }
+  if (capability === "embed" && provider.adapter.embedsModel?.(route.model) === false) {
+    throw new RouteUnavailableError(
+      operation,
+      `route unavailable: ${what} names model "${route.model}" of provider "${provider.id}", which its ${provider.adapter.id} adapter cannot embed images and text with in one space; set ${fields} in the developer settings to a model that can`,
     );
   }
   if (

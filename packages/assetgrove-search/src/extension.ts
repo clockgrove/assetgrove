@@ -433,8 +433,11 @@ async function index(
     await closeCached(`local\0${localDir(ctx)}\0${embedder.id}@${embedder.revision}`);
     const dir = localDir(ctx);
     const names = await readdir(dir).catch(() => [] as string[]);
-    // `vectors.lance` is the content cache: a rebuild pays nothing twice for content it holds.
-    for (const n of names.filter((n) => n.endsWith(".lance") && n !== "vectors.lance")) {
+    // With a hosted embedder, `vectors.lance` (the content cache, keyed by embedder) survives, so
+    // a rebuild pays nothing twice for content it holds. The local model's rebuild deletes every
+    // table and embeds afresh, as it always has.
+    const keep = ctx.settings.embedder === "route" ? "vectors.lance" : undefined;
+    for (const n of names.filter((n) => n.endsWith(".lance") && n !== keep)) {
       await rm(join(dir, n), { recursive: true, force: true });
     }
   }

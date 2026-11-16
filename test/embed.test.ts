@@ -16,7 +16,7 @@ import { Caller } from "../src/calls.ts";
 import { ProviderError } from "../src/errors.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { VercelGateway } from "../src/gateway/vercel.ts";
-import { anthropicAdapter, scriptedAdapter } from "../src/providers/adapter.ts";
+import { anthropicAdapter, gatewayAdapter, scriptedAdapter } from "../src/providers/adapter.ts";
 import { EMBED_OPERATION, RouteUnavailableError, resolveRoute } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
 import { Journal, withRunScope } from "../src/runs/journal.ts";
@@ -43,6 +43,24 @@ test("the embed operation is routed by the embeddings role, only to an adapter w
     () => resolveRoute({ routes: {}, roles: {} }, EMBED_OPERATION, providers),
     (e: unknown) => e instanceof RouteUnavailableError && /roles\.embeddings/.test(e.message),
   );
+});
+
+test("a gateway embeddings route to a model that cannot embed images and text in one space exits route_unavailable", () => {
+  const gateway = [{ id: "gateway", adapter: gatewayAdapter }];
+  const settings = (model: string) => ({
+    routes: {},
+    roles: { embeddings: { provider: "gateway", model, estimatedCostUsd: 0.001 } },
+  });
+  for (const model of ["openai/text-embedding-3-small", "google/gemini-embedding-001"])
+    assert.throws(
+      () => resolveRoute(settings(model), EMBED_OPERATION, gateway),
+      (e: unknown) =>
+        e instanceof RouteUnavailableError &&
+        e.message.includes(model) &&
+        /images and text/.test(e.message),
+    );
+  const route = resolveRoute(settings("google/gemini-embedding-2"), EMBED_OPERATION, gateway);
+  assert.equal(route.model, "google/gemini-embedding-2");
 });
 
 function image(): LoadedReference {

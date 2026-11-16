@@ -60,6 +60,11 @@ export interface ProviderAdapter {
    * grant and terms of its (provider, model) pair. None means it serves only what settings route.
    */
   defaultRoutes?: Readonly<Record<string, Route>>;
+  /**
+   * With `embed`, which models embed images and text in one space; every model when absent. A
+   * route to another model exits 2 `route_unavailable` before any reservation.
+   */
+  embedsModel?: (model: string) => boolean;
   create(c: AdapterContext): GenerationProvider;
 }
 
@@ -78,6 +83,8 @@ export const gatewayAdapter: ProviderAdapter = {
   fixedHosts: [new URL(VercelGateway.defaultBaseURL).host],
   endpointFromSettings: true,
   defaultRoutes: GATEWAY_DEFAULT_ROUTES,
+  // Through the gateway only Google's multimodal embedding model takes images (src/gateway/vercel.ts).
+  embedsModel: (model) => /^google\/gemini-embedding-2(-[a-z0-9.-]+)?$/.test(model),
   create: (c) =>
     new VercelGateway({
       apiKey: c.apiKey,

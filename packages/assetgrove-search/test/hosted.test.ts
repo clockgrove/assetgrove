@@ -16,10 +16,20 @@ import {
 } from "../../../test/fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { commands } from "../../../src/commands/registry.ts";
@@ -31,7 +41,7 @@ import { routeDataFlows } from "../../../src/dataflows.ts";
 import { coreExtension } from "../../../src/extensions/core.ts";
 import { ExtensionRegistry } from "../../../src/extensions/registry.ts";
 import { nearMatchesFor } from "../../../src/search/near-match.ts";
-import { toolAnnotations } from "../../../src/mcp.ts";
+import { serveMcp, toolAnnotations } from "../../../src/mcp.ts";
 import { loadSettings } from "../../../src/settings.ts";
 import { GAME, fixtureLibrary } from "../../../test/fixtures/library.ts";
 import searchExtension, { nearMatchesWith } from "../src/extension.ts";
@@ -63,12 +73,16 @@ const extensions = new ExtensionRegistry([
   },
 ]);
 
+/** The installed package name the tree test lists in settings. */
+const SHIM = "assetgrove-search-hosted-shim";
+
 const spec = (name: string): CommandSpec => commands.find((c) => c.name === name)!;
 
 /** Hosted settings with the embeddings role on `provider` (the scripted one by default). */
-function hosted(model = "scripted/embed-a", provider = "scripted"): void {
+function hosted(model = "scripted/embed-a", provider = "scripted", listed = false): void {
   writeSettings({
     search: { embedder: "route" },
+    ...(listed && { extensions: [SHIM] }),
     providers: {
       scripted: { limit: { kind: "prepaid", usd: 100 } },
       anthropic: {},
@@ -133,7 +147,12 @@ test("search index forecasts one call per unembedded image, asks once, reserves 
   assert.equal(asked[0]!.kind, "spend");
   assert.equal(calls.image, embed.images, "one call per unembedded image");
   assert.equal(calls.text, embed.texts);
-  assert.ok(embedEntries().length >= embed.images + embed.texts, "every call is in the ledger");
+  // Exactly one reservation per call, each for its own call key: none missing, none twice.
+  const reserves = embedEntries()
+    .map((line) => JSON.parse(line) as { op: string; callKey: string })
+    .filter((e) => e.op === "reserve");
+  assert.equal(reserves.length, embed.images + embed.texts, "each call reserved once");
+  assert.equal(new Set(reserves.map((e) => e.callKey)).size, reserves.length);
   const ledger = embedEntries().length;
 
   const before = total();
@@ -199,6 +218,93 @@ test("reads with a hosted embedder use stored vectors only; find with words is a
   assert.equal(asked.length, 1, "find with words asks its own confirmation");
   assert.equal(total(), before + 1, "one query embedding");
   assert.equal(embedEntries().length, ledger + 1);
+});
+
+test("the tree's find, like and where paths over MCP with a hosted embedder make no provider call: stored vectors only, words refused", async () => {
+  // The server loads the package from the project, as settings list it: an installed shim whose
+  // entry re-exports this package's extension (Git tracks the package's own files, which an
+  // extension entry may not be).
+  const shim = join(lib.dir, "node_modules", SHIM);
+  mkdirSync(shim, { recursive: true });
+  writeFileSync(
+    join(shim, "package.json"),
+    JSON.stringify({
+      name: SHIM,
+      version: "1.0.0",
+      type: "module",
+      assetgrove: { api: 1, entry: "./index.js" },
+    }),
+  );
+  writeFileSync(
+    join(shim, "index.js"),
+    `export { default } from ${JSON.stringify(new URL("../src/extension.ts", import.meta.url).href)};\n`,
+  );
+  hosted("scripted/embed-a", "scripted", true);
+  const indexed = await run("search index", {});
+  assert.equal(indexed.exitCode, 0, JSON.stringify(indexed.error));
+  const before = total();
+  const ledger = embedEntries().length;
+
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const pending = new Map<number, (message: Record<string, unknown>) => void>();
+  let buffered = "";
+  output.on("data", (chunk: Buffer) => {
+    buffered += chunk.toString("utf8");
+    let end: number;
+    while ((end = buffered.indexOf("\n")) >= 0) {
+      const line = buffered.slice(0, end).trim();
+      buffered = buffered.slice(end + 1);
+      if (line === "") continue;
+      const message = JSON.parse(line) as { id?: number };
+      if (typeof message.id === "number") pending.get(message.id)?.(message);
+    }
+  });
+  let next = 0;
+  const request = (method: string, params: unknown) =>
+    new Promise<Record<string, unknown>>((done) => {
+      const id = ++next;
+      pending.set(id, done);
+      input.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    });
+  const read = async (uri: string) => request("resources/read", { uri });
+
+  const cwd = process.cwd();
+  process.chdir(lib.dir);
+  const ctx: RunContext = {
+    settings: loadSettings(),
+    extensions,
+    log: () => {},
+    providerScript: script,
+  };
+  const served = serveMcp(ctx, input, output, { target: lib.dir });
+  try {
+    await request("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "hosted-test", version: "0.0.0" },
+    });
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    for (const path of ["like/lantern", `where/${encodeURIComponent("kind=still")}`]) {
+      const answer = await read(`asset://${GAME}/${path}`);
+      assert.equal(answer["error"], undefined, `${path}: ${JSON.stringify(answer["error"])}`);
+      const contents = (answer["result"] as { contents: { text: string }[] }).contents;
+      const document = JSON.parse(contents[0]!.text) as { hits: unknown[] };
+      assert.ok(document.hits.length > 0, path);
+    }
+    // Words need a query embedding: the tree refuses them and points at the find tool.
+    const words = await read(`asset://${GAME}/find/lantern`);
+    const refused = words["error"] as { message: string; data: { code: string; exitCode: number } };
+    assert.equal(refused.data.code, "invalid_input", JSON.stringify(words));
+    assert.equal(refused.data.exitCode, 2);
+    assert.match(refused.message, /find tool/);
+  } finally {
+    input.end();
+    await served;
+    process.chdir(cwd);
+  }
+  assert.equal(total(), before, "no provider call from a tree read");
+  assert.equal(embedEntries().length, ledger, "no reservation from a tree read");
 });
 
 test("a route whose adapter lacks embed exits 2 route_unavailable before any reservation; init's data flows list the embedding provider", async () => {
@@ -322,4 +428,39 @@ test("with the local model find and search index take no tracked-key guard and n
   } finally {
     process.chdir(cwd);
   }
+});
+
+test("with the local model a dry run or an estimate of find or search index is refused and runs nothing", async () => {
+  writeSettings({ search: { embedder: "scripted" } });
+  useAttended();
+  const built = await run("search index", { rebuild: true });
+  assert.equal(built.exitCode, 0, JSON.stringify(built.error));
+  const store = join(stateDir, "search");
+  const listing = () =>
+    readdirSync(store, { recursive: true })
+      .map((name) => `${String(name)}@${statSync(join(store, String(name))).mtimeMs}`)
+      .sort();
+  const was = listing();
+  assert.ok(
+    was.some((n) => n.includes(".lance")),
+    "an index to keep",
+  );
+  for (const [name, args] of [
+    ["search index", { rebuild: true }],
+    ["find", { words: "lantern" }],
+  ] as const) {
+    const dry = await run(name, { ...args, dryRun: true });
+    assert.equal(dry.exitCode, 2, name);
+    assert.equal(dry.error?.code, "invalid_input", name);
+    assert.match(dry.error!.message, /spends nothing with the local model/);
+    const estimate = await runCommand(
+      spec("estimate"),
+      { command: name, args: { ...args, target: lib.dir } },
+      { settings: loadSettings(), extensions, log: () => {} },
+    );
+    assert.equal(estimate.exitCode, 2, name);
+    assert.equal(estimate.error?.code, "invalid_input", name);
+    assert.match(estimate.error!.message, /spends nothing, so it has no estimate/);
+  }
+  assert.deepEqual(listing(), was, "nothing deleted or rebuilt");
 });
