@@ -27,7 +27,7 @@ import { InputError } from "./errors.ts";
 import { commandIdentity, defaultGate, requireApproval, resolveProgram } from "./approvals.ts";
 import type { ApprovalGate, CommandStep } from "./approvals.ts";
 import { requireLicensable } from "./license.ts";
-import { bindingOf } from "./provenance-binding.ts";
+import { bindingOf, callsSha256 } from "./provenance-binding.ts";
 import { keyFreeEnv, redact } from "./redact.ts";
 import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
@@ -463,10 +463,14 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   ].filter((value) => value !== undefined);
   const digitalSourceType = known.length ? combineDigitalSourceTypes(known) : "undeclared";
   requireDeclared(digitalSourceType);
+  // The mark carries the sha256 of the record's calls: evidence outside the provenance file that
+  // it is the record of these bytes (src/provenance-binding.ts).
+  const marks = callsSha256(write.provenance);
   const output = {
     ...write.output,
     bytes: embedDigitalSourceType(write.output.bytes, write.output.mediaType, digitalSourceType, {
       models: write.provenance.models,
+      callsSha256: marks,
     }),
   };
   // A sidecar in a format that can carry the mark is marked like the media.
@@ -481,6 +485,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
           ...sidecar,
           bytes: embedDigitalSourceType(sidecar.bytes, type, digitalSourceType, {
             models: write.provenance.models,
+            callsSha256: marks,
           }),
         };
   });

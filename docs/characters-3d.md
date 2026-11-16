@@ -118,7 +118,7 @@ assetgrove rig --model c3.glb --provenance c3/provenance.json --spec fern-3d.jso
 assetgrove pick --run .assetgrove/runs/<run> --candidate c1 --target ../my-game
 ```
 
-The provenance must be the model's own record: the provenance file hand-off wrote beside it, or, for a model made outside Assetgrove, a record with no calls; any other file exits 2 `provenance_mismatch` naming both files ([decisions](decisions.md#provenance-is-bound-to-its-media)). `lod` and `look-dev` check a given model's provenance the same way.
+The provenance must be the model's own record: for a handed-off model, the provenance file hand-off wrote beside it; for a staged candidate given by its file in the run folder, its `provenance` in that folder's `run.json`, or the candidate's `provenance` in the `stage --json` document (its masked shared text is matched against `run.json`, whose copy is used); for a model made outside Assetgrove, a record with no calls. Any other file exits 2 `provenance_mismatch` naming both files ([decisions](decisions.md#provenance-is-bound-to-its-media)). `lod` and `look-dev` check a given model's provenance the same way.
 
 `rig` stages a one-candidate run, `c1`, with the same renders, reasons and provenance as a `stage` candidate. It calls no model and spends nothing. It exits 5 when the re-rigged model fails QA, and the renders are still written. A draft template and walk for a four-legged character are in [examples/rig/](examples/rig/).
 

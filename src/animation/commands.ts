@@ -2,7 +2,7 @@
  * The work behind `assetgrove animation-qa` and `assetgrove fix-frame`, kept apart from argument
  * parsing so tests and the MCP surface can call it directly.
  */
-import { bindProvenance, checkProvenance } from "../provenance-binding.ts";
+import { bindProvenance, callsSha256, checkProvenance } from "../provenance-binding.ts";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Budget } from "../budget.ts";
@@ -381,7 +381,12 @@ export async function runFixFrame(options: {
   const origin2 = fixed.provenance.digitalSourceType;
   const png = encodePng(fixed.strip);
   const stripBytes =
-    origin2 === undefined ? png : embedDigitalSourceType(png, "image/png", origin2);
+    origin2 === undefined
+      ? png
+      : embedDigitalSourceType(png, "image/png", origin2, {
+          models: fixed.provenance.models,
+          callsSha256: callsSha256(fixed.provenance),
+        });
   await writeFile(stripPath, stripBytes);
   const provenancePath = `${stripPath}.provenance.json`;
   // The record is bound to the strip it was written with (src/provenance-binding.ts).

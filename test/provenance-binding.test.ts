@@ -389,3 +389,90 @@ test("fix-frame refuses a strip's own provenance whose calls were emptied, befor
   await refused(r, stripPath, provenance);
   await assert.rejects(readFile(join(out, "walk-right.png")), "nothing written");
 });
+
+test("a record re-bound after its calls were emptied or edited is refused by the media's mark", async () => {
+  const w = await world();
+  const mine = await handedOff(w);
+  const rebind = (p: Doc) => {
+    delete p.binding;
+    p.binding = (bindProvenance(p as never, new Uint8Array()) as unknown as Doc)["binding"];
+  };
+  // The binding is recomputed over the edited record; only the mark outside the file says no.
+  const fixMedia = async (path: string) => {
+    const record = await readJson(path);
+    record.binding.mediaSha256 = await fileSha(mine.model);
+    await writeFile(path, JSON.stringify(record));
+    return path;
+  };
+  const emptied = await fixMedia(
+    await altered(w, mine.provenance, "rebound-emptied.json", (p) => {
+      p.calls = [];
+      rebind(p);
+    }),
+  );
+  await refused(await rig(w, mine.model, emptied), mine.model, emptied);
+  const flipped = await fixMedia(
+    await altered(w, mine.provenance, "rebound-flipped.json", (p) => {
+      p.calls[0].outputGrant.commercial = false;
+      rebind(p);
+    }),
+  );
+  const r = await rig(w, mine.model, flipped);
+  await refused(r, mine.model, flipped);
+  assert.match(doc(r)["error"].message, /mark records/);
+  const unbound = await altered(w, mine.provenance, "unbound-emptied.json", (p) => {
+    p.calls = [];
+    delete p.binding;
+  });
+  await refused(await rig(w, mine.model, unbound), mine.model, unbound);
+});
+
+test("fix-frame accepts a strip and the provenance 0.1.0 wrote beside it, untouched", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-010-")));
+  const { strip } = syntheticStrip({ count: 8, style: "painterly", motion: "walk" });
+  // What 0.1.0's fix-frame wrote: the strip marked with its source type only, and a record with
+  // its calls and no binding.
+  const stripPath = join(root, "walk-right.png");
+  await writeFile(
+    stripPath,
+    embedDigitalSourceType(encodePng(strip), "image/png", DIGITAL_SOURCE_TYPES.composite),
+  );
+  await writeFile(
+    join(root, "profile.json"),
+    JSON.stringify({
+      ...syntheticProfile(),
+      style: { alpha: { mode: "soft" }, color: { rule: "full" } },
+      frames: { width: 64, height: 64, durationMs: 100 },
+    }),
+  );
+  const provenance = join(root, "walk-right.png.provenance.json");
+  await writeFile(
+    provenance,
+    JSON.stringify({
+      generator: "sheet-import",
+      route: "import:hand",
+      models: ["x/y"],
+      prompt: "imported",
+      parameters: {},
+      requestIds: [],
+      referenceHashes: [],
+      bibleVersion: "1",
+      license: "MIT",
+      providerTerms: [],
+      startedAt: "2026-11-08T00:00:00.000Z",
+      finishedAt: "2026-11-08T00:00:00.000Z",
+      costUsd: 0.04,
+      calls: [{ operation: "edit", model: "x/y" }],
+    }),
+  );
+  const out = join(root, "fixed");
+  const r = await cli([
+    ...["fix-frame", "--strip", stripPath, "--family", "walk-right"],
+    ...["--profile", join(root, "profile.json"), "--frame", "3", "--from", "2", "--out", out],
+    ...["--provider-script", FIX_SCRIPT, "--json"],
+  ]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const fixed = await readJson(join(out, "walk-right.png.provenance.json"));
+  assert.equal(fixed.binding.mediaSha256, await fileSha(join(out, "walk-right.png")));
+  assert.equal(fixed.calls.length, 2, "the 0.1.0 call and the fix's call");
+});

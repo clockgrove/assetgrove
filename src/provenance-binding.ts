@@ -1,14 +1,14 @@
 /**
  * Whether a provenance file is the record of the media it is named with (docs/decisions.md,
- * "Provenance is bound to its media"). Every record Assetgrove writes beside media carries
- * `binding`: the sha256 of the exact bytes it describes and the sha256 of its own canonical content
- * without `binding`. Each writer binds again after it writes the bytes (hand-off after the mark and
- * the content credentials), so the binding holds across that rewrite and a later hand-off.
+ * "Provenance is bound to its media"). The file cannot vouch for itself, so the evidence outside it
+ * is read first: the sha256 of the record's calls in the media's own mark (or, in a 0.1.0 mark, the
+ * model names), the library review record beside the media and the run record beside it. Each
+ * that speaks must agree. The record's own `binding` (the sha256 of the exact bytes it describes
+ * and of its canonical content) must also hold when present.
  *
- * A record without a binding is accepted only when the asset's library review record beside the
- * media lists these bytes with this file's sha256 (a 0.1.0 hand-off), when the run record beside
- * the media stages these bytes with this record (a staged candidate), or as media made outside
- * Assetgrove: no calls, and no model named in the media's own mark. Anything else is refused.
+ * A record that agrees with all of them is accepted, so 0.1.0 records (no binding, no calls sha256
+ * in the mark) still are. A record with no calls, no binding and no model in the media's mark is
+ * media made outside Assetgrove. Anything else is refused.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -17,7 +17,7 @@ import { canonicalJson, sha256Hex } from "./library/canonical.ts";
 import { parseReview } from "./library/review.ts";
 import { readRun } from "./loop.ts";
 import type { RunRecord } from "./loop.ts";
-import { readMarkedModels } from "./metadata.ts";
+import { readMarkedCallsSha256, readMarkedModels } from "./metadata.ts";
 import type { Provenance, ProvenanceBinding } from "./types.ts";
 
 /** A provenance file that is not the record of the media it is named with: exit 2. */
@@ -57,10 +57,18 @@ export interface NamedProvenance {
   provenance: { path: string; bytes: Uint8Array | string; value: Provenance };
 }
 
+/** The sha256 of a record's calls, which the media's mark carries (MarkOptions.callsSha256). */
+export function callsSha256(record: Pick<Provenance, "calls">): string {
+  const calls = Array.isArray(record.calls) ? record.calls : [];
+  return sha256Hex(canonicalJson(JSON.parse(JSON.stringify(calls))));
+}
+
 /**
- * The record, checked as the record of the media: a bound record whose digests hold, a 0.1.0
- * record the library vouches for, or media made outside Assetgrove (returned with
- * `madeOutsideAssetgrove: true`). Throws a ProvenanceError naming both files otherwise.
+ * The record, checked as the record of the media against the evidence outside the file (the
+ * media's mark, and the library review record and run record beside the media) and against its
+ * own binding. Returns the record (for a staged candidate given by its `--json` view, the run
+ * record's own copy), with `madeOutsideAssetgrove: true` when it records no call and nothing says
+ * a model made the media. Throws a ProvenanceError naming both files otherwise.
  */
 export async function checkProvenance(named: NamedProvenance): Promise<Provenance> {
   const { media, provenance } = named;
@@ -68,8 +76,49 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   const refuse = (why: string) =>
     new ProvenanceError(
       `refused: ${provenance.path} is not the provenance of ${media.path}: ${why}. ` +
-        "Give the media with the provenance file Assetgrove wrote beside it",
+        "Give the media with the provenance file Assetgrove wrote beside it; for a staged " +
+        "candidate, its record in the run.json beside it (or the stage --json document's)",
     );
+  const calls = Array.isArray(record.calls) ? record.calls : [];
+  const callCount = `${calls.length} model call${calls.length === 1 ? "" : "s"}`;
+
+  // The media's own mark: the calls sha256 a hand-off or fix-frame wrote, else the model names.
+  const markedCalls = markRead(() => readMarkedCallsSha256(media.bytes, media.mediaType));
+  if (markedCalls !== undefined) {
+    if (markedCalls !== callsSha256(record)) {
+      throw refuse(
+        `its ${callCount} are not the calls the media's own mark records (its calls sha256 differs)`,
+      );
+    }
+  } else {
+    const marked = markRead(() => readMarkedModels(media.bytes, media.mediaType));
+    const named = new Set(calls.map((c) => (c as { model?: unknown })?.model));
+    const missing = (marked ?? "")
+      .split(";")
+      .map((m) => m.trim())
+      .filter((m) => m !== "" && !named.has(m));
+    if (missing.length > 0) {
+      throw refuse(
+        calls.length === 0
+          ? `it records no model call, but the media's own mark names the model${missing.length === 1 ? "" : "s"} ${missing.join(", ")}`
+          : `its calls do not name the model${missing.length === 1 ? "" : "s"} ${missing.join(", ")} that the media's own mark names`,
+      );
+    }
+  }
+
+  // The library review record beside the media, when it lists these bytes with a provenance.
+  const library = await libraryListing(media.path, media.bytes, provenance.bytes);
+  if (library === "other") {
+    throw refuse(
+      "the library review record beside the media lists these bytes with another provenance file",
+    );
+  }
+  // The run record beside the media, when it stages these bytes.
+  const run = await runListing(media.path, media.bytes, record);
+  if (run === "other") {
+    throw refuse("the run record beside the media stages these bytes with another record");
+  }
+
   const binding = record.binding as Partial<ProvenanceBinding> | undefined;
   if (binding !== undefined) {
     if (
@@ -86,84 +135,132 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
     if (binding.mediaSha256 !== sha256Hex(media.bytes)) {
       throw refuse("it records other bytes (its mediaSha256 is not the media's sha256)");
     }
-    return record;
   }
-  if (await libraryVouches(media.path, media.bytes, provenance.bytes)) return record;
-  if (await runVouches(media.path, media.bytes, record)) return record;
-  const calls = Array.isArray(record.calls) ? record.calls : [];
-  if (calls.length > 0) {
-    throw refuse(
-      `it records ${calls.length} model call${calls.length === 1 ? "" : "s"} but is not bound to the media, ` +
-        "and neither a library review record nor a run record beside the media lists these bytes with this record",
-    );
+  const own = run === undefined || run === "same" ? record : run.record;
+  // No call, nothing outside the file says a model made the media, and no binding: made outside.
+  if (calls.length === 0 && binding === undefined && markedCalls === undefined) {
+    return { ...own, madeOutsideAssetgrove: true };
   }
-  const marked = markedModels(media.bytes, media.mediaType);
-  if (marked !== undefined) {
-    throw refuse(
-      `it records no model call, but the media's own mark names the model${marked.includes(",") ? "s" : ""} ${marked}`,
-    );
-  }
-  return { ...record, madeOutsideAssetgrove: true };
+  return own;
 }
 
-function markedModels(bytes: Uint8Array, mediaType: string): string | undefined {
+function markRead(read: () => string | undefined): string | undefined {
   try {
-    return readMarkedModels(bytes, mediaType);
+    return read();
   } catch {
     return undefined;
   }
 }
 
 /**
- * Whether a library review record in the media's folder lists a version with exactly these media
- * bytes and this provenance file's bytes: what a 0.1.0 hand-off recorded.
+ * What the library review records in the media's folder say of these bytes: "same" when a version
+ * lists them with this provenance file's sha256, "other" when versions list them only with other
+ * provenance, undefined when none lists them with a provenance.
  */
-async function libraryVouches(
+async function libraryListing(
   mediaPath: string,
   mediaBytes: Uint8Array,
   provenanceBytes: Uint8Array | string,
-): Promise<boolean> {
+): Promise<"same" | "other" | undefined> {
   const dir = dirname(mediaPath);
   const names = await readdir(dir).catch(() => [] as string[]);
   const media = sha256Hex(mediaBytes);
   const own = sha256Hex(provenanceBytes);
+  let listed: "same" | "other" | undefined;
   for (const name of names.filter((n) => n.endsWith(".review.json"))) {
     const source = join(dir, name);
     try {
       const review = parseReview(await readFile(source, "utf8"), source);
-      if (review.versions.some((v) => v.sha256 === media && v.provenanceSha256 === own)) {
-        return true;
+      for (const v of review.versions) {
+        if (v.sha256 !== media || v.provenanceSha256 === undefined) continue;
+        if (v.provenanceSha256 === own) return "same";
+        listed = "other";
       }
     } catch {
-      // Not a review record this check can read: it vouches for nothing.
+      // Not a review record this check can read: it says nothing.
     }
   }
-  return false;
+  return listed;
 }
 
 /**
- * Whether the run record of the media's folder stages a candidate with exactly these bytes and
- * exactly this record: a staged candidate given by its file, with its provenance copied out.
+ * What the run record of the media's folder says of these bytes: "same" when a candidate stages
+ * them with exactly this record, the candidate's own record when this is that record's `--json`
+ * view (shared text masked as `[sharedText:<n>]`), "other" when candidates stage them only with
+ * other records, undefined when none stages them.
  */
-async function runVouches(
+async function runListing(
   mediaPath: string,
   mediaBytes: Uint8Array,
   record: Provenance,
-): Promise<boolean> {
+): Promise<"same" | "other" | { record: Provenance } | undefined> {
   let run: RunRecord;
   try {
     run = await readRun(dirname(mediaPath));
   } catch {
-    return false;
+    return undefined;
   }
   const media = sha256Hex(mediaBytes);
-  const own = canonicalJson(JSON.parse(JSON.stringify(record)));
-  return (Array.isArray(run.candidates) ? run.candidates : []).some(
-    (c) =>
-      c?.sha256 === media &&
-      c.provenance !== undefined &&
-      canonicalJson(JSON.parse(JSON.stringify(c.provenance))) === own,
-  );
+  const given = plain(record);
+  let listed: "other" | { record: Provenance } | undefined;
+  for (const c of Array.isArray(run.candidates) ? run.candidates : []) {
+    if (c?.sha256 !== media || c.provenance === undefined) continue;
+    const staged = plain(c.provenance);
+    if (canonicalJson(staged) === canonicalJson(given)) return "same";
+    if (maskedView(given, staged, new Map())) listed = { record: c.provenance };
+    else listed ??= "other";
+  }
+  return listed;
+}
+
+/** The record as its file holds it, without its binding. */
+function plain(record: Provenance): unknown {
+  const { binding: _binding, ...rest } = record;
+  void _binding;
+  return JSON.parse(JSON.stringify(rest));
+}
+
+const SHARED_SLOT = /\[sharedText:(\d+)\]/g;
+
+/**
+ * Whether `view` is `actual` with shared text masked (src/request.ts, withSharedText): equal but
+ * that a string may hold `[sharedText:<n>]` where `actual` holds a text, the same text for each n.
+ */
+function maskedView(view: unknown, actual: unknown, slots: Map<string, string>): boolean {
+  if (typeof view === "string" && typeof actual === "string") {
+    if (view === actual) return true;
+    const names: string[] = [];
+    const pattern = view
+      .split(SHARED_SLOT)
+      .map((part, i) => {
+        if (i % 2 === 0) return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        names.push(part);
+        return "([\\s\\S]+?)";
+      })
+      .join("");
+    if (names.length === 0) return false;
+    const match = new RegExp(`^${pattern}$`).exec(actual);
+    if (!match) return false;
+    return names.every((n, i) => {
+      const text = match[i + 1]!;
+      const known = slots.get(n);
+      if (known !== undefined) return known === text;
+      slots.set(n, text);
+      return true;
+    });
+  }
+  if (Array.isArray(view) && Array.isArray(actual)) {
+    return view.length === actual.length && view.every((v, i) => maskedView(v, actual[i], slots));
+  }
+  if (view && actual && typeof view === "object" && typeof actual === "object") {
+    if (Array.isArray(view) || Array.isArray(actual)) return false;
+    const a = view as Record<string, unknown>;
+    const b = actual as Record<string, unknown>;
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    return keys.every((k) => Object.hasOwn(b, k) && maskedView(a[k], b[k], slots));
+  }
+  return view === actual;
 }
 
 /**
