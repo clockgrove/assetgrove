@@ -457,3 +457,62 @@ test("identity-eval prints the per-medium breakdown, the bar and the record chec
   assert.match(result.stdout, /enforce bar: not judged on provisional 3D/);
   assert.match(result.stdout, /record check: record "bram" lock bram-3 agrees/);
 });
+
+test("identity-eval recommends only a cut within the false-accept bar in every kind and cast", async () => {
+  const f = await fixture();
+  // 20 generic negatives score 0 and one look-alike scores 0.75: a cut near 0.4 has a 4.8%
+  // overall false-accept rate but accepts every look-alike, so it is not within the bar.
+  const cases = [
+    { image: "sheet.png", subject: "bram", same: true },
+    { image: "sheet.png", subject: "bram", same: true },
+    { image: "sheet.png", subject: "bram", same: false, kind: "lookalike" },
+    ...Array.from({ length: 20 }, () => ({ image: "sheet.png", subject: "bram", same: false })),
+  ];
+  await writeFile(join(f.root, "cases.json"), JSON.stringify(cases));
+  const result = await exec(
+    process.execPath,
+    [
+      CLI,
+      "identity-eval",
+      "--bible",
+      f.bible,
+      "--cases",
+      join(f.root, "cases.json"),
+      "--provider-script",
+      SCRIPT,
+    ],
+    { env: env(["4", "4", "3", ...Array.from({ length: 20 }, () => "0")].join(",")) },
+  );
+  assert.match(result.stdout, /^recommended threshold 0\.875 /m);
+  // At a cut below the look-alike's score (the configured 0.68 here) the bar report fails it.
+  assert.match(result.stdout, /not met: kind lookalike: false accepts 100% > 5%/);
+});
+
+test("identity-eval prints that none meets the bar when a different character scores the top level", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.root, "cases.json"),
+    JSON.stringify([
+      { image: "sheet.png", subject: "bram", same: true },
+      { image: "sheet.png", subject: "bram", same: false },
+    ]),
+  );
+  const result = await exec(
+    process.execPath,
+    [
+      CLI,
+      "identity-eval",
+      "--bible",
+      f.bible,
+      "--cases",
+      join(f.root, "cases.json"),
+      "--provider-script",
+      SCRIPT,
+    ],
+    { env: env("4,4") },
+  );
+  assert.match(
+    result.stdout,
+    /no threshold recommended: none meets the bar \(false-accept rate within the enforce bar\)/,
+  );
+});

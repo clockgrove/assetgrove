@@ -138,7 +138,7 @@ every case names its bible. With identity.question "cast" each candidate is judg
 cast of its bible; every subject's record is first checked against its own references. Each call's label, confidence,
 latency and cost are logged on stderr, and one JSON line per case goes to --log. Reports accuracy
 for every threshold, the recommended threshold, accuracy at the profile's threshold and agreement
-with the cases' QA verdicts. The recommended threshold is the one with the fewest false rejects among those whose false-accept rate is within the enforce bar (the lowest on a tie); when none meets the bar, none is recommended. --record writes it to identity-thresholds.json beside --bible, keyed by question and model, which enforce mode requires. Never filters or approves. Keep the set and the log local; they may
+with the cases' QA verdicts. The recommended threshold is the one with the fewest false rejects among those whose false-accept rate is within the enforce bar overall, per kind and per cast (the lowest on a tie); when none meets the bar, none is recommended. --record writes it to identity-thresholds.json beside --bible, keyed by question and model, which enforce mode requires. Never filters or approves. Keep the set and the log local; they may
 hold a game's private art. See docs/generation-knobs.md.`,
   input: {
     type: "object",

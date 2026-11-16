@@ -909,11 +909,13 @@ export interface ThresholdRow {
  * Sweeps every threshold that separates the logged scores differently. It recommends, among the
  * thresholds whose false-accept rate (false accepts over the different-character cases, 0 with
  * none) is within `maxFalseAcceptRate`, the one with the fewest false rejects; ties go to the
- * lowest threshold. When none is within the bar, nothing is recommended.
+ * lowest threshold. `withinBar`, when given, must also hold at a threshold for it to count as
+ * within the bar (identity-eval uses it to judge every kind and cast, not only the overall rate).
+ * When none is within the bar, nothing is recommended.
  */
 export function sweepThresholds(
   cases: Array<{ score: number; same: boolean }>,
-  options: { maxFalseAcceptRate: number },
+  options: { maxFalseAcceptRate: number; withinBar?: (threshold: number) => boolean },
 ): {
   rows: ThresholdRow[];
   recommended?: ThresholdRow;
@@ -933,7 +935,9 @@ export function sweepThresholds(
   });
   const negatives = cases.filter((c) => !c.same).length;
   const within = rows.filter(
-    (r) => (negatives === 0 ? 0 : r.falseAccepts / negatives) <= options.maxFalseAcceptRate,
+    (r) =>
+      (negatives === 0 ? 0 : r.falseAccepts / negatives) <= options.maxFalseAcceptRate &&
+      (options.withinBar?.(r.threshold) ?? true),
   );
   const recommended = within.reduce<ThresholdRow | undefined>(
     (best, r) =>

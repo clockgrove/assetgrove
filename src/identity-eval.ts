@@ -432,8 +432,22 @@ export async function evaluateIdentity(options: {
   // 2D case recommends nothing.
   const basis = trusted.filter((r) => r.medium === "2d");
   const points = basis.map((r) => ({ score: r.score!.score!, same: r.same }));
+  const grouped = basis.map((r) => ({
+    score: r.score!.score!,
+    same: r.same,
+    kind: r.kind,
+    cast: r.cast,
+  }));
+  // A cut counts as within the bar only when the false-accept rate is within it in every group
+  // the bar report judges: overall, each kind and each cast.
   const { rows, recommended } = sweepThresholds(points, {
     maxFalseAcceptRate: IDENTITY_ENFORCE_BAR.falseAcceptRate,
+    withinBar: (threshold) => {
+      const b = breakdown(grouped, threshold);
+      return [b, ...Object.values(b.byKind), ...Object.values(b.byCast)].every(
+        (g) => g.falseAcceptRate <= IDENTITY_ENFORCE_BAR.falseAcceptRate,
+      );
+    },
   });
   const at = (threshold: number): ThresholdRow => {
     const falseRejects = points.filter((p) => p.same && p.score < threshold).length;
