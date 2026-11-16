@@ -1,5 +1,5 @@
 import { SearchError } from "./errors.ts";
-import type { FilterTerm } from "./store.ts";
+import type { FilterTerm, Scalar } from "./store.ts";
 
 export const FILTER_FIELDS = [
   "kind",
@@ -83,6 +83,16 @@ export function compileFilter(terms: FilterTerm[]): string | undefined {
           },
         );
       }
+      if (t.op === "in") {
+        if (isTags) {
+          throw new SearchError("invalid_input", "tags only supports the has operator.", {
+            details: { filter: t },
+          });
+        }
+        // An empty list keeps no row; SQL has no empty IN list.
+        if (t.value.length === 0) return `(${t.field} IS NULL AND ${t.field} IS NOT NULL)`;
+        return `${t.field} IN (${t.value.map((v) => literal(v, t)).join(", ")})`;
+      }
       const lit = literal(t.value, t);
       if (t.op === "has") {
         if (!isTags) {
@@ -101,4 +111,41 @@ export function compileFilter(terms: FilterTerm[]): string | undefined {
       return `${t.field} ${t.op} ${lit}`;
     })
     .join(" AND ");
+}
+
+/**
+ * The order `<` and `>` filters compare values in: numeric collation, so "2" comes before "10" and
+ * "v3" before "v10". It is core's `newer()` (src/library/write.ts), the order of the stale view.
+ */
+export function compareVersions(a: string, b: string): number {
+  return a.localeCompare(b, "en", { numeric: true });
+}
+
+/**
+ * Replaces each `<` and `>` term with `field IN (...)`: of the values `valuesOf` finds for that
+ * field, those before (`<`) or after (`>`) the term's value by `compareVersions`. SQL and
+ * JavaScript compare strings character by character, which puts "10" before "9".
+ */
+export async function resolveOrdered(
+  terms: FilterTerm[],
+  valuesOf: (field: string, others: FilterTerm[]) => Promise<Scalar[]>,
+): Promise<FilterTerm[]> {
+  const others = terms.filter((t) => t.op !== "<" && t.op !== ">");
+  const out: FilterTerm[] = [];
+  for (const t of terms) {
+    if (t.op !== "<" && t.op !== ">") {
+      out.push(t);
+      continue;
+    }
+    const sign = t.op === "<" ? -1 : 1;
+    const keep = [...new Set(await valuesOf(t.field, others))].filter(
+      (v) => Math.sign(compareVersions(String(v), String(t.value))) === sign,
+    );
+    out.push({
+      field: t.field,
+      op: "in",
+      value: keep.sort((a, b) => compareVersions(String(a), String(b))),
+    });
+  }
+  return out;
 }

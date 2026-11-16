@@ -29,7 +29,7 @@ Where the plan step of `plan`, `stage`, `apply` and `generate-sheet` looks for p
 
 ## The shared index
 
-With `search.store` in the settings, pick and reference rows go to the team's own bucket; candidate and folder rows stay in the local store, and a query searches both. Only the machine whose settings say `writer: true` builds it, and only from a clean HEAD. A shared index exposes embeddings to whoever can read the bucket. A reader whose HEAD differs from the shared index's `builtFrom` gets `fresh: false`.
+With `search.store` in the settings, pick and reference rows go to the team's own bucket; candidate and folder rows stay in the local store, and a query searches both. Only the machine whose settings say `writer: true` builds it, and only from a clean HEAD. A shared index exposes embeddings to whoever can read the bucket. A reader gets `fresh: false` when something the shared index holds (a file under the library root, the style bible or one of its references) changed between the shared index's `builtFrom` and its HEAD; a commit that touches only code leaves it fresh.
 
 ## Refusals
 

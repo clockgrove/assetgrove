@@ -48,8 +48,16 @@ import { assertSupportedPlatform } from "./platform.ts";
 import { ScriptedEmbedder } from "./scripted.ts";
 import { loadSiglip2 } from "./siglip2.ts";
 import { modelIsInstalled, setupModel } from "./setup.ts";
-import type { BuiltFrom, EmbedderRecord, FilterTerm, Hit, Store, StoreQuery } from "./store.ts";
-import { parseWhere } from "./where.ts";
+import type {
+  BuiltFrom,
+  EmbedderRecord,
+  FilterTerm,
+  Hit,
+  Scalar,
+  Store,
+  StoreQuery,
+} from "./store.ts";
+import { parseWhere, resolveOrdered } from "./where.ts";
 
 const embedders = new Map<string, Promise<Embedder>>();
 const stores = new Map<string, Promise<LanceStore>>();
@@ -250,6 +258,24 @@ async function localIndex(ctx: SearchContext, embedder: Embedder): Promise<Searc
   });
 }
 
+/**
+ * Whether a shared store is fresh for this work tree: built at its HEAD, or at a commit since which
+ * nothing it covers (the library root, the bible and its references) changed. A library that
+ * cannot answer `changedSince` leaves it fresh only at its build commit.
+ */
+async function sharedFresh(
+  built: BuiltFrom | undefined,
+  head: (() => Promise<string>) | undefined,
+  changedSince: ((commit: string) => Promise<boolean>) | undefined,
+): Promise<boolean> {
+  if (built === undefined) return false;
+  if (head !== undefined && built.head === (await head())) return true;
+  return changedSince !== undefined && !(await changedSince(built.head));
+}
+
+const changedSinceOf = (library: SearchLibrary) =>
+  library.changedSince && ((commit: string) => library.changedSince!(commit));
+
 const toHit = ({ row, score }: Hit, i: number): SearchHit => {
   const defined = (o: Record<string, unknown>) =>
     Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
@@ -321,14 +347,23 @@ export async function findWith(
     spends?: boolean;
     /** The work tree's commit, which a fresh shared store was built from. */
     head?: () => Promise<string>;
+    /** Whether anything the shared store covers changed since a commit; see `SearchLibrary`. */
+    changedSince?: (commit: string) => Promise<boolean>;
   },
 ): Promise<SearchFindResult> {
   const { embedder, local, remote } = o;
-  const filter: FilterTerm[] = parseWhere(q.where ?? []);
+  const terms: FilterTerm[] = parseWhere(q.where ?? []);
   const sources = q.sources ?? [];
+  // The requested sources filter in the store, so every ranking's pool is drawn from them.
   if (sources.length === 1) {
-    filter.push({ field: "source", op: "=", value: sources[0] as SearchSource });
+    terms.push({ field: "source", op: "=", value: sources[0] as SearchSource });
+  } else if (sources.length > 1) {
+    terms.push({ field: "source", op: "in", value: [...sources] });
   }
+  const scopes = [{ store: local.store, tree: local.tree }];
+  if (remote) scopes.push({ store: remote.store, tree: remote.tree });
+  const inScope = (f: FilterTerm[], tree: string): FilterTerm[] =>
+    q.allGames ? f : [...f, { field: "tree", op: "=", value: tree }];
   const refreshed = o.spends ? false : (await local.refresh()).fresh;
 
   const words = q.words?.trim() ?? "";
@@ -343,20 +378,32 @@ export async function findWith(
     );
   }
 
-  const within = (tree: string): FilterTerm[] =>
-    q.allGames ? filter : [...filter, { field: "tree", op: "=", value: tree }];
-  const searched = [{ store: local.store, filter: within(local.tree) }];
-  if (remote) searched.push({ store: remote.store, filter: within(remote.tree) });
-  let ranked = await rankAcross(searched, q, vectors);
-  if (sources.length > 1) ranked = ranked.filter((h) => sources.includes(h.row.source));
+  // `<` and `>` order values as versions ("2" before "10"), so each becomes an IN list of the
+  // values the rows in scope hold on the asked side.
+  const filter = await resolveOrdered(terms, async (field, others) => {
+    const values: Scalar[] = [];
+    for (const { store, tree } of scopes) {
+      const rows = await store.query({
+        filter: inScope(others, tree),
+        limit: Number.MAX_SAFE_INTEGER,
+      });
+      for (const { row } of rows) {
+        const v = (row as unknown as Record<string, unknown>)[field];
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean")
+          values.push(v);
+      }
+    }
+    return values;
+  });
+  const searched = scopes.map(({ store, tree }) => ({ store, filter: inScope(filter, tree) }));
+  const ranked = await rankAcross(searched, q, vectors);
 
   const hits = bestViewPerAsset(ranked).slice(0, q.limit).map(toHit);
   if (!remote) {
     return { hits, fresh: refreshed, builtFrom: (await local.store.builtFrom(local.tree)) ?? null };
   }
   const built = await remote.store.builtFrom(remote.tree);
-  const fresh =
-    refreshed && built !== undefined && o.head !== undefined && built.head === (await o.head());
+  const fresh = refreshed && (await sharedFresh(built, o.head, o.changedSince));
   return { hits, fresh, builtFrom: built ?? null };
 }
 
@@ -374,6 +421,7 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
     remote: remote && { store: remote, tree: await sharedTree(ctx) },
     spends,
     head: () => ctx.library.head(),
+    changedSince: changedSinceOf(ctx.library),
   });
 }
 
@@ -496,7 +544,11 @@ async function status(ctx: SearchContext): Promise<Record<string, unknown>> {
       writer: remoteSettings.writer,
       recordedEmbedder: (await remote.embedder()) ?? null,
       builtFrom: built,
-      fresh: built !== null && built.head === (await ctx.library.head()),
+      fresh: await sharedFresh(
+        built ?? undefined,
+        () => ctx.library.head(),
+        changedSinceOf(ctx.library),
+      ),
     };
   }
   return out;
@@ -612,7 +664,8 @@ export async function nearMatchesWith(
     return { hits, fresh: refreshed, builtFrom: (await local.store.builtFrom(local.tree)) ?? null };
   }
   const built = await remote.builtFrom(await sharedTree(ctx));
-  const fresh = refreshed && built !== undefined && built.head === (await ctx.library.head());
+  const fresh =
+    refreshed && (await sharedFresh(built, () => ctx.library.head(), changedSinceOf(ctx.library)));
   return { hits, fresh, builtFrom: built ?? null };
 }
 

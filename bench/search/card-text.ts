@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { PNG } from "pngjs";
 import type { ImageSource } from "./fetch.ts";
-import { containsStem, stem, type Manifest } from "./manifest.ts";
+import type { Manifest } from "./manifest.ts";
 
 export const CARD_PROMPT =
   "Describe this game asset image in one or two plain sentences for a searchable card: what it " +
@@ -100,7 +100,7 @@ export interface WriteOptions {
   force?: boolean;
   /** Called after each text is written, so a caller can save progress. */
   onWritten?: (image: Manifest["images"][number]) => Promise<void> | void;
-  /** Refuse to make more vision calls than this (retries count): a spend cap for the run. */
+  /** Refuse to make more vision calls than this: a spend cap for the run. */
   maxCalls?: number;
 }
 
@@ -119,17 +119,9 @@ export async function writeCardTexts(o: WriteOptions): Promise<number> {
   let written = 0;
   for (const image of o.manifest.images) {
     if (image.card && !o.force) continue;
-    let used = prompt;
-    let out = await call(image, used);
-    // A text that names its file would let search read the answer off the file name: ask once more.
-    if (containsStem(out.text, image.file)) {
-      used = `${prompt} Never write "${stem(image.file)}".`;
-      out = await call(image, used);
-    }
-    if (containsStem(out.text, image.file))
-      throw new Error(`${image.id}: the vision model wrote the file stem into the card text`);
-    const key = keyOf(used);
-    o.manifest.prompts[key] = used;
+    const out = await call(image, prompt);
+    const key = keyOf(prompt);
+    o.manifest.prompts[key] = prompt;
     image.card = {
       text: out.text,
       model: out.model,

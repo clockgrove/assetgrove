@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SearchError } from "../src/errors.ts";
 import { assertSupportedPlatform } from "../src/platform.ts";
-import { compileFilter, parseWhere } from "../src/where.ts";
+import { compileFilter, parseWhere, resolveOrdered } from "../src/where.ts";
+import { MemoryStore } from "../src/memory-store.ts";
 
 test("parseWhere reads each operator", () => {
   assert.deepEqual(parseWhere(["kind=model", "state!=draft", "id<5", "id>2"]), [
@@ -76,4 +77,55 @@ test("assertSupportedPlatform refuses only Intel Mac", () => {
   );
   assert.doesNotThrow(() => assertSupportedPlatform({ platform: "linux", arch: "x64" }));
   assert.doesNotThrow(() => assertSupportedPlatform({ platform: "darwin", arch: "arm64" }));
+});
+
+test("compileFilter emits IN for a list, and a term matching nothing for an empty one", () => {
+  assert.equal(
+    compileFilter([{ field: "source", op: "in", value: ["candidate", "folder"] }]),
+    "source IN ('candidate', 'folder')",
+  );
+  assert.equal(
+    compileFilter([{ field: "bible", op: "in", value: [] }]),
+    "(bible IS NULL AND bible IS NOT NULL)",
+  );
+  assert.throws(() => compileFilter([{ field: "tags", op: "in", value: ["a"] }]), {
+    code: "invalid_input",
+  });
+});
+
+test("the memory store matches in, and resolveOrdered orders values as versions", async () => {
+  const store = new MemoryStore();
+  const row = (key: string, source: "pick" | "candidate" | "folder", bible: string) => ({
+    key,
+    tree: "t",
+    id: key,
+    address: key,
+    source,
+    bible,
+    path: key,
+    sha256: key,
+  });
+  await store.upsert([row("a", "pick", "1"), row("b", "candidate", "2"), row("c", "folder", "10")]);
+  const keys = async (filter: Parameters<typeof store.query>[0]["filter"]) =>
+    (await store.query({ filter, limit: 10 })).map((h) => h.row.key);
+  assert.deepEqual(await keys([{ field: "source", op: "in", value: ["candidate", "folder"] }]), [
+    "b",
+    "c",
+  ]);
+  assert.deepEqual(await keys([{ field: "source", op: "in", value: [] }]), []);
+  const resolved = await resolveOrdered(
+    [
+      { field: "kind", op: "=", value: "k" },
+      { field: "bible", op: "<", value: "10" },
+    ],
+    async (field, others) => {
+      assert.equal(field, "bible");
+      assert.deepEqual(others, [{ field: "kind", op: "=", value: "k" }]);
+      return ["10", "9", "1", "2", "11", "9"];
+    },
+  );
+  assert.deepEqual(resolved, [
+    { field: "kind", op: "=", value: "k" },
+    { field: "bible", op: "in", value: ["1", "2", "9"] },
+  ]);
 });

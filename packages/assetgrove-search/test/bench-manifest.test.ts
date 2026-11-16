@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fixtureSource, buildFixtureManifest } from "../../../bench/search/fixture.ts";
-import { checkManifest, containsStem, readManifest } from "../../../bench/search/manifest.ts";
+import { checkManifest, readManifest } from "../../../bench/search/manifest.ts";
 import { buildManifest, parseInventory } from "../../../bench/search/build-manifest.ts";
 import { WRITTEN_QUERIES } from "../../../bench/search/queries.ts";
 import { stratifiedSample, type InventoryImage } from "../../../bench/search/sample.ts";
@@ -49,13 +49,12 @@ describe("manifest checks", () => {
     assert.match(problems, /16-px/);
   });
 
-  it("fails when a card text contains its image's file stem", async () => {
+  it("accepts a card text that says its image's file stem", async () => {
     const m = await readManifest(fixtureUrl);
     const first = m.images[0]!;
-    (first.card as { text: string }).text = `A knight, see characters_1 here`;
-    assert.match(checkManifest(m).join("\n"), /file stem/);
-    assert.equal(containsStem("a Tile-0042 photo", "tile_0042.png"), true);
-    assert.equal(containsStem("a tile", "tile_0042.png"), false);
+    first.file = "Bear.png";
+    (first.card as { text: string }).text = "A brown bear.";
+    assert.doesNotMatch(checkManifest(m).join("\n"), /stem/);
   });
 
   it("fails on a judgement that is not of a candidate, names no prompt or is not a probability", async () => {
@@ -120,10 +119,21 @@ describe("real manifest", () => {
       readFileSync(new URL("../../../bench/search/inventory-full.csv", import.meta.url), "utf8"),
     ).map((r) => r.path.split("/").pop()!);
     assert.ok(files.length > 1700);
+    const phrase = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+    const holdsStem = (text: string, file: string) => {
+      const stem = file.replace(/\.[^./]+$/, "");
+      // A one-word lower-case stem names a subject, which a truthful query may say.
+      if (/^\p{L}+$/u.test(stem) && stem === stem.toLowerCase()) return false;
+      return phrase(stem) !== "" && ` ${phrase(text)} `.includes(` ${phrase(stem)} `);
+    };
     const stems = new Set(files.map(words).filter((s) => s !== ""));
     for (const q of WRITTEN_QUERIES) {
       assert.equal(stems.has(words(q)), false, `"${q}" is a file name`);
-      for (const f of files) assert.equal(containsStem(q, f), false, `"${q}" holds ${f}`);
+      for (const f of files) assert.equal(holdsStem(q, f), false, `"${q}" holds ${f}`);
     }
   });
 });

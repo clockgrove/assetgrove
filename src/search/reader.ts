@@ -30,6 +30,7 @@ export type LibraryReader = SearchLibrary & {
   game: string;
   /** The bytes of a path the reader lists; undefined for any other path or an unreadable file. */
   loadImageByPath(path: string): Promise<Uint8Array | undefined>;
+  changedSince(commit: string): Promise<boolean>;
 };
 
 const slash = (path: string) => path.split(sep).join("/");
@@ -139,7 +140,8 @@ export async function createLibraryReader(options: {
     return out;
   }
 
-  function references(): SearchLibraryItem[] {
+  /** The bible's references inside the project, listed or not, each with its project path. */
+  function bibleRefs(): { path: string; abs: string; role: string; subject?: string }[] {
     const biblePath = join(project.dir, BIBLE_PATH);
     if (!existsSync(biblePath)) return [];
     let refs;
@@ -148,12 +150,17 @@ export async function createLibraryReader(options: {
     } catch {
       return [];
     }
+    return refs.flatMap((ref) => {
+      const abs = resolve(dirname(biblePath), ref.path);
+      return inside(project.dir, abs) ? [{ ...ref, abs, path: rel(abs) }] : [];
+    });
+  }
+
+  function references(): SearchLibraryItem[] {
     const out: SearchLibraryItem[] = [];
     const seen = new Set<string>();
-    for (const ref of refs) {
-      const abs = resolve(dirname(biblePath), ref.path);
-      if (!inside(project.dir, abs)) continue;
-      const path = rel(abs);
+    for (const ref of bibleRefs()) {
+      const { abs, path } = ref;
       if (seen.has(path)) continue;
       const item = base("reference", abs, path, path, `asset://${game}/references/${path}`);
       if (!item) continue;
@@ -244,6 +251,23 @@ export async function createLibraryReader(options: {
       const root = slash(relative(project.dir, project.library.root)) || ".";
       const r = git(project.dir, ["status", "--porcelain", "--untracked-files=all", "--", root]);
       return r.ok && r.out.trim() === "";
+    },
+    async changedSince(commit) {
+      // The shared index holds picks (under the library root) and the bible's references, so a
+      // commit touching anything else, such as code, leaves it as fresh as it was.
+      const head = git(project.dir, ["rev-parse", "HEAD"]);
+      if (!head.ok || commit === "") return true;
+      if (head.out.trim() === commit) return false;
+      const paths = new Set([
+        slash(relative(project.dir, project.library.root)) || ".",
+        BIBLE_PATH,
+        ...bibleRefs().map((r) => r.path),
+      ]);
+      const r = spawnSync("git", ["diff", "--quiet", commit, "HEAD", "--", ...paths], {
+        cwd: project.dir,
+      });
+      // 0: no difference; 1: a difference; anything else (an unknown commit): cannot tell.
+      return r.status !== 0;
     },
     async loadImageByPath(path) {
       try {
