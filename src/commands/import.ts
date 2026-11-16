@@ -145,6 +145,8 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
             lock.cast ? undefined : [lock.record.subject],
           )
         : {}),
+      // The recorded threshold decides which candidates enforce mode drops.
+      ...(lock?.recordPath !== undefined && { "lockBible/identity-thresholds": lock.recordPath }),
     },
     // The grouping proposal's prompt names the subject and carries the hints.
     promptText: args.noPropose ? [] : [args.subject, args.hints].filter((t) => t !== undefined),

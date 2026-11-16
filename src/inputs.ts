@@ -8,7 +8,12 @@ import {
 } from "./bible.ts";
 import { InputError } from "./errors.ts";
 import { readFormat } from "./formats.ts";
-import { identitySettings, identitySettingsFor, loadCast, loadIdentity } from "./identity.ts";
+import {
+  identitySettings,
+  identitySettingsWithRecord,
+  loadCast,
+  loadIdentity,
+} from "./identity.ts";
 import { readJson } from "./json.ts";
 import { parseDigitalSourceType } from "./metadata.ts";
 import type { DigitalSourceType } from "./metadata.ts";
@@ -88,6 +93,8 @@ export async function readModel(path: string): Promise<{ bytes: Uint8Array; path
 /**
  * The identity lock of `subject` from `--lock-bible`, with the run's identity settings
  * (`--identity-mode` over the profile's). Undefined when the subject has no lock or scoring is off.
+ * `recordPath` is the bible's identity-thresholds.json when its threshold is the one used, for the
+ * request to hash among its reads: a re-recorded threshold then changes the request.
  */
 export async function lockFor(
   lockBible: string | undefined,
@@ -105,11 +112,17 @@ export async function lockFor(
   const doc = await loadBible(lockBible);
   const loaded = await loadIdentity(doc, subject);
   if (!loaded) return undefined;
-  const settings = await identitySettingsFor(profile, identityMode, doc, routes);
+  const { settings, recordPath } = await identitySettingsWithRecord(
+    profile,
+    identityMode,
+    doc,
+    routes,
+  );
   if (settings.mode === "off") return undefined;
   return {
     ...loaded,
     settings,
+    ...(recordPath !== undefined && { recordPath }),
     ...(settings.question === "cast" && { cast: await loadCast(doc) }),
   };
 }

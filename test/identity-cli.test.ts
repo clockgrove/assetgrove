@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { syntheticProfile } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const exec = promisify(execFile);
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -515,4 +515,42 @@ test("identity-eval prints that none meets the bar when a different character sc
     result.stdout,
     /no threshold recommended: none meets the bar \(false-accept rate within the enforce bar\)/,
   );
+});
+
+test("import and generate-sheet hash the identity threshold record they filter at, so a re-recorded threshold is another request", async () => {
+  const f = await fixture();
+  const world = await syntheticWorld();
+  roots.push(world.dir);
+  const spec = join(world.dir, "spec.json");
+  const bible = join(world.bibleDir, "bible.json");
+  await writeFile(spec, JSON.stringify({ ...shelterSpec, subject: "bram" }));
+  await writeFile(bible, JSON.stringify(world.bible));
+  await writeFile(join(world.dir, "profile.json"), JSON.stringify(world.profile));
+  const lock = ["--lock-bible", f.bible, "--identity-mode", "enforce", "--dry-run", "--json"];
+  const requests = {
+    import: importArgs(f.root, "bram", lock),
+    "generate-sheet": [
+      CLI,
+      "generate-sheet",
+      ...["--spec", spec, "--bible", bible, "--profile", join(world.dir, "profile.json")],
+      ...["--provider-script", SCRIPT, ...lock],
+    ],
+  };
+  const digest = async (args: string[]) =>
+    (
+      JSON.parse((await exec(process.execPath, args, { env: env("1") })).stdout) as {
+        digest: string;
+      }
+    ).digest;
+  const first: Record<string, string> = {};
+  for (const [name, args] of Object.entries(requests)) {
+    first[name] = await digest(args);
+    assert.equal(await digest(args), first[name], name);
+  }
+  const path = join(f.bible, "..", "identity-thresholds.json");
+  const record = JSON.parse(await readFile(path, "utf8"));
+  record.entries[0].threshold = 0.9;
+  await writeFile(path, JSON.stringify(record));
+  for (const [name, args] of Object.entries(requests))
+    assert.notEqual(await digest(args), first[name], `${name}: a re-recorded threshold`);
 });

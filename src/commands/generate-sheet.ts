@@ -116,6 +116,8 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
             lock.cast ? undefined : [lock.record.subject],
           )
         : {}),
+      // The recorded threshold decides which candidates enforce mode drops.
+      ...(lock?.recordPath !== undefined && { "lockBible/identity-thresholds": lock.recordPath }),
     },
     promptText: [
       ...motionTemplates.flatMap((t) => motionLines(t, undefined)),
