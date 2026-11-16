@@ -551,6 +551,30 @@ test("a character with no nose: the locate call says so, and the groom check ask
   });
 });
 
+test("a character with no eyes: neither the groom check nor the catch-light check asks for them", async () => {
+  const w = await world();
+  const input = await riggedModel(w);
+  const r = await cli(lookDevArgs(w, input), {
+    SCRIPT_LOOKDEV_EYES: JSON.stringify({
+      has: { eyes: false, nose: true, pawPads: true },
+      eyes: [],
+      nose: { x: 255, y: 240, r: 12 },
+    }),
+  });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const c = doc(r)["candidates"][0];
+  const checks = checksOf(c);
+  for (const season of ["summer", "winter"]) {
+    const check = checks[`groom-${season}-masks`]!;
+    assert.equal(check.passed, true, check.reason);
+    assert.match(check.reason, /eyes: absent \(the locate call says the character has none\)/);
+  }
+  const light = checks["eyes-catch-light"]!;
+  assert.equal(light.passed, true, light.reason);
+  assert.match(light.reason, /^eyes: absent/);
+  assert.equal(c.provenance.parameters.lookdev.parts.eyes, "absent");
+});
+
 test("a profile with no rig template runs without the paw-pad requirement, decided from the profile", async () => {
   const w = await world();
   const input = await riggedModel(w);

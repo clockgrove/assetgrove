@@ -1452,10 +1452,15 @@ export async function lookDev(
     lighting,
   });
   const light = catchLight(eyesClose, closeUp(0), markers.eyes);
+  // A character the locate call says has no eyes (a robot with a visor) has no eye material to
+  // light: recorded as absent, not as a failure, like its groom mask.
   reasons.push({
     check: "eyes-catch-light",
-    passed: eyeTriangles > 0 && light.found,
+    passed: parts.eyes === "absent" || (eyeTriangles > 0 && light.found),
     reason:
+      (parts.eyes === "absent"
+        ? "eyes: absent (the locate call says the character has none), no eye material or catch-light required; "
+        : "") +
       `${markers.eyes.length} eye(s) located, ${eyeTriangles} triangle(s) in the "${EYE_MATERIAL}" material; ` +
       `catch-light in ${light.eyes} of ${markers.eyes.length} eye(s) of the close-up at the closest zoom ` +
       `(peak luminance ${light.peak}; the catch-light is the eye material's emissive texture, the base colour has none)`,
