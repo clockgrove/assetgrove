@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as asn1js from "asn1js";
 import * as pkijs from "pkijs";
+import "./pure-cbor.ts";
 import { Algorithms, Headers, ProtectedHeaders, Sign1 } from "@auth0/cose";
 import { initSync, WasmBuilder, WasmReader } from "@contentauth/c2pa-wasm";
 import type { DigitalSourceType } from "./metadata.ts";
