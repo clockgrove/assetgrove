@@ -14,6 +14,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pickCommand } from "../src/commands/pick.ts";
 import { requestChangeCommand } from "../src/commands/request-change.ts";
+import { reviewCommand } from "../src/commands/review.ts";
 import { stageCommand } from "../src/commands/stage.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import type { RunContext } from "../src/commands/types.ts";
@@ -468,6 +469,77 @@ test("a frame region edits only that frame, through fix-frame's path", async () 
     assert.notDeepEqual(frameOf(after, 2), frameOf(strip, 2), "frame 3 changed");
     assert.equal(typeof f.candidates[0].outsideChange, "number");
     assert.ok(existsSync(join(f.runDir, "compare.png")));
+  });
+});
+
+test("a frame region beyond the strip exits 2 before confirmation and records nothing", async () => {
+  const strip = createRaster(128, 32);
+  for (let i = 0; i < 4; i++)
+    for (let y = 12; y < 30; y++)
+      for (let x = i * 32 + 10; x < i * 32 + 20; x++) setPixel(strip, x, y, [90, 90, 140, 255]);
+  const p = await project(
+    { kind: "sprite-strip", assetId: "walker", animationFamily: "walk" },
+    strip,
+  );
+  const s = await script(p.dir);
+  useAttended();
+  const asked: ConfirmRequest[] = [];
+  const port: ConfirmPort = {
+    method: "tty",
+    confirm: async (request) => {
+      asked.push(request);
+      return true;
+    },
+  };
+  const before = await readFile(p.review, "utf8");
+  await inProject(p.dir, async () => {
+    const done = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,16,16 frame 9 : raise the paw"],
+        candidates: 1,
+        runs: p.runs,
+        providerScript: s.path,
+      },
+      context(port),
+    );
+    assert.equal(done.exitCode, 2);
+    assert.match(done.error?.message ?? "", /frame 9 is not in the strip, which has 4 frames/);
+    assert.equal(asked.length, 0, "no spend confirmation");
+    assert.equal((await s.calls()).length, 0);
+    assert.equal(await readFile(p.review, "utf8"), before, "no editing annotation");
+    assert.equal(existsSync(join(p.dir, "assets", "walker.review")), false);
+  });
+});
+
+test("a request on an assessed version reports the version's derived state", async () => {
+  const p = await project();
+  const s = await script(p.dir);
+  await inProject(p.dir, async () => {
+    const rejected = await runCommand(
+      reviewCommand,
+      { address: p.card, reject: "too dim" },
+      context(),
+    );
+    assert.equal(rejected.exitCode, 0, rejected.error?.message);
+    const done = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,10,10 : the glass redder"],
+        candidates: 1,
+        runs: p.runs,
+        providerScript: s.path,
+      },
+      context(),
+    );
+    assert.equal(done.exitCode, 0, done.error?.message);
+    const record = parseReview(await readFile(p.review, "utf8"), p.review);
+    const status = versionStatus(record, record.versions[0]!.sha256);
+    assert.equal(status, "rejected", "the latest assessment decides");
+    assert.equal(done.fields["state"], status);
+    assert.match(done.human ?? "", /\(rejected\)/);
   });
 });
 

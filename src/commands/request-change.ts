@@ -38,8 +38,8 @@ import { loadAsset, locateAsset, withLibraryLock, writeAsset } from "../library/
 import type { LoadedAsset } from "../library/actions.ts";
 import { sha256Hex } from "../library/canonical.ts";
 import { parseLfsPointer } from "../library/lfs.ts";
-import { appendAnnotation } from "../library/review.ts";
-import type { Annotation, AnnotationInput, Version } from "../library/review.ts";
+import { appendAnnotation, versionStatus } from "../library/review.ts";
+import type { Annotation, AnnotationInput, Version, VersionStatus } from "../library/review.ts";
 import { AssetIdError, writeAtomic } from "../library/write.ts";
 import { planStage, readRun, stage, writeRun } from "../loop.ts";
 import type { RunRecord, StagedCandidate } from "../loop.ts";
@@ -144,6 +144,33 @@ function jobKind(regions: readonly Region[], is3d: boolean): "still" | "frame" |
 }
 
 /** The plan step: the asset, its version, the regions, the job and the WorkPlan; no call made. */
+/**
+ * Checks each frame region's `frame N` against the strip before any confirmation, as fix-frame
+ * would after it: the strip must be a row of the profile's frames, with N among them and a
+ * neighbour frame to copy from.
+ */
+function checkFrames(
+  frames: ReadonlySet<number>,
+  size: { width: number; height: number } | undefined,
+  frame: { width: number; height: number },
+): void {
+  if (
+    size === undefined ||
+    frame.width < 1 ||
+    size.height !== frame.height ||
+    size.width % frame.width !== 0
+  )
+    throw new InputError(
+      `a frame region needs a strip of ${frame.width}x${frame.height} frames${size ? `, not a ${size.width}x${size.height} image` : ""}`,
+    );
+  const count = size.width / frame.width;
+  if (count < 2)
+    throw new InputError("a frame region needs a strip of at least two frames, one to copy from");
+  for (const f of frames)
+    if (!Number.isInteger(f) || f < 1 || f > count)
+      throw new InputError(`frame ${f} is not in the strip, which has ${count} frames`);
+}
+
 async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   const candidates = args.candidates ?? DEFAULT_CHANGE_CANDIDATES;
   if (!Number.isInteger(candidates) || candidates < 1)
@@ -194,6 +221,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     if (!route) throw new InputError('no model route for operation "edit"');
     const frames = new Set(regions.flatMap((r) => (r.frame !== undefined ? [r.frame] : [])));
     if (kind === "frame") {
+      checkFrames(frames, imageSize(bytes), profileFrame(source.profile));
       jobs = [jobOf("edit", route, candidates * frames.size)];
       job = "fix-frame";
     } else {
@@ -298,7 +326,7 @@ async function recordRequests(
     source: RunRecord;
   },
   runId: string,
-): Promise<{ annotations: Annotation[]; files: string[] }> {
+): Promise<{ annotations: Annotation[]; files: string[]; state: VersionStatus }> {
   const location = locateAsset(args.address);
   return withLibraryLock(location, ctx.settings.stateDir, async () => {
     const asset = await loadAsset(location);
@@ -311,7 +339,8 @@ async function recordRequests(
     const own = asset.record.annotations.filter(
       (a) => a.motivation === "editing" && (a as Record<string, unknown>)["ag:run"] === runId,
     );
-    if (own.length > 0) return { annotations: own, files: [] };
+    if (own.length > 0)
+      return { annotations: own, files: [], state: versionStatus(asset.record, current.sha256) };
     const files: string[] = [];
     const created = new Date().toISOString();
     let record = asset.record;
@@ -354,7 +383,7 @@ async function recordRequests(
     }
     const written = await writeAsset(asset, record);
     const annotations = record.annotations.filter((a) => ids.includes(a.id));
-    return { annotations, files: [...files, ...written.files] };
+    return { annotations, files: [...files, ...written.files], state: written.state };
   });
 }
 
@@ -739,7 +768,7 @@ version is appended with answers naming the requests. The run that made the asse
       runDir: dir,
       asset: asset.assetId,
       version: version.sha256,
-      state: "changes-requested",
+      state: recorded.state,
       job,
       requests: recorded.annotations.map((a) => ({
         id: a.id,
@@ -762,7 +791,7 @@ version is appended with answers naming the requests. The run that made the asse
     };
     const human = [
       `${run.candidates.length} of ${candidates} candidate(s) for ${asset.assetId} (${job}), $${run.spentUsd.toFixed(4)} spent`,
-      `requests ${answers.join(", ")} on version ${asset.record.versions.length} (changes-requested)`,
+      `requests ${answers.join(", ")} on version ${asset.record.versions.length} (${recorded.state})`,
       ...fields.candidates.map(
         (c) =>
           `  ${c.file}${"outsideChange" in c ? `  outsideChange ${String(c.outsideChange)}` : ""}`,
