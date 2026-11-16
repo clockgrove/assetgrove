@@ -7,6 +7,7 @@ import type {
   CallKind,
   DecisionQuestion,
   DecisionResult,
+  EmbedResult,
   GenerationProvider,
   ImageInput,
   ModelResult,
@@ -302,6 +303,53 @@ export class Caller {
         });
       },
     );
+  }
+
+  /**
+   * One embedding of an image or a text on the operation's route (design section 7.7), at
+   * `dimensions` wide. An image's journal key is its sha256, a text's its own text, so a resumed
+   * run pays for neither twice.
+   */
+  async embed(
+    operation: string,
+    input: { image: LoadedReference } | { text: string },
+    dimensions: number,
+  ): Promise<number[]> {
+    const route = this.route(operation);
+    const images = "image" in input ? [input.image] : [];
+    const prompt = "text" in input ? input.text : "";
+    const parameters: Record<string, unknown> = {
+      dimensions,
+      input: "image" in input ? "image" : "text",
+      ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
+      ...("image" in input && { image: { path: input.image.path, sha256: input.image.sha256 } }),
+    };
+    const result: EmbedResult = await this.record(
+      "embed",
+      operation,
+      prompt,
+      images,
+      parameters,
+      undefined,
+      (r, provider) => {
+        const embed = provider.embed?.bind(provider);
+        if (!embed) throw new ProviderError(`the provider cannot embed (${operation})`);
+        return embed({
+          model: r.model,
+          input:
+            "image" in input
+              ? { image: { mediaType: input.image.mediaType, bytes: input.image.bytes } }
+              : { text: input.text },
+          dimensions,
+          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+        });
+      },
+    );
+    if (result.vector.length !== dimensions)
+      throw new ProviderError(
+        `the ${operation} call returned ${result.vector.length} dimensions, not ${dimensions}; route it to a model that gives ${dimensions}`,
+      );
+    return result.vector;
   }
 
   /** A vision-model analysis of images; returns the model's text. */

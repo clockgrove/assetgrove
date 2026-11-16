@@ -5,7 +5,7 @@
  */
 import type { Embedder } from "./embedder.ts";
 import { itemMeta, itemText, sha256Hex, type Library, type LibraryItem } from "./library.ts";
-import type { CachedVector, Row, SourceRow, Store } from "./store.ts";
+import type { CachedVector, EmbedderRecord, Row, SourceRow, Store } from "./store.ts";
 
 /** The `view` under which a text's vector is cached. */
 export const TEXT_VIEW = "#text";
@@ -27,6 +27,14 @@ export interface RefreshOptions {
   tree: string;
   onProgress?: (done: number, total: number) => void;
 }
+
+export const embedderRecord = (e: Embedder): EmbedderRecord => ({
+  id: e.id,
+  revision: e.revision,
+  ...(e.route !== undefined && { route: e.route }),
+  ...(e.model !== undefined && { model: e.model }),
+  dimension: e.dimension,
+});
 
 export const embedderKey = (e: Embedder): string => `${e.id}@${e.revision}`;
 
@@ -60,7 +68,72 @@ export async function refreshTree(o: RefreshOptions): Promise<RefreshStats> {
     const head = (await library.head?.()) ?? "";
     await store.recordBuiltFrom(tree, { head, at: new Date().toISOString() });
   }
+  if (!(await store.embedder())) await store.recordEmbedder(embedderRecord(o.embedder));
   return stats;
+}
+
+export interface PendingWork {
+  images: number;
+  texts: number;
+  /** sha256 hex over the stale items, the removed paths and the embedder key. */
+  fingerprint: string;
+}
+
+/**
+ * What `refreshTree` would embed, decided the same way and without embedding or writing: stale
+ * items are loaded and hashed, touched-but-identical ones skipped, and content already in the
+ * vector cache or shared within the pending work counted once or not at all. With `rebuild`
+ * the tree's rows are taken as gone, so every item is stale; the vector cache still answers.
+ */
+export async function pendingWork(o: {
+  store: Store;
+  embedder: Embedder;
+  library: Library;
+  tree: string;
+  rebuild?: boolean;
+}): Promise<PendingWork> {
+  const { store, library, tree } = o;
+  const ek = embedderKey(o.embedder);
+  const items = await library.list();
+  const known = new Map((o.rebuild ? [] : await store.sources(tree)).map((s) => [s.path, s]));
+  const listed = new Set(items.map((i) => i.path));
+  const gone = [...known.keys()].filter((p) => !listed.has(p)).sort();
+  const stale = items.filter((item) => {
+    const s = known.get(item.path);
+    return !s || s.size !== item.size || s.mtimeMs !== item.mtimeMs || s.meta !== itemMeta(item);
+  });
+
+  const wanted = new Map<string, { sha256: string; view: string; image: boolean }>();
+  const changed: string[][] = [];
+  for (const item of stale) {
+    const loaded = await library.load(item);
+    const sha256 = sha256Hex(loaded.bytes);
+    const meta = itemMeta(item);
+    const was = known.get(item.path);
+    changed.push([item.path, String(item.size), String(item.mtimeMs), meta]);
+    if (was && was.sha256 === sha256 && was.meta === meta) continue;
+    for (const v of loaded.views) {
+      wanted.set(vecKey(sha256, v.view), { sha256, view: v.view, image: true });
+    }
+    const text = itemText(item);
+    wanted.set(vecKey(sha256Hex(text), TEXT_VIEW), {
+      sha256: sha256Hex(text),
+      view: TEXT_VIEW,
+      image: false,
+    });
+  }
+  const cached = new Set(
+    (await store.cachedVectors(ek, [...wanted.values()])).map((c) => vecKey(c.sha256, c.view)),
+  );
+  const missing = [...wanted.entries()].filter(([k]) => !cached.has(k)).map(([, v]) => v);
+  const fingerprint = sha256Hex(
+    JSON.stringify({ changed: changed.sort(), gone, embedder: ek, rebuild: o.rebuild ?? false }),
+  );
+  return {
+    images: missing.filter((m) => m.image).length,
+    texts: missing.filter((m) => !m.image).length,
+    fingerprint,
+  };
 }
 
 async function refreshBatch(

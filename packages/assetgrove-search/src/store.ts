@@ -76,7 +76,19 @@ export interface CachedVector {
   vec: Float32Array;
 }
 
+/** What made an index's vectors; one per store. */
+export interface EmbedderRecord {
+  id: string;
+  revision: string;
+  route?: string;
+  model?: string;
+  dimension: number;
+}
+
 export interface Store {
+  /** The embedder that made this store's vectors, or undefined before its first write. */
+  embedder(): Promise<EmbedderRecord | undefined>;
+  recordEmbedder(record: EmbedderRecord): Promise<void>;
   upsert(rows: Row[]): Promise<void>;
   remove(keys: string[]): Promise<void>;
   /** Removes every row of these paths in one tree. */

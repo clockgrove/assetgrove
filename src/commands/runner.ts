@@ -167,7 +167,11 @@ export async function runCommand(spec: CommandSpec, args: Args, ctx: RunContext)
     if (spec.tool !== null && GUARDED_TARGETS.has(spec.tool) && typeof args["target"] === "string")
       checkTrackedKeys(args["target"], guard);
     const logged: RunContext = { ...ctx, log: (message) => ctx.log(redact(message)) };
-    if (spec.plan !== undefined && args["dryRun"] !== true)
+    if (
+      spec.plan !== undefined &&
+      args["dryRun"] !== true &&
+      (spec.planned?.(args, logged) ?? true)
+    )
       return await planned(spec, args, logged);
     return await spec.run(args, logged);
   } catch (error) {

@@ -10,6 +10,7 @@ import type {
   Extension,
   SearchContext,
   SearchFindResult,
+  SearchForecast,
   SearchHit,
   SearchLibrary,
   SearchQuery,
@@ -20,16 +21,23 @@ import type {
 import type { Embedder } from "./embedder.ts";
 import { SearchError } from "./errors.ts";
 import { bestViewPerAsset, rrf, SearchIndex } from "./find.ts";
-import { refreshTree, type RefreshStats } from "./indexer.ts";
+import {
+  embedderRecord,
+  pendingWork,
+  refreshTree,
+  type PendingWork,
+  type RefreshStats,
+} from "./indexer.ts";
 import { LanceStore } from "./lance-store.ts";
 import { sha256Hex, type Library } from "./library.ts";
 import { acquireWriteLock } from "./lock.ts";
+import { RouteEmbedder } from "./route-embedder.ts";
 import { MODEL_MANIFEST } from "./model-manifest.ts";
 import { assertSupportedPlatform } from "./platform.ts";
 import { ScriptedEmbedder } from "./scripted.ts";
 import { loadSiglip2 } from "./siglip2.ts";
 import { modelIsInstalled, setupModel } from "./setup.ts";
-import type { BuiltFrom, FilterTerm, Hit, Store } from "./store.ts";
+import type { BuiltFrom, EmbedderRecord, FilterTerm, Hit, Store } from "./store.ts";
 import { parseWhere } from "./where.ts";
 
 const embedders = new Map<string, Promise<Embedder>>();
@@ -39,6 +47,19 @@ const modelsDir = (ctx: SearchContext): string => join(ctx.stateDir, "models");
 const localDir = (ctx: SearchContext): string => join(ctx.stateDir, "search");
 
 function embedderFor(ctx: SearchContext): Promise<Embedder> {
+  if (ctx.settings.embedder === "route") {
+    if (!ctx.embedder) {
+      return Promise.reject(
+        new SearchError(
+          "settings_invalid",
+          'search.embedder is "route" but no embeddings route resolved.',
+          { hint: "Give the embeddings role a provider and model in the developer settings." },
+        ),
+      );
+    }
+    // Never cached: the port differs per call, a paid run's carrying `embed`.
+    return Promise.resolve(new RouteEmbedder(ctx.embedder));
+  }
   const key = `${ctx.settings.embedder}\0${modelsDir(ctx)}`;
   let p = embedders.get(key);
   if (!p) {
@@ -67,6 +88,29 @@ async function closeCached(key: string): Promise<void> {
   stores.delete(key);
   if (p) (await p.catch(() => undefined))?.close();
 }
+
+const sameEmbedder = (a: EmbedderRecord, b: EmbedderRecord): boolean =>
+  a.id === b.id && a.revision === b.revision && a.route === b.route && a.model === b.model;
+
+const embedderLabel = (r: Pick<EmbedderRecord, "id" | "revision" | "route" | "model">): string =>
+  r.route !== undefined ? `${r.id} ${r.route}/${r.model}` : `${r.id}@${r.revision}`;
+
+/** One embedder per index: a store built by another embedder is rebuilt, never mixed. */
+async function assertSameEmbedder(store: Store, embedder: Embedder, where: string): Promise<void> {
+  const built = await store.embedder();
+  const current = embedderRecord(embedder);
+  if (!built || sameEmbedder(built, current)) return;
+  throw new SearchError(
+    "embedder_changed",
+    `The index at ${where} was built by ${embedderLabel(built)} and this request uses ${embedderLabel(current)}. Run \`assetgrove search index --rebuild\` to rebuild it under the new embedder.`,
+    {
+      hint: "Run `assetgrove search index --rebuild` to rebuild it under the new embedder.",
+      details: { built, current },
+    },
+  );
+}
+
+const remoteWhere = (ctx: SearchContext): string => (ctx.settings.store as SearchStoreSettings).uri;
 
 /** Per URI scheme, each credential field and the object-store key Lance is handed it under. */
 const CREDENTIAL_KEYS: Record<string, { field: CredentialField; key: string; optional?: true }[]> =
@@ -178,6 +222,9 @@ function adapt(
 const REMOTE_SOURCES = ["pick", "reference"] as const;
 const LOCAL_WITH_REMOTE = ["candidate", "folder"] as const;
 
+const localLibrary = (ctx: SearchContext): Library =>
+  adapt(ctx.library, ctx.settings.store ? LOCAL_WITH_REMOTE : undefined, ctx.settings.candidates);
+
 async function localIndex(ctx: SearchContext, embedder: Embedder): Promise<SearchIndex> {
   const dir = localDir(ctx);
   const store = await openCached(`local\0${dir}\0${embedder.id}@${embedder.revision}`, () =>
@@ -188,11 +235,7 @@ async function localIndex(ctx: SearchContext, embedder: Embedder): Promise<Searc
     embedder,
     store,
     worktree: ctx.worktree,
-    library: adapt(
-      ctx.library,
-      ctx.settings.store ? LOCAL_WITH_REMOTE : undefined,
-      ctx.settings.candidates,
-    ),
+    library: localLibrary(ctx),
   });
 }
 
@@ -275,7 +318,11 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
   const embedder = await embedderFor(ctx);
   const local = await localIndex(ctx, embedder);
   const remote = ctx.settings.store ? await openRemote(ctx, embedder) : undefined;
-  const { fresh: refreshed } = await local.refresh();
+  await assertSameEmbedder(local.store, embedder, localDir(ctx));
+  if (remote) await assertSameEmbedder(remote, embedder, remoteWhere(ctx));
+  // A hosted embedder spends, so without its paid-run port a read answers from stored vectors.
+  const spends = ctx.settings.embedder === "route" && !ctx.embedder?.embed;
+  const refreshed = spends ? false : (await local.refresh()).fresh;
 
   const words = q.words?.trim() ?? "";
   const vectors: { words?: Float32Array; like?: Float32Array } = {};
@@ -331,11 +378,14 @@ async function index(
     await closeCached(`local\0${localDir(ctx)}\0${embedder.id}@${embedder.revision}`);
     const dir = localDir(ctx);
     const names = await readdir(dir).catch(() => [] as string[]);
-    for (const n of names.filter((n) => n.endsWith(".lance"))) {
+    // `vectors.lance` is the content cache: a rebuild pays nothing twice for content it holds.
+    for (const n of names.filter((n) => n.endsWith(".lance") && n !== "vectors.lance")) {
       await rm(join(dir, n), { recursive: true, force: true });
     }
   }
   const local = await localIndex(ctx, embedder);
+  if (options.rebuild) await local.store.recordEmbedder(embedderRecord(embedder));
+  else await assertSameEmbedder(local.store, embedder, localDir(ctx));
   const result: Record<string, unknown> = { local: await local.index() };
   if (!remoteSettings) return result;
   if (!remoteSettings.writer) {
@@ -343,6 +393,8 @@ async function index(
   }
   const remote = await openRemote(ctx, embedder);
   const tree = await sharedTree(ctx);
+  if (options.rebuild) await remote.recordEmbedder(embedderRecord(embedder));
+  else await assertSameEmbedder(remote, embedder, remoteSettings.uri);
   const lock = await acquireWriteLock(remoteLockDir(ctx, remoteSettings.uri));
   try {
     const stats: RefreshStats = await refreshTree({
@@ -365,10 +417,9 @@ async function status(ctx: SearchContext): Promise<Record<string, unknown>> {
   const embedder = await embedderStatus(ctx);
   const out: Record<string, unknown> = {
     store: localDir(ctx),
-    embedder: { id: embedder.id, revision: embedder.revision },
+    embedder,
     model: {
-      installed:
-        ctx.settings.embedder === "scripted" ? true : await modelIsInstalled(modelsDir(ctx)),
+      installed: ctx.settings.embedder === "local" ? await modelIsInstalled(modelsDir(ctx)) : true,
     },
   };
   if (ctx.settings.embedder === "local" && !(out.model as { installed: boolean }).installed) {
@@ -376,6 +427,7 @@ async function status(ctx: SearchContext): Promise<Record<string, unknown>> {
   }
   const real = await embedderFor(ctx);
   const local = await localIndex(ctx, real);
+  out.recordedEmbedder = (await local.store.embedder()) ?? null;
   out.files = (await local.store.sources(local.tree)).length;
   out.builtFrom = (await local.store.builtFrom(local.tree)) ?? null;
   const remoteSettings = ctx.settings.store;
@@ -385,6 +437,7 @@ async function status(ctx: SearchContext): Promise<Record<string, unknown>> {
     out.remote = {
       uri: remoteSettings.uri,
       writer: remoteSettings.writer,
+      recordedEmbedder: (await remote.embedder()) ?? null,
       builtFrom: built,
       fresh: built !== null && built.head === (await ctx.library.head()),
     };
@@ -393,18 +446,84 @@ async function status(ctx: SearchContext): Promise<Record<string, unknown>> {
 }
 
 /** The embedder's identity without loading a model. */
-async function embedderStatus(ctx: SearchContext): Promise<{ id: string; revision: string }> {
-  if (ctx.settings.embedder === "scripted") return new ScriptedEmbedder();
+async function embedderStatus(
+  ctx: SearchContext,
+): Promise<Pick<EmbedderRecord, "id" | "revision" | "route" | "model">> {
+  if (ctx.settings.embedder === "scripted") {
+    const { id, revision } = new ScriptedEmbedder();
+    return { id, revision };
+  }
+  if (ctx.settings.embedder === "route") {
+    const { id, revision, route, model } = await embedderFor(ctx);
+    return { id, revision, route, model };
+  }
   return { id: MODEL_MANIFEST.id, revision: MODEL_MANIFEST.revision };
 }
 
 async function setup(ctx: SearchContext): Promise<Record<string, unknown>> {
   if (ctx.settings.embedder === "scripted") return { model: "scripted", installed: true };
+  if (ctx.settings.embedder === "route") return { model: "route", installed: true };
   const { dir } = await setupModel({ modelsDir: modelsDir(ctx), onProgress: ctx.log });
   return { dir, model: MODEL_MANIFEST.id, installed: true };
 }
 
-export const searchSlot: SearchSlot = { find, index, status, setup };
+const sumPending = (a: PendingWork, b: PendingWork): PendingWork => ({
+  images: a.images + b.images,
+  texts: a.texts + b.texts,
+  fingerprint: `${a.fingerprint}${b.fingerprint}`,
+});
+
+/** What a request would embed, counted without embedding, writing or calling the port. */
+async function forecast(
+  request: { index: { rebuild?: boolean } } | { find: SearchQuery },
+  ctx: SearchContext,
+): Promise<SearchForecast> {
+  const embedder = await embedderFor(ctx);
+  const rebuild = "index" in request ? request.index.rebuild === true : false;
+  const local = await localIndex(ctx, embedder);
+  if (!rebuild) await assertSameEmbedder(local.store, embedder, localDir(ctx));
+  let pending = await pendingWork({
+    store: local.store,
+    embedder,
+    library: localLibrary(ctx),
+    tree: local.tree,
+    rebuild,
+  });
+  let queries = 0;
+  let query = "";
+  if ("index" in request) {
+    const remoteSettings = ctx.settings.store;
+    if (remoteSettings?.writer) {
+      const remote = await openRemote(ctx, embedder);
+      if (!rebuild) await assertSameEmbedder(remote, embedder, remoteSettings.uri);
+      pending = sumPending(
+        pending,
+        await pendingWork({
+          store: remote,
+          embedder,
+          library: adapt(ctx.library, REMOTE_SOURCES),
+          tree: await sharedTree(ctx),
+        }),
+      );
+    }
+  } else {
+    const q = request.find;
+    if (ctx.settings.store) {
+      await assertSameEmbedder(await openRemote(ctx, embedder), embedder, remoteWhere(ctx));
+    }
+    const words = q.words?.trim() ?? "";
+    if (words !== "") queries++;
+    if (q.like && "image" in q.like) queries++;
+    query = JSON.stringify({
+      words,
+      like: q.like && ("image" in q.like ? sha256Hex(q.like.image) : q.like.address),
+    });
+  }
+  const state = sha256Hex(JSON.stringify({ pending: pending.fingerprint, query }));
+  return { images: pending.images, texts: pending.texts, queries, state };
+}
+
+export const searchSlot: SearchSlot = { find, index, status, setup, forecast };
 
 /** Core's entry: refuses on darwin-x64 before LanceDB or Transformers.js is imported. */
 export default function searchExtension(_context: { api: 1 }): Extension {

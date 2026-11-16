@@ -27,7 +27,12 @@ import {
 import type { Route } from "../routes.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
-export type Capability = "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate";
+/**
+ * What an adapter's providers can serve. `embed` means images and text embedded in one vector
+ * space (design section 7.7): an adapter that embeds only one of them does not declare it.
+ */
+export type Capability =
+  "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate" | "embed";
 
 /** What an adapter is given to make one provider instance. */
 export interface AdapterContext {
@@ -68,7 +73,7 @@ function billingFrom(c: AdapterContext): Pick<Billing, "providerId" | "limit"> {
 
 export const gatewayAdapter: ProviderAdapter = {
   id: "vercel-ai-gateway",
-  capabilities: ["image", "edit", "vision", "decide"],
+  capabilities: ["image", "edit", "vision", "decide", "embed"],
   defaultKeyEnv: "AI_GATEWAY_API_KEY",
   fixedHosts: [new URL(VercelGateway.defaultBaseURL).host],
   endpointFromSettings: true,
@@ -188,7 +193,7 @@ const NO_SCRIPT: Script = {
 
 export const scriptedAdapter: ProviderAdapter = {
   id: "scripted",
-  capabilities: ["image", "edit", "vision", "decide", "model", "rig", "animate"],
+  capabilities: ["image", "edit", "vision", "decide", "model", "rig", "animate", "embed"],
   fixedHosts: [],
   endpointFromSettings: false,
   defaultRoutes,

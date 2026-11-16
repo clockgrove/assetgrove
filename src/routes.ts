@@ -13,6 +13,11 @@ export const LOOKDEV_LOCATE_OPERATION = "lookdev-locate";
 export const LOOKDEV_GROOM_OPERATION = "lookdev-groom";
 export const LOOKDEV_MARKINGS_OPERATION = "lookdev-markings";
 export const IDENTITY_CHECK_OPERATION = "identity-check";
+/**
+ * Hosted search embeddings (design section 7.7): one operation for images and texts alike, so both
+ * always land in one model's space. No adapter routes it by default: the `embeddings` role does.
+ */
+export const EMBED_OPERATION = "embed";
 /** The prompt policy's model check: one Boolean decision on a request's prompt text. */
 export const PROMPT_POLICY_OPERATION = "prompt-policy";
 
@@ -390,6 +395,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   model3d: "model3d",
   rig3d: "rig3d",
   clips3d: "clips3d",
+  [EMBED_OPERATION]: "embeddings",
 };
 
 /** The adapter capability each role needs. */
@@ -402,6 +408,7 @@ export const ROLE_CAPABILITY: Readonly<Record<string, string>> = {
   model3d: "model",
   rig3d: "rig",
   clips3d: "animate",
+  embeddings: "embed",
 };
 
 /** The role of an operation; undefined for an operation outside the table. */

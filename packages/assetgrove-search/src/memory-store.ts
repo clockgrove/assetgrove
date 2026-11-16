@@ -2,6 +2,7 @@ import { cosine } from "./embedder.ts";
 import type {
   BuiltFrom,
   CachedVector,
+  EmbedderRecord,
   FilterTerm,
   Hit,
   Row,
@@ -33,6 +34,15 @@ export class MemoryStore implements Store {
   private built = new Map<string, BuiltFrom>();
   private sourceRows = new Map<string, SourceRow>();
   private vectors = new Map<string, Float32Array>();
+  private record: EmbedderRecord | undefined;
+
+  async embedder(): Promise<EmbedderRecord | undefined> {
+    return this.record && { ...this.record };
+  }
+
+  async recordEmbedder(record: EmbedderRecord): Promise<void> {
+    this.record = { ...record };
+  }
 
   async upsert(rows: Row[]): Promise<void> {
     for (const r of rows) this.rows.set(r.key, structuredClone(r));

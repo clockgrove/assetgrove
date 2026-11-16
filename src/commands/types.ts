@@ -122,6 +122,12 @@ export interface CommandSpec<A = Record<string, unknown>> {
   /** The free plan step of a paid command: no provider call, no ledger entry (design section 6). */
   plan?(args: A, ctx: RunContext): Promise<WorkPlan>;
   /**
+   * Whether this call takes the plan step and runs through the executor; always when absent. A
+   * command that pays only in some calls (find and search index with a hosted embedder) runs the
+   * others directly, with no run directory.
+   */
+  planned?(args: A, ctx: RunContext): boolean;
+  /**
    * An earlier request's confirmation that covers this one (design section 7: apply uses its
    * plan's record while every input hash matches and its forecast is at or under the confirmed
    * one); undefined when none does, and this request asks under its own digest.

@@ -48,7 +48,7 @@ export interface VisionResult extends ProviderResult {
 }
 
 /** The kind of provider call; a provider made of several adapters bills each kind to one of them. */
-export type CallKind = "image" | "vision" | "decide" | "model" | "rig" | "animate";
+export type CallKind = "image" | "vision" | "decide" | "model" | "rig" | "animate" | "embed";
 
 /** What the provider reports about the money its key can still spend. */
 export interface LimitReading {
@@ -105,12 +105,30 @@ export interface GenerationProvider {
   analyzeImages(request: VisionRequest): Promise<VisionResult>;
   /** A typed decision (Score or Boolean); providers without decision models leave it out. */
   decide?(request: DecisionRequest): Promise<DecisionResult>;
+  /**
+   * One embedding: an image or a text, in the one vector space the model puts both in. Providers
+   * without the `embed` capability leave it out.
+   */
+  embed?(request: EmbedRequest): Promise<EmbedResult>;
   /** Image-to-3D: a textured model from reference images. Providers without 3D leave it out. */
   generateModel?(request: ModelRequest): Promise<ModelResult>;
   /** Rigs a model the provider made earlier (by its handle) for a gait. */
   rigModel?(request: RigRequest): Promise<ModelResult>;
   /** Retargets library clips onto a rigged model (by its handle); one model with every clip. */
   animateModel?(request: AnimateRequest): Promise<ModelResult>;
+}
+
+export interface EmbedRequest {
+  model: string;
+  /** One image (encoded bytes) or one text. */
+  input: { image: ImageInput } | { text: string };
+  /** The vector width asked for. */
+  dimensions: number;
+  providerOptions?: Record<string, Record<string, unknown>>;
+}
+
+export interface EmbedResult extends ProviderResult {
+  vector: number[];
 }
 
 /** Reference views for image-to-3D, by the view each image shows. */

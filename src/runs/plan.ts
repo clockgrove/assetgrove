@@ -233,6 +233,11 @@ export interface WorkPlanParts {
    * blocklist and the model check.
    */
   promptText?: readonly string[];
+  /**
+   * Content the request covers that is not a file it names (search's pending work), name to
+   * sha256 hex: added to `inputs`, so other content is another request.
+   */
+  hashes?: Record<string, string>;
 }
 
 /** What the plan step reads from a command's provider set: its routes and its providers' billing. */
@@ -317,6 +322,7 @@ export async function buildWorkPlan(
     paths[name] = typeof value === "string" ? value : undefined;
   }
   const inputs = await hashInputs(paths);
+  for (const [name, hash] of Object.entries(parts.hashes ?? {})) inputs[name] = hash;
   for (const [name, path] of Object.entries(parts.reads ?? {})) {
     if (name in inputs) continue;
     const hash = await hashIfReadable(path);

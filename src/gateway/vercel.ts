@@ -1,4 +1,4 @@
-import { createGateway, experimental_decide, generateImage, generateText } from "ai";
+import { createGateway, embed, experimental_decide, generateImage, generateText } from "ai";
 import { ProviderError } from "../errors.ts";
 import { failureFacts, isQuotaRefusal, providerFailure } from "./failure.ts";
 import type {
@@ -7,6 +7,8 @@ import type {
   DecisionAnswer,
   DecisionRequest,
   DecisionResult,
+  EmbedRequest,
+  EmbedResult,
   GenerationProvider,
   ImageRequest,
   ImageResult,
@@ -281,6 +283,58 @@ export class VercelGateway implements GenerationProvider {
       ...requestId(gatewayMeta(meta)["generationId"], result.response.id),
       ...(cost !== undefined && { costUsd: cost }),
       ...(confidence !== undefined && { confidence }),
+    };
+  }
+
+  /**
+   * One embedding through the gateway's embedding models, at the requested width. The SDK's
+   * `embed` takes text; an image goes to a Google multimodal model (`google/gemini-embedding-2`)
+   * as the Google provider's `content` option, inline, with an empty value. Another vendor's model
+   * is refused an image, since its gateway embeddings take text only.
+   */
+  async embed(req: EmbedRequest): Promise<EmbedResult> {
+    const image = "image" in req.input ? req.input.image : undefined;
+    if (image !== undefined && !req.model.startsWith("google/"))
+      throw new ProviderError(
+        `gateway embed: ${req.model} embeds text only through the gateway; route the embeddings role to a model that embeds images and text in one space, such as google/gemini-embedding-2`,
+      );
+    const own = req.providerOptions ?? {};
+    const providerOptions =
+      image === undefined
+        ? own
+        : {
+            ...own,
+            google: {
+              ...own["google"],
+              content: [
+                [
+                  {
+                    inlineData: {
+                      mimeType: image.mediaType,
+                      data: Buffer.from(image.bytes).toString("base64"),
+                    },
+                  },
+                ],
+              ],
+            },
+          };
+    const result = await this.#guard("embed", (gateway) =>
+      embed({
+        model: gateway.embeddingModel(req.model),
+        value: "text" in req.input ? req.input.text : "",
+        dimensions: req.dimensions,
+        maxRetries: 0,
+        ...(Object.keys(providerOptions).length > 0 && {
+          providerOptions: providerOptions as Record<string, never>,
+        }),
+      }),
+    );
+    const gw = gatewayMeta(result.providerMetadata as Metadata);
+    const cost = toNumber(gw["cost"]);
+    return {
+      vector: result.embedding,
+      ...requestId(gw["generationId"]),
+      ...(cost !== undefined && { costUsd: cost }),
     };
   }
 }

@@ -68,7 +68,7 @@ const storeSchema = z.strictObject({
 
 const searchSchema = z.strictObject({
   store: storeSchema.optional(),
-  embedder: z.enum(["local", "scripted"]).optional(),
+  embedder: z.enum(["local", "scripted", "route"]).optional(),
   model: z.enum(["siglip2-base"]).optional(),
   candidates: z.boolean().optional(),
   nearMatch: z.boolean().optional(),
@@ -219,7 +219,7 @@ export interface SearchStoreSettings {
 /** The settings' `search` block with every default filled. */
 export interface SearchSettings {
   store?: SearchStoreSettings;
-  embedder: "local" | "scripted";
+  embedder: "local" | "scripted" | "route";
   model: "siglip2-base";
   candidates: boolean;
   nearMatch: boolean;

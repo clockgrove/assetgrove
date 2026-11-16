@@ -29,6 +29,7 @@ export const EXIT = {
   extension_refused: 2,
   extension_conflict: 2,
   route_unavailable: 2,
+  embedder_changed: 2,
   plan_changed: 2,
   run_in_progress: 2,
   command_refused: 2,

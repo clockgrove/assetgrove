@@ -99,7 +99,41 @@ export interface SearchContext {
   library: SearchLibrary;
   /** The environment the credential variables named by `store.credentialsEnv` are read from. */
   env: Record<string, string | undefined>;
+  /**
+   * The hosted embedder (design section 7.7), set only when `search.embedder` is `route`: the
+   * provider and model the `embeddings` role resolves to.
+   */
+  embedder?: SearchRouteEmbedder;
   log(message: string): void;
+}
+
+/** The hosted embedder core resolved from the `embeddings` role. */
+export interface SearchRouteEmbedder {
+  /** The settings id of the provider the route names. */
+  route: string;
+  /** The route's model. */
+  model: string;
+  /** The vector width core asks the route for. */
+  dimension: number;
+  /**
+   * Embeds one image (encoded bytes) or one text through core's `Caller`: reserved against the
+   * caps, journalled and recorded in the spend ledger. Present only inside a confirmed paid run
+   * (`find` with words or an image, `search index`); absent, nothing may call the provider, and
+   * the slot answers from vectors already stored.
+   */
+  embed?(input: { image: Uint8Array } | { text: string }): Promise<number[]>;
+}
+
+/** What a request would embed, counted by the slot without embedding anything. */
+export interface SearchForecast {
+  /** Image views neither cached by content nor indexed unchanged. */
+  images: number;
+  /** Card texts likewise. */
+  texts: number;
+  /** Query embeddings: one for words, one for a `like` image. */
+  queries: number;
+  /** sha256 hex of the pending work, so the same work gives the same value. */
+  state: string;
 }
 
 /** A find query (design section 7.5). */
@@ -143,6 +177,14 @@ export interface SearchSlot {
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;
   setup(ctx: SearchContext): Promise<Record<string, unknown>>;
+  /**
+   * The free plan step of a hosted embedder's paid request (design section 7.7): what `index` or
+   * `find` would embed, counted from the index and the library without calling the embedder.
+   */
+  forecast?(
+    request: { index: { rebuild?: boolean } } | { find: SearchQuery },
+    ctx: SearchContext,
+  ): Promise<SearchForecast>;
 }
 
 /** What core hands an entry's default export when it is a function. */
