@@ -90,6 +90,60 @@ test("projecting a uniform view gives that colour on visible texels", () => {
   assert.ok(seen > 0);
 });
 
+test("coverage counts the texels a camera sees: hidden UV area neither lowers it nor hides an unpainted side", () => {
+  const { glb, texels } = character();
+  const { list, depths } = views(glb, [100, 150, 200]);
+  const full = projectViews(glb, texels, list, depths);
+
+  // Hidden UV area (a mouth interior, an inner shell): the same texels in one quadrant of a
+  // texture twice the size, and as many again in another quadrant, inside the body, facing the
+  // front camera but behind the front face.
+  const big = 2 * SIZE;
+  const hidden = {
+    size: big,
+    covered: new Uint8Array(big * big),
+    position: new Float32Array(big * big * 3),
+    normal: new Float32Array(big * big * 3),
+    joint: new Int16Array(big * big).fill(-1),
+  };
+  let added = 0;
+  for (let y = 0; y < SIZE; y++)
+    for (let x = 0; x < SIZE; x++) {
+      const from = y * SIZE + x;
+      if (!texels.covered[from]) continue;
+      const to = y * big + x;
+      hidden.covered[to] = 1;
+      hidden.position.set(texels.position.subarray(from * 3, from * 3 + 3), to * 3);
+      hidden.normal.set(texels.normal.subarray(from * 3, from * 3 + 3), to * 3);
+      const inner = (y + SIZE) * big + x + SIZE;
+      hidden.covered[inner] = 1;
+      hidden.position.set([0.3, 1.5, 0], inner * 3);
+      hidden.normal.set([0, 0, 1], inner * 3);
+      added++;
+    }
+  const withHidden = projectViews(glb, hidden, list, depths);
+  assert.ok(added > 0);
+  assert.ok(withHidden.uvCoverage < full.uvCoverage * 0.6, `uv ${withHidden.uvCoverage}`);
+  assert.equal(withHidden.coverage, full.coverage, "hidden texels are not in the denominator");
+  assert.ok(full.coverage > 0.9, `coverage ${full.coverage}`);
+  assert.equal(count(withHidden.visible), count(full.visible));
+
+  // Every view drew its left half as background: those visible texels stay unpainted and count.
+  const halved = list.map((v) => {
+    const image = uniform(96, 96, [100, 150, 200]);
+    for (let y = 0; y < 96; y++)
+      for (let x = 0; x < 48; x++) image.data.set([216, 216, 216, 255], (y * 96 + x) * 4);
+    return { ...v, image, background: editedBackground(image) };
+  });
+  const half = projectViews(glb, texels, halved, depths);
+  assert.equal(
+    count(half.visible),
+    count(full.visible),
+    "the edit's background does not hide texels",
+  );
+  assert.ok(half.coverage < full.coverage - 0.2, `half ${half.coverage}, full ${full.coverage}`);
+});
+
 test("views that disagree on a texel give it the squarer view's colour, not their grey mean", () => {
   const { glb, texels } = character();
   const { list, depths } = views(glb, [0, 0, 0]);

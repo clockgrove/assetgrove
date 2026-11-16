@@ -302,6 +302,7 @@ test("look-dev gives a rigged model its look, maps and eyes; pick hands it all o
     "groom-summer-render",
     "groom-winter-render",
     "lookdev-albedo-coverage",
+    "lookdev-registration",
     "lookdev-seams",
     "eyes-catch-light",
     "gltf-validator",
@@ -374,6 +375,13 @@ test("look-dev gives a rigged model its look, maps and eyes; pick hands it all o
     /no marking was measured.*three-quarter \(the references have no three-quarter view\)/,
   );
   assert.equal(c.provenance.parameters.lookdev.sourceModelSha256, sha256(inputBytes));
+  // Coverage is over the texels a camera sees; registration records each view's overlap.
+  const { coverage, uvCoverage, registration } = c.provenance.parameters.lookdev;
+  assert.ok(coverage >= 0.9 && coverage >= uvCoverage, `coverage ${coverage}, uv ${uvCoverage}`);
+  assert.match(checks["lookdev-albedo-coverage"]!.reason, /texels a restyled view's camera sees/);
+  assert.equal(Object.keys(registration).length, 8);
+  for (const [view, overlap] of Object.entries(registration))
+    assert.ok((overlap as number) >= 0.9, `${view}: ${String(overlap)}`);
   assert.ok(c.provenance.outputGrant);
   assert.deepEqual(c.provenance.parameters.lookdev.seasons, ["summer", "winter"]);
 

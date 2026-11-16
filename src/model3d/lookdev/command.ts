@@ -49,7 +49,15 @@ import { GLB_MEDIA_TYPE, parseGlb, writeGlb } from "../glb.ts";
 import type { Glb } from "../glb.ts";
 import { CHARACTER_3D_KIND, characterSpec, model3dSettings } from "../profile.ts";
 import { budgetChecks, qaPassed, validatorCheck } from "../qa.ts";
-import { TURNTABLE_VIEWS, closeUpCamera, framedCamera, renderView, speckle } from "../render.ts";
+import {
+  TURNTABLE_VIEWS,
+  closeUpCamera,
+  framedCamera,
+  figureMask,
+  renderView,
+  renderViewWithDepth,
+  speckle,
+} from "../render.ts";
 import type { FurMaps, PreviewLighting, ViewCamera } from "../render.ts";
 import { profileSha256 } from "../rig/candidate.ts";
 import { declaresRig, loadRig } from "../rig/template.ts";
@@ -143,8 +151,12 @@ const DETAIL_FILL = 0.8;
 const VIEW_PX = 1024;
 const CLOSE_UP_PX = 512;
 const BACKGROUND: [number, number, number] = [216, 216, 216];
-/** Texels with less projection than this share keep the colour-matched source texture. */
-const MIN_COVERAGE = 0.5;
+/**
+ * The least share of the visible texels (those some restyled view's camera sees, facing it and
+ * past its depth test) that must take colour from the restyled views. Hidden UV area is not in
+ * the share, so the limit can be high.
+ */
+const MIN_COVERAGE = 0.9;
 /** The most speckle (impulse pixels, fur render minus bare render) a fur preview view may show. */
 const MAX_FUR_SPECKLE = 0.005;
 
@@ -319,54 +331,51 @@ export function resize(src: Raster, width: number, height: number): Raster {
   return out;
 }
 
-/** The bounding box of pixels that differ from the background by more than `tolerance`. */
-function foregroundBox(raster: Raster, background: [number, number, number], tolerance = 24) {
+/** The bounding box of the set pixels of a `width`-wide mask. */
+function maskBox(mask: Uint8Array, width: number) {
   let x0 = Infinity;
   let y0 = Infinity;
   let x1 = -Infinity;
   let y1 = -Infinity;
-  const { width, height, data } = raster;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const o = (y * width + x) * 4;
-      const d =
-        Math.abs(data[o]! - background[0]) +
-        Math.abs(data[o + 1]! - background[1]) +
-        Math.abs(data[o + 2]! - background[2]);
-      if (d <= tolerance) continue;
-      if (x < x0) x0 = x;
-      if (y < y0) y0 = y;
-      if (x > x1) x1 = x;
-      if (y > y1) y1 = y;
-    }
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    const x = i % width;
+    const y = (i - x) / width;
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
   }
   return x1 < x0 ? undefined : { x0, y0, x1: x1 + 1, y1: y1 + 1 };
 }
 
 /**
  * The figure cut out with a margin of `margin` of its larger side, so a vision model boxes markings
- * on the figure at its full resolution rather than on a small figure in a wide frame.
+ * on the figure at its full resolution rather than on a small figure in a wide frame. The figure
+ * is the render's depth `mask`; the crop carries the mask cut the same way.
  */
 export function figureCrop(
   raster: Raster,
-  background: [number, number, number],
+  mask: Uint8Array,
   margin = 0.08,
-): Raster {
-  const box = foregroundBox(raster, background);
-  if (!box) return raster;
+): { image: Raster; mask: Uint8Array } {
+  const box = maskBox(mask, raster.width);
+  if (!box) return { image: raster, mask };
   const pad = Math.round(Math.max(box.x1 - box.x0, box.y1 - box.y0) * margin);
   const x0 = Math.max(0, box.x0 - pad);
   const y0 = Math.max(0, box.y0 - pad);
   const x1 = Math.min(raster.width, box.x1 + pad);
   const y1 = Math.min(raster.height, box.y1 + pad);
   const out = createRaster(x1 - x0, y1 - y0);
+  const outMask = new Uint8Array(out.width * out.height);
   for (let y = y0; y < y1; y++) {
     out.data.set(
       raster.data.subarray((y * raster.width + x0) * 4, (y * raster.width + x1) * 4),
       (y - y0) * out.width * 4,
     );
+    outMask.set(mask.subarray(y * raster.width + x0, y * raster.width + x1), (y - y0) * out.width);
   }
-  return out;
+  return { image: out, mask: outMask };
 }
 
 /** The median colour of the image's border: the background an edited image ended up with. */
@@ -463,29 +472,145 @@ export function editedBackground(
   return grown;
 }
 
+/** `mask` with every hole the figure encloses filled: 1 wherever the border cannot be reached through 0s. */
+function filledSilhouette(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const outside = new Uint8Array(mask.length);
+  const stack: number[] = [];
+  const seed = (i: number) => {
+    if (!mask[i] && !outside[i]) {
+      outside[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < width; x++) {
+    seed(x);
+    seed((height - 1) * width + x);
+  }
+  for (let y = 0; y < height; y++) {
+    seed(y * width);
+    seed(y * width + width - 1);
+  }
+  while (stack.length > 0) {
+    const i = stack.pop()!;
+    const x = i % width;
+    if (x > 0) seed(i - 1);
+    if (x < width - 1) seed(i + 1);
+    if (i >= width) seed(i - width);
+    if (i < (height - 1) * width) seed(i + width);
+  }
+  return outside.map((v) => (v ? 0 : 1));
+}
+
+/** How well the edited figure must overlap the render's before the edit counts as the same figure. */
+const MIN_OVERLAP = 0.9;
+
 /**
- * Registers an edited view onto its render: the edit's figure box is scaled and moved onto the
- * render's, so a model that shifted or resized the figure still projects onto the right texels.
+ * Registers an edited view onto its render. The render's figure is `mask` (its depth buffer). The
+ * edit's figure is what is not background connected to its border. The fit starts from the box
+ * of one onto the box of the other, then refines scale and offset in x and y to maximise the
+ * intersection over union of the two figures, so a soft shadow or a pale outline that moves the
+ * edit's box does not stretch the edit. `overlap` is that intersection over union at the fit:
+ * low, the edit moved or reshaped the figure.
  */
-export function register(edited: Raster, render: Raster): Raster {
+export function register(
+  edited: Raster,
+  render: Raster,
+  mask: Uint8Array,
+): { image: Raster; overlap: number } {
   const size = render.width;
+  const height = render.height;
   const sized =
-    edited.width === size && edited.height === render.height
-      ? edited
-      : resize(edited, size, render.height);
-  const target = foregroundBox(render, BACKGROUND);
-  const source = foregroundBox(sized, borderColour(sized));
-  if (!target || !source) return sized;
+    edited.width === size && edited.height === height ? edited : resize(edited, size, height);
+  // The edit's figure is all that its border-connected background is not, so a gap the figure
+  // encloses (between the legs) counts as figure there; the render's mask is filled the same way.
+  const figure = filledSilhouette(mask, size, height);
+  const target = maskBox(figure, size);
+  const background = editedBackground(sized, undefined, 24, 0);
+  const foreground = new Uint8Array(background.length);
+  for (let i = 0; i < foreground.length; i++) foreground[i] = background[i] ? 0 : 1;
+  const source = maskBox(foreground, sized.width);
+  if (!target || !source) return { image: sized, overlap: 0 };
+
+  // A render pixel (x, y) reads the edit at (ox + sx * x, oy + sy * y).
+  type Fit = [number, number, number, number];
+  const sampleAt = (p: Fit, x: number, y: number): number => {
+    const u = Math.round(p[2] + p[0] * x);
+    const v = Math.round(p[3] + p[1] * y);
+    return u < 0 || v < 0 || u >= sized.width || v >= sized.height
+      ? 0
+      : foreground[v * sized.width + u]!;
+  };
+  const iou = (p: Fit, stride: number): number => {
+    let both = 0;
+    let either = 0;
+    for (let y = 0; y < height; y += stride) {
+      for (let x = 0; x < size; x += stride) {
+        const m = figure[y * size + x]!;
+        const f = sampleAt(p, x, y);
+        if (m && f) both++;
+        if (m || f) either++;
+      }
+    }
+    return either === 0 ? 0 : both / either;
+  };
+
+  // Two starts, each refined: the figures' boxes, and the figures' areas and centroids (a shadow
+  // moves the edit's box far more than its centroid).
   const sx = (source.x1 - source.x0) / (target.x1 - target.x0);
   const sy = (source.y1 - source.y0) / (target.y1 - target.y0);
-  const out = createRaster(size, render.height);
-  for (let y = 0; y < render.height; y++) {
-    const v = Math.min(sized.height - 1, Math.max(0, Math.round(source.y0 + (y - target.y0) * sy)));
+  const stats = (m: Uint8Array, width: number) => {
+    let n = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0; i < m.length; i++) {
+      if (!m[i]) continue;
+      n++;
+      cx += i % width;
+      cy += Math.floor(i / width);
+    }
+    return { n, cx: cx / n, cy: cy / n };
+  };
+  const t = stats(figure, size);
+  const f = stats(foreground, sized.width);
+  const area = Math.sqrt(f.n / t.n);
+  const starts: Fit[] = [
+    [sx, sy, source.x0 - target.x0 * sx, source.y0 - target.y0 * sy],
+    [area, area, f.cx - t.cx * area, f.cy - t.cy * area],
+  ];
+  let fit = starts[0]!;
+  let best = -1;
+  for (const start of starts) {
+    let at = start;
+    let score = iou(at, 2);
+    for (let step = 8; step >= 0.25; step /= 2) {
+      for (let improved = true; improved;) {
+        improved = false;
+        for (let k = 0; k < 4; k++) {
+          const delta = k < 2 ? step / size : step;
+          for (const sign of [1, -1]) {
+            const next = [...at] as Fit;
+            next[k] = at[k]! + sign * delta;
+            const nextScore = iou(next, 2);
+            if (nextScore > score + 1e-9) {
+              score = nextScore;
+              at = next;
+              improved = true;
+            }
+          }
+        }
+      }
+    }
+    if (score > best) {
+      best = score;
+      fit = at;
+    }
+  }
+
+  const out = createRaster(size, height);
+  for (let y = 0; y < height; y++) {
+    const v = Math.min(sized.height - 1, Math.max(0, Math.round(fit[3] + fit[1] * y)));
     for (let x = 0; x < size; x++) {
-      const u = Math.min(
-        sized.width - 1,
-        Math.max(0, Math.round(source.x0 + (x - target.x0) * sx)),
-      );
+      const u = Math.min(sized.width - 1, Math.max(0, Math.round(fit[2] + fit[0] * x)));
       const from = (v * sized.width + u) * 4;
       const to = (y * size + x) * 4;
       out.data[to] = sized.data[from]!;
@@ -494,7 +619,7 @@ export function register(edited: Raster, render: Raster): Raster {
       out.data[to + 3] = 255;
     }
   }
-  return out;
+  return { image: out, overlap: iou(fit, 1) };
 }
 
 function restylePrompt(
@@ -879,18 +1004,13 @@ function greyMask(mask: Uint8Array, size: number): Raster {
 
 const round = (v: number, places = 6) => Math.round(v * 10 ** places) / 10 ** places;
 
-/** Mean luminance of the pixels that differ from the background in `mask` (the figure). */
-function figureLuminance(raster: Raster, mask: Raster): number {
+/** Mean luminance of the pixels set in `mask` (the figure, from the render's depth). */
+export function figureLuminance(raster: Raster, mask: Uint8Array): number {
   let sum = 0;
   let n = 0;
-  for (let i = 0; i < raster.data.length; i += 4) {
-    if (
-      Math.abs(mask.data[i]! - BACKGROUND[0]) +
-        Math.abs(mask.data[i + 1]! - BACKGROUND[1]) +
-        Math.abs(mask.data[i + 2]! - BACKGROUND[2]) <=
-      6
-    )
-      continue;
+  for (let p = 0; p < mask.length; p++) {
+    if (!mask[p]) continue;
+    const i = p * 4;
     sum += 0.2126 * raster.data[i]! + 0.7152 * raster.data[i + 1]! + 0.0722 * raster.data[i + 2]!;
     n++;
   }
@@ -904,7 +1024,11 @@ function figureLuminance(raster: Raster, mask: Raster): number {
  */
 function resolveLighting(
   settings: PreviewLightingSettings,
-  render: (lighting: PreviewLighting | undefined, unlit: boolean, view: number) => Raster,
+  render: (
+    lighting: PreviewLighting | undefined,
+    unlit: boolean,
+    view: number,
+  ) => { raster: Raster; depth: Float64Array },
 ): PreviewLighting {
   const lighting: PreviewLighting = {
     ambient: settings.ambient,
@@ -917,8 +1041,9 @@ function resolveLighting(
   let unlit = 0;
   for (let v = 0; v < TURNTABLE_VIEWS.length; v++) {
     const albedo = render(undefined, true, v);
-    lit += figureLuminance(render(lighting, false, v), albedo);
-    unlit += figureLuminance(albedo, albedo);
+    const mask = figureMask(albedo.depth);
+    lit += figureLuminance(render(lighting, false, v).raster, mask);
+    unlit += figureLuminance(albedo.raster, mask);
   }
   return { ...lighting, exposure: lit > 0 ? unlit / lit : 1 };
 }
@@ -1026,7 +1151,7 @@ export async function lookDev(
   // One preview lighting for every before and after render, every season.
   const turntablePx = settings.turntablePx;
   const lighting = resolveLighting(look.previewLighting, (l, unlit, v) =>
-    renderView(glb, {
+    renderViewWithDepth(glb, {
       sizePx: turntablePx,
       yawDeg: facingDeg + TURNTABLE_VIEWS[v]!.yawDeg,
       framing,
@@ -1035,7 +1160,7 @@ export async function lookDev(
     }),
   );
   const unlitView = (model: Glb, v: number) =>
-    renderView(model, {
+    renderViewWithDepth(model, {
       sizePx: turntablePx,
       yawDeg: facingDeg + TURNTABLE_VIEWS[v]!.yawDeg,
       framing,
@@ -1046,7 +1171,7 @@ export async function lookDev(
   const beforeViews = TURNTABLE_VIEWS.map((v) =>
     renderView(glb, { sizePx: turntablePx, yawDeg: facingDeg + v.yawDeg, framing, lighting }),
   );
-  const unlitBefore = TURNTABLE_VIEWS.map((_, i) => unlitView(glb, i));
+  const unlitBefore = TURNTABLE_VIEWS.map((_, i) => unlitView(glb, i).raster);
   const beforeClose = renderView(glb, {
     sizePx: CLOSE_UP_PX,
     yawDeg: 0,
@@ -1066,6 +1191,7 @@ export async function lookDev(
       : resize(sourceTexture, textureSize, textureSize);
   const projected = [];
   const depths: Float32Array[] = [];
+  const registration: Record<string, number> = {};
   const viewArtifacts: Array<{ name: string; bytes: Uint8Array }> = [];
   let painted = glb;
   // The turntable views framed on the figure's own outline, then the detail pass.
@@ -1103,7 +1229,7 @@ export async function lookDev(
   ];
   for (const [k, v] of restyleViews.entries()) {
     const { camera } = v;
-    const flat = renderView(painted, {
+    const flatView = renderViewWithDepth(painted, {
       sizePx: VIEW_PX,
       yawDeg: 0,
       framing,
@@ -1111,6 +1237,8 @@ export async function lookDev(
       unlit: true,
       background: BACKGROUND,
     });
+    const flat = flatView.raster;
+    const flatMask = figureMask(flatView.depth);
     const flatPng = encodePng(flat);
     const matching = references.filter((r) => r.view === v.reference);
     const refs = [...matching, ...references.filter((r) => !matching.includes(r))].slice(0, 3);
@@ -1126,7 +1254,8 @@ export async function lookDev(
       ),
       [{ ...png(flatPng), role: `flat-lit render, ${v.name} view` }, ...refs],
     );
-    const aligned = register(decodeImage(edited.bytes), flat);
+    const { image: aligned, overlap } = register(decodeImage(edited.bytes), flat, flatMask);
+    registration[v.name] = overlap;
     projected.push({ camera, image: aligned, background: editedBackground(aligned, flat) });
     depths.push(depthMap(glb, camera));
     if (k < restyleViews.length - 1) {
@@ -1347,8 +1476,11 @@ export async function lookDev(
   // 5. After: per season, turntables with map-driven shell fur, and the close-up.
   const artifacts: Array<{ name: string; bytes: Uint8Array }> = [...viewArtifacts];
   const afterBySeason: Record<string, Raster[]> = {};
+  const afterMaskBySeason: Record<string, Uint8Array[]> = {};
   const afterClose: Record<string, Raster> = {};
-  const unlitAfter = TURNTABLE_VIEWS.map((_, i) => unlitView(written, i));
+  const unlitAfterViews = TURNTABLE_VIEWS.map((_, i) => unlitView(written, i));
+  const unlitAfter = unlitAfterViews.map((u) => u.raster);
+  const unlitAfterMask = unlitAfterViews.map((u) => figureMask(u.depth));
   const litToUnlit: Record<string, Record<string, number>> = {};
   const furSpeckle: Record<string, Record<string, number>> = {};
   for (const season of plan.seasons) {
@@ -1363,15 +1495,15 @@ export async function lookDev(
       strandsPerUv: Math.max(192, Math.round(groomSize / 2)),
     };
     const bare = TURNTABLE_VIEWS.map((v) =>
-      renderView(written, {
+      renderViewWithDepth(written, {
         sizePx: turntablePx,
         yawDeg: facingDeg + v.yawDeg,
         framing,
         lighting,
       }),
     );
-    const views = TURNTABLE_VIEWS.map((v) =>
-      renderView(written, {
+    const viewsDepth = TURNTABLE_VIEWS.map((v) =>
+      renderViewWithDepth(written, {
         sizePx: turntablePx,
         yawDeg: facingDeg + v.yawDeg,
         framing,
@@ -1379,15 +1511,17 @@ export async function lookDev(
         lighting,
       }),
     );
+    const views = viewsDepth.map((v) => v.raster);
     afterBySeason[season] = views;
-    const bareClose = renderView(written, {
+    afterMaskBySeason[season] = viewsDepth.map((v) => figureMask(v.depth));
+    const bareClose = renderViewWithDepth(written, {
       sizePx: CLOSE_UP_PX,
       yawDeg: 0,
       framing,
       camera: closeUp(0),
       lighting,
     });
-    afterClose[season] = renderView(written, {
+    const furClose = renderViewWithDepth(written, {
       sizePx: CLOSE_UP_PX,
       yawDeg: 0,
       framing,
@@ -1395,12 +1529,13 @@ export async function lookDev(
       fur,
       lighting,
     });
+    afterClose[season] = furClose.raster;
     litToUnlit[season] = Object.fromEntries(
       TURNTABLE_VIEWS.map((v, i) => [
         v.name,
         round(
-          figureLuminance(views[i]!, unlitAfter[i]!) /
-            Math.max(1e-6, figureLuminance(unlitAfter[i]!, unlitAfter[i]!)),
+          figureLuminance(views[i]!, unlitAfterMask[i]!) /
+            Math.max(1e-6, figureLuminance(unlitAfter[i]!, unlitAfterMask[i]!)),
           3,
         ),
       ]),
@@ -1408,14 +1543,22 @@ export async function lookDev(
     // Speckle the fur adds over the bare surface, in every view and the close-up.
     const speckles: Record<string, number> = {};
     TURNTABLE_VIEWS.forEach((v, i) => {
-      speckles[v.name] = Math.max(0, speckle(views[i]!) - speckle(bare[i]!));
+      speckles[v.name] = Math.max(
+        0,
+        speckle(views[i]!, afterMaskBySeason[season]![i]!) -
+          speckle(bare[i]!.raster, figureMask(bare[i]!.depth)),
+      );
     });
-    speckles["close-up"] = Math.max(0, speckle(afterClose[season]) - speckle(bareClose));
+    speckles["close-up"] = Math.max(
+      0,
+      speckle(furClose.raster, figureMask(furClose.depth)) -
+        speckle(bareClose.raster, figureMask(bareClose.depth)),
+    );
     furSpeckle[season] = Object.fromEntries(
       Object.entries(speckles).map(([k, v]) => [k, round(v, 5)]),
     );
     const worst = Object.entries(speckles).reduce((a, b) => (b[1] > a[1] ? b : a));
-    const share = Math.max(...views.map((v, i) => changedShare(v, bare[i]!)));
+    const share = Math.max(...views.map((v, i) => changedShare(v, bare[i]!.raster)));
     reasons.push({
       check: look.seasons ? `groom-${season}-render` : "groom-render",
       passed: share > 0.01 && worst[1] <= MAX_FUR_SPECKLE,
@@ -1427,10 +1570,26 @@ export async function lookDev(
   }
 
   // Checks on the albedo.
+  const visibleTexels = projection.visible.reduce((n, v) => n + v, 0);
   reasons.push({
     check: "lookdev-albedo-coverage",
     passed: projection.coverage >= MIN_COVERAGE,
-    reason: `${(projection.coverage * 100).toFixed(1)}% of the texels take colour from the restyled views; the rest keep the source texture, colour-matched`,
+    reason:
+      `${(projection.coverage * 100).toFixed(1)}% of the ${visibleTexels} texels a restyled view's camera sees take colour from the restyled views ` +
+      `(limit ${(MIN_COVERAGE * 100).toFixed(0)}%; ${(projection.uvCoverage * 100).toFixed(1)}% of all UV-covered texels); the rest keep the source texture, colour-matched`,
+    source: "deterministic",
+  });
+  const overlaps = Object.entries(registration);
+  const moved = overlaps.filter(([, o]) => o < MIN_OVERLAP).map(([k]) => k);
+  reasons.push({
+    check: "lookdev-registration",
+    passed: moved.length === 0,
+    reason:
+      `overlap of each restyled view's figure with the render's figure (limit ${MIN_OVERLAP}): ` +
+      overlaps.map(([k, o]) => `${k} ${o.toFixed(3)}`).join(", ") +
+      (moved.length > 0
+        ? `; ${moved.join(", ")} under the limit: the edit moved or reshaped the figure`
+        : ""),
     source: "deterministic",
   });
   const seamsBefore = seamError(parseGlb(options.model.bytes), source, textured.image);
@@ -1483,7 +1642,10 @@ export async function lookDev(
       continue;
     }
     // Each render cut to its figure, so the boxes land on the figure at full resolution.
-    const renders = plan.seasons.map((s) => figureCrop(afterBySeason[s]![v]!, BACKGROUND));
+    const crops = plan.seasons.map((s) =>
+      figureCrop(afterBySeason[s]![v]!, afterMaskBySeason[s]![v]!),
+    );
+    const renders = crops.map((c) => c.image);
     const text = await caller.vision(
       LOOKDEV_MARKINGS_OPERATION,
       markingsPrompt({
@@ -1520,10 +1682,10 @@ export async function lookDev(
         unmeasured.push(`${m.name} in ${view.name} (not located on the reference)`);
         continue;
       }
-      renders.forEach((render, k) => {
+      crops.forEach((crop, k) => {
         const boxes = m.boxes[k + 1];
-        const mark = boxes && measureBox(render, boxes.mark, BACKGROUND);
-        const ground = boxes && measureBox(render, boxes.ground, BACKGROUND);
+        const mark = boxes && measureBox(crop.image, boxes.mark, crop.mask);
+        const ground = boxes && measureBox(crop.image, boxes.ground, crop.mask);
         const image = plan.seasons[k]!;
         if (!mark) {
           // The turnaround shows this marking; a render that does not has lost it.
@@ -1727,6 +1889,10 @@ export async function lookDev(
         ...(m.contrastRender !== undefined && { contrastRender: round(m.contrastRender, 2) }),
       })),
       coverage: round(projection.coverage, 4),
+      uvCoverage: round(projection.uvCoverage, 4),
+      registration: Object.fromEntries(
+        Object.entries(registration).map(([k, o]) => [k, round(o, 4)]),
+      ),
       costUsd: round(budget.spentUsd),
     },
   };
