@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { decidePromptPolicy } from "../../src/policy/model.ts";
 import { checkPromptText } from "../../src/policy/text.ts";
+import type { PolicyHit, PromptPart, PromptPartLabel } from "../../src/policy/text.ts";
 import { defaultRoutes, PROMPT_POLICY_OPERATION } from "../../src/routes.ts";
 import { realBudget, skipWithout } from "./budget.ts";
 
@@ -24,6 +25,7 @@ interface Bars {
 interface Row {
   id: string;
   prompt: string;
+  part?: PromptPartLabel;
   expect: "refuse" | "allow";
 }
 
@@ -58,8 +60,11 @@ test(
   async () => {
     const bars = await readBars();
     const rows = await readRows();
-    // The blocklist decides its rows for free, as it does before a request's confirmation.
-    const toModel = rows.filter((r) => checkPromptText(r.prompt).verdict === "allowed");
+    // The blocklist refuses unambiguous names for free, as it does before a request's confirmation;
+    // every other row goes to the model with the hits the free check recorded.
+    const partsOf = (r: Row): PromptPart[] => [{ label: r.part ?? "brief", text: r.prompt }];
+    const records = new Map(rows.map((r) => [r.id, checkPromptText(partsOf(r))]));
+    const toModel = rows.filter((r) => records.get(r.id)!.verdict === "allowed");
     const rb = realBudget();
     const gw = rb.provider("vercel-ai-gateway");
     const estimate = defaultRoutes[PROMPT_POLICY_OPERATION]!.estimatedCostUsd;
@@ -68,7 +73,11 @@ test(
     for (const r of rows) if (!toModel.includes(r)) refused.set(r.id, true);
     await rb.cleared("real prompt-policy", async () => {
       for (const r of toModel) {
-        const verdict = await decidePromptPolicy(caller, r.prompt);
+        const verdict = await decidePromptPolicy(
+          caller,
+          partsOf(r),
+          records.get(r.id)!.hits ?? ([] as PolicyHit[]),
+        );
         refused.set(r.id, verdict.refused);
         console.log(`${r.id} ${r.expect}: ${verdict.probability.toFixed(3)}`);
       }

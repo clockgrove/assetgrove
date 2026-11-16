@@ -52,40 +52,16 @@
       "workflow": "release.yml"
     },
     {
-      "id": "confirm-claude-code-local",
+      "id": "harness-unattended",
       "kind": "manual-owner",
-      "title": "Confirmation proven in Claude Code on the developer's machine",
-      "evidence": "A spend confirmation and a pick confirmed in a local Claude Code session on this commit: the run directory's confirmation records, each saying how it was confirmed."
-    },
-    {
-      "id": "confirm-claude-code-remote",
-      "kind": "manual-owner",
-      "title": "Confirmation proven in a remote Claude Code session",
-      "evidence": "A spend confirmation and a pick confirmed in a remote Claude Code session on this commit: the confirmation records and the session's environment setup (key as a secret)."
-    },
-    {
-      "id": "confirm-second-harness",
-      "kind": "manual-owner",
-      "title": "Confirmation proven in Codex",
-      "evidence": "A spend confirmation and a pick confirmed in Codex on this commit: the harness's version, and the confirmation records."
-    },
-    {
-      "id": "confirm-copilot-cli",
-      "kind": "manual-owner",
-      "title": "Confirmation proven in GitHub Copilot CLI",
-      "evidence": "A spend confirmation and a pick confirmed in GitHub Copilot CLI on this commit: the harness's version, and the confirmation records."
+      "title": "No harness confirms a spend by itself, and the agent's shell holds no key",
+      "evidence": "Claude Code, Codex and GitHub Copilot CLI each run with no person present against this commit, with attended settings and the key in the server's environment: the paid tool ends unconfirmed, no confirmation record or ledger entry is written, and printing the key variable from the agent's shell prints nothing. The harness versions are recorded."
     },
     {
       "id": "unattended-session",
       "kind": "manual-owner",
       "title": "An unattended session runs under headless settings set outside the repository",
       "evidence": "A run with headless developer settings and no person present: its records show spend inside the caps, and a gated command not in commands.approved exits 8 confirmation_required."
-    },
-    {
-      "id": "key-recipes",
-      "kind": "manual-owner",
-      "title": "The key recipe per harness keeps the key out of the agent's shell",
-      "evidence": "For each proven harness, the docs/keys.md recipe followed in the quick start, and the agent's shell shown not to hold the provider key."
     },
     {
       "id": "real-check-skips",

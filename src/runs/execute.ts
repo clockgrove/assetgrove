@@ -33,13 +33,13 @@ import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcil
 import { Budget } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import { checkPromptModel } from "../policy/model.ts";
-import type { PromptPolicyRecord } from "../policy/text.ts";
+import type { PromptPart, PromptPolicyRecord } from "../policy/text.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { SpendHoldError, ledgerFor } from "../spend.ts";
 import { bindConfirmation, requireConfirmation } from "../confirm/index.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import type { ConfirmationRecord } from "../types.ts";
-import { DEFAULT_ROUND, policyTextOf } from "./plan.ts";
+import { DEFAULT_ROUND, policyPartsOf } from "./plan.ts";
 import type { WorkPlan } from "./plan.ts";
 import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "./dir.ts";
 import { Journal, withRunScope } from "./journal.ts";
@@ -298,8 +298,10 @@ export async function executeRun(options: {
     try {
       outcome = await withRunScope(scope, async () => {
         // The run's first job (design section 16): the prompt policy's model check, before any
-        // other call. A refusal exits 9; a check that cannot run exits 4 (fails closed).
-        const text = policyTextOf(plan);
+        // other call. A refusal exits 9; a check that cannot run exits 4 (fails closed). When it
+        // objects only to model-written text, the record's `fallback` tells the command to use
+        // the template's prompt in its place.
+        const text = policyPartsOf(plan);
         if (text !== undefined && plan.promptPolicy !== undefined) {
           try {
             const checked = await promptPolicyCheck(ctx, options, plan, text, plan.promptPolicy);
@@ -312,7 +314,10 @@ export async function executeRun(options: {
           }
           promptPolicy = scope.promptPolicy;
         }
-        return options.run({ ...ctx, run: { dir: plan.runDir, plan } });
+        return options.run({
+          ...ctx,
+          run: { dir: plan.runDir, plan, ...(promptPolicy && { promptPolicy }) },
+        });
       });
     } catch (error) {
       outcome = options.toOutcome(error);
@@ -382,7 +387,7 @@ async function promptPolicyCheck(
   ctx: RunContext,
   options: { providerScript?: string; workItem?: string },
   plan: WorkPlan,
-  text: string,
+  text: readonly PromptPart[],
   record: PromptPolicyRecord,
 ): Promise<{ record: PromptPolicyRecord; spentUsd: number }> {
   const providers = await providerSet(options.providerScript, ctx);

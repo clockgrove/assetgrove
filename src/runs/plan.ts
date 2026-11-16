@@ -9,8 +9,13 @@ import { join, relative, resolve, sep } from "node:path";
 import { bibleReferences, loadBible } from "../bible.ts";
 import { InputError } from "../errors.ts";
 import type { JsonSchemaObject } from "../commands/types.ts";
-import { collectPromptText, enforcePromptPolicy } from "../policy/text.ts";
-import type { PromptPolicyRecord } from "../policy/text.ts";
+import {
+  collectPromptParts,
+  enforcePromptPolicy,
+  modelWritten,
+  partsText,
+} from "../policy/text.ts";
+import type { PromptPart, PromptPolicyRecord } from "../policy/text.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import type { NearMatch, NearMatchOutcome } from "../search/near-match.ts";
@@ -162,6 +167,14 @@ export function jobOf(operation: string, route: Route, count = 1): PlanJob {
 }
 
 /**
+ * The prompt-policy job of a request: one decide call, or two when its prompt text holds
+ * model-written parts (the second decides on the person's parts alone, src/policy/model.ts).
+ */
+export function policyJobOf(route: Route, modelWrittenParts: boolean): PlanJob {
+  return jobOf(PROMPT_POLICY_OPERATION, route, modelWrittenParts ? 2 : 1);
+}
+
+/**
  * Jobs from planned calls, each `count` times; the provider comes from the operation's route.
  * Calls of the same operation, provider, model and estimate merge into one job.
  */
@@ -244,6 +257,11 @@ export interface WorkPlanParts {
    * blocklist and the model check.
    */
   promptText?: readonly string[];
+  /**
+   * Labelled prompt text the request carries beside its input files' (apply: a saved plan's input
+   * files and its compiler-written text, src/planning.ts): checked with the rest.
+   */
+  promptParts?: readonly PromptPart[];
   /** The plan step's near matches (src/search/near-match.ts); kept out of the digest. */
   near?: NearMatchOutcome;
   /**
@@ -260,11 +278,17 @@ export type PolicyProviders = Parameters<typeof paidBy>[0] & {
 };
 
 /** The prompt text each plan checked, kept beside the plan (never printed or digested as text). */
-const policyTexts = new WeakMap<WorkPlan, string>();
+const policyTexts = new WeakMap<WorkPlan, PromptPart[]>();
 
-/** The prompt text a plan's prompt-policy job decides on; undefined when it has none. */
-export function policyTextOf(plan: WorkPlan): string | undefined {
+/** The labelled prompt text a plan's prompt-policy job decides on; undefined when it has none. */
+export function policyPartsOf(plan: WorkPlan): PromptPart[] | undefined {
   return policyTexts.get(plan);
+}
+
+/** The prompt text a plan's prompt-policy job decides on, joined; undefined when it has none. */
+export function policyTextOf(plan: WorkPlan): string | undefined {
+  const parts = policyTexts.get(plan);
+  return parts && partsText(parts);
 }
 
 /** The sha256 of a file, or undefined when it cannot be read. */
@@ -346,15 +370,26 @@ export async function buildWorkPlan(
   for (const [name, path] of Object.entries(paths))
     if (path !== undefined) promptFiles[name] = path;
   for (const [name, path] of Object.entries(parts.reads ?? {})) promptFiles[name] ??= path;
-  const promptTexts = [
-    ...(await collectPromptText(promptFiles)),
-    ...(parts.promptText ?? []).filter((text) => text.trim().length > 0),
+  const promptParts: PromptPart[] = [
+    ...(await collectPromptParts(promptFiles)),
+    ...(parts.promptParts ?? []),
+    ...(parts.promptText ?? [])
+      .filter((text) => text.trim().length > 0)
+      .map((text) => ({ label: "text" as const, text })),
   ];
-  const promptPolicy = enforcePromptPolicy(promptTexts, parts.promptAllow ?? []);
-  const policyText = promptTexts.join("\n");
-  // The model check (design section 16): one decide call when there is text to check.
+  // Free: an unambiguous name refuses here; a phrase or ambiguous-name hit is recorded for the
+  // model check to decide when the run starts.
+  const promptPolicy = enforcePromptPolicy(promptParts, parts.promptAllow ?? []);
+  const policyText = partsText(promptParts);
+  // The model check (design section 16): one decide call when there is text to check, and a
+  // second, on the person's parts alone, when model-written text could be all it objects to.
   const policyJobs = policyText.trim()
-    ? [jobOf(PROMPT_POLICY_OPERATION, parts.providers.routes[PROMPT_POLICY_OPERATION]!)]
+    ? [
+        policyJobOf(
+          parts.providers.routes[PROMPT_POLICY_OPERATION]!,
+          promptParts.some(modelWritten),
+        ),
+      ]
     : [];
   const policyTextSha256 = promptPolicy.textSha256;
   const options: Record<string, unknown> = {};
@@ -390,7 +425,7 @@ export async function buildWorkPlan(
     digest,
     runDir: runDirOf(resolve(runs), digest),
   };
-  if (policyJobs.length > 0) policyTexts.set(plan, policyText);
+  if (policyJobs.length > 0) policyTexts.set(plan, promptParts);
   if (parts.near?.nearMatches !== undefined) plan.nearMatches = parts.near.nearMatches;
   if (parts.near?.nearMatchSheet !== undefined) plan.nearMatchSheet = parts.near.nearMatchSheet;
   if (parts.near?.searchError !== undefined) plan.searchError = parts.near.searchError;
