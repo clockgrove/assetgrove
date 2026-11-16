@@ -93,6 +93,46 @@ A person confirms the pick: headless settings record it unattended and must name
 
 MCP tool: `pick`, arguments `run`, `candidate`, `target`.
 
+### `review`
+
+```text
+review <address> [--candidate <id>] [--version <n|sha256>] [--comment <text>] [--reply <id>] [--resolve <id>] [--reject <reason>] [--json]
+```
+
+Appends one annotation to a review record, never changing an existing line. The address is an asset's card, media or review record, or, with `--candidate`, a run directory. `--version` names the version by number or sha256 (the current one by default; not with `--candidate`). `--comment` comments; `--reply` with `--comment` replies to the annotation it names; `--resolve` closes a request, with `--comment` as its note; `--reject` rejects with its reason and takes no `--comment`. Give one of `--reply`, `--resolve` or `--reject`. For a version it then rewrites the card's state, the folder indexes and `log.md`. No confirmation, no model call and no spend. The annotation's text is returned only under `sharedText`.
+
+MCP tool: `review`, arguments `address`, `candidate`, `version`, `comment`, `reply`, `resolve`, `reject`.
+
+### `approve`
+
+```text
+approve <address> [--version <n|sha256>] [--json]
+```
+
+The only way to approve a version. The address is the asset's card, media or review record; `--version` names the version by number or sha256, the current one by default. A person confirms it like a pick (a record at `<configDir>/confirmations/<hex>.json`, an MCP client's form, the inline prompt on a TTY, or exit 8 `confirmation_required` and `assetgrove confirm <hex>`). The digest covers the asset id, the version's sha256 and the record's head, so a confirmation no longer applies once the record gains a line. Under headless settings it exits 8 `confirmation_required` and writes nothing; if the record changes between confirming and writing it exits 2 `plan_changed`. Appends an assessing annotation carrying the confirmation, sets the card's state to approved, rewrites its lock and logs a line. The manifest's review stays pending. Calls no model and spends nothing. Only a person runs it.
+
+MCP tool: `approve`, arguments `address`, `version`.
+
+### `library adopt`
+
+```text
+library adopt <address> [--bible <bible.json>] [--json]
+```
+
+Records a hand edit of a picked asset's file as a new version. The address is the asset's card, media or review record. Runs the free QA checks again on the file (transparency, the frame count its provenance records, and the palette of `--bible` when given); a failure exits 5 `qa_found_nothing`. A person then confirms it like a pick; under headless settings it exits 8 `confirmation_required` and writes nothing. Marks the file `compositeWithTrainedAlgorithmicMedia`, adds a human-edit step to its provenance (its own file, or the record a manifest embeds, updated in place), appends the version and an adopt annotation, and rewrites the card, its lock, the indexes and `log.md`. A file equal to the current version, a Git LFS pointer, or a card that names no provenance inside the library root exits 2; the bytes of an older version exit 2 `version_exists`. Calls no model and spends nothing. Only a person runs it.
+
+MCP tool: `library_adopt`, arguments `address`, `bible`.
+
+### `card edit`
+
+```text
+card edit <address> [--title <text>] [--description <text>] [--tag <tag>]... [--body <markdown>] [--field <name=value>]... [--json]
+```
+
+Changes the person fields of a picked asset's card. `--tag` is repeatable and replaces the card's tags; `--body` replaces the Markdown after the front matter; `--field` is repeatable and sets a field Assetgrove does not own. Naming a machine field exits 2 `card_field_owned` before anything is written. Appends a describing annotation (tagging when only the tags change) that names the changed fields, rewrites the card and the folder indexes, and logs a line. No confirmation, no model call and no spend. The card's text is returned only under `sharedText`.
+
+MCP tool: `card_edit`, arguments `address`, `title`, `description`, `tag`, `body`, `field`.
+
 ### `rig`
 
 ```text

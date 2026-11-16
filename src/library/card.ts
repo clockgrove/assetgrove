@@ -165,19 +165,23 @@ export interface MachineInput {
   assetgrove: string;
 }
 
-/** The machine fields a card carries for these records, in card order. */
-export function machineFields(input: MachineInput): Record<string, unknown> {
-  const { provenance, review } = input;
+/**
+ * The card's `verified` entries for the record's current version: Assetgrove's QA at `qaAt`, the
+ * pick (a person with its confirmation method, or the headless operator), and each approval.
+ */
+export function verifiedOf(
+  review: ReviewRecord,
+  qaAt: string,
+  source: string,
+): Record<string, string>[] {
   const current = currentVersion(review);
-  if (!current) throw new InputError(`${input.reviewResource}: no version has been picked.`);
-  const verified: Record<string, string>[] = [
-    { by: "process:assetgrove-qa", at: provenance.finishedAt },
-  ];
+  if (!current) throw new InputError(`${source}: no version has been picked.`);
+  const verified: Record<string, string>[] = [{ by: "process:assetgrove-qa", at: qaAt }];
   const confirmation = current.confirmation;
   if (confirmation) {
     if (confirmation.method === "headless") {
       if (!confirmation.operator) {
-        throw new InputError(`${input.reviewResource}: a headless pick names its operator.`);
+        throw new InputError(`${source}: a headless pick names its operator.`);
       }
       verified.push({ by: `process:headless:${confirmation.operator}`, at: current.at });
     } else {
@@ -201,6 +205,15 @@ export function machineFields(input: MachineInput): Record<string, unknown> {
       ...(method === undefined ? {} : { method }),
     });
   }
+  return verified;
+}
+
+/** The machine fields a card carries for these records, in card order. */
+export function machineFields(input: MachineInput): Record<string, unknown> {
+  const { provenance, review } = input;
+  const current = currentVersion(review);
+  if (!current) throw new InputError(`${input.reviewResource}: no version has been picked.`);
+  const verified = verifiedOf(review, provenance.finishedAt, input.reviewResource);
   const sources = [
     ...(input.provenanceResource === undefined
       ? []
@@ -332,4 +345,80 @@ export function checkCardPaths(
   source: string,
 ): void {
   for (const path of cardPaths(card)) libraryPath(libraryRoot, cardDir, path, source);
+}
+
+/**
+ * The card with the machine fields its review record decides (`verified`, `state`, `version` and
+ * `lock`) rewritten from `review`; the other machine fields keep their values. `qaAt` is the time of
+ * Assetgrove's QA, by default the one the card already records.
+ */
+export function refreshFromReview(
+  card: Card,
+  review: ReviewRecord,
+  source: string,
+  options: { qaAt?: string } = {},
+): Card {
+  const current = currentVersion(review);
+  if (!current) throw new InputError(`${source}: the review record holds no version.`);
+  const data = card.data as {
+    verified?: { by: string; at: string }[];
+    generated?: { at?: string };
+    bible?: string;
+    lock?: { bible?: string };
+  };
+  const qaAt =
+    options.qaAt ??
+    data.verified?.find((v) => v.by === "process:assetgrove-qa")?.at ??
+    data.generated?.at ??
+    current.at;
+  const fields: Record<string, unknown> = {};
+  for (const key of MACHINE_FIELDS) if (key in card.data) fields[key] = card.data[key];
+  const bible = data.lock?.bible ?? data.bible;
+  fields["verified"] = verifiedOf(review, qaAt, source);
+  fields["state"] = versionStatus(review, current.sha256);
+  fields["version"] = versionNumber(review, current.sha256);
+  fields["lock"] = { sha256: current.sha256, ...(bible !== undefined && { bible }) };
+  return rewriteMachineFields(card, fields, source);
+}
+
+/** A card edit naming a field Assetgrove owns: exit 2 `card_field_owned`. */
+export class CardFieldOwnedError extends InputError {
+  readonly code = "card_field_owned";
+  constructor(field: string) {
+    super(
+      `"${field}" is a machine field Assetgrove rebuilds from the records (${MACHINE_FIELDS.join(", ")}); a card edit changes person fields only`,
+    );
+    this.name = "CardFieldOwnedError";
+  }
+}
+
+/**
+ * The card with person fields set and, when given, its body replaced. An existing entry is
+ * replaced in place; a new `description` goes after `title`, other new fields at the end. Naming a
+ * machine field throws `CardFieldOwnedError` (exit 2 `card_field_owned`).
+ */
+export function setPersonFields(
+  card: Card,
+  values: Record<string, unknown>,
+  body: string | undefined,
+  source: string,
+): Card {
+  for (const key of Object.keys(values)) if (MACHINE.has(key)) throw new CardFieldOwnedError(key);
+  const entries = card.entries.map((entry, index) => ({
+    key: entry.key,
+    text: index === card.entries.length - 1 ? entry.text + card.newline : entry.text,
+  }));
+  for (const [key, value] of Object.entries(values)) {
+    const text = renderEntry(key, value, card.newline);
+    const at = entries.findIndex((entry) => entry.key === key);
+    if (at >= 0) {
+      entries[at] = { key, text };
+      continue;
+    }
+    const after = key === "description" ? entries.findIndex((e) => e.key === "title") : -1;
+    entries.splice(after >= 0 ? after + 1 : entries.length, 0, { key, text });
+  }
+  const next =
+    body === undefined ? card : { ...card, body: body.endsWith("\n") ? body : `${body}\n` };
+  return fromEntries(next, entries, source);
 }

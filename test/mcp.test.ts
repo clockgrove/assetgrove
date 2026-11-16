@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
@@ -129,7 +129,9 @@ function normalise(value: unknown): unknown {
       // A plan's digest covers its creation time.
       .replace(/"digest":"[0-9a-f]{64}"/g, '"digest":"<digest>"')
       // A signed image's bytes: its C2PA manifest holds random identifiers and a fresh signature.
-      .replace(/("version":\d+,"sha256":)"[0-9a-f]{64}"/g, '$1"<signed>"'),
+      .replace(/("version":\d+,"sha256":)"[0-9a-f]{64}"/g, '$1"<signed>"')
+      // An annotation's id hashes its creation time.
+      .replace(/#[0-9a-f]{16}/g, "#<annotation>"),
   );
 }
 
@@ -198,6 +200,17 @@ test("tools/list names equal the registry's tool names and no tool takes a CLI-o
     version: version["version"],
   });
 });
+
+/** The card the pick row wrote into the work directory's target. */
+async function pickedCard(): Promise<string> {
+  const target = join(work, "target");
+  for (const entry of await readdir(target, { recursive: true })) {
+    const path = join(target, entry.toString());
+    if (!path.endsWith(".md") || /(^|[\\/])(index|log)\.md$/.test(path)) continue;
+    if ((await readFile(path, "utf8")).includes("type: Game Asset")) return path;
+  }
+  throw new Error("the pick row wrote no card");
+}
 
 /**
  * One row per tool: `prepare` builds what the call needs in the work directory and returns its
@@ -551,6 +564,24 @@ const rows: Row[] = [
       approveProfile(syntheticProfile(), { targetDir: target });
       return { run: join(runs, run!), candidate: "c1", target };
     },
+  },
+  { tool: "review", prepare: async () => ({ address: await pickedCard(), comment: "a row" }) },
+  { tool: "approve", prepare: async () => ({ address: await pickedCard() }), exitCode: 8 },
+  { tool: "card_edit", prepare: async () => ({ address: await pickedCard(), title: "A row" }) },
+  {
+    tool: "library_adopt",
+    prepare: async () => {
+      // A person's hand edit: one opaque pixel recoloured.
+      const card = await pickedCard();
+      const resource = /^resource: (.+)$/m.exec(await readFile(card, "utf8"))![1]!;
+      const media = join(dirname(card), resource);
+      const image = decodeImage(new Uint8Array(await readFile(media)));
+      const i = image.data.findIndex((v, j) => j % 4 === 3 && v === 255) - 3;
+      setPixel(image, (i / 4) % image.width, Math.floor(i / 4 / image.width), [1, 2, 3, 255]);
+      await writeFile(media, encodePng(image));
+      return { address: card };
+    },
+    exitCode: 8,
   },
   {
     tool: "compare",

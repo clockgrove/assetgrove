@@ -11,7 +11,9 @@ import { describeRequest } from "../confirm/prompt.ts";
 import type { ConfirmRequest } from "../confirm/prompt.ts";
 import { spendShown } from "../runs/execute.ts";
 import type { WorkPlan } from "../runs/plan.ts";
+import { rebuildAdoptRequest } from "./library.ts";
 import { pickRequest } from "./pick.ts";
+import { rebuildApproveRequest } from "./review.ts";
 import { applySettingsChange, rebuiltSettingsRequest } from "../settings-write.ts";
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -48,7 +50,17 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
       return { kind: "spend", id: request.id, body, ...shown };
     }
     let rebuilt: KindRequest;
-    if (request.kind === "pick") {
+    if (
+      request.kind === "pick" &&
+      (body["command"] === "approve" || body["command"] === "library adopt")
+    ) {
+      const again =
+        body["command"] === "approve"
+          ? await rebuildApproveRequest(body)
+          : await rebuildAdoptRequest(body);
+      if (again === undefined) return undefined;
+      rebuilt = again;
+    } else if (request.kind === "pick") {
       const run = text(body["run"]);
       const target = text(body["target"]);
       const candidate = text(body["candidate"]);

@@ -1,5 +1,8 @@
 import { animationQaCommand } from "./animation-qa.ts";
 import { applyCommand } from "./apply.ts";
+import { approveCommand, reviewCommand } from "./review.ts";
+import { cardEditCommand } from "./card.ts";
+import { libraryAdoptCommand } from "./library.ts";
 import { bibleCommand } from "./bible.ts";
 import { catCommand, lsCommand } from "./browse.ts";
 import { compareCommand } from "./compare.ts";
@@ -49,6 +52,10 @@ export const commands: readonly CommandSpec[] = [
   materialsCommand,
   stageCommand,
   pickCommand,
+  reviewCommand,
+  approveCommand,
+  libraryAdoptCommand,
+  cardEditCommand,
   rigCommand,
   lodCommand,
   lookDevCommand,
