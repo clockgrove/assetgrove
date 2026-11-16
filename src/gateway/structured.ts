@@ -38,7 +38,8 @@ export function userMessage(prompt: string, images: VisionRequest["images"]) {
 
 /**
  * A typed decision through structured output: the model answers a score (the index of one of the
- * question's levels) or a probability that the statement holds. `guard` maps a thrown SDK error to
+ * question's levels), a probability that the statement holds, or the option that fits with its
+ * probability. `guard` maps a thrown SDK error to
  * the adapter's own; `headerId` names the response header that carries the provider's request ID.
  */
 export async function decideStructured(
@@ -50,16 +51,24 @@ export async function decideStructured(
 ): Promise<DecisionResult> {
   const q = req.question;
   const top = q.type === "score" ? Math.max(1, q.levels.length - 1) : 1;
+  const names = q.type === "choice" ? Object.keys(q.options) : [];
   const schema =
     q.type === "score"
       ? z.object({ score: z.number().min(0).max(top) })
-      : z.object({ probability: z.number().min(0).max(1) });
+      : q.type === "choice"
+        ? z.object({
+            choice: z.enum(names as [string, ...string[]]),
+            probability: z.number().min(0).max(1),
+          })
+        : z.object({ probability: z.number().min(0).max(1) });
   const instructions =
     q.type === "score"
       ? `${q.instructions}\nAnswer with score, the index (0 to ${top}) of the level that fits: ${q.levels.map((l, i) => `${i}: ${l}`).join("; ")}.`
-      : `${q.instructions}\nAnswer with probability, from 0 to 1, that this holds.` +
-        `${q.whenTrue !== undefined ? ` True means: ${q.whenTrue}.` : ""}` +
-        `${q.whenFalse !== undefined ? ` False means: ${q.whenFalse}.` : ""}`;
+      : q.type === "choice"
+        ? `${q.instructions}\nAnswer with choice, the one option that fits, and probability, from 0 to 1, that it is right. Options: ${Object.entries(q.options).map(([name, meaning]) => `${name}: ${meaning}`).join("; ")}.`
+        : `${q.instructions}\nAnswer with probability, from 0 to 1, that this holds.` +
+          `${q.whenTrue !== undefined ? ` True means: ${q.whenTrue}.` : ""}` +
+          `${q.whenFalse !== undefined ? ` False means: ${q.whenFalse}.` : ""}`;
   const result = await guard("decide", () =>
     generateText({
       model,
@@ -69,10 +78,19 @@ export async function decideStructured(
       output: Output.object({ schema }),
     }),
   );
-  const raw = result.output as { score?: number; probability?: number } | undefined;
+  const raw = result.output as
+    | { score?: number; probability?: number; choice?: string }
+    | undefined;
   let answer: DecisionAnswer;
   if (q.type === "score" && typeof raw?.score === "number")
     answer = { type: "score", score: raw.score };
+  else if (
+    q.type === "choice" &&
+    typeof raw?.choice === "string" &&
+    names.includes(raw.choice) &&
+    typeof raw.probability === "number"
+  )
+    answer = { type: "choice", choice: raw.choice, probabilities: { [raw.choice]: raw.probability } };
   else if (q.type === "boolean" && typeof raw?.probability === "number")
     answer = { type: "boolean", probability: raw.probability };
   else throw new ProviderError(`${provider} decide: the answer did not match the question`);

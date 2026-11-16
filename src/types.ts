@@ -55,6 +55,11 @@ export interface BibleReference {
   subject?: string;
   /** The look this reference belongs to; it is sent only for assets of that look. Unset: every look. */
   look?: string;
+  /**
+   * For a 3D character's references: which view the image shows (`front`, `left`, `right`, `back`,
+   * `three-quarter`, `sheet` or `detail`). Unset: a model judges it from the image (#325).
+   */
+  view?: string;
   /** This reference's licence (SPDX, `LicenseRef-*` or `NOASSERTION`); the bible's `referenceLicense` otherwise. */
   license?: string;
 }
@@ -238,13 +243,18 @@ export interface OutputGrant {
 
 /** One typed decision call's answer, as logged in its call record. */
 export interface DecisionLog {
-  question: "score" | "boolean";
-  /** The answer's label: the nearest Score level's description, or `true`/`false`. */
+  question: "score" | "boolean" | "choice";
+  /** The answer's label: the nearest Score level's description, `true`/`false`, or the Choice. */
   label: string;
-  /** The answer on 0..1: a Score normalised over its levels, or a Boolean's probability of true. */
+  /**
+   * The answer on 0..1: a Score normalised over its levels, a Boolean's probability of true, or the
+   * chosen option's probability (1 when the model reports none).
+   */
   value: number;
-  /** The raw answer: a Score's position on its levels or a Boolean's probability. */
+  /** The raw answer: a Score's position on its levels, a Boolean's or the Choice's probability. */
   raw: number;
+  /** A Choice's probability per option, when the model reports them. */
+  probabilities?: Record<string, number>;
   /** The provider's confidence, else the selected level's probability, when either is known. */
   confidence?: number;
   /** How the answer was made: `decision-model` or `structured-output`, when the provider says. */

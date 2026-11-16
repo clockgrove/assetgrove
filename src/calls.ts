@@ -335,7 +335,7 @@ export class Caller {
   }
 
   /**
-   * A typed decision (Score or Boolean) about images. The call record carries the decision's
+   * A typed decision (Score, Boolean or Choice) about images. The call record carries the decision's
    * label, normalised value, confidence and latency, and one log line reports them with the cost.
    */
   async decide(
@@ -429,6 +429,21 @@ function decisionLog(
       label: answer.probability >= 0.5 ? "true" : "false",
       value: Math.min(1, Math.max(0, answer.probability)),
       raw: answer.probability,
+      ...(result.confidence !== undefined && { confidence: result.confidence }),
+      ...(result.decisionSource !== undefined && { decisionSource: result.decisionSource }),
+      latencyMs,
+    };
+  }
+  if (question.type === "choice" && answer.type === "choice") {
+    if (!Object.hasOwn(question.options, answer.choice))
+      throw new ProviderError(`the decision chose "${answer.choice}", which is not an option`);
+    const p = answer.probabilities?.[answer.choice] ?? result.confidence ?? 1;
+    return {
+      question: "choice",
+      label: answer.choice,
+      value: Math.min(1, Math.max(0, p)),
+      raw: p,
+      ...(answer.probabilities !== undefined && { probabilities: answer.probabilities }),
       ...(result.confidence !== undefined && { confidence: result.confidence }),
       ...(result.decisionSource !== undefined && { decisionSource: result.decisionSource }),
       latencyMs,

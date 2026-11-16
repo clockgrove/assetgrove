@@ -1,4 +1,5 @@
 import type { Caller } from "../calls.ts";
+import type { ReferenceViewCache } from "../model3d/views.ts";
 import type { Routes } from "../routes.ts";
 import type { AssetSpec, MediaOutput, QaResult, StyleBible, TargetProfile } from "../types.ts";
 
@@ -24,6 +25,8 @@ export interface GeneratorContext {
   note?: string;
   /** Directory the profile's relative paths (a rig template, reference frames) resolve against. */
   profileDir?: string;
+  /** The run's cache of which view each reference image shows, shared by its candidates. */
+  referenceViews?: ReferenceViewCache;
 }
 
 export interface GeneratedCandidate {
@@ -55,5 +58,15 @@ export interface Generator {
    * starts. Throws `InputError` for a spec that cannot be generated, before any spend.
    */
   planCandidate(spec: AssetSpec, profile: TargetProfile, routes: Routes): PlannedCall[];
+  /**
+   * The calls a request makes once, whatever its candidate count (a 3D character's reference
+   * view calls); forecast with the candidates' calls. Absent: none.
+   */
+  planRequest?(
+    spec: AssetSpec,
+    profile: TargetProfile,
+    routes: Routes,
+    bible: StyleBible,
+  ): PlannedCall[];
   generate(context: GeneratorContext): Promise<GeneratedCandidate>;
 }

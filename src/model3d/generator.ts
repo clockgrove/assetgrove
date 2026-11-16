@@ -15,11 +15,20 @@ import {
 import type { IdentityRecord, IdentityScore } from "../identity.ts";
 import { createRaster, decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
-import { loadReference, sha256, subjectOf, withNote } from "../request.ts";
+import { sha256, subjectOf, withNote } from "../request.ts";
 import type { Route, Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, Reason, StyleBible, TargetProfile } from "../types.ts";
 import { GLB_MEDIA_TYPE, parseGlb, writeGlb } from "./glb.ts";
 import type { Glb } from "./glb.ts";
+import {
+  ReferenceViewCache,
+  loadReferenceViews,
+  planReferenceViews,
+  requireFront,
+  subjectBibleReferences,
+  viewRecord,
+} from "./views.ts";
+import type { ViewedReference } from "./views.ts";
 import { CHARACTER_3D_KIND, FRAMES_PER_CLIP, characterSpec, model3dSettings } from "./profile.ts";
 import type { CharacterSpec } from "./profile.ts";
 import {
@@ -74,29 +83,27 @@ export function clipPlan(
   return { planned, missing };
 }
 
-/** Bible references of the subject, each with the view it shows, read from its role. */
-function viewOf(role: string): string {
-  const r = role.toLowerCase();
-  if (r.includes("three-quarter") || r.includes("3/4")) return "three-quarter";
-  if (r.includes("front")) return "front";
-  if (r.includes("back")) return "back";
-  if (r.includes("left") || r.includes("side")) return "left";
-  if (r.includes("right")) return "right";
-  return role;
-}
-
+/**
+ * Bible references of the subject, each with the view it shows (declared, or judged by a model and
+ * cached), front first. A request whose references show no front view is refused here, before
+ * the 3D call.
+ */
 async function subjectReferences(
   spec: AssetSpec,
   bible: StyleBible,
   bibleDir: string,
-): Promise<Array<LoadedReference & { view: string }>> {
-  const subject = subjectOf(spec);
-  const refs = bible.references.filter((r) => r.subject === subject && r.role !== "perspective");
+  call: GeneratorContext["call"],
+  cache: ReferenceViewCache,
+): Promise<ViewedReference[]> {
+  const refs = subjectBibleReferences(spec, bible);
   if (refs.length === 0) {
-    throw new InputError(`the style bible has no approved references for subject "${subject}"`);
+    throw new InputError(
+      `the style bible has no approved references for subject "${subjectOf(spec)}"`,
+    );
   }
-  const loaded = await Promise.all(refs.map((r) => loadReference(r.path, r.role, bibleDir)));
-  return loaded.map((r) => ({ ...r, view: viewOf(r.role) }));
+  const viewed = await loadReferenceViews(call, refs, bibleDir, cache);
+  requireFront(viewed);
+  return [...viewed.filter((r) => r.view === "front"), ...viewed.filter((r) => r.view !== "front")];
 }
 
 /**
@@ -206,16 +213,28 @@ export const character3dGenerator: Generator = {
     return calls;
   },
 
+  planRequest(spec: AssetSpec, _profile: TargetProfile, routes: Routes, bible: StyleBible) {
+    // One view call per reference that declares no view, once per request.
+    return planReferenceViews(subjectBibleReferences(spec, bible), routes);
+  },
+
   async generate(context: GeneratorContext) {
     const { spec, bible, profile, call } = context;
     const character = characterSpec(spec);
     const settings = model3dSettings(profile);
-    const references = await subjectReferences(spec, bible, context.bibleDir);
     const text = withNote(prompt(spec, bible, character), context.note);
     // A rig template that cannot be read is refused before the first call.
     const rig = declaresRig(profile)
       ? await loadRig(profile, context.profileDir ?? process.cwd())
       : undefined;
+    // The view calls are cheap; the front view is required before the expensive 3D call.
+    const references = await subjectReferences(
+      spec,
+      bible,
+      context.bibleDir,
+      call,
+      context.referenceViews ?? new ReferenceViewCache(),
+    );
 
     const made = await call.model3d(
       MODEL_OPERATION,
@@ -330,12 +349,7 @@ export const character3dGenerator: Generator = {
       };
     }
 
-    const referenceParameters = references.map((r) => ({
-      role: r.role,
-      view: r.view,
-      path: r.path,
-      sha256: r.sha256,
-    }));
+    const referenceParameters = viewRecord(references);
     let identity: IdentityScore | undefined;
     const identityMode = identitySettings3d(profile);
     if (identityMode.mode !== "off") {
