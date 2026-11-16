@@ -1,10 +1,20 @@
-/** The search bench: runs the confirmed bars through the package's Store and Embedder interfaces. */
-import { mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promises";
+/**
+ * The search bench: runs the confirmed bars on the search that ships. The labelled library is
+ * indexed by the package's own indexer (`SearchIndex.index()`, batched as it batches) into a
+ * `LanceStore` in a temporary folder, every words and look query is answered by the package's own
+ * find (`findWith`, what `assetgrove find` runs), and the speed and freshness bars time those calls.
+ */
+import { realpathSync, readdirSync, statSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { availableParallelism, arch, cpus, platform, totalmem, tmpdir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import type { SearchQuery } from "../../packages/assetgrove-search/src/contract.ts";
 import { normalize, type Embedder } from "../../packages/assetgrove-search/src/embedder.ts";
-import { MemoryStore } from "../../packages/assetgrove-search/src/memory-store.ts";
+import { findWith } from "../../packages/assetgrove-search/src/extension.ts";
+import { rankingQueries, SearchIndex } from "../../packages/assetgrove-search/src/find.ts";
+import { LanceStore } from "../../packages/assetgrove-search/src/lance-store.ts";
+import type { Library, LibraryItem } from "../../packages/assetgrove-search/src/library.ts";
 import type { Row, Store } from "../../packages/assetgrove-search/src/store.ts";
 import { passes, type Bar } from "./bars.ts";
 import type { ImageSource } from "./fetch.ts";
@@ -15,8 +25,9 @@ import {
   wordsLabelProblems,
   type Label,
   type Manifest,
+  type ManifestImage,
 } from "./manifest.ts";
-import { mean, percentile, precisionAt5, rrf } from "./metrics.ts";
+import { mean, percentile, precisionAt5 } from "./metrics.ts";
 
 export interface BenchEntry {
   bar: string;
@@ -41,6 +52,24 @@ export interface Machine {
   referenceBox: boolean;
 }
 
+/**
+ * Where the shipped indexer's time went, over one `SearchIndex.index()` of the labelled library:
+ * embedding images, embedding card texts, writing to the store (rows, sources, the vector cache,
+ * the optimize), and the rest (lock, listing, reading and hashing files).
+ */
+export interface IndexingSplit {
+  images: number;
+  totalMs: number;
+  perImageMs: number;
+  embedImagesMs: number;
+  embedTextsMs: number;
+  writeMs: number;
+  otherMs: number;
+  /** What the embedder was asked for: images and distinct card texts. */
+  embeddedImages: number;
+  embeddedTexts: number;
+}
+
 export interface BenchReport {
   entries: BenchEntry[];
   machine: Machine;
@@ -50,6 +79,7 @@ export interface BenchReport {
   paddedTo: number;
   /** Written queries left out of the by-words score: fewer than `MIN_RELEVANT` judged relevant. */
   dropped: { id: string; text: string; relevant: number }[];
+  indexing: IndexingSplit;
 }
 
 export interface BenchOptions {
@@ -62,8 +92,6 @@ export interface BenchOptions {
    * manifest's look queries must be in it. Defaults to the manifest's own images and labels.
    */
   lookLibrary?: LookLibrary;
-  /** A fresh store per call; the bench rebuilds one to check rebuild equality. */
-  newStore?: () => Store | Promise<Store>;
   padTo?: number;
   /** Count of timed queries per speed measure. */
   timedQueries?: number;
@@ -88,64 +116,291 @@ export function machine(): Machine {
   };
 }
 
-const TOP = 20;
-/** The package indexer's write batch (`packages/assetgrove-search/src/indexer.ts`). */
-const INDEX_BATCH = 64;
-
-/** Words query in shipped mode: image vector, card-text vector and full text, fused by RRF. */
-async function shipped(
-  store: Store,
-  emb: Embedder,
-  text: string,
-  limit: number,
-): Promise<string[]> {
-  const [q] = await emb.embedTexts([text]);
-  const vec = q as Float32Array;
-  const lists = await Promise.all([
-    store.query({ vector: { column: "imageVec", value: vec }, limit: TOP }),
-    store.query({ vector: { column: "textVec", value: vec }, limit: TOP }),
-    store.query({ text, limit: TOP }),
-  ]);
-  return rrf(lists.map((l) => l.map((h) => h.row.key))).slice(0, limit);
+/** Time spent in each part of the shipped calls, added up as they run. */
+export interface Timings {
+  embedImagesMs: number;
+  embedTextsMs: number;
+  writeMs: number;
+  embeddedImages: number;
+  embeddedTexts: number;
 }
 
-/** The rankings the bench scores by words, each a list of image keys, best first. */
+const newTimings = (): Timings => ({
+  embedImagesMs: 0,
+  embedTextsMs: 0,
+  writeMs: 0,
+  embeddedImages: 0,
+  embeddedTexts: 0,
+});
+
+/** The embedder as given, its two calls timed. */
+function timedEmbedder(e: Embedder, t: Timings): Embedder {
+  return {
+    id: e.id,
+    revision: e.revision,
+    dimension: e.dimension,
+    ...(e.route !== undefined && { route: e.route }),
+    ...(e.model !== undefined && { model: e.model }),
+    ...(e.paid !== undefined && { paid: e.paid }),
+    async embedImages(images) {
+      const t0 = performance.now();
+      try {
+        return await e.embedImages(images);
+      } finally {
+        t.embedImagesMs += performance.now() - t0;
+        t.embeddedImages += images.length;
+      }
+    },
+    async embedTexts(texts) {
+      const t0 = performance.now();
+      try {
+        return await e.embedTexts(texts);
+      } finally {
+        t.embedTextsMs += performance.now() - t0;
+        t.embeddedTexts += texts.length;
+      }
+    },
+  };
+}
+
+const WRITES = new Set<string | symbol>([
+  "recordEmbedder",
+  "upsert",
+  "remove",
+  "removePaths",
+  "recordBuiltFrom",
+  "putSources",
+  "removeSources",
+  "cacheVectors",
+  "optimize",
+]);
+
+/** The store as given, every write timed. */
+function timedStore(store: Store, t: Timings): Store {
+  return new Proxy(store, {
+    get(target, prop) {
+      const v = Reflect.get(target, prop, target) as unknown;
+      if (typeof v !== "function") return v;
+      if (!WRITES.has(prop)) return v.bind(target);
+      return async (...args: unknown[]) => {
+        const t0 = performance.now();
+        try {
+          return await v.apply(target, args);
+        } finally {
+          t.writeMs += performance.now() - t0;
+        }
+      };
+    },
+  });
+}
+
+/** The bench's folder: one `LanceStore` (`search/`) and the work trees it indexes. */
+export interface Bench {
+  root: string;
+  /** The store folder, as `<stateDir>/search` is: it holds the tables and `write.lock`. */
+  dir: string;
+  store: Store;
+  embedder: Embedder;
+  timings: Timings;
+  close(): Promise<void>;
+}
+
+/** A temporary folder with an empty `LanceStore`, the embedder and store timed. */
+export async function openBench(embedder: Embedder): Promise<Bench> {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), "bench-search-")));
+  const dir = join(root, "search");
+  const timings = newTimings();
+  const lance = await LanceStore.open(dir, { embedder });
+  return {
+    root,
+    dir,
+    store: timedStore(lance, timings),
+    embedder: timedEmbedder(embedder, timings),
+    timings,
+    async close() {
+      lance.close();
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+/** One work tree of the bench: its folder, the library over it, and the shipped index of it. */
+export interface BenchTree {
+  worktree: string;
+  index: SearchIndex;
+  store: Store;
+  embedder: Embedder;
+  address(imageId: string): string;
+  /** The image id an address names, or undefined for a row that is not one of the images. */
+  imageOf(address: string): string | undefined;
+}
+
+/**
+ * A folder library, listed as core's reader lists files (a stat each) and loaded from disk: the
+ * images with their labels as card fields, and every file under `folder` as a file with no image
+ * view, which the freshness check stats but which adds no row.
+ */
+function folderLibrary(
+  worktree: string,
+  images: Map<string, Omit<LibraryItem, "size" | "mtimeMs">>,
+  folder?: string,
+): Library {
+  return {
+    async list() {
+      const items: LibraryItem[] = [];
+      for (const [path, item] of images) {
+        const s = statSync(join(worktree, path));
+        items.push({ ...item, size: s.size, mtimeMs: s.mtimeMs });
+      }
+      if (folder !== undefined) {
+        const abs = join(worktree, folder);
+        let names: string[];
+        try {
+          names = readdirSync(abs).sort();
+        } catch {
+          names = [];
+        }
+        for (const name of names) {
+          const path = folder === "" ? name : `${folder}/${name}`;
+          const s = statSync(join(abs, name));
+          if (!s.isFile()) continue;
+          items.push({
+            path,
+            size: s.size,
+            mtimeMs: s.mtimeMs,
+            source: "folder",
+            id: path,
+            address: `asset://bench-files/${path}`,
+            text: "freshness file",
+          });
+        }
+      }
+      return items;
+    },
+    async load(item) {
+      const bytes = new Uint8Array(await readFile(join(worktree, item.path)));
+      return { bytes, views: images.has(item.path) ? [{ view: "", image: bytes }] : [] };
+    },
+    head: async () => "bench",
+  };
+}
+
+/**
+ * Writes `images` into a new work tree `<root>/<name>` and opens the shipped index of it in the
+ * bench's store. Each image is a pick with its label's category as kind and pack as subject and
+ * tags; with `cardText` its written card text is its text, as the labelled library's is.
+ */
+export async function benchTree(
+  bench: Bench,
+  o: {
+    name: string;
+    images: ManifestImage[];
+    labels: Label[];
+    source: ImageSource;
+    cardText: boolean;
+    /** A folder inside the work tree whose files the library lists too (freshness files). */
+    folder?: string;
+    /** False when the work tree already holds the images (an index rebuilt from it). */
+    write?: boolean;
+  },
+): Promise<BenchTree> {
+  const worktree = join(bench.root, o.name);
+  await mkdir(worktree, { recursive: true });
+  const label = new Map(o.labels.map((l) => [l.image, l]));
+  const prefix = `asset://${o.name}/`;
+  const items = new Map<string, Omit<LibraryItem, "size" | "mtimeMs">>();
+  for (const image of o.images) {
+    const l = label.get(image.id);
+    if (!l) throw new Error(`image ${image.id} has no label`);
+    const path = `${image.id}${extname(image.file)}`;
+    if (o.write !== false) await writeFile(join(worktree, path), await o.source.bytes(image));
+    items.set(path, {
+      path,
+      source: "pick",
+      id: image.id,
+      address: `${prefix}${image.id}`,
+      kind: l.category,
+      subject: l.pack,
+      tags: [l.category, l.pack],
+      ...(o.cardText && { text: image.card?.text ?? "" }),
+    });
+  }
+  const index = await SearchIndex.open({
+    dir: bench.dir,
+    embedder: bench.embedder,
+    store: bench.store,
+    worktree,
+    library: folderLibrary(worktree, items, o.folder),
+  });
+  return {
+    worktree,
+    index,
+    store: bench.store,
+    embedder: bench.embedder,
+    address: (id) => `${prefix}${id}`,
+    imageOf: (address) => (address.startsWith(prefix) ? address.slice(prefix.length) : undefined),
+  };
+}
+
+/** The shipped find over one bench tree; the image ids it returns, best first. */
+export async function find(tree: BenchTree, q: SearchQuery): Promise<string[]> {
+  const r = await findWith(q, { embedder: tree.embedder, local: tree.index });
+  return r.hits.map((h) => tree.imageOf(h.address)).filter((id): id is string => id !== undefined);
+}
+
+/** Indexes the labelled library through the shipped indexer, as `bench` in the bench's store. */
+export async function indexLabelled(
+  bench: Bench,
+  manifest: Manifest,
+  source: ImageSource,
+  folder?: string,
+): Promise<BenchTree> {
+  const tree = await benchTree(bench, {
+    name: "bench",
+    images: manifest.images,
+    labels: manifest.labels,
+    source,
+    cardText: true,
+    folder,
+  });
+  await tree.index.index();
+  return tree;
+}
+
+/** The rankings the bench scores by words, each a list of image ids, best first. */
 export const RANKINGS = ["image-vector", "card-text-vector", "full-text", "fused"] as const;
 export type Ranking = (typeof RANKINGS)[number];
 
 /**
- * The top `depth` of every ranking the bench scores, for one written query: the image vector, the
- * card-text vector, the full text, and the three fused as shipped mode fuses them. The relevance
- * pool is taken from these, so it favours none of them.
+ * The top `depth` of every ranking the bench scores, for one written query: the shipped find's
+ * three rankings (image vector, card-text vector, full text), each asked of the store as the find
+ * asks it, and the find itself, which fuses them. The relevance pool is taken from these, so it
+ * favours none of them.
  */
 export async function rankingsFor(
-  store: Store,
-  emb: Embedder,
+  tree: BenchTree,
   text: string,
   depth: number,
 ): Promise<Record<Ranking, string[]>> {
-  const [q] = await emb.embedTexts([text]);
-  const vec = q as Float32Array;
-  const keys = (hits: { row: Row }[]) => hits.map((h) => h.row.key);
+  const [vec] = await tree.embedder.embedTexts([text]);
+  const filter = [{ field: "tree", op: "=" as const, value: tree.index.tree }];
+  const lists = await Promise.all(
+    rankingQueries(text.trim(), { words: vec as Float32Array }, depth).map((q) =>
+      tree.store.query({ ...q, filter }),
+    ),
+  );
+  const ids = (i: number) =>
+    (lists[i] ?? [])
+      .map((h) => tree.imageOf(h.row.address))
+      .filter((id): id is string => id !== undefined)
+      .filter((id, n, all) => all.indexOf(id) === n)
+      .slice(0, depth);
   return {
-    "image-vector": keys(
-      await store.query({ vector: { column: "imageVec", value: vec }, limit: depth }),
-    ),
-    "card-text-vector": keys(
-      await store.query({ vector: { column: "textVec", value: vec }, limit: depth }),
-    ),
-    "full-text": keys(await store.query({ text, limit: depth })),
-    fused: await shipped(store, emb, text, depth),
+    "image-vector": ids(0),
+    "card-text-vector": ids(1),
+    "full-text": ids(2),
+    fused: await find(tree, { words: text, limit: depth }),
   };
-}
-
-async function imageOnly(store: Store, emb: Embedder, text: string, limit: number) {
-  const [q] = await emb.embedTexts([text]);
-  const hits = await store.query({
-    vector: { column: "imageVec", value: q as Float32Array },
-    limit,
-  });
-  return hits.map((h) => h.row.key);
 }
 
 /** Small deterministic generator for padding rows. */
@@ -159,18 +414,18 @@ function prng(seed: number): () => number {
 
 const VOCAB = ["stone", "wood", "gold", "red", "blue", "sprite", "tile", "icon", "forest", "ruin"];
 
-function paddingRows(count: number, dimension: number, fromIndex: number): Row[] {
+/** Rows standing in for the rest of 10,000 assets: in the tree searched, not under test. */
+function paddingRows(count: number, dimension: number, tree: string): Row[] {
   const rand = prng(42);
   const rows: Row[] = [];
-  for (let n = 0; n < count; n++) {
+  for (let i = 0; i < count; i++) {
     const unit = (): Float32Array =>
       normalize(Float32Array.from({ length: dimension }, () => rand() - 0.5));
-    const i = fromIndex + n;
     rows.push({
-      key: `pad-${i}`,
-      tree: "bench",
+      key: `${tree}:pad/${i}.png#`,
+      tree,
       id: `pad-${i}`,
-      address: `asset://bench/pad-${i}`,
+      address: `asset://bench-pad/pad-${i}`,
       source: "pick",
       kind: "pad",
       subject: "pad",
@@ -178,6 +433,7 @@ function paddingRows(count: number, dimension: number, fromIndex: number): Row[]
       text: `${VOCAB[i % 10]} ${VOCAB[(i * 7) % 10]} padding ${i}`,
       path: `pad/${i}.png`,
       sha256: `pad-${i}`,
+      view: "",
       imageVec: unit(),
       textVec: unit(),
     });
@@ -185,77 +441,10 @@ function paddingRows(count: number, dimension: number, fromIndex: number): Row[]
   return rows;
 }
 
-/** Stat every file and compare with what the index knows; no change means nothing to hash. */
-export async function freshnessScan(
-  files: string[],
-  known: Map<string, { size: number; mtimeMs: number }>,
-): Promise<number> {
-  const changed = await Promise.all(
-    files.map(async (f) => {
-      const s = await stat(f);
-      const k = known.get(f);
-      return !k || k.size !== s.size || k.mtimeMs !== s.mtimeMs;
-    }),
-  );
-  return changed.filter(Boolean).length;
-}
-
-/**
- * Indexes the labelled library into `store`: image vector from the pixels, text vector from the
- * card text, written in the package indexer's batches and optimized afterwards. Returns the rows
- * and each image's indexing time (its embedding plus its share of its batch's write).
- */
-export async function indexLibrary(
-  manifest: Manifest,
-  source: ImageSource,
-  embedder: Embedder,
-  store: Store,
-): Promise<{ rows: Row[]; indexMs: number[] }> {
-  const label = new Map<string, Label>(manifest.labels.map((l) => [l.image, l]));
-  const rows: Row[] = [];
-  const indexMs: number[] = [];
-  let pending: { row: Row; ms: number }[] = [];
-  const flush = async () => {
-    const t0 = performance.now();
-    await store.upsert(pending.map((p) => p.row));
-    const share = (performance.now() - t0) / Math.max(1, pending.length);
-    for (const p of pending) indexMs.push(p.ms + share);
-    pending = [];
-  };
-  for (const image of manifest.images) {
-    const l = label.get(image.id) as Label;
-    const text = image.card?.text ?? "";
-    const t0 = performance.now();
-    const [imageVec] = await embedder.embedImages([await source.bytes(image)]);
-    const [textVec] = await embedder.embedTexts([text]);
-    const row: Row = {
-      key: image.id,
-      tree: "bench",
-      id: image.id,
-      address: `asset://bench/${image.id}`,
-      source: "pick",
-      kind: l.category,
-      subject: l.pack,
-      tags: [l.category, l.pack],
-      text,
-      path: image.file,
-      sha256: image.sha256,
-      imageVec,
-      textVec,
-    };
-    pending.push({ row, ms: performance.now() - t0 });
-    rows.push(row);
-    if (pending.length === INDEX_BATCH) await flush();
-  }
-  await flush();
-  // A writer optimizes after a batch: on LanceStore this builds the full-text index shipped mode uses.
-  await store.optimize();
-  return { rows, indexMs };
-}
+const round = (ms: number): number => Math.round(ms * 1000) / 1000;
 
 export async function runBench(o: BenchOptions): Promise<BenchReport> {
   const { manifest, embedder } = o;
-  const newStore = o.newStore ?? (() => new MemoryStore());
   const padTo = o.padTo ?? 10_000;
   const timed = o.timedQueries ?? 50;
   // By words reads only judged relevance: refuse a manifest whose labels are rule-made, unjudged,
@@ -268,6 +457,11 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     throw new Error(
       `the written queries cannot be scored by words:\n${labelProblems.slice(0, 10).join("\n")}`,
     );
+  const look = o.lookLibrary ?? { images: manifest.images, labels: manifest.labels };
+  const lookLabel = new Map<string, Label>(look.labels.map((l) => [l.image, l]));
+  for (const id of manifest.lookQueries) {
+    if (!lookLabel.has(id)) throw new Error(`look query ${id} is not in the look library`);
+  }
   const dropped = droppedQueries(manifest);
   const droppedIds = new Set(dropped.map((q) => q.id));
   const entries: BenchEntry[] = [];
@@ -277,7 +471,7 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     if (!bar) throw new Error(`bar ${id} is not in the decisions record`);
     const e: BenchEntry = {
       bar: id,
-      measured: Math.round(measured * 1000) / 1000,
+      measured: round(measured),
       target: `${bar.op} ${bar.value}${bar.unit === "ms" ? " ms" : ""}`,
       pass: passes(bar, measured),
       unit: bar.unit,
@@ -287,197 +481,241 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     entries.push(e);
   };
 
-  // Index the library: image vector from the pixels, text vector from the card text.
-  const store = await newStore();
-  const { rows, indexMs } = await indexLibrary(manifest, o.source, embedder, store);
-
-  // By look, in the look library: the full library the by-look bars were set on (docs/decisions.md).
-  const look = o.lookLibrary ?? { images: manifest.images, labels: manifest.labels };
-  const lookLabel = new Map<string, Label>(look.labels.map((l) => [l.image, l]));
-  const known = new Map(rows.map((r) => [r.key, r]));
-  const lookStore = await newStore();
-  const lookRows: Row[] = [];
-  for (const image of look.images) {
-    const l = lookLabel.get(image.id);
-    if (!l) throw new Error(`look library image ${image.id} has no label`);
-    const imageVec =
-      known.get(image.id)?.imageVec ??
-      (await embedder.embedImages([await o.source.bytes(image)]))[0];
-    lookRows.push({
-      key: image.id,
-      tree: "bench-look",
-      id: image.id,
-      address: `asset://bench-look/${image.id}`,
-      source: "pick",
-      kind: l.category,
-      subject: l.pack,
-      path: image.file,
-      sha256: image.sha256,
-      imageVec,
-    });
-  }
-  for (let i = 0; i < lookRows.length; i += 500) await lookStore.upsert(lookRows.slice(i, i + 500));
-  await lookStore.optimize();
-  const lookVec = new Map(lookRows.map((r) => [r.key, r.imageVec as Float32Array]));
-  // The query image is left out of its own results.
-  const neighbours = async (id: string, k: number): Promise<string[]> => {
-    const hits = await lookStore.query({
-      vector: { column: "imageVec", value: lookVec.get(id) as Float32Array },
-      limit: k + 1,
-    });
-    return hits
-      .map((h) => h.row.key)
-      .filter((k2) => k2 !== id)
-      .slice(0, k);
-  };
-  const shareCategory: number[] = [];
-  const pixelRecall: number[] = [];
-  const recall: number[] = [];
-  for (const id of manifest.lookQueries) {
-    const l = lookLabel.get(id);
-    if (!l) throw new Error(`look query ${id} is not in the look library`);
-    const top5 = await neighbours(id, 5);
-    const ok = top5.filter((n) => lookLabel.get(n)?.category === l.category).length >= 3 ? 1 : 0;
-    shareCategory.push(ok);
-    // Relevant: the other images of the same pack and category, as the spike measured it.
-    const relevant = look.labels.filter(
-      (x) => x.image !== id && x.category === l.category && x.pack === l.pack,
-    );
-    if (relevant.length > 0) {
-      const top10 = new Set(await neighbours(id, 10));
-      const found = relevant.filter((r) => top10.has(r.image)).length;
-      const r = found / Math.min(10, relevant.length);
-      recall.push(r);
-      if (l.pixel === 16) pixelRecall.push(r);
-    }
-  }
-  entry("look-category", mean(shareCategory), shareCategory.length);
-  entry("look-recall10", mean(recall), recall.length);
-  entry("look-pixel16", mean(pixelRecall), pixelRecall.length);
-
-  // By words.
-  const p5 = async (run: (text: string) => Promise<string[]>): Promise<number[]> => {
-    const out: number[] = [];
-    for (const q of manifest.writtenQueries) {
-      // A query judged to have fewer than MIN_RELEVANT relevant images is dropped and reported.
-      if (droppedIds.has(q.id)) continue;
-      const top = await run(q.text);
-      // An image ranked here that was never judged counts as not relevant (the pooling rule).
-      out.push(precisionAt5(top, relevantOf(q)));
-    }
-    return out;
-  };
-  const imgP = await p5((t) => imageOnly(store, embedder, t, 5));
-  const shipP = await p5((t) => shipped(store, embedder, t, 5));
-  entry("words-image-p5", mean(imgP), imgP.length);
-  entry("words-shipped-p5", mean(shipP), shipP.length);
-
-  // Filters return only matching rows; a rebuilt store answers identically.
-  const rebuilt = await newStore();
-  await rebuilt.upsert(rows);
-  await rebuilt.optimize();
-  const kinds = [...new Set(manifest.labels.map((l) => l.category))];
-  const probe = rows[0]?.imageVec as Float32Array;
-  let checks = 0;
-  let good = 0;
-  for (const kind of kinds) {
-    for (const [op, value] of [
-      ["=", kind],
-      ["!=", kind],
-    ] as const) {
-      checks++;
-      const q = { vector: { column: "imageVec" as const, value: probe }, limit: 1000 };
-      const hits = await store.query({ ...q, filter: [{ field: "kind", op, value }] });
-      const again = await rebuilt.query({ ...q, filter: [{ field: "kind", op, value }] });
-      const expected = rows.filter((r) => (op === "=" ? r.kind === kind : r.kind !== kind)).length;
-      const onlyMatching = hits.every((h) =>
-        op === "=" ? h.row.kind === kind : h.row.kind !== kind,
-      );
-      const same =
-        JSON.stringify(hits.map((h) => h.row.key)) === JSON.stringify(again.map((h) => h.row.key));
-      if (onlyMatching && same && hits.length === expected) good++;
-    }
-  }
-  entry("filters-rebuild", checks === 0 ? 0 : good / checks, checks);
-
-  // Freshness fixture (also timed inside search-10k).
-  const dir = await mkdtemp(join(tmpdir(), "bench-fresh-"));
+  const bench = await openBench(embedder);
+  let rebuilt: Bench | undefined;
+  let lookBench: Bench | undefined;
   try {
-    const count = o.freshnessFiles ?? 2000;
-    const files: string[] = [];
-    const known = new Map<string, { size: number; mtimeMs: number }>();
-    const when = new Date(1_700_000_000_000);
-    for (let i = 0; i < count; i++) {
-      const f = join(dir, `f${i}.png`);
-      await writeFile(f, `file ${i}`);
-      await utimes(f, when, when);
-      const s = await stat(f);
-      files.push(f);
-      known.set(f, { size: s.size, mtimeMs: s.mtimeMs });
-    }
+    // Index the labelled library through the shipped indexer, timed as it runs.
+    const t = bench.timings;
+    const before = { ...t };
+    const words = await benchTree(bench, {
+      name: "bench",
+      images: manifest.images,
+      labels: manifest.labels,
+      source: o.source,
+      cardText: true,
+      folder: "fresh",
+    });
+    const t0 = performance.now();
+    await words.index.index();
+    const totalMs = performance.now() - t0;
+    const images = manifest.images.length;
+    const embedImagesMs = t.embedImagesMs - before.embedImagesMs;
+    const embedTextsMs = t.embedTextsMs - before.embedTextsMs;
+    const writeMs = t.writeMs - before.writeMs;
+    const indexing: IndexingSplit = {
+      images,
+      totalMs: round(totalMs),
+      perImageMs: round(totalMs / Math.max(1, images)),
+      embedImagesMs: round(embedImagesMs),
+      embedTextsMs: round(embedTextsMs),
+      writeMs: round(writeMs),
+      otherMs: round(totalMs - embedImagesMs - embedTextsMs - writeMs),
+      embeddedImages: t.embeddedImages - before.embeddedImages,
+      embeddedTexts: t.embeddedTexts - before.embeddedTexts,
+    };
 
-    // Speed: pad to padTo rows.
-    await store.upsert(paddingRows(Math.max(0, padTo - rows.length), embedder.dimension, 0));
-    await store.optimize();
+    // By look, in the look library: the full library the by-look bars were set on
+    // (docs/decisions.md), indexed in a store of its own so that the speed bars below time a store
+    // of exactly padTo rows. Each query is `find --like <address>`; the query image is left out of
+    // its own results.
+    lookBench = await openBench(embedder);
+    const lookTree = await benchTree(lookBench, {
+      name: "bench-look",
+      images: look.images,
+      labels: look.labels,
+      source: o.source,
+      cardText: false,
+    });
+    await lookTree.index.index();
+    const shareCategory: number[] = [];
+    const pixelRecall: number[] = [];
+    const recall: number[] = [];
+    for (const id of manifest.lookQueries) {
+      const l = lookLabel.get(id) as Label;
+      const ranked = (
+        await find(lookTree, { like: { address: lookTree.address(id) }, limit: 11 })
+      ).filter((n) => n !== id);
+      const top5 = ranked.slice(0, 5);
+      const ok = top5.filter((n) => lookLabel.get(n)?.category === l.category).length >= 3 ? 1 : 0;
+      shareCategory.push(ok);
+      // Relevant: the other images of the same pack and category, as the spike measured it.
+      const relevant = look.labels.filter(
+        (x) => x.image !== id && x.category === l.category && x.pack === l.pack,
+      );
+      if (relevant.length > 0) {
+        const top10 = new Set(ranked.slice(0, 10));
+        const found = relevant.filter((r) => top10.has(r.image)).length;
+        const r = found / Math.min(10, relevant.length);
+        recall.push(r);
+        if (l.pixel === 16) pixelRecall.push(r);
+      }
+    }
+    entry("look-category", mean(shareCategory), shareCategory.length);
+    entry("look-recall10", mean(recall), recall.length);
+    entry("look-pixel16", mean(pixelRecall), pixelRecall.length);
+    await lookBench.close();
+    lookBench = undefined;
+
+    // By words: the image-vector ranking alone, and the shipped find.
+    const p5 = async (run: (text: string) => Promise<string[]>): Promise<number[]> => {
+      const out: number[] = [];
+      for (const q of manifest.writtenQueries) {
+        // A query judged to have fewer than MIN_RELEVANT relevant images is dropped and reported.
+        if (droppedIds.has(q.id)) continue;
+        const top = await run(q.text);
+        // An image ranked here that was never judged counts as not relevant (the pooling rule).
+        out.push(precisionAt5(top, relevantOf(q)));
+      }
+      return out;
+    };
+    const imgP = await p5(async (text) => (await rankingsFor(words, text, 5))["image-vector"]);
+    const shipP = await p5((text) => find(words, { words: text, limit: 5 }));
+    entry("words-image-p5", mean(imgP), imgP.length);
+    entry("words-shipped-p5", mean(shipP), shipP.length);
+
+    // Filters return only matching rows; an index rebuilt from the same library answers
+    // identically. Both through the shipped find, ranked by the first image's look.
+    rebuilt = await openBench(embedder);
+    const again = await benchTree(
+      { ...rebuilt, root: bench.root },
+      {
+        name: "bench",
+        images: manifest.images,
+        labels: manifest.labels,
+        source: o.source,
+        cardText: true,
+        folder: "fresh",
+        write: false,
+      },
+    );
+    await again.index.index();
+    const kinds = [...new Set(manifest.labels.map((l) => l.category))];
+    const kindOf = new Map(manifest.labels.map((l) => [l.image, l.category]));
+    const first = manifest.images[0];
+    let checks = 0;
+    let good = 0;
+    for (const kind of first ? kinds : []) {
+      for (const op of ["=", "!="] as const) {
+        checks++;
+        const q: SearchQuery = {
+          like: { address: words.address((first as ManifestImage).id) },
+          where: [`kind${op}${kind}`],
+          limit: 1000,
+        };
+        const hits = await find(words, q);
+        const same = await find(again, q);
+        const matches = (id: string) =>
+          op === "=" ? kindOf.get(id) === kind : kindOf.get(id) !== kind;
+        const expected = manifest.images.filter((i) => matches(i.id)).length;
+        if (
+          hits.every(matches) &&
+          JSON.stringify(hits) === JSON.stringify(same) &&
+          hits.length === expected
+        )
+          good++;
+      }
+    }
+    entry("filters-rebuild", checks === 0 ? 0 : good / checks, checks);
+    await rebuilt.close();
+    rebuilt = undefined;
+
+    // Speed: pad the labelled tree to padTo rows, then time the shipped find, which checks
+    // freshness before it answers.
+    await bench.store.upsert(
+      paddingRows(Math.max(0, padTo - images), embedder.dimension, words.index.tree),
+    );
+    await bench.store.optimize();
+    // The speed bars are set on a store of padTo rows: the timed finds search that and no more.
+    const stored = (await bench.store.query({ limit: Number.MAX_SAFE_INTEGER })).length;
+    if (stored !== Math.max(padTo, images))
+      throw new Error(`the timed store holds ${stored} rows, not ${Math.max(padTo, images)}`);
     const queries = manifest.writtenQueries.map((q) => q.text);
     const textMs: number[] = [];
-    // "Fresh": a query preceded by the no-change freshness scan, as the real find does (design 7.4).
-    const freshMs: number[] = [];
     for (let i = 0; i < timed; i++) {
-      const t0 = performance.now();
-      await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
-      textMs.push(performance.now() - t0);
       const t1 = performance.now();
-      if ((await freshnessScan(files, known)) !== 0) throw new Error("freshness scan saw changes");
-      await shipped(store, embedder, queries[i % queries.length] ?? "tile", 10);
-      freshMs.push(performance.now() - t1);
+      await find(words, { words: queries[i % queries.length] ?? "tile", limit: 10 });
+      textMs.push(performance.now() - t1);
     }
     const imageMs: number[] = [];
-    const first = manifest.images[0];
     if (first) {
       const bytes = await o.source.bytes(first);
       for (let i = 0; i < timed; i++) {
-        const t0 = performance.now();
-        const [v] = await embedder.embedImages([bytes]);
-        await store.query({ vector: { column: "imageVec", value: v as Float32Array }, limit: 10 });
-        imageMs.push(performance.now() - t0);
+        const t1 = performance.now();
+        await find(words, { like: { image: bytes }, limit: 10 });
+        imageMs.push(performance.now() - t1);
       }
+    }
+
+    // Freshness files: unchanged files the library lists beside the images. The fresh search
+    // over 10,000 assets stats them with the images; the freshness bar checks them alone, a
+    // work tree of their own.
+    const count = o.freshnessFiles ?? 2000;
+    const freshDir = join(words.worktree, "fresh");
+    await mkdir(freshDir, { recursive: true });
+    const when = new Date(1_700_000_000_000);
+    for (let i = 0; i < count; i++) {
+      const f = join(freshDir, `f${i}.png`);
+      await writeFile(f, `file ${i}`);
+      await utimes(f, when, when);
+    }
+    await words.index.refresh();
+    const freshMs: number[] = [];
+    for (let i = 0; i < timed; i++) {
+      const t1 = performance.now();
+      await find(words, { words: queries[i % queries.length] ?? "tile", limit: 10 });
+      freshMs.push(performance.now() - t1);
     }
     entry("text-query-p95", percentile(textMs, 0.95), textMs.length, true);
     entry("image-query-p95", percentile(imageMs, 0.95), imageMs.length, true);
     entry("search-10k", Math.max(...freshMs), freshMs.length, true);
-    entry("indexing", mean(indexMs), indexMs.length, true);
+    entry("indexing", indexing.perImageMs, images, true);
 
-    // Freshness: no changes, many files.
-    const t0 = performance.now();
-    const changed = await freshnessScan(files, known);
-    const ms = performance.now() - t0;
-    if (changed !== 0) throw new Error("freshness scan saw changes in an unchanged folder");
+    // Freshness: no changes, many files, the package's own check.
+    const files = await benchTree(bench, {
+      name: join("bench", "fresh"),
+      images: [],
+      labels: [],
+      source: o.source,
+      cardText: false,
+      folder: "",
+    });
+    await files.index.index();
+    const t2 = performance.now();
+    const fresh = await files.index.refresh();
+    const ms = performance.now() - t2;
+    const changed = (fresh.stats?.written ?? 0) + (fresh.stats?.removed ?? 0);
+    if (!fresh.fresh || changed !== 0)
+      throw new Error("the freshness check saw changes in an unchanged folder");
     entry("freshness-2000", ms, count, true);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
 
-  const embedderInfo = {
-    id: embedder.id,
-    revision: embedder.revision,
-    scripted: embedder.id.startsWith("scripted"),
-  };
-  return {
-    entries,
-    machine: mach,
-    embedder: embedderInfo,
-    images: rows.length,
-    paddedTo: padTo,
-    dropped: dropped.map((q) => ({ id: q.id, text: q.text, relevant: relevantOf(q).length })),
-  };
+    const embedderInfo = {
+      id: embedder.id,
+      revision: embedder.revision,
+      scripted: embedder.id.startsWith("scripted"),
+    };
+    return {
+      entries,
+      machine: mach,
+      embedder: embedderInfo,
+      images,
+      paddedTo: padTo,
+      dropped: dropped.map((q) => ({ id: q.id, text: q.text, relevant: relevantOf(q).length })),
+      indexing,
+    };
+  } finally {
+    if (rebuilt) await rebuilt.close();
+    if (lookBench) await lookBench.close();
+    await bench.close();
+  }
 }
 
-/** One JSON line per bar, then the dropped written queries, then the machine. */
+/** One JSON line per bar, then the dropped written queries, the indexing split and the machine. */
 export function formatReport(r: BenchReport): string[] {
   return [
     ...r.entries.map((e) => JSON.stringify(e)),
     JSON.stringify({ dropped: r.dropped }),
+    JSON.stringify({ indexing: r.indexing }),
     JSON.stringify({
       embedder: r.embedder,
       machine: r.machine,

@@ -1,14 +1,4 @@
-/** Ranking helpers and quality measures. Pure functions over vectors and labels. */
-
-/** Reciprocal Rank Fusion over ranked key lists (k = 60), best first. */
-export function rrf(lists: string[][], k = 60): string[] {
-  const score = new Map<string, number>();
-  for (const list of lists)
-    list.forEach((key, i) => score.set(key, (score.get(key) ?? 0) + 1 / (k + i + 1)));
-  return [...score.entries()]
-    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-    .map((e) => e[0]);
-}
+/** Quality measures. Pure functions over rankings and labels; the rankings are the package's own. */
 
 export const mean = (xs: number[]): number =>
   xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
