@@ -2,7 +2,7 @@
  * The one RunContext the CLI and the MCP server build: developer settings loaded fresh for each
  * CLI command and each tool call, the log, and the provider options the server was started with.
  */
-import { checkEnvironment } from "../env.ts";
+import { checkEnvironment, envUses } from "../env.ts";
 import type { Env } from "../env.ts";
 import { ttyPort } from "../confirm/prompt.ts";
 import { loadExtensions } from "../extensions/registry.ts";
@@ -136,5 +136,5 @@ export function canSpend(spec: CommandSpec, ctx: RunContext): boolean {
  * that can send a key (src/commands/runner.ts).
  */
 export function checkContextEnvironment(ctx: RunContext): void {
-  checkEnvironment(ctx.settings.environment.allow, ctx.env);
+  checkEnvironment(ctx.settings.environment.allow, ctx.env, envUses(ctx.settings));
 }

@@ -26,6 +26,7 @@ import { sha256Hex } from "./canonical.ts";
 import type { WriteJournal } from "./undo.ts";
 import {
   checkCardPaths,
+  isCardText,
   machineFields,
   newCard,
   parseCard,
@@ -214,7 +215,7 @@ export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: Unr
         continue;
       }
       const id = entry.name.slice(0, -".md".length);
-      if (!/^---\r?\n/.test(text) || !text.includes("Game Asset")) {
+      if (!isCardText(text)) {
         // Not a card, unless a review record beside it says it is one: then it is a card that does
         // not parse (a whole-file conflict puts a marker on line 1), and its rows are kept.
         if (existsSync(join(dir, `${id}.review.json`))) {

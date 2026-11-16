@@ -2,16 +2,18 @@
  * A scripted 3D provider for tests and offline runs: every model, rig and clip call answers with a
  * synthetic rigged character (test/fixtures/glb.ts). `SCRIPT_3D_TRIANGLES` makes every candidate
  * that many triangles (to exceed a budget); `SCRIPT_3D_OPEN_LOOP=1` leaves the clip unclosed by the
- * provider (Assetgrove closes it).
+ * provider (Assetgrove closes it). The facing decision answers from `SCRIPT_3D_FACING` (default
+ * "90", the +x the default route faces).
  */
 import type { Script } from "../../src/gateway/scripted.ts";
 import { syntheticCharacter } from "./glb.ts";
-import { referenceView } from "./scripted-views.ts";
+import { facing, referenceView } from "./scripted-views.ts";
 
 const triangles = Number(process.env["SCRIPT_3D_TRIANGLES"] ?? 300);
 
 const script: Script = {
   referenceView,
+  facing,
   image() {
     throw new Error("the 3D script makes no images");
   },

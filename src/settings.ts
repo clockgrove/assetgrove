@@ -98,6 +98,10 @@ const routeSchema = z.strictObject({
   model: name,
   outputGrant: outputGrantSchema.optional(),
   providerTerms: z.string().optional(),
+  providerTermsAsOf: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   estimatedCostUsd: usd.optional(),
 });
 

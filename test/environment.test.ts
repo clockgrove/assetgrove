@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 import {
   checkEnvironment,
+  envUses,
   REFUSED_VARIABLES,
   refusedVariables,
   SettingsError,
@@ -85,7 +86,7 @@ function cleanEnv(): NodeJS.ProcessEnv {
 }
 
 /** A settings file outside every repository, allowing the given variables. */
-async function settings(allow: string[]): Promise<string> {
+async function settings(allow: string[], search?: object): Promise<string> {
   const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-environment-")));
   const path = join(dir, "settings.json");
   await writeFile(
@@ -94,6 +95,7 @@ async function settings(allow: string[]): Promise<string> {
       format: "assetgrove-settings/1",
       providers: { "vercel-ai-gateway": {} },
       environment: { allow },
+      ...(search && { search }),
     }),
   );
   return path;
@@ -210,22 +212,79 @@ test("spend check and spend reconcile refuse a refused environment before any pr
   }
 });
 
-test("an AWS variable that can redirect index data is refused unless environment.allow lists it", async () => {
+const s3Search = {
+  store: {
+    uri: "s3://synthetic-bucket/index",
+    credentialsEnv: { accessKeyId: "SYNTHETIC_ID", secretAccessKey: "SYNTHETIC_SECRET" },
+  },
+};
+
+test("an AWS variable that can redirect index data is refused with an s3 store unless environment.allow lists it", async () => {
   for (const name of ["AWS_ENDPOINT_URL", "AWS_PROFILE"]) {
     const env: NodeJS.ProcessEnv = {
       ...cleanEnv(),
       [name]: "synthetic",
-      ASSETGROVE_CONFIG: await settings([]),
+      ASSETGROVE_CONFIG: await settings([], s3Search),
     };
     const refused = await cli(await stageArgs(), env);
     assert.equal(refused.code, 2, refused.stderr);
     assert.equal(JSON.parse(refused.stdout).error.code, "settings_invalid");
     assert.match(refused.stdout, new RegExp(`${name} is set`));
 
+    const unconfigured = await cli(await stageArgs(), {
+      ...env,
+      ASSETGROVE_CONFIG: await settings([]),
+    });
+    assert.equal(unconfigured.code, 0, unconfigured.stderr);
+
     const allowed = await cli(await stageArgs(), {
       ...env,
-      ASSETGROVE_CONFIG: await settings([name]),
+      ASSETGROVE_CONFIG: await settings([name], s3Search),
     });
     assert.equal(allowed.code, 0, allowed.stderr);
   }
+});
+
+const uses = (uri: string | undefined, providers: Record<string, { adapter?: string }>) =>
+  envUses({
+    providers,
+    ...(uri && { search: { store: { uri } } }),
+  } as unknown as Parameters<typeof envUses>[0]);
+
+test("AWS variables are refused only with an s3:// search store", () => {
+  for (const name of ["AWS_REGION", "AWS_PROFILE", "AWS_ACCESS_KEY_ID"]) {
+    const env = { [name]: "synthetic" };
+    assert.deepEqual(refusedVariables([], env, uses(undefined, {})), []);
+    assert.deepEqual(refusedVariables([], env, uses("gs://bucket/index", {})), []);
+    assert.deepEqual(refusedVariables([], env, uses("s3://bucket/index", {})), [name]);
+    assert.deepEqual(refusedVariables([name], env, uses("s3://bucket/index", {})), []);
+    assert.deepEqual(refusedVariables([], env), [name], "no uses fails closed");
+  }
+});
+
+test("a base URL variable is refused only with its adapter configured", () => {
+  const anthropic = { ANTHROPIC_BASE_URL: "http://x" };
+  const openai = { OPENAI_BASE_URL: "http://x" };
+  const gateway = { "vercel-ai-gateway": {} };
+  assert.deepEqual(refusedVariables([], anthropic, uses(undefined, gateway)), []);
+  assert.deepEqual(refusedVariables([], anthropic, uses(undefined, { anthropic: {} })), [
+    "ANTHROPIC_BASE_URL",
+  ]);
+  assert.deepEqual(
+    refusedVariables([], anthropic, uses(undefined, { mine: { adapter: "anthropic" } })),
+    ["ANTHROPIC_BASE_URL"],
+  );
+  assert.deepEqual(refusedVariables([], openai, uses(undefined, gateway)), []);
+  assert.deepEqual(refusedVariables([], openai, uses(undefined, { openai: {} })), [
+    "OPENAI_BASE_URL",
+  ]);
+  assert.deepEqual(refusedVariables([], anthropic, uses(undefined, { openai: {} })), []);
+});
+
+test("TLS and proxy variables are refused whatever is configured", () => {
+  const env = { HTTPS_PROXY: "http://p", NODE_EXTRA_CA_CERTS: "/ca.pem" };
+  assert.deepEqual(refusedVariables([], env, uses(undefined, {})), [
+    "NODE_EXTRA_CA_CERTS",
+    "HTTPS_PROXY",
+  ]);
 });

@@ -14,6 +14,7 @@ import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import { developmentSigner } from "../src/credentials.ts";
 import { loadSettings } from "../src/settings.ts";
+import type { Settings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
 import { shelterSpec, syntheticProfile } from "./fixtures/synthetic.ts";
 
@@ -59,13 +60,15 @@ const provenance = (over: Partial<Provenance>): Provenance => ({
   ...over,
 });
 
-async function library(): Promise<string> {
-  const target = await mkdtemp(join(tmpdir(), "assetgrove-disclosure-"));
-  for (const [family, over] of [
+async function library(
+  families: Array<[string, Partial<Provenance>]> = [
     ["shelter", {}],
     ["walk", { models: ["openai/gpt-image-2", "bfl/flux-kontext-pro"] }],
     ["idle", { digitalSourceType: DIGITAL_SOURCE_TYPES.human, models: [], calls: [] }],
-  ] as Array<[string, Partial<Provenance>]>) {
+  ],
+): Promise<string> {
+  const target = await mkdtemp(join(tmpdir(), "assetgrove-disclosure-"));
+  for (const [family, over] of families) {
     const profile = syntheticProfile({ handoff: [{ preset: "atlas-json" }] });
     delete profile.validator;
     profile.layout.provenance =
@@ -111,7 +114,7 @@ test("disclose reports kinds, source types, models, providers and terms with dat
   ]);
   assert.deepEqual(
     d.providers.map((p) => p.name),
-    ["openai"],
+    ["gateway"],
   );
   assert.deepEqual(d.terms, [
     { terms: "OpenAI Services Agreement (as of 2026-11-07)", asOf: "2026-11-07", assets: 3 },
@@ -119,6 +122,59 @@ test("disclose reports kinds, source types, models, providers and terms with dat
   assert.match(d.steam, /2 of 3 assets/);
   assert.deepEqual(d.itch.tags, ["ai-generated-assets"]);
   assert.ok(!JSON.stringify(d).includes(prompt));
+});
+
+const callOf = (route: string, model: string, extra: object = {}): Provenance["calls"][number] => ({
+  ...provenance({}).calls[0]!,
+  route,
+  model,
+  ...extra,
+});
+
+test("providers come from the call route's provider id, and vendors from the gateway adapter", async () => {
+  const target = await library([
+    [
+      "shelter",
+      {
+        calls: [
+          callOf("gateway:still:openai/gpt-image-2", "openai/gpt-image-2"),
+          callOf("anthropic:qa:claude-sonnet-5-5", "claude-sonnet-5-5"),
+          callOf("local-sd:still:stabilityai/sdxl-turbo", "stabilityai/sdxl-turbo"),
+        ],
+      },
+    ],
+  ]);
+  const settings = {
+    providers: {
+      gateway: { adapter: "vercel-ai-gateway" },
+      anthropic: {},
+      "local-sd": { adapter: "openai-compatible", baseURL: "http://localhost:1234/v1" },
+    },
+  } as unknown as Settings;
+  const d = await disclose(target, { settings });
+  assert.deepEqual(d.providers.map((p) => p.name).sort(), ["anthropic", "gateway", "local-sd"]);
+  assert.deepEqual(d.vendors, [{ name: "openai", assets: 1 }]);
+  assert.match(disclosureMarkdown(d), /## Model vendors behind gateways\n- openai: 1/);
+  assert.deepEqual((await disclose(target)).vendors, []);
+});
+
+test("a terms date recorded on the call is used, with or without parentheses in the text", async () => {
+  const terms = "Foo terms as of 2026-11-10";
+  const target = await library([
+    [
+      "shelter",
+      {
+        providerTerms: [terms],
+        calls: [
+          callOf("gateway:still:foo/bar", "foo/bar", {
+            providerTerms: terms,
+            providerTermsAsOf: "2026-11-10",
+          }),
+        ],
+      },
+    ],
+  ]);
+  assert.deepEqual((await disclose(target)).terms, [{ terms, asOf: "2026-11-10", assets: 1 }]);
 });
 
 test("the CLI and the tool return the same JSON, and no output holds prompt text", async () => {

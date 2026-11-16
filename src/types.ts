@@ -218,6 +218,8 @@ export interface CallRecord {
   costSource: "provider" | "estimate";
   /** The provider terms of its route; absent when the route records none. */
   providerTerms?: string;
+  /** The date (YYYY-MM-DD) those terms were read, from its route. */
+  providerTermsAsOf?: string;
   /** What the provider grants for this call's output, from its route. */
   outputGrant?: OutputGrant;
   /** For a typed decision call: what it answered, how sure and how long it took. */

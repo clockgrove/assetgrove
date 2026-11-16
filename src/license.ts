@@ -66,12 +66,19 @@ export function combineGrants(grants: OutputGrant[]): OutputGrant | undefined {
   const worst = Math.max(...grants.map(rank));
   const attribution = distinct(grants.flatMap((g) => (g.attribution ? [g.attribution] : [])));
   return {
-    license: distinct(grants.filter((g) => rank(g) === worst).map((g) => g.license)).join(" AND "),
+    license: distinct(grants.filter((g) => rank(g) === worst).map((g) => g.license))
+      .sort()
+      .join(" AND "),
     plan: distinct(grants.map((g) => g.plan)).join(" + "),
     commercial: grants.every((g) => g.commercial),
     relabel: grants.every((g) => g.relabel),
     ...(attribution.length > 0 && { attribution: attribution.join("; ") }),
   };
+}
+
+/** The distinct licences of an SPDX conjunction (`A AND B`), as a recorded expression is written. */
+export function licenseComponents(license: string): string[] {
+  return distinct(license.split(" AND ").map((l) => l.trim()));
 }
 
 /** The combined grant of every call that records one. */
@@ -112,13 +119,15 @@ export function licenseDecision(
         `${profile.name} cannot take it under ${profile.license} or any other licence`,
     };
   }
-  if (acceptedLicenses(profile).includes(grant.license)) return { license: grant.license };
+  const accepted = acceptedLicenses(profile);
+  const missing = licenseComponents(grant.license).filter((l) => !accepted.includes(l));
+  if (accepted.includes(grant.license) || missing.length === 0) return { license: grant.license };
   return {
     refused:
       `the provider's terms grant ${where}` +
       `${grant.attribution ? `, which requires the credit "${grant.attribution}"` : ""}` +
       `, not ownership; ${profile.name} would relabel it as ${profile.license}. ` +
-      `List "${grant.license}" in the target profile's acceptedLicenses to accept it on purpose`,
+      `List ${missing.map((l) => `"${l}"`).join(" and ")} in the target profile's acceptedLicenses to accept it on purpose`,
   };
 }
 

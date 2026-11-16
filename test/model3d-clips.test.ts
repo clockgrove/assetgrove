@@ -187,8 +187,8 @@ test("an extra bind take and generic names do not matter when the adapter says w
   }
   assert.equal(candidate.fields.unmatchedClips, undefined);
   assert.deepEqual(
-    candidate.provenance.calls.map((c: { operation: string }) => c.operation).slice(0, 4),
-    ["model3d", "rig3d", "clips3d", "clips3d"],
+    candidate.provenance.calls.map((c: { operation: string }) => c.operation).slice(0, 5),
+    ["model3d", "model3d-facing", "rig3d", "clips3d", "clips3d"],
   );
 });
 

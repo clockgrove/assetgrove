@@ -5,6 +5,7 @@ import { FormatError } from "../src/formats.ts";
 import {
   MACHINE_FIELDS,
   checkCardPaths,
+  isCardText,
   machineFields,
   newCard,
   parseCard,
@@ -165,4 +166,11 @@ test("front matter that is not a card is refused", () => {
   for (const text of ["no front matter", "---\n- a\n---\n", "---\na: 1\na: 2\n---\n"]) {
     assert.throws(() => parseCard(text, "c.md"), InputError);
   }
+});
+
+test("isCardText accepts type Game Asset only, and false for other text or broken YAML", () => {
+  assert.equal(isCardText(CARD), true);
+  assert.equal(isCardText("---\ntitle: Game Asset naming rules\n---\nGame Asset\n"), false);
+  assert.equal(isCardText("---\ntype: [unclosed\n---\nbody\n"), false);
+  assert.equal(isCardText("type: Game Asset\n"), false);
 });
