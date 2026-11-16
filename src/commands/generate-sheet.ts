@@ -1,3 +1,4 @@
+import { nearMatchesFor } from "../search/near-match.ts";
 import { resolve } from "node:path";
 import { readJson, lockFor, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
@@ -79,11 +80,14 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   const family = spec.value.animationFamily;
   const template =
     typeof family === "string" ? templateFor(family, templatesFor(profile.value)) : undefined;
+  const bibleFiles = styleBibleReads("bible", bible);
+  const near = await nearMatchesFor(spec.value, Object.values(bibleFiles), ctx);
   const work = await buildWorkPlan(generateSheetCommand, args, {
+    near,
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile", "brief", "lockBible"],
     reads: {
-      ...styleBibleReads("bible", bible),
+      ...bibleFiles,
       ...specReads("spec", spec),
       ...(lock && args.lockBible !== undefined
         ? await bibleReads(

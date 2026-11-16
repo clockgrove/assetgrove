@@ -2,6 +2,9 @@ import { InputError } from "../errors.ts";
 import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { loadBible } from "../bible.ts";
+import { readJson } from "../inputs.ts";
+import { nearMatchesFor } from "../search/near-match.ts";
+import type { AssetSpec } from "../types.ts";
 import { applyJobs, applyPlan, planDigest } from "../planning.ts";
 import type { SavedPlan } from "../planning.ts";
 import { bindingAllows, readConfirmation, writeConfirmation } from "../confirm/records.ts";
@@ -30,6 +33,22 @@ interface ApplyArgs {
   note?: string;
 }
 
+/** The near matches of the spec and reference images a saved plan names. */
+async function savedPlanNearMatches(planPath: string, ctx: RunContext) {
+  try {
+    const saved = JSON.parse(await readFile(planPath, "utf8")) as SavedPlan;
+    const specPath = saved.inputs["spec"]?.path;
+    if (specPath === undefined) return {};
+    const spec = await readJson<AssetSpec>(specPath);
+    const references = Object.entries(saved.inputs)
+      .filter(([name]) => name.startsWith("reference/"))
+      .map(([, input]) => input.path);
+    return await nearMatchesFor(spec.value, references, ctx);
+  } catch {
+    return {};
+  }
+}
+
 /** The plan step: the saved plan checked as apply checks it, and the calls apply would make. */
 async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
   const providers = await providerSet(args.providerScript, ctx);
@@ -38,7 +57,9 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
   });
+  const near = await savedPlanNearMatches(plan, ctx);
   const work: WorkPlan = await buildWorkPlan(applyCommand, args, {
+    near,
     inputs: ["plan"],
     jobs: forecast.jobs,
     capUsd: forecast.capUsd,

@@ -10,6 +10,7 @@ import type {
   Extension,
   SearchContext,
   SearchFindResult,
+  NearMatchQuery,
   SearchHit,
   SearchLibrary,
   SearchOutliersResult,
@@ -24,6 +25,7 @@ import { bestViewPerAsset, rrf, SearchIndex } from "./find.ts";
 import { refreshTree, type RefreshStats } from "./indexer.ts";
 import { LanceStore } from "./lance-store.ts";
 import { sha256Hex, type Library } from "./library.ts";
+import { IMAGE_THRESHOLD } from "./image-threshold.ts";
 import { findOutliers, type Member } from "./outliers.ts";
 import { acquireWriteLock } from "./lock.ts";
 import { MODEL_MANIFEST } from "./model-manifest.ts";
@@ -436,7 +438,43 @@ async function setup(ctx: SearchContext): Promise<Record<string, unknown>> {
   return { dir, model: MODEL_MANIFEST.id, installed: true };
 }
 
-export const searchSlot: SearchSlot = { find, outliers, index, status, setup };
+/**
+ * Picked assets of exactly the query's kind and subject, at most `limit`. Without references they
+ * are ranked by words (the subject); with references each must also reach `threshold` in cosine
+ * similarity to one of them, and a null threshold lists none.
+ */
+export async function nearMatchesWith(
+  threshold: number | null,
+  q: NearMatchQuery,
+  ctx: SearchContext,
+): Promise<SearchFindResult> {
+  const where = [`kind=${q.kind}`, `subject=${q.subject}`];
+  const base = { where, sources: ["pick" as const] };
+  if (q.references.length === 0) {
+    return find({ ...base, words: q.subject, limit: q.limit }, ctx);
+  }
+  const pool = Math.max(q.limit * 20, 100);
+  let last: SearchFindResult | undefined;
+  const best = new Map<string, SearchHit>();
+  for (const image of q.references) {
+    last = await find({ ...base, like: { image }, limit: pool }, ctx);
+    for (const hit of last.hits) {
+      if (threshold === null || hit.score < threshold) continue;
+      const had = best.get(hit.address);
+      if (!had || hit.score > had.score) best.set(hit.address, hit);
+    }
+  }
+  const hits = [...best.values()]
+    .sort((a, b) => b.score - a.score || (a.address < b.address ? -1 : 1))
+    .slice(0, q.limit)
+    .map((h, i) => ({ ...h, rank: i + 1 }));
+  return { hits, fresh: last?.fresh ?? true, builtFrom: last?.builtFrom ?? null };
+}
+
+const nearMatch = (q: NearMatchQuery, ctx: SearchContext) =>
+  nearMatchesWith(IMAGE_THRESHOLD, q, ctx);
+
+export const searchSlot: SearchSlot = { find, outliers, index, status, setup, nearMatch };
 
 /** Core's entry: refuses on darwin-x64 before LanceDB or Transformers.js is imported. */
 export default function searchExtension(_context: { api: 1 }): Extension {
