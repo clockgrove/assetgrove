@@ -100,6 +100,14 @@ export function lfsObjectPath(gitDir: string, oid: string): string {
 
 const sha256Of = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
+/** A media file that is not there (or is a folder): told from an invalid one by type, not by wording. */
+export class MediaMissingError extends InputError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "MediaMissingError";
+  }
+}
+
 async function readExisting(path: string): Promise<Uint8Array> {
   try {
     return await readFile(path);
@@ -108,7 +116,7 @@ async function readExisting(path: string): Promise<Uint8Array> {
       (error as NodeJS.ErrnoException).code === "ENOENT" ||
       (error as NodeJS.ErrnoException).code === "EISDIR"
     ) {
-      throw new InputError(`media file ${path} does not exist`, { cause: error });
+      throw new MediaMissingError(`media file ${path} does not exist`, { cause: error });
     }
     throw error;
   }

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { InputError } from "../src/errors.ts";
+import { MediaMissingError } from "../src/library/lfs.ts";
 import { findGitDir, lfsObjectPath, parseLfsPointer, readMedia } from "../src/library/lfs.ts";
 
 const enc = (text: string) => new TextEncoder().encode(text);
@@ -116,6 +117,12 @@ test("a near-miss pointer is refused by readMedia, never returned as media", asy
 test("a missing media file is invalid input", async () => {
   const { repo } = await fixture();
   await assert.rejects(readMedia(join(repo, "lib", "none.png")), InputError);
+  await assert.rejects(readMedia(join(repo, "lib", "none.png")), (error: unknown) => {
+    assert.ok(error instanceof MediaMissingError);
+    assert.equal((error.cause as NodeJS.ErrnoException).code, "ENOENT");
+    return true;
+  });
+  await assert.rejects(readMedia(join(repo, "lib")), MediaMissingError);
 });
 
 test("findGitDir follows a gitdir file and a commondir to the shared store", async () => {

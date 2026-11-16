@@ -616,3 +616,20 @@ test("an unreadable card whose folder's index.md does not parse either leaves th
   assert.match(await text(indexPath), /\]\(lamp\.md\)/);
   assert.equal((await l.lib("check")).code, 0);
 });
+
+test("a notes file whose front matter only mentions Game Asset is not a card, and does not hide a folder's mismatch (#375)", async () => {
+  const l = await library(["lantern"]);
+  await writeFile(
+    join(dir(l), "naming.md"),
+    "---\ntitle: Game Asset naming rules\n---\nName assets plainly.\n",
+  );
+  const ok = await l.lib("check");
+  assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+  assert.deepEqual(doc(ok)["problems"], []);
+  assert.deepEqual(doc(ok)["needsRebuild"], []);
+
+  await rm(join(dir(l), "index.md"));
+  const missing = await l.lib("check");
+  assert.equal(missing.code, 6);
+  assert.deepEqual(doc(missing)["error"].problems, [{ file: "index.md", code: "index_missing" }]);
+});

@@ -29,13 +29,14 @@ export interface Row {
   textVec?: Float32Array;
 }
 
-export type FilterOp = "=" | "!=" | "<" | ">" | "has";
-/** A parsed filter term; a store never receives an unparsed string. All terms must match. */
-export interface FilterTerm {
-  field: string;
-  op: FilterOp;
-  value: Scalar;
-}
+export type FilterOp = "=" | "!=" | "<" | ">" | "has" | "in";
+/**
+ * A parsed filter term; a store never receives an unparsed string. All terms must match. `in`
+ * keeps a row whose field is one of `value` (an empty list keeps none).
+ */
+export type FilterTerm =
+  | { field: string; op: Exclude<FilterOp, "in">; value: Scalar }
+  | { field: string; op: "in"; value: Scalar[] };
 
 export interface StoreQuery {
   /** Rank by cosine similarity of this vector against `column`. */

@@ -27,6 +27,12 @@ export interface RouteDataFlow {
   retention: "local" | null;
 }
 
+/** The model vendor behind a gateway route (the model id's prefix); null for a direct route. */
+export function upstreamOf(adapterId: string, model: string): string | null {
+  const slash = model.indexOf("/");
+  return adapterId === "vercel-ai-gateway" && slash > 0 ? model.slice(0, slash) : null;
+}
+
 /**
  * One entry per operation the settings route (an operation no configured provider serves, or
  * that several could and none is chosen, is left out), in the role table's order. Makes no call and reads no key.
@@ -48,15 +54,11 @@ export function routeDataFlows(
     const provider = configured.find((c) => c.id === route.provider)!;
     const host = provider.provider.billing.hosts[0] ?? null;
     const hostname = host === null ? null : new URL(`http://${host}`).hostname;
-    const slash = route.model.indexOf("/");
     flows.push({
       operation,
       providerId: provider.id,
       host,
-      upstream:
-        provider.adapter.id === "vercel-ai-gateway" && slash > 0
-          ? route.model.slice(0, slash)
-          : null,
+      upstream: upstreamOf(provider.adapter.id, route.model),
       providerTerms: route.providerTerms ?? null,
       retention: hostname === null || isLoopback(hostname) ? "local" : null,
     });

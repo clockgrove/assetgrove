@@ -11,7 +11,7 @@ import type { Raster } from "../image/raster.ts";
 import { DIGITAL_SOURCE_TYPES, combineDigitalSourceTypes } from "../metadata.ts";
 import { sha256 } from "../request.ts";
 import type { Routes } from "../routes.ts";
-import { measureFrame } from "../sheet/register.ts";
+import { measureFrame, pinX } from "../sheet/register.ts";
 import { sheetImportRecipe } from "../sheet/import.ts";
 import type { ResolvedStyle } from "../style.ts";
 import { pixelHash, runOperation, runRecipe } from "../transform/run.ts";
@@ -27,6 +27,7 @@ import type {
   Size,
 } from "../types.ts";
 import { joinStrip, measureThreshold, splitStrip } from "./strip.ts";
+import { DEFAULT_THRESHOLDS } from "./templates.ts";
 
 export const DEFAULT_FIX_CAP_USD = 2;
 
@@ -81,6 +82,21 @@ export interface FixFrameOptions {
   frame: Size;
   anchor: Point;
   family: string;
+  /**
+   * The point the fixed frame is registered by, the one its family's strip was registered by
+   * (`registrationPin`). The fixed frame's pin point is put on the reference neighbour's measured
+   * pin point (and its bottom row on the neighbour's, when the neighbour is on the ground), so a planted family's repaired frame keeps
+   * its feet on its neighbours' however the strip was placed; `anchor` is used only for a strip of
+   * one frame.
+   */
+  pin: "center" | "footprint";
+  /**
+   * The ground-contact tolerance, a fraction of the figure's height (the profile's
+   * `groundTolerance`). The fixed frame's bottom row goes on the neighbour's only when the
+   * neighbour stands within it of `anchor.y`; a neighbour off the ground (an airborne beat) leaves
+   * the fixed frame on the ground line.
+   */
+  groundTolerance?: number;
   subject: string;
   /** 1-based frame to fix. */
   index: number;
@@ -102,6 +118,14 @@ type FixedProvenance = Provenance & { fixes?: FrameFix[] };
 function pngReference(raster: Raster, role: string, path: string): LoadedReference {
   const bytes = encodePng(raster);
   return { role, path, mediaType: "image/png", bytes, sha256: sha256(bytes) };
+}
+
+/** The first row holding a pixel at or above the alpha threshold (measureFrame's baseline is the last). */
+function topRow(raster: Raster, threshold: number): number {
+  for (let y = 0; y < raster.height; y++)
+    for (let x = 0; x < raster.width; x++)
+      if ((raster.data[(y * raster.width + x) * 4 + 3] as number) >= threshold) return y;
+  return raster.height;
 }
 
 function unique<T>(values: T[]): T[] {
@@ -315,19 +339,53 @@ export async function fixFrame(
   if (!figure) throw new InputError("the edited frame has no visible figure");
   const scale = Math.sqrt(reference.area / figure.area);
 
-  const registered = runOperation(
-    [item],
-    {
-      op: "register",
-      params: {
-        frame: options.frame,
-        anchor: options.anchor,
-        scale,
-        measureThreshold: threshold,
+  // The fixed frame's pin point goes where its neighbour's is, not on the anchor: a strip stage made
+  // places each frame by its box centre, so its neighbours' pin points are off the anchor, and
+  // footprint-drift compares the fixed frame's feet with theirs. With a key pose, the frame next
+  // to the fixed one stands in for the neighbour; a strip of one frame keeps the anchor.
+  const beside = neighbour ?? (count > 1 ? (index > 1 ? index - 1 : index + 1) : undefined);
+  const placedBy = beside === undefined ? undefined : measureFrame(frames[beside - 1]!, threshold);
+  const register = (anchor: Point) =>
+    runOperation(
+      [item],
+      {
+        op: "register",
+        params: {
+          frame: options.frame,
+          anchor,
+          scale,
+          measureThreshold: threshold,
+          pins: [options.pin],
+        },
       },
-    },
-    { style },
-  );
+      { style },
+    );
+  let registered: ReturnType<typeof register>;
+  if (placedBy === undefined) registered = register(options.anchor);
+  else {
+    // The anchor is a whole pixel and the pin point is measured to the half pixel, so of the
+    // anchor columns either side, keep the one that puts the pin point nearest the neighbour's.
+    const target = pinX(placedBy, options.pin);
+    // The neighbour's bottom row is the ground only when it stands on the ground line: next to an
+    // airborne beat (a `play` landing after a jump), the fixed frame stays on the ground line.
+    const tolerance = options.groundTolerance ?? DEFAULT_THRESHOLDS.groundTolerance;
+    const height = placedBy.baseline - topRow(frames[beside! - 1]!, threshold) + 1;
+    // Rows are whole pixels, so a neighbour one row off the line still counts as standing on it.
+    const grounded =
+      Math.abs(placedBy.baseline - options.anchor.y) <= Math.max(1, tolerance * height);
+    const row = grounded ? placedBy.baseline : options.anchor.y;
+    const near = Math.round(target - 0.5);
+    let best: { registered: ReturnType<typeof register>; off: number } | undefined;
+    for (const x of [near, near - 1, near + 1]) {
+      if (x < 0 || x >= options.frame.width) continue;
+      const tried = register({ x, y: row });
+      const m = measureFrame((tried.items[0] as ImageItem).raster, threshold);
+      const off =
+        m === undefined ? Number.POSITIVE_INFINITY : Math.abs(pinX(m, options.pin) - target);
+      if (best === undefined || off < best.off) best = { registered: tried, off };
+    }
+    registered = best?.registered ?? register(options.anchor);
+  }
   const styled = runOperation(registered.items, { op: "apply-style" }, { style });
   steps.push(registered.step, styled.step);
   const fixed = (styled.items[0] as ImageItem).raster;

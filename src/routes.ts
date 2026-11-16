@@ -24,6 +24,10 @@ export const PROMPT_POLICY_OPERATION = "prompt-policy";
 export const BRIEF_POLICY_OPERATION = "brief-policy";
 /** Which view a 3D request's reference image shows: one typed choice decision per image. */
 export const REFERENCE_VIEW_OPERATION = "reference-view";
+/** Which way a generated 3D model faces (#365): one typed choice decision per candidate. */
+export const MODEL3D_FACING_OPERATION = "model3d-facing";
+/** Whether a look-dev identity marking is kept (#365): one typed choice decision per marking and render. */
+export const LOOKDEV_MARKING_OPERATION = "lookdev-marking";
 /**
  * Whether a library asset made under another style bible version should be redone: one Boolean
  * decision per asset and version pair, made only by `library judge-stale` (src/library/stale.ts).
@@ -42,6 +46,8 @@ export interface Route {
    * provider or model was overridden without its own terms.
    */
   providerTerms?: string;
+  /** The date (YYYY-MM-DD) the provider terms were read, beside `providerTerms`. */
+  providerTermsAsOf?: string;
   /**
    * What the provider grants for this route's outputs on the plan it is called on, recorded on
    * every call. A call without one is refused at hand-off (exit 7 `license_refused`).
@@ -101,6 +107,7 @@ const tripoGrant = {
   relabel: true,
 };
 const tripoTerms = "Tripo API Terms of Service, paid credits (as of 2026-11-10)";
+const tripoTermsAsOf = "2026-11-10";
 
 const googleGrant: OutputGrant = {
   license: "LicenseRef-google-api",
@@ -110,6 +117,7 @@ const googleGrant: OutputGrant = {
 };
 const googleTerms =
   "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)";
+const googleTermsAsOf = "2026-11-07";
 
 /**
  * The core default routes, each with the grant its terms give: the gateway survey of 2026-11-07
@@ -129,6 +137,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "OpenAI Services Agreement and Usage Policies, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   edit: {
     model: "bfl/flux-kontext-pro",
@@ -142,6 +151,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "Black Forest Labs API Terms of Service, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   sheet: {
     model: "openai/gpt-image-2",
@@ -155,6 +165,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "OpenAI Services Agreement and Usage Policies, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   vision: {
     model: "google/gemini-3-flash",
@@ -167,6 +178,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   identity: {
     // #27's image eval: best on identity with reference images; `openai/gpt-6-luna-decisions`
@@ -180,6 +192,7 @@ export const defaultRoutes: Routes = {
       relabel: true,
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-08)",
+    providerTermsAsOf: "2026-11-08",
   },
   // The prompt policy's model check (#185): one Boolean decision on a request's prompt text,
   // text only, on the same typed decision model and upper bound as identity.
@@ -193,6 +206,7 @@ export const defaultRoutes: Routes = {
       relabel: true,
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+    providerTermsAsOf: "2026-11-15",
   },
   // The brief policy's model check (#324): one Boolean decision per protected bible field on
   // whether a brief's or the compiler's text departs from the bible; same model and bound.
@@ -206,10 +220,38 @@ export const defaultRoutes: Routes = {
       relabel: true,
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+    providerTermsAsOf: "2026-11-15",
   },
   // Which view a 3D request's reference shows (#325): one typed choice decision per image, on the
   // same typed decision model and upper bound as identity.
   [REFERENCE_VIEW_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+    providerTermsAsOf: "2026-11-15",
+  },
+  // Which way a generated 3D model faces (#365): one typed choice decision per candidate on four
+  // free renders of the raw mesh, on the same typed decision model and upper bound.
+  [MODEL3D_FACING_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+  },
+  // Whether each look-dev identity marking is kept, drifted or missing (#365): one typed choice
+  // decision per marking, view and season render, on the same typed decision model and bound.
+  [LOOKDEV_MARKING_OPERATION]: {
     model: "perplexity/pplx-decider-v1.2",
     estimatedCostUsd: 0.001,
     outputGrant: {
@@ -232,6 +274,7 @@ export const defaultRoutes: Routes = {
       relabel: true,
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
+    providerTermsAsOf: "2026-11-16",
   },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
@@ -245,6 +288,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "OpenAI Services Agreement and Usage Policies, via Vercel AI Gateway (as of 2026-11-11)",
+    providerTermsAsOf: "2026-11-11",
   },
   // Whether an identity record's written signature agrees with its own approved references (#92).
   [IDENTITY_CHECK_OPERATION]: {
@@ -258,6 +302,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "OpenAI Services Agreement and Usage Policies, via Vercel AI Gateway (as of 2026-11-11)",
+    providerTermsAsOf: "2026-11-11",
   },
   // Identity-flicker judgement between consecutive animation frames.
   flicker: {
@@ -271,6 +316,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   // Image-to-3D on Tripo: multiview (or single-image) to a textured PBR model, 30 credits with
   // texture and PBR (#72's probe); the estimate is an upper bound. Its models face +x: measured
@@ -281,6 +327,7 @@ export const defaultRoutes: Routes = {
     forward: "+x",
     outputGrant: tripoGrant,
     providerTerms: tripoTerms,
+    providerTermsAsOf: tripoTermsAsOf,
     providerOptions: {
       tripo: { modelVersion: "v2.5-20250123", texture: true, pbr: true },
     },
@@ -291,6 +338,7 @@ export const defaultRoutes: Routes = {
     estimatedCostUsd: 0.3,
     outputGrant: tripoGrant,
     providerTerms: tripoTerms,
+    providerTermsAsOf: tripoTermsAsOf,
     rigTypes: { quadruped: "quadruped", biped: "biped" },
     providerOptions: {
       tripo: { spec: "tripo", modelVersion: "v2.0-20250506" },
@@ -302,6 +350,7 @@ export const defaultRoutes: Routes = {
     estimatedCostUsd: 0.2,
     outputGrant: tripoGrant,
     providerTerms: tripoTerms,
+    providerTermsAsOf: tripoTermsAsOf,
     library: {
       biped: {
         idle: { clip: "preset:idle", loop: true },
@@ -337,6 +386,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "OpenAI Services Agreement and Usage Policies, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   // Look-dev (#82): where the eyes and nose are on a close-up render, as pixel points and radii.
   [LOOKDEV_LOCATE_OPERATION]: {
@@ -350,6 +400,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   // Look-dev (#82): one season's groom (lengths, densities, tip tint) read from the target's traits.
   [LOOKDEV_GROOM_OPERATION]: {
@@ -363,6 +414,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)",
+    providerTermsAsOf: "2026-11-07",
   },
   // Look-dev (#122): where each identity marking and the coat beside it are, in a turnaround view
   // and the lit renders of the same view, for the deterministic markings check.
@@ -380,6 +432,7 @@ export const defaultRoutes: Routes = {
     },
     providerTerms:
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-12)",
+    providerTermsAsOf: "2026-11-12",
   },
   // Holes: one enlarged frame with its enclosed see-through areas marked. $0.003 to $0.008 a call
   // (#51's proof); the estimate is an upper bound.
@@ -389,6 +442,7 @@ export const defaultRoutes: Routes = {
     outputGrant: googleGrant,
     providerTerms:
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-09)",
+    providerTermsAsOf: "2026-11-09",
   },
   // Prompt compilation for plan (the planning role) and material QA: the vision model.
   compiler: {
@@ -396,12 +450,14 @@ export const defaultRoutes: Routes = {
     estimatedCostUsd: 0.02,
     outputGrant: googleGrant,
     providerTerms: googleTerms,
+    providerTermsAsOf: googleTermsAsOf,
   },
   "material-qa": {
     model: "google/gemini-3-flash",
     estimatedCostUsd: 0.02,
     outputGrant: googleGrant,
     providerTerms: googleTerms,
+    providerTermsAsOf: googleTermsAsOf,
   },
 };
 
@@ -441,6 +497,8 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [PROMPT_POLICY_OPERATION]: "decisions",
   [BRIEF_POLICY_OPERATION]: "decisions",
   [REFERENCE_VIEW_OPERATION]: "decisions",
+  [MODEL3D_FACING_OPERATION]: "decisions",
+  [LOOKDEV_MARKING_OPERATION]: "decisions",
   [STALENESS_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
@@ -591,8 +649,16 @@ export function resolveRoute(
   if (override !== undefined) {
     const same = fallback?.provider === override.provider && fallback?.model === override.model;
     if (same) {
+      // A date belongs to the terms text it was recorded for: new text without its own date
+      // drops the default's date rather than claiming it.
+      const { providerTermsAsOf: inheritedAsOf, ...base } = fallback!;
+      const keepAsOf =
+        override.providerTerms === undefined && inheritedAsOf !== undefined
+          ? { providerTermsAsOf: inheritedAsOf }
+          : {};
       route = {
-        ...fallback!,
+        ...base,
+        ...keepAsOf,
         ...(override.estimatedCostUsd !== undefined && {
           estimatedCostUsd: override.estimatedCostUsd,
         }),
@@ -600,6 +666,9 @@ export function resolveRoute(
           outputGrant: structuredClone(override.outputGrant) as OutputGrant,
         }),
         ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
+        ...(override.providerTermsAsOf !== undefined && {
+          providerTermsAsOf: override.providerTermsAsOf,
+        }),
       };
     } else {
       missingEstimate = override.estimatedCostUsd === undefined ? field : undefined;
@@ -611,6 +680,9 @@ export function resolveRoute(
           outputGrant: structuredClone(override.outputGrant) as OutputGrant,
         }),
         ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
+        ...(override.providerTermsAsOf !== undefined && {
+          providerTermsAsOf: override.providerTermsAsOf,
+        }),
       };
     }
   } else if (fallback !== undefined) {
@@ -700,6 +772,7 @@ const anthropicGrant: OutputGrant = {
   relabel: true,
 };
 const anthropicTerms = "Anthropic Commercial Terms of Service and Usage Policy (as of 2026-11-14)";
+const anthropicTermsAsOf = "2026-11-14";
 const openaiGrant: OutputGrant = {
   license: "LicenseRef-openai-api",
   plan: "api",
@@ -707,6 +780,7 @@ const openaiGrant: OutputGrant = {
   relabel: true,
 };
 const openaiTerms = "OpenAI Services Agreement and Usage Policies (as of 2026-11-14)";
+const openaiTermsAsOf = "2026-11-14";
 
 /** A direct adapter's model for one role, with its own per-call estimates. */
 interface DirectModel {
@@ -727,6 +801,7 @@ function directRoutes(
   models: Readonly<Record<string, DirectModel>>,
   grant: OutputGrant,
   terms: string,
+  termsAsOf: string,
 ): Readonly<Record<string, Route>> {
   const routes: Record<string, Route> = {};
   for (const [operation, route] of Object.entries(defaultRoutes)) {
@@ -739,6 +814,7 @@ function directRoutes(
       ...(route.size !== undefined && { size: route.size }),
       outputGrant: { ...grant },
       providerTerms: terms,
+      providerTermsAsOf: termsAsOf,
     };
   }
   return routes;
@@ -758,6 +834,7 @@ export const ANTHROPIC_DEFAULT_ROUTES: Readonly<Record<string, Route>> = directR
   },
   anthropicGrant,
   anthropicTerms,
+  anthropicTermsAsOf,
 );
 
 /** The openai adapter's default routes (design section 12): every 2D role. */
@@ -773,4 +850,5 @@ export const OPENAI_DEFAULT_ROUTES: Readonly<Record<string, Route>> = directRout
   },
   openaiGrant,
   openaiTerms,
+  openaiTermsAsOf,
 );

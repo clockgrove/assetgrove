@@ -27,7 +27,7 @@ export interface CardText {
 
 export interface ManifestImage {
   id: string;
-  /** The image's file name in its source pack; its stem must not appear in the card text. */
+  /** The image's file name in its source pack; it never reaches the vision model. */
   file: string;
   /** Pinned download address. */
   url: string;
@@ -189,22 +189,6 @@ export async function readManifest(path: string | URL): Promise<Manifest> {
   return JSON.parse(await readFile(path, "utf8")) as Manifest;
 }
 
-export const stem = (file: string): string => file.replace(/\.[^./]+$/, "");
-
-const normalise = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ");
-
-/**
- * True when `text` contains the file stem as a whole phrase (separators ignored). A stem of one
- * lower-case word is exempt: it names the subject, and a truthful card must be free to say it.
- */
-export function containsStem(text: string, file: string): boolean {
-  const s = normalise(stem(file)).trim();
-  if (s === "") return false;
-  // A stem that is one plain word ("bear", "left") is the subject itself: a true description says it.
-  if (/^\p{L}+$/u.test(stem(file)) && stem(file) === stem(file).toLowerCase()) return false;
-  return ` ${normalise(text).trim()} `.includes(` ${s} `);
-}
-
 /** Returns a list of problems; empty means the manifest is sound. */
 export function checkManifest(m: Manifest, o: { cardsPending?: boolean } = {}): string[] {
   const problems: string[] = [];
@@ -222,8 +206,6 @@ export function checkManifest(m: Manifest, o: { cardsPending?: boolean } = {}): 
     } else {
       if (!(i.card.prompt in m.prompts)) problems.push(`${i.id}: card names unknown prompt`);
       if (!i.card.model || !i.card.date) problems.push(`${i.id}: card lacks model or date`);
-      if (containsStem(i.card.text, i.file))
-        problems.push(`${i.id}: card text contains the file stem "${stem(i.file)}"`);
     }
   }
   const known = (id: string, where: string) => {

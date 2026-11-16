@@ -12,7 +12,10 @@ import {
   provenanceProblems,
 } from "../src/animation/fix.ts";
 import type { FixFrameOptions } from "../src/animation/fix.ts";
-import { splitStrip } from "../src/animation/strip.ts";
+import { animationQa } from "../src/animation/qa.ts";
+import { postprocessFrames } from "../src/postprocess.ts";
+import { joinStrip, splitStrip } from "../src/animation/strip.ts";
+import { registrationPin, templateFor, templatesFor } from "../src/animation/templates.ts";
 import { Budget, BudgetExceededError } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { InputError } from "../src/errors.ts";
@@ -22,7 +25,7 @@ import type { Raster } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import { sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
-import { measureFrame } from "../src/sheet/register.ts";
+import { measureFrame, registerFrames } from "../src/sheet/register.ts";
 import { resolveStyle } from "../src/style.ts";
 import { parseRecipe, transformFiles } from "../src/transform/run.ts";
 import type { Provenance } from "../src/types.ts";
@@ -74,6 +77,7 @@ function base(call: Caller, over: Partial<FixFrameOptions> = {}): FixFrameOption
     frame,
     anchor,
     family: "walk",
+    pin: "center",
     subject: "fox",
     index: 3,
     from: { neighbour: 2 },
@@ -113,8 +117,11 @@ for (const transparent of [false, true]) {
     assert.notDeepEqual(after[2]?.data, before[2]?.data);
     const m = measureFrame(result.frame);
     assert.ok(m);
-    assert.equal(m.baseline, anchor.y);
-    assert.ok(Math.abs(m.centerX - (anchor.x + 0.5)) <= 1);
+    // Placed where its neighbour (frame 2) is: bottom row and centre of mass on the neighbour's.
+    const near = measureFrame(before[1] as Raster);
+    assert.ok(near);
+    assert.equal(m.baseline, near.baseline);
+    assert.ok(Math.abs(m.centerX - near.centerX) <= 1);
 
     const neighbourPng = encodePng(before[1] as Raster);
     const badPng = encodePng(before[2] as Raster);
@@ -349,4 +356,216 @@ test("a recipe's transform record for the strip is carried forward with the fix"
   assert.equal(p.calls.length, 1);
   assert.equal(p.fixes[0].frame, 3);
   assert.equal(p.license, "MIT");
+});
+
+/** A side-view sniff crop: the feet never move, the head drops and reaches forward. */
+function sniffCrop(headDrop: number): Raster {
+  const r = createRaster(64, 40);
+  rect(r, 12, 12, 10, 14, [200, 150, 100]); // body
+  rect(r, 12, 26, 3, 6, [200, 150, 100]); // rear leg
+  rect(r, 19, 26, 3, 6, [200, 150, 100]); // front leg
+  rect(r, 22 + headDrop, 8 + headDrop * 2, 8, 6, [200, 150, 100]); // head
+  return r;
+}
+
+test("a fixed frame of a planted family is registered by its feet, so the strip passes footprint-drift", async () => {
+  const sniffFrame = { width: 64, height: 48 };
+  const sniffAnchor = { x: 32, y: 44 };
+  const style = resolveStyle({ alpha: { mode: "binary" }, edges: "crisp" });
+  const pin = registrationPin(templateFor("sniff", templatesFor()));
+  assert.equal(pin, "footprint");
+  const figures = [0, 3, 6, 3].map(sniffCrop);
+  const registered = registerFrames(figures, {
+    frame: sniffFrame,
+    anchor: sniffAnchor,
+    edges: "crisp",
+    scale: 1,
+    pins: figures.map(() => pin),
+  });
+  const strip = joinStrip(registered.frames.map((f) => f.image));
+  const failures = async (used: "center" | "footprint") => {
+    const provider = new ScriptedProvider({
+      image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(sniffCrop(6)) }] }),
+      vision: () => ({ text: "" }),
+    });
+    const call = new Caller({
+      provider,
+      providerName: "scripted",
+      budget: new Budget(DEFAULT_FIX_CAP_USD),
+      routes: defaultRoutes,
+    });
+    const result = await fixFrame({
+      ...base(call),
+      strip,
+      frame: sniffFrame,
+      anchor: sniffAnchor,
+      family: "sniff",
+      pin: used,
+      index: 3,
+      from: { neighbour: 2 },
+      style,
+    });
+    const report = animationQa(
+      {
+        frames: splitStrip(result.strip, sniffFrame),
+        frame: sniffFrame,
+        anchor: sniffAnchor,
+        family: "sniff",
+      },
+      {},
+      style,
+    );
+    return report.reasons
+      .filter((r) => !r.passed && (r.check === "footprint-drift" || r.check === "ground-contact"))
+      .map((r) => r.check);
+  };
+  assert.deepEqual(await failures(pin), []);
+  // Registered by its centre of mass instead, the repaired frame's feet slide off its neighbours'.
+  assert.ok((await failures("center")).includes("footprint-drift"));
+});
+
+/**
+ * A side-view animal at 2 px per unit on a 128 px canvas, drawn where it falls (not placed): a
+ * body, a head that bobs, four planted legs and a long tail out one side, so its centre of mass
+ * and its footprint sit far from its box centre.
+ */
+function tailedAnimal(bob: number): Raster {
+  const r = createRaster(128, 128);
+  const box = (x0: number, y0: number, x1: number, y1: number) =>
+    rect(r, x0 * 2, y0 * 2, (x1 - x0 + 1) * 2, (y1 - y0 + 1) * 2, [90, 80, 70]);
+  box(1, 38, 14, 39); // the long tail
+  box(15, 36, 36, 50); // body
+  box(37, 32 + bob, 42, 40); // head
+  box(17, 51, 19, 62); // legs
+  box(32, 51, 34, 62);
+  return r;
+}
+
+test("a fixed frame of a strip stage placed keeps its feet on its neighbours', so the strip passes footprint-drift", async () => {
+  // Stage places each frame by its box centre, so the feet of this animal are off the anchor.
+  const sniffFrame = { width: 64, height: 64 };
+  const sniffAnchor = { x: 32, y: 63 };
+  const style = resolveStyle({ alpha: { mode: "binary" }, edges: "crisp" });
+  const { strip } = postprocessFrames([0, 1, 2, 1].map(tailedAnimal), {
+    frame: sniffFrame,
+    frameCount: 4,
+    anchor: sniffAnchor,
+    palette: ["#5a5046"],
+  });
+  const qa = (frames: Raster[]) =>
+    animationQa(
+      { frames, frame: sniffFrame, anchor: sniffAnchor, family: "sniff" },
+      {},
+      style,
+    ).reasons.filter(
+      (r) => !r.passed && (r.check === "footprint-drift" || r.check === "ground-contact"),
+    );
+  assert.deepEqual(qa(splitStrip(strip, sniffFrame)), []);
+  const pin = registrationPin(templateFor("sniff", templatesFor()));
+  for (const from of [{ neighbour: 2 }, { neighbour: 4 }] as const) {
+    const provider = new ScriptedProvider({
+      image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(tailedAnimal(2)) }] }),
+      vision: () => ({ text: "" }),
+    });
+    const call = new Caller({
+      provider,
+      providerName: "scripted",
+      budget: new Budget(DEFAULT_FIX_CAP_USD),
+      routes: defaultRoutes,
+    });
+    const result = await fixFrame({
+      ...base(call),
+      strip,
+      frame: sniffFrame,
+      anchor: sniffAnchor,
+      family: "sniff",
+      pin,
+      index: 3,
+      from,
+      style,
+    });
+    assert.deepEqual(qa(splitStrip(result.strip, sniffFrame)), [], JSON.stringify(from));
+    // The repaired frame's feet are where its neighbour's are, not on the anchor column.
+    const fixed = measureFrame(splitStrip(result.strip, sniffFrame)[2]!)!;
+    const near = measureFrame(splitStrip(strip, sniffFrame)[from.neighbour - 1]!)!;
+    assert.ok(Math.abs(fixed.footX - near.footX) <= 1, `${fixed.footX} vs ${near.footX}`);
+    assert.equal(fixed.baseline, near.baseline);
+    assert.ok(Math.abs(fixed.footX - (sniffAnchor.x + 0.5)) > 3, String(fixed.footX));
+  }
+});
+
+/** A side-view hopper crop, 30 px tall: body, head and two legs. */
+function hopperCrop(): Raster {
+  const r = createRaster(64, 40);
+  rect(r, 14, 6, 20, 16, [200, 150, 100]); // body
+  rect(r, 34, 4, 8, 8, [200, 150, 100]); // head
+  rect(r, 16, 22, 3, 14, [200, 150, 100]); // rear leg
+  rect(r, 29, 22, 3, 14, [200, 150, 100]); // front leg
+  return r;
+}
+
+/** The frame moved up by `px` rows (an airborne beat). */
+function lifted(r: Raster, px: number): Raster {
+  const out = createRaster(r.width, r.height);
+  out.data.set(r.data.subarray(px * r.width * 4));
+  return out;
+}
+
+test("a landing frame fixed next to an airborne beat stays on the ground line", async () => {
+  // A 5-frame `play` strip: frames 3 and 4 are 12 px in the air, frame 5 lands.
+  const playFrame = { width: 64, height: 64 };
+  const playAnchor = { x: 32, y: 60 };
+  const style = resolveStyle({ alpha: { mode: "binary" }, edges: "crisp" });
+  const pin = registrationPin(templateFor("play", templatesFor()));
+  const figures = [0, 1, 2, 3, 4].map(() => hopperCrop());
+  const registered = registerFrames(figures, {
+    frame: playFrame,
+    anchor: playAnchor,
+    edges: "crisp",
+    scale: 1,
+    pins: figures.map(() => pin),
+  }).frames.map((f) => f.image);
+  const frames = registered.map((f, i) => (i === 2 || i === 3 ? lifted(f, 12) : f));
+  assert.equal(measureFrame(frames[3]!)!.baseline, playAnchor.y - 12);
+  const strip = joinStrip(frames);
+  const bytes = encodePng(hopperCrop());
+  const keyPose = {
+    role: "key pose (approved)",
+    path: "key.png",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  };
+  for (const from of [{ neighbour: 4 }, { keyPose }]) {
+    const provider = new ScriptedProvider({
+      image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(hopperCrop()) }] }),
+      vision: () => ({ text: "" }),
+    });
+    const call = new Caller({
+      provider,
+      providerName: "scripted",
+      budget: new Budget(DEFAULT_FIX_CAP_USD),
+      routes: defaultRoutes,
+    });
+    const result = await fixFrame({
+      ...base(call),
+      strip,
+      frame: playFrame,
+      anchor: playAnchor,
+      family: "play",
+      pin,
+      index: 5,
+      from,
+      style,
+    });
+    const out = splitStrip(result.strip, playFrame);
+    const label = "neighbour" in from ? "neighbour" : "key pose";
+    assert.equal(measureFrame(out[4]!)!.baseline, playAnchor.y, label);
+    const failed = animationQa(
+      { frames: out, frame: playFrame, anchor: playAnchor, family: "play" },
+      {},
+      style,
+    ).reasons.filter((r) => !r.passed && r.check === "ground-contact");
+    assert.deepEqual(failed, [], label);
+  }
 });

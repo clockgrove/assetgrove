@@ -5,6 +5,8 @@ import { templateFor, templatesFor, thresholdsFor } from "../src/animation/templ
 import { InputError } from "../src/errors.ts";
 import { createRaster, setPixel } from "../src/image/raster.ts";
 import type { ResolvedStyle } from "../src/style.ts";
+import { postprocessFrames } from "../src/postprocess.ts";
+import { splitStrip } from "../src/animation/strip.ts";
 import { quadrupedWalk, syntheticStrip } from "./fixtures/strip.ts";
 import type { StripOptions } from "./fixtures/strip.ts";
 
@@ -37,7 +39,6 @@ for (const s of STYLES) {
       "template",
       "beats",
       "ground-contact",
-      "anchor-drift",
       "footprint-drift",
       "silhouette",
       "loop-seam",
@@ -51,13 +52,17 @@ for (const s of STYLES) {
   });
 }
 
-test("horizontal drift fails anchor-drift naming the frames", () => {
-  const r = run({ count: 8, style: "flat", motion: "walk", drift: 2 }, "walk");
-  const bad = failed(r, "anchor-drift");
+test("horizontal drift fails footprint-drift naming the frame and the one before it", () => {
+  const r = run({ count: 8, style: "flat", motion: "idle", drift: 2 }, "idle");
+  const bad = failed(r, "footprint-drift");
   assert.ok(bad.length > 0);
-  assert.match(bad[0]!.reason, /^frame \d+:/);
+  assert.match(
+    bad[0]!.reason,
+    /^frame \d+: footprint centre .* px from frame \d+'s .*, the previous planted frame \(limit /,
+  );
   assert.ok(bad.every((x) => x.frames?.length === 1));
   assert.ok(bad.some((x) => x.frames?.[0] === 8));
+  assert.deepEqual(failed(r, "ground-contact"), []);
 });
 
 test("a floating frame fails ground-contact naming that frame", () => {
@@ -142,10 +147,10 @@ test("cycle timing outside the template fails timing", () => {
 });
 
 test("profile thresholds override the defaults", () => {
-  const opts: StripOptions = { count: 8, style: "flat", motion: "walk", drift: 2 };
-  assert.ok(failed(run(opts, "walk"), "anchor-drift").length > 0);
-  const loose = { animation: { thresholds: { anchorDriftPx: 20 } } };
-  assert.deepEqual(failed(run(opts, "walk", loose), "anchor-drift"), []);
+  const opts: StripOptions = { count: 8, style: "flat", motion: "idle", drift: 2 };
+  assert.ok(failed(run(opts, "idle"), "footprint-drift").length > 0);
+  const loose = { animation: { thresholds: { footprintDrift: 0.5 } } };
+  assert.deepEqual(failed(run(opts, "idle", loose), "footprint-drift"), []);
 });
 
 test("templatesFor rejects an invalid template", () => {
@@ -200,7 +205,7 @@ test("footprint drift: a walk whose contacts alternate 40-70 px on the ground li
     thresholds: thresholdsFor(),
     threshold: 128,
   });
-  assert.equal(footFails(strict).length, 6);
+  assert.equal(footFails(strict).length, 8);
 });
 
 test("footprint drift: a walk that slides over the cycle fails each slid frame against its phase", () => {
@@ -220,7 +225,7 @@ test("footprint drift: a walk that slides over the cycle fails each slid frame a
   );
   assert.match(
     bad[0]!.reason,
-    /^frame 5: footprint centre .* is 10 px from frame 1's .*, the same phase one stride earlier \(limit 6\)/,
+    /^frame 5: footprint centre .* is 10 px from frame 1's .*, the same phase one stride earlier \(limit 20% of the 41 px figure = 8\.2 px\)/,
   );
   // One frame that slips is the only frame named.
   const one = [...WALK_PAWS];
@@ -261,7 +266,7 @@ test("footprint drift: an asymmetric 9-frame hop is held to the loop's mean, fra
           contact: "none",
           silhouette: { min: 0, max: 1 },
           footprint: "moving",
-          footprintDriftPx: 8,
+          footprintDrift: 0.2,
         },
       ],
     },
@@ -285,7 +290,7 @@ test("footprint drift: an asymmetric 9-frame hop is held to the loop's mean, fra
   );
   assert.match(
     bad[0]!.reason,
-    /^frame 1: .* 12 px from the loop's mean footprint centre .* \(limit 8\)/,
+    /^frame 1: .* 12 px from the loop's mean footprint centre .* \(limit 20% of the 41 px figure = 8\.2 px\)/,
   );
   // The strict reading (no template) fails it against frame 1.
   assert.ok(
@@ -323,7 +328,7 @@ test("templates: a hyphenated name serves exactly that family and its suffixes",
   );
 });
 
-test("footprint drift: static families keep the strict check against frame 1", () => {
+test("footprint drift: planted families hold each frame to the previous planted one", () => {
   const shuffled = [40, 40, 40, 44, 40, 40];
   for (const family of ["idle", "sit-groom"]) {
     const r = checkAnimation(
@@ -335,8 +340,16 @@ test("footprint drift: static families keep the strict check against frame 1", (
       },
     );
     const bad = footFails(r);
-    assert.equal(bad.length, 1, family);
-    assert.match(bad[0]!.reason, /^frame 4: footprint centre .* 4 px from frame 1's .*\(limit 2\)/);
+    assert.deepEqual(
+      bad.map((x) => x.frames),
+      [[4], [5]],
+      family,
+    );
+    assert.match(
+      bad[0]!.reason,
+      /^frame 4: footprint centre .* 4 px from frame 3's .*, the previous planted frame \(limit 3% of the 41 px figure = 1\.23 px\)/,
+    );
+    assert.match(bad[1]!.reason, /^frame 5: .* from frame 4's/);
   }
 });
 
@@ -398,7 +411,7 @@ test("gait: a four-legged walk fails the two-stride rule and passes under gait q
   assert.equal(r.gait, "quadruped");
   assert.match(
     r.reasons.find((x) => x.check === "footprint-drift")!.reason,
-    /within 12 px of the loop's mean footprint centre .* \(gait quadruped; footprint over the bottom 30% of the figure\)$/,
+    /within 11 px of the loop's mean footprint centre .* \(gait quadruped; footprint over the bottom 30% of the figure\)$/,
   );
   // The asset spec's gait wins over the profile's.
   assert.equal(quadFails(walk, profile, "biped").length, 4);
@@ -413,7 +426,7 @@ test("gait: a four-legged walk whose legs slide in one frame fails that frame", 
   );
   assert.match(
     bad[0]!.reason,
-    /^frame 6: footprint centre .* px from the loop's mean footprint centre .* \(limit 12\) \(gait quadruped/,
+    /^frame 6: footprint centre .* px from the loop's mean footprint centre .* \(limit 20% of the 55 px figure = 11 px\) \(gait quadruped/,
   );
 });
 
@@ -437,4 +450,119 @@ test("gait: a gait the template does not list keeps the template's own rule and 
       animationQa({ ...quadrupedWalk(4), family: "walk", gait: "Four Legs" }, {}, style("flat")),
     (e: unknown) => e instanceof InputError && /invalid gait/.test(e.message),
   );
+});
+
+/**
+ * A side-view animal at `s` px per unit (frame 64 units tall): a body, a head that bobs, four
+ * legs planted on the ground and a long tail out one side, so its centre of mass sits far from
+ * its box centre. Each frame is placed by its bounding-box centre on the anchor column, the way
+ * postprocessFrames places a frame. `feet[k]` shifts frame k + 1's legs by that many px.
+ */
+function tailedAnimal(s: number, feet: number[], bob = [0, 1, 2, 1]) {
+  const size = 64 * s;
+  const anchor = { x: size / 2, y: 63 * s - 1 };
+  const frames = feet.map((dx, k) => {
+    const r = createRaster(size, size);
+    const rect = (x0: number, y0: number, x1: number, y1: number, shift = 0) => {
+      for (let y = y0 * s; y < (y1 + 1) * s; y++)
+        for (let x = x0 * s + shift; x < (x1 + 1) * s + shift; x++)
+          setPixel(r, x, y, [90, 80, 70, 255]);
+    };
+    // Drawn left-aligned, then moved so the box centre lands on the anchor column.
+    rect(1, 38, 14, 39); // the long tail
+    rect(15, 36, 36, 50); // body
+    rect(37, 32 + (bob[k % bob.length] as number), 42, 40); // head
+    rect(17, 51, 19, 62, dx); // legs
+    rect(32, 51, 34, 62, dx);
+    let left = size;
+    let right = -1;
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++)
+        if ((r.data[(y * size + x) * 4 + 3] as number) > 0) {
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+        }
+    const out = createRaster(size, size);
+    const move = Math.round(anchor.x - (left + right + 1) / 2);
+    for (let y = 0; y < size; y++)
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        if ((r.data[i + 3] as number) > 0 && x + move >= 0 && x + move < size)
+          setPixel(out, x + move, y, [90, 80, 70, 255]);
+      }
+    return out;
+  });
+  return { frames, frame: { width: size, height: size }, anchor };
+}
+
+const animalQa = (s: number, feet: number[], family = "sniff") =>
+  animationQa({ ...tailedAnimal(s, feet), family }, {}, style("flat"));
+
+test("a long-tailed animal placed by its box centre passes ground-contact and footprint-drift", () => {
+  const input = tailedAnimal(1, [0, 0, 0, 0]);
+  const r = animalQa(1, [0, 0, 0, 0]);
+  assert.deepEqual(failed(r, "ground-contact"), []);
+  assert.deepEqual(failed(r, "footprint-drift"), []);
+  assert.deepEqual(
+    r.reasons.filter((x) => x.check === "anchor-drift"),
+    [],
+  );
+  // The centre of mass is well off the anchor, which is what the removed check used to fail.
+  const m = r.measures[0]!;
+  assert.ok(Math.abs(m.centerX - (input.anchor.x + 0.5)) > 3, String(m.centerX));
+  assert.equal(r.figureHeightPx, 30);
+});
+
+test("the bounds are fractions of the figure's height, so a figure's scale does not change the verdict", () => {
+  for (const [shift64, shift512, ok] of [
+    [0, 0, true],
+    [1, 8, false],
+  ] as const) {
+    const small = animalQa(1, [0, 0, shift64, 0]);
+    const large = animalQa(8, [0, 0, shift512, 0]);
+    assert.equal(small.figureHeightPx, 30);
+    assert.equal(large.figureHeightPx, 240);
+    assert.equal(failed(small, "footprint-drift").length === 0, ok);
+    assert.equal(failed(large, "footprint-drift").length === 0, ok);
+    assert.deepEqual(
+      failed(small, "footprint-drift").map((x) => x.frames),
+      failed(large, "footprint-drift").map((x) => x.frames),
+    );
+  }
+  // 1 px is a tiny slip on a 512 px figure.
+  assert.deepEqual(failed(animalQa(8, [0, 0, 1, 0]), "footprint-drift"), []);
+});
+
+test("planted feet that slide a little each frame fail footprint-drift against the previous frame", () => {
+  const r = animalQa(8, [0, 10, 20, 30, 40, 50]);
+  const bad = failed(r, "footprint-drift");
+  assert.deepEqual(
+    bad.map((x) => x.frames),
+    [[2], [3], [4], [5], [6], [1]],
+  );
+  assert.match(
+    bad[0]!.reason,
+    /^frame 2: footprint centre .* 10 px from frame 1's .*, the previous planted frame \(limit 3% of the 240 px figure = 7\.2 px\)/,
+  );
+  assert.match(bad[1]!.reason, /^frame 3: .* from frame 2's/);
+});
+
+test("a long-tailed animal through stage's own placement passes ground-contact and footprint-drift", () => {
+  // The source frames go through postprocessFrames, which places each by its box centre on the
+  // anchor column and its bottom row on the anchor's row.
+  const source = tailedAnimal(2, [0, 0, 0, 0]);
+  const frame = { width: 64, height: 64 };
+  const anchor = { x: 32, y: 63 };
+  const { strip } = postprocessFrames(source.frames, {
+    frame,
+    frameCount: 4,
+    anchor,
+    palette: ["#5a5046"],
+  });
+  const frames = splitStrip(strip, frame);
+  const r = animationQa({ frames, frame, anchor, family: "sniff" }, {}, style("pixel"));
+  assert.deepEqual(failed(r, "ground-contact"), []);
+  assert.deepEqual(failed(r, "footprint-drift"), []);
+  const m = r.measures[0]!;
+  assert.ok(Math.abs(m.centerX - (anchor.x + 0.5)) > 3, String(m.centerX));
 });

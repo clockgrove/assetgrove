@@ -262,29 +262,103 @@ test("an emissive texture adds light to its material, and unlit renders leave it
   );
 });
 
-test("catchLight needs a highlight in every located eye", async () => {
+test("catchLight is exact: every eye needs painted texels that pass the close-up's depth test", async () => {
   const { catchLight } = await import("../src/model3d/lookdev/command.ts");
-  const camera = viewCamera({ sizePx: 64, yawDeg: 0, framing: setup().base.framing });
-  const eyeAt = (x: number, y: number) => {
-    // A point on the view axis plane at the camera's focus distance, projected to (x, y).
-    const depth = 1;
-    const sx = ((x + 0.5 - 32) * depth) / camera.focal;
-    const sy = (-(y + 0.5 - 32) * depth) / camera.focal;
-    const point = [0, 1, 2].map(
+  const { renderViewWithDepth } = await import("../src/model3d/render.ts");
+  const { glb, base } = setup();
+  const size = 64;
+  const camera = viewCamera({ sizePx: size, yawDeg: 0, framing: base.framing });
+  const close = renderViewWithDepth(glb, { ...base, sizePx: size, yawDeg: 0 });
+  // A world point on the ray through pixel (x, y) at `depth` along the view axis.
+  const at = (x: number, y: number, depth: number) => {
+    const sx = ((x + 0.5 - size / 2) * depth) / camera.focal;
+    const sy = (-(y + 0.5 - size / 2) * depth) / camera.focal;
+    return [0, 1, 2].map(
       (k) =>
         camera.eye[k]! + camera.forward[k]! * depth + camera.right[k]! * sx + camera.up[k]! * sy,
     ) as [number, number, number];
-    return { point, radius: (3 * depth) / camera.focal };
   };
-  const eyes = [eyeAt(20, 30), eyeAt(44, 30)];
-  const render = solid([40, 40, 40, 255], 64);
-  const spot = (x: number, y: number) => render.data.set([255, 255, 255, 255], (y * 64 + x) * 4);
-  spot(20, 30);
-  const one = catchLight(render, camera, eyes);
-  assert.equal(one.eyes, 1);
-  assert.equal(one.found, false);
-  spot(44, 30);
-  const both = catchLight(render, camera, eyes);
-  assert.equal(both.eyes, 2);
+  const surface = (x: number, y: number) => {
+    const depth = close.depth[y * size + x]!;
+    assert.ok(Number.isFinite(depth), `the figure covers pixel ${x},${y}`);
+    return depth;
+  };
+  const d1 = surface(28, 32);
+  const d2 = surface(36, 32);
+  const radius = (2 * d1) / camera.focal;
+  const eyes = [
+    { point: at(28, 32, d1), radius },
+    { point: at(36, 32, d2), radius },
+  ];
+  // Texels: 0 and 1 on the visible surface in each eye, 2 on the same ray behind the figure's front.
+  const position = new Float32Array([
+    ...at(28, 32, d1),
+    ...at(36, 32, d2),
+    ...at(36, 32, d2 * 1.5),
+  ]);
+  const texels = {
+    size: 2,
+    covered: new Uint8Array([1, 1, 1, 0]),
+    position,
+    normal: new Float32Array(12),
+    joint: new Int16Array(4),
+  };
+
+  // Both eyes painted where the close-up sees them: found, with no brightness measured (a pale
+  // eye or a render with no highlight at all does not matter).
+  const both = catchLight(camera, close.depth, texels, eyes, [[0], [1]]);
   assert.equal(both.found, true);
+  assert.equal(both.eyes, 2);
+  assert.deepEqual(both.perEye, [
+    { painted: 1, visible: 1 },
+    { painted: 1, visible: 1 },
+  ]);
+
+  // An eye with nothing painted fails, whatever the other eye shows.
+  const none = catchLight(camera, close.depth, texels, eyes, [[0], []]);
+  assert.equal(none.found, false);
+  assert.equal(none.eyes, 1);
+  assert.deepEqual(none.perEye[1], { painted: 0, visible: 0 });
+
+  // Painted but hidden from the close-up (behind the surface it drew there) fails the depth test.
+  const hidden = catchLight(camera, close.depth, texels, eyes, [[0], [2]]);
+  assert.equal(hidden.found, false);
+  assert.deepEqual(hidden.perEye[1], { painted: 1, visible: 0 });
+
+  // No located eye is no catch-light.
+  assert.equal(catchLight(camera, close.depth, texels, [], []).found, false);
+});
+
+test("paintCatchLights returns the texels it painted per eye, none for an eye with no texel", async () => {
+  const { paintCatchLights } = await import("../src/model3d/lookdev/command.ts");
+  // A 16 × 16 patch of surface facing +z across the first eye.
+  const size = 16;
+  const position = new Float32Array(size * size * 3);
+  const normal = new Float32Array(size * size * 3);
+  for (let i = 0; i < size * size; i++) {
+    position[i * 3] = ((i % size) / (size - 1)) * 0.2 - 0.1;
+    position[i * 3 + 1] = (Math.floor(i / size) / (size - 1)) * 0.2 - 0.1;
+    normal[i * 3 + 2] = 1;
+  }
+  const texels = {
+    size,
+    covered: new Uint8Array(size * size).fill(1),
+    position,
+    normal,
+    joint: new Int16Array(size * size),
+  };
+  const albedo = solid([0, 0, 0, 255], size);
+  const painted = paintCatchLights(
+    albedo,
+    texels,
+    [
+      { point: [0, 0, 0], radius: 0.1 },
+      { point: [-9, -9, -9], radius: 0.1 },
+    ],
+    [0, 0, 1],
+  );
+  assert.equal(painted.length, 2);
+  assert.ok(painted[0]!.length > 0, "the eye's texels near its catch-light are painted");
+  assert.ok(painted[0]!.every((i) => albedo.data[i * 4]! > 0));
+  assert.deepEqual(painted[1], []);
 });

@@ -12,7 +12,7 @@ import { encodePng } from "../src/image/raster.ts";
 import { ProviderSet } from "../src/providers/set.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { pick } from "../src/handoff.ts";
-import { combineGrants, LicenseError } from "../src/license.ts";
+import { combineGrants, LicenseError, licenseDecision } from "../src/license.ts";
 import { stage } from "../src/loop.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
@@ -201,6 +201,26 @@ test("the most restrictive grant wins when calls combine", () => {
   assert.equal(all.commercial, false);
   assert.equal(all.relabel, false);
   assert.equal(all.attribution, CC_BY.attribution);
+});
+
+test("licences of several attribution-only grants are a set, whatever the call order", () => {
+  const a: OutputGrant = { ...CC_BY, license: "CC-BY-4.0" };
+  const b: OutputGrant = { ...CC_BY, license: "LicenseRef-x" };
+  const forward = combineGrants([a, b])!;
+  assert.equal(forward.license, "CC-BY-4.0 AND LicenseRef-x");
+  assert.equal(combineGrants([b, a])!.license, forward.license);
+  const profile = (acceptedLicenses: string[]) =>
+    ({ name: "game", license: "MIT", acceptedLicenses }) as unknown as TargetProfile;
+  for (const grant of [forward, combineGrants([b, a])!]) {
+    assert.deepEqual(licenseDecision(profile(["CC-BY-4.0", "LicenseRef-x"]), grant), {
+      license: "CC-BY-4.0 AND LicenseRef-x",
+    });
+    assert.deepEqual(licenseDecision(profile([forward.license]), grant), {
+      license: forward.license,
+    });
+    const refused = licenseDecision(profile(["CC-BY-4.0"]), grant);
+    assert.ok("refused" in refused && refused.refused.includes('List "LicenseRef-x" in'));
+  }
 });
 
 function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {

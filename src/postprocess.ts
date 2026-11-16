@@ -171,7 +171,8 @@ export function postprocessFrames(frames: Raster[], options: PostprocessOptions)
     const dh = Math.min(frame.height, Math.max(1, Math.round(box.height * scale)));
     const scaled = resample(src, box, dw, dh);
     const ox = Math.min(frame.width - dw, Math.max(0, Math.round(anchor.x - dw / 2)));
-    const oy = Math.min(frame.height - dh, Math.max(0, Math.round(anchor.y - dh)));
+    // The feet's row is the anchor's row, the ground line animation QA measures contact against.
+    const oy = Math.min(frame.height - dh, Math.max(0, Math.round(anchor.y) + 1 - dh));
     for (let y = 0; y < dh; y++) {
       for (let x = 0; x < dw; x++) {
         const px = getPixel(scaled, x, y);

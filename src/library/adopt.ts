@@ -432,7 +432,7 @@ function isProvenance(value: unknown): value is Provenance {
 }
 
 /** The first provenance record in `value`, searched a few levels down (a manifest may embed it). */
-function findProvenance(value: unknown, depth = 0): Provenance | undefined {
+export function findProvenance(value: unknown, depth = 0): Provenance | undefined {
   if (isProvenance(value)) return value;
   if (value === null || typeof value !== "object" || depth > 4) return undefined;
   for (const child of Object.values(value)) {

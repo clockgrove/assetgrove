@@ -236,7 +236,8 @@ function route(value: Route | undefined, label: string): Route {
     !value.model.trim() ||
     !Number.isFinite(value.estimatedCostUsd) ||
     value.estimatedCostUsd < 0 ||
-    (value.providerTerms !== undefined && typeof value.providerTerms !== "string")
+    (value.providerTerms !== undefined && typeof value.providerTerms !== "string") ||
+    (value.providerTermsAsOf !== undefined && typeof value.providerTermsAsOf !== "string")
   )
     throw new InputError(`invalid ${label} route`);
   if (value.outputGrant !== undefined) requireGrant(value.outputGrant, `the ${label} route`);
@@ -1373,7 +1374,11 @@ export async function applyPlan(
           style,
         );
         const ox = Math.min(frameSize.width - width, Math.max(0, Math.round(anchor.x - width / 2)));
-        const oy = Math.min(frameSize.height - height, Math.max(0, Math.round(anchor.y - height)));
+        // The feet's row is the anchor's row, the ground line animation QA measures contact against.
+        const oy = Math.min(
+          frameSize.height - height,
+          Math.max(0, Math.round(anchor.y) + 1 - height),
+        );
         for (let y = 0; y < height; y++)
           for (let x = 0; x < width; x++)
             setPixel(strip, f * frameSize.width + ox + x, oy + y, getPixel(normalized, x, y));

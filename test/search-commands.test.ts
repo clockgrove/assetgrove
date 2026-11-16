@@ -233,9 +233,22 @@ test("find by words, --like and --where returns the same JSON on the CLI and as 
   assert.equal(doc(unknown).error.code, "invalid_input");
 });
 
-test("an AWS variable that could redirect index data exits 2 settings_invalid before a search command unless environment.allow lists it", async () => {
-  useSettings(true);
+test("an AWS variable that could redirect index data exits 2 settings_invalid before a search command when the store is s3://, unless environment.allow lists it", async () => {
   const env = { ...childEnv(), AWS_ENDPOINT_URL: "https://elsewhere.example" };
+  // With no s3:// store configured, nothing reads the AWS variables, so they are not refused.
+  useSettings(true);
+  const unused = await cli(["search", "status", "--json"], env);
+  assert.equal(unused.code, 0, unused.stderr);
+
+  const store = {
+    uri: "s3://bucket/index",
+    credentialsEnv: { accessKeyId: "STORE_KEY_ID", secretAccessKey: "STORE_SECRET" },
+  };
+  writeSettings({
+    providers: { scripted: { limit: { ...SCRIPTED_LIMIT } } },
+    extensions: [STUB],
+    search: { store },
+  });
   const refused = await cli(["search", "status", "--json"], env);
   assert.equal(refused.code, 2);
   assert.equal(doc(refused).error.code, "settings_invalid");
@@ -244,6 +257,7 @@ test("an AWS variable that could redirect index data exits 2 settings_invalid be
   writeSettings({
     providers: { scripted: { limit: { ...SCRIPTED_LIMIT } } },
     extensions: [STUB],
+    search: { store },
     environment: { allow: ["AWS_ENDPOINT_URL"] },
   });
   const allowed = await cli(["search", "status", "--json"], env);

@@ -3,8 +3,12 @@ import { after, before, describe, it } from "node:test";
 import { RRF_K } from "../src/find.ts";
 import { SearchError } from "../src/errors.ts";
 import type { Hit } from "../src/store.ts";
-import { FILTER_FIELDS } from "../src/where.ts";
+import { compareVersions, FILTER_FIELDS } from "../src/where.ts";
 import { cleanup, fixtureRepo, LIBRARY, openIndex, tempDir } from "./helpers/fixture.ts";
+
+/** `<` and `>` order `bible` as versions ("2" before "10") and every other field as strings. */
+const precedes = (field: string, a: string, b: string): boolean =>
+  field === "bible" ? compareVersions(a, b) < 0 : a < b;
 import { folderLibrary } from "./helpers/library.ts";
 
 describe("find over the LanceDB store", () => {
@@ -95,13 +99,25 @@ describe("find over the LanceDB store", () => {
       for (const value of values) {
         for (const op of ["=", "!=", "<", ">"] as const) {
           const { hits } = await index.find({ where: `${field}${op}${value}`, limit: 100 });
+          const ordered = op === "<" || op === ">";
           const raw = await index.store.query({
             filter: [
               { field: "tree", op: "=", value: index.tree },
-              { field, op, value },
+              ...(ordered && field === "bible" ? [] : [{ field, op, value }]),
             ],
             limit: 1000,
           });
+          if (ordered && field === "bible") {
+            // The store compares strings; the expected rows are those on the asked side by version.
+            const keep = raw.filter((r) => {
+              const got = r.row.bible;
+              return (
+                got !== undefined &&
+                (op === "<" ? precedes(field, got, value) : precedes(field, value, got))
+              );
+            });
+            raw.splice(0, raw.length, ...keep);
+          }
           for (const r of raw) {
             const got = (r.row as unknown as Record<string, unknown>)[field] as string | undefined;
             const ok =
@@ -109,7 +125,8 @@ describe("find over the LanceDB store", () => {
                 ? got === value
                 : op === "!="
                   ? got !== value
-                  : got !== undefined && (op === "<" ? got < value : got > value);
+                  : got !== undefined &&
+                    (op === "<" ? precedes(field, got, value) : precedes(field, value, got));
             assert.ok(ok, `${field}${op}${value} returned ${String(got)}`);
           }
           // And every matching asset is found.
@@ -171,5 +188,44 @@ describe("find over the LanceDB store", () => {
     );
     // The table is untouched.
     assert.equal((await index.find({ limit: 100 })).hits.length, Object.keys(LIBRARY).length);
+  });
+});
+
+describe("SearchIndex.find orders bible as versions", () => {
+  let repo: string;
+  let store: string;
+  let opened: Awaited<ReturnType<typeof openIndex>>;
+  const numbered = Array.from({ length: 10 }, (_, i) => String(i + 1));
+  before(async () => {
+    const files: Record<string, { caption: string; card: Record<string, unknown> }> = {};
+    for (const b of numbered) files[`n-${b}.png`] = { caption: `crate ${b}`, card: { bible: b } };
+    repo = await fixtureRepo(files);
+    store = await tempDir("store");
+    opened = await openIndex(store, repo);
+  });
+  after(async () => {
+    opened.index.close();
+    await cleanup(repo, store);
+  });
+
+  const bibles = async (where: string) =>
+    (await opened.index.find({ where, limit: 50 })).hits
+      .map((h) => h.fields.bible as string)
+      .sort(compareVersions);
+
+  it("bible<10 keeps every bible from 1 to 9, with and without words", async () => {
+    assert.deepEqual(await bibles("bible<10"), numbered.slice(0, 9));
+    assert.deepEqual(await bibles("bible>9"), ["10"]);
+    const worded = await opened.index.find({ words: "crate", where: "bible<10", limit: 50 });
+    assert.deepEqual(
+      worded.hits.map((h) => h.fields.bible as string).sort(compareVersions),
+      numbered.slice(0, 9),
+    );
+  });
+
+  it("other fields keep string order", async () => {
+    // "n-10.png" sorts before "n-2.png" as a string.
+    const { hits } = await opened.index.find({ where: "path<n-2.png", limit: 50 });
+    assert.deepEqual(hits.map((h) => h.path).sort(), ["n-1.png", "n-10.png"]);
   });
 });

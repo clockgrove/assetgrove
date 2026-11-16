@@ -84,6 +84,13 @@ export interface SearchLibrary {
    * repository's. A shared index keys its rows by this and the game id.
    */
   origin(): Promise<string>;
+  /**
+   * Whether anything the shared index covers (the library root, the style bible and its reference
+   * files) differs between `commit` and HEAD: `git diff --quiet <commit> HEAD -- <paths>`. True
+   * when Git cannot tell (outside Git, or a commit this clone lacks). Optional in the contract: a
+   * library without it leaves a shared index fresh only at the commit it was built from.
+   */
+  changedSince?(commit: string): Promise<boolean>;
 }
 
 /** What core hands each search slot call. */

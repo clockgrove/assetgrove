@@ -36,7 +36,7 @@ export interface MotionTemplate {
   silhouette: { min: number; max: number };
   /**
    * How the footprint behaves. `planted` (the default): the feet stay put, so every planted
-   * frame's footprint is checked against the first's. `moving`: the contacts move by design (a
+   * frame's footprint is checked against the previous planted frame's. `moving`: the contacts move by design (a
    * walk's legs alternate, a hop crouches and lands), so each planted frame is checked against
    * its own phase: the same frame of the cycle's first stride when `strides` is 2 or more, else
    * the loop's mean footprint.
@@ -47,8 +47,8 @@ export interface MotionTemplate {
    * Frames a whole stride apart share a phase. Default 1. Used by `footprint: "moving"`.
    */
   strides?: number;
-  /** Overrides the footprint drift bound for this family, in px. */
-  footprintDriftPx?: number;
+  /** Overrides the footprint drift bound for this family, as a fraction of the figure's height (0..1). */
+  footprintDrift?: number;
   /**
    * Where a frame's footprint is measured. Unset: the span of the bottom two rows (one foot, the
    * lowest). Set: the centre of the pixels in the bottom `footprintBand` of the figure's height
@@ -65,17 +65,21 @@ export interface MotionTemplate {
 
 /** A gait's footprint rule: the template's footprint fields it overrides. */
 export type GaitRule = Partial<
-  Pick<MotionTemplate, "footprint" | "strides" | "footprintDriftPx" | "footprintBand">
+  Pick<MotionTemplate, "footprint" | "strides" | "footprintDrift" | "footprintBand">
 >;
 
 /** Bounds of the deterministic checks and the flicker cutoff. All optional in the profile. */
 export interface AnimationThresholds {
-  /** How far a contact frame's baseline may sit from the ground line (anchor.y), in px. Default 1. */
-  groundTolerancePx: number;
-  /** How far a frame's baseline or centre of mass may sit from the anchor, in px. Default 1. */
-  anchorDriftPx: number;
-  /** How far a planted footprint's centre may move from the first frame's (or, for a moving footprint, from its own phase's), in px. Default 2. */
-  footprintDriftPx: number;
+  /**
+   * How far a contact frame's baseline may sit from the ground line (anchor.y), as a fraction of
+   * the strip's figure height (the median of baseline − top + 1). Default 0.02.
+   */
+  groundTolerance: number;
+  /**
+   * How far a planted footprint's centre may move between consecutive planted frames (or, for a
+   * moving footprint, from its own phase's), as a fraction of the figure's height. Default 0.03.
+   */
+  footprintDrift: number;
   /** The last→first frame distance may be at most this × the largest consecutive distance. Default 1.5. */
   loopSeamRatio: number;
   /**
@@ -115,6 +119,8 @@ export interface AnimationFrameMeasure {
   frame: number;
   /** Lowest row at or above the alpha threshold, or -1 for an empty frame. */
   baseline: number;
+  /** Highest row at or above the alpha threshold, or -1 for an empty frame. */
+  top: number;
   centerX: number;
   centerY: number;
   /** Visible pixels at or above the alpha threshold. */
@@ -144,6 +150,8 @@ export interface AnimationReport {
   /** The gait the checks used, when one was declared. */
   gait?: string;
   frameCount: number;
+  /** The strip's figure height in px: the median over non-empty frames of baseline − top + 1; 0 when all are empty. */
+  figureHeightPx: number;
   passed: boolean;
   reasons: AnimationReason[];
   measures: AnimationFrameMeasure[];

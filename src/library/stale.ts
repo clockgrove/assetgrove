@@ -18,7 +18,9 @@ import type { Caller } from "../calls.ts";
 import { turntableViews } from "../compare.ts";
 import { ProviderError } from "../errors.ts";
 import { STALENESS_OPERATION } from "../routes.ts";
-import { thumbnail } from "../tree/thumbs.ts";
+import { stripShape, thumbnail } from "../tree/thumbs.ts";
+import type { ThumbShape } from "../tree/thumbs.ts";
+import { findProvenance } from "./adopt.ts";
 import type { LoadedReference } from "../types.ts";
 import { sha256Hex } from "./canonical.ts";
 import { readMedia } from "./lfs.ts";
@@ -197,6 +199,8 @@ export interface StaleSubject {
   asset: string;
   /** The media file, absolute. */
   media: string;
+  /** The provenance file the card names, absolute: a strip's frame size is read from it. */
+  provenance?: string;
   /** The card's `lock.sha256`. */
   sha256: string;
   /** The bible version the card names. */
@@ -204,6 +208,17 @@ export interface StaleSubject {
   kind?: string;
   subject?: string;
   tags: string[];
+}
+
+/** How a strip is cut, as the tree's thumbnail cuts it: the frames its provenance records. */
+function stalenessShape(subject: StaleSubject): ThumbShape {
+  if (subject.kind !== "sprite-strip" || subject.provenance === undefined) return "image";
+  try {
+    const record = findProvenance(JSON.parse(readFileSync(subject.provenance, "utf8")));
+    return stripShape(subject.kind, record?.parameters);
+  } catch {
+    return "image";
+  }
 }
 
 /** The thumbnail the call is shown: 512 px at most, a strip's key frames, a 3D asset's turntable. */
@@ -229,7 +244,7 @@ export async function stalenessThumbnail(subject: StaleSubject): Promise<LoadedR
     try {
       const media = await readMedia(subject.media);
       if (media.kind !== "lfs-pointer")
-        png = thumbnail([media.bytes], subject.kind === "sprite-strip" ? "strip" : "image", budget);
+        png = thumbnail([media.bytes], stalenessShape(subject), budget);
     } catch {
       png = undefined;
     }

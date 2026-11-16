@@ -129,6 +129,16 @@ describe("a shared remote store (a local folder URI)", () => {
     assert.equal(r.builtFrom?.head, "head-1");
     const st = await searchSlot.status(moved);
     assert.equal((st.remote as { fresh: boolean }).fresh, false);
+
+    // A commit that touched nothing the shared index covers (code only) keeps it fresh.
+    const codeOnly = p.context(settings(false), { head: "head-3", clean: true, changed: false });
+    const fresh = await searchSlot.find({ words: "lantern", limit: 3 }, codeOnly);
+    assert.equal(fresh.fresh, true);
+    assert.equal(fresh.builtFrom?.head, "head-1");
+    assert.equal(((await searchSlot.status(codeOnly)).remote as { fresh: boolean }).fresh, true);
+    const touched = p.context(settings(false), { head: "head-3", clean: true, changed: true });
+    assert.equal((await searchSlot.find({ words: "lantern", limit: 3 }, touched)).fresh, false);
+    assert.equal(((await searchSlot.status(touched)).remote as { fresh: boolean }).fresh, false);
     assert.deepEqual(await snapshot(remoteDir), before);
   });
 
