@@ -76,6 +76,13 @@ import {
 } from "./policy/text.ts";
 import type { PromptPart, PromptPartLabel } from "./policy/text.ts";
 import type { PromptPolicyRecord } from "./policy/text.ts";
+import {
+  BRIEF_POLICY_OPERATION,
+  briefPolicyFields,
+  decideBriefPolicy,
+  protectedFields,
+} from "./policy/brief.ts";
+import type { BriefPolicyVerdict, LabelledText, ProtectedFields } from "./policy/brief.ts";
 
 export interface GenerationBrief {
   purpose?: string;
@@ -331,6 +338,12 @@ interface Prepared {
   compilerRequest: string;
   qaPrompt: string;
   routes: { generation: Route; compiler: Route; qa: Route };
+  /** Every route the plan resolves from (the settings' or the ones given). */
+  allRoutes: Routes;
+  /** The bible's protected fields the brief-policy check reads text against. */
+  protectedFields: ProtectedFields;
+  /** The brief's free-text fields, labelled; empty when it has none. */
+  briefText: LabelledText;
   /** The operations apply runs, in order, and the route of each. */
   operations: string[];
   operationRoutes: Record<string, Route>;
@@ -383,6 +396,7 @@ async function prepare(options: CreatePlanOptions): Promise<Prepared> {
   if (runOptions.seed !== undefined && !generationRoute.supportsSeed)
     throw new InputError("generation route does not support the requested seed");
   const { brief, clamps } = prepareBrief(originalBrief, doc.data);
+  const briefText = briefTextOf(brief);
   if (spec.look !== undefined && !Object.hasOwn(doc.data.looks ?? {}, spec.look))
     throw new InputError(`the style bible declares no look "${spec.look}"`);
   const forLook = (r: { look?: string }) => r.look === undefined || r.look === spec.look;
@@ -603,6 +617,9 @@ async function prepare(options: CreatePlanOptions): Promise<Prepared> {
     compilerRequest,
     qaPrompt,
     routes: { generation: generationRoute, compiler: compilerRoute, qa: qaRoute },
+    allRoutes: routes,
+    protectedFields: protectedFields(doc.data, effectivePalette, subject),
+    briefText,
     operations,
     operationRoutes,
     capUsd,
@@ -633,26 +650,84 @@ export interface CreatedPlan {
   clamps: Clamp[];
   forecast: { generationUsd: number; compilerUsd: number; totalUsd: number; withinCap: boolean };
   promptPolicy: PromptPolicyRecord;
+  /**
+   * The brief policy's model verdicts (src/policy/brief.ts): one per protected field on the
+   * brief's free text and one per field on the compiler's text, each with its probability.
+   */
+  briefPolicy: BriefPolicyVerdict[];
+}
+
+/** Whether the brief has free text the brief-policy check reads. */
+function checksBrief(p: Prepared): boolean {
+  return p.briefText.length > 0;
+}
+
+/**
+ * The brief-policy calls `createPlan` makes: one per protected field on the brief's free text
+ * when it has any, and one per field on the compiler's text when the compiler runs.
+ */
+function briefPolicyJobs(p: Prepared, compiles: boolean): PlanJob[] {
+  const passes = (checksBrief(p) ? 1 : 0) + (compiles ? 1 : 0);
+  if (passes === 0) return [];
+  const route = briefPolicyRoute(p);
+  return [
+    jobOf(BRIEF_POLICY_OPERATION, route, passes * briefPolicyFields(p.protectedFields).length),
+  ];
+}
+
+/** The brief-policy route; throws `RouteUnavailableError` when no configured provider serves it. */
+function briefPolicyRoute(p: Prepared): Route {
+  return route(p.allRoutes[BRIEF_POLICY_OPERATION], BRIEF_POLICY_OPERATION);
+}
+
+/** The refusal of a brief the check finds departing from the bible: names each field. */
+function briefRefusal(verdicts: readonly BriefPolicyVerdict[]): InputError {
+  const named = verdicts
+    .map((v) => `${v.field} (probability ${v.probability.toFixed(2)})`)
+    .join(", ");
+  return new InputError(
+    `the brief asks to depart from the style bible's protected ${verdicts.length === 1 ? "field" : "fields"} ${named}; the bible decides ${verdicts.length === 1 ? "it" : "them"}, a brief cannot`,
+  );
 }
 
 export async function createPlan(options: CreatePlanOptions): Promise<CreatedPlan> {
   const p = await prepare(options);
-  const doc = p.doc;
   const frameCount = p.postprocess.frameCount;
   // The compiler runs when its route's provider can be called; otherwise the template applies.
   const compiles = compilerCallable(options, p.routes.compiler);
   const compilerEstimate = compiles ? p.routes.compiler.estimatedCostUsd : 0;
+  const policyJobs = briefPolicyJobs(p, compiles);
+  const policyEstimate = policyJobs.reduce((sum, j) => sum + j.count * j.estimatedCostUsd, 0);
+  // The brief's free text is read by the model; with no provider nothing can read it: fail closed.
+  if (checksBrief(p) && !options.provider)
+    throw new ProviderError(
+      "the brief's free text needs the brief-policy model check, and no provider was given",
+    );
   const budget = new Budget(p.capUsd, ledgerFor(options.ledger, options.provider, p.profile));
-  budget.check(p.generationUsd + compilerEstimate, "planned compiler and generation calls");
-  const caller =
-    compiles && options.provider
-      ? new Caller({
-          provider: options.provider,
-          ...(options.providerName !== undefined && { providerName: options.providerName }),
-          budget,
-          routes: { ...routesOf(options), compiler: p.routes.compiler },
-        })
-      : undefined;
+  budget.check(
+    p.generationUsd + compilerEstimate + policyEstimate,
+    "planned brief-policy, compiler and generation calls",
+  );
+  const caller = options.provider
+    ? new Caller({
+        provider: options.provider,
+        ...(options.providerName !== undefined && { providerName: options.providerName }),
+        budget,
+        routes: {
+          ...routesOf(options),
+          compiler: p.routes.compiler,
+          ...(policyJobs.length > 0 && { [BRIEF_POLICY_OPERATION]: briefPolicyRoute(p) }),
+        },
+      })
+    : undefined;
+  const briefPolicy: BriefPolicyVerdict[] = [];
+  // The author's brief, read against the bible before anything else is called.
+  if (caller && checksBrief(p)) {
+    const verdicts = await decideBriefPolicy(caller, p.protectedFields, "brief", p.briefText);
+    briefPolicy.push(...verdicts);
+    const objections = verdicts.filter((v) => v.objects);
+    if (objections.length > 0) throw briefRefusal(objections);
+  }
   let rawOutput: string | undefined;
   let mode: CompilerRecord["mode"] = "template-fallback";
   let fallbackReason: string | undefined = "LLM provider unavailable";
@@ -660,7 +735,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
   let policyFallback: string | undefined;
   let output: CompilerRecord["output"] = templateOutput(p);
   const clamps = [...p.clamps];
-  if (caller) {
+  if (caller && compiles) {
     let text: string | undefined;
     try {
       text = await caller.vision("compiler", p.compilerRequest, p.references);
@@ -696,7 +771,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
         throw new InputError(
           "LLM compiler output is invalid or reports a constitutional violation",
         );
-      assertConstitutionalContext(parsed.prompt, doc.data);
+      const compilerClamps: Clamp[] = [];
       for (const item of parsed.clamps) {
         if (
           !item ||
@@ -707,7 +782,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
           !("applied" in item)
         )
           throw new InputError("LLM clamp record is invalid");
-        clamps.push(item as Clamp);
+        compilerClamps.push(item as Clamp);
       }
       if (
         (frameCount > 1 && !Array.isArray(parsed.framePrompts)) ||
@@ -720,30 +795,44 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
       const framePrompts = Array.isArray(parsed.framePrompts)
         ? (parsed.framePrompts as string[])
         : undefined;
-      framePrompts?.forEach((prompt) => assertConstitutionalContext(prompt, doc.data));
-      const compiled = {
-        prompt: parsed.prompt,
-        negativePrompt: parsed.negativePrompt,
-        ...(framePrompts && { framePrompts }),
-      };
-      // Text the compiler wrote is never the reason the person's request is refused after the
-      // spend: a name in it falls back to the template's prompt, for free. Its phrase hits are
-      // decided by apply's model check, which sees them labelled model-written.
-      const named = checkPromptText(
-        [
-          { label: "model-prompt", text: compiled.prompt },
-          ...(framePrompts ?? []).map((text) => ({ label: "model-prompt" as const, text })),
-          { label: "model-negative", text: compiled.negativePrompt },
-        ],
-        options.promptAllow,
-      ).match;
-      if (named === undefined) {
-        output = compiled;
-        mode = "llm";
-        fallbackReason = undefined;
-      } else
-        policyFallback =
-          fallbackReason = `the compiler's text names "${named.term}" (${named.kind}), which the prompt policy refuses; the repository template's prompt is used in its place`;
+      // The compiler's own text is read against the bible too. Text the check objects to is
+      // dropped for the template prompt, with the reason recorded; it never fails the plan.
+      const verdicts = await decideBriefPolicy(caller, p.protectedFields, "compiler", [
+        ["prompt", parsed.prompt],
+        ...(framePrompts ?? []).map((text, i): [string, string] => [`framePrompts[${i}]`, text]),
+      ]);
+      briefPolicy.push(...verdicts);
+      const objections = verdicts.filter((v) => v.objects);
+      if (objections.length > 0) {
+        fallbackReason = `the compiler's prompt departs from the style bible's ${objections
+          .map((v) => `${v.field} (brief-policy probability ${v.probability.toFixed(2)})`)
+          .join(", ")}; dropped for the deterministic repository template`;
+      } else {
+        const compiled = {
+          prompt: parsed.prompt,
+          negativePrompt: parsed.negativePrompt,
+          ...(framePrompts && { framePrompts }),
+        };
+        // Text the compiler wrote is never the reason the person's request is refused after the
+        // spend: a name in it falls back to the template's prompt, for free. Its phrase hits are
+        // decided by apply's model check, which sees them labelled model-written.
+        const named = checkPromptText(
+          [
+            { label: "model-prompt", text: compiled.prompt },
+            ...(framePrompts ?? []).map((text) => ({ label: "model-prompt" as const, text })),
+            { label: "model-negative", text: compiled.negativePrompt },
+          ],
+          options.promptAllow,
+        ).match;
+        if (named === undefined) {
+          clamps.push(...compilerClamps);
+          output = compiled;
+          mode = "llm";
+          fallbackReason = undefined;
+        } else
+          policyFallback =
+            fallbackReason = `the compiler's text names "${named.term}" (${named.kind}), which the prompt policy refuses; the repository template's prompt is used in its place`;
+      }
     }
   }
   const prompts = planPrompts(p, output);
@@ -797,6 +886,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
       withinCap: p.generationUsd + spent <= p.capUsd + 1e-9,
     },
     promptPolicy,
+    briefPolicy,
   };
 }
 
@@ -918,6 +1008,7 @@ export async function planJobs(options: CreatePlanOptions): Promise<JobForecast>
       ...(compilerCallable(options, p.routes.compiler)
         ? [jobOf("compiler", p.routes.compiler)]
         : []),
+      ...briefPolicyJobs(p, compilerCallable(options, p.routes.compiler)),
       ...p.applyJobs,
     ],
     candidates: p.runOptions.candidates,
@@ -1456,35 +1547,26 @@ export async function applyPlan(
   return { run, runDir };
 }
 
-function assertConstitutionalContext(text: string, bible: ArtBible): void {
-  const content = text.toLowerCase();
-  if (
-    /(?:ignore|disregard|override|supersede|replace|change|relax|remove|discard|forget)\b[^.!?\n]{0,100}\b(?:instructions|bible|constitution|palette|identity|audience|limits|proportions|signature|features|anchors|rules)/i.test(
-      text,
-    )
-  )
-    throw new InputError("context attempts to override constitutional instructions");
-  if (
-    /(?:use|set|make|give|choose|select|replace|change|adjust|alter|modify)\b[^.!?\n]{0,60}\b(?:audience|proportions|palette|identity|content limits|signature features|turnaround)\b|\b(?:audience|proportions|palette|identity|content limits|signature features|turnaround)\s*(?:is|should be|must be|to|as|:)/i.test(
-      text,
-    )
-  )
-    throw new InputError("context cannot set protected constitutional fields; use the bible");
-  if (
-    ["young-kids", "all-ages"].includes(bible.tone.audience) &&
-    /\b(?:mature|adult|sexual|gore|blood|nudity|hateful)\b/i.test(text)
-  )
-    throw new InputError("context conflicts with the bible audience or content limits");
-  for (const limit of bible.tone.contentLimits) {
-    const phrase = limit
-      .replace(/^(?:no|avoid|without|forbid(?:den)?)\s+/i, "")
-      .trim()
-      .toLowerCase();
-    if (phrase.length > 2 && content.includes(phrase))
-      throw new InputError(`context conflicts with content limit: ${limit}`);
+/**
+ * The brief's free-text fields, labelled, for the brief-policy model check. Whether they ask to
+ * depart from the bible is the model's to judge (src/policy/brief.ts), never a word pattern's.
+ */
+function briefTextOf(brief: GenerationBrief): LabelledText {
+  const parts: LabelledText = [];
+  for (const key of ["purpose", "appearsIn", "context"] as const) {
+    const text = brief[key];
+    if (text !== undefined && text.trim()) parts.push([key, text]);
   }
+  (brief.neighbouringAssets ?? []).forEach((text, i) => {
+    if (text.trim()) parts.push([`neighbouringAssets[${i}]`, text]);
+  });
+  return parts;
 }
 
+/**
+ * The exact checks of a brief, made in the free plan step: only known fields, each of its type,
+ * and no adjustment of a constitutional field; mood and adjustments clamped to the bible's bounds.
+ */
 function prepareBrief(
   raw: GenerationBrief | undefined,
   bible: ArtBible,
@@ -1515,15 +1597,6 @@ function prepareBrief(
       input.neighbouringAssets.some((v) => typeof v !== "string"))
   )
     throw new InputError("neighbouringAssets must be a string array");
-  for (const text of [
-    input.purpose,
-    input.appearsIn,
-    input.context,
-    ...(input.neighbouringAssets ?? []),
-  ])
-    if (text !== undefined) {
-      assertConstitutionalContext(text, bible);
-    }
   const brief: GenerationBrief = structuredClone(input);
   const clamps: Clamp[] = [];
   const moods = bible.adjustable.mood.filter((m) => bible.tone.moodRange.includes(m));
@@ -1579,24 +1652,6 @@ function prepareBrief(
       brief.adjustments[field] = applied as string | number;
     }
   }
-  // Free context cannot be made safe by clamping one keyword while leaving an instruction behind.
-  for (const limit of bible.tone.contentLimits) {
-    const forbidden = limit.replace(/^(?:no|avoid|without|forbid(?:den)?)\s+/i, "").trim();
-    if (
-      forbidden.length > 2 &&
-      [brief.purpose, brief.appearsIn, brief.context, ...(brief.neighbouringAssets ?? [])].some(
-        (v) => v?.toLowerCase().includes(forbidden.toLowerCase()),
-      )
-    ) {
-      throw new InputError(`brief conflicts with content limit: ${limit}`);
-    }
-  }
-  if (
-    /(?:ignore|override|replace|change|disregard)\b[^.!?\n]{0,80}\b(?:bible|constitution|palette|identity|audience|content limits|proportions|signature)/i.test(
-      JSON.stringify(brief),
-    )
-  )
-    throw new InputError("brief attempts to override the constitution or identity lock");
   return { brief, clamps };
 }
 

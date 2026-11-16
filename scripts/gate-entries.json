@@ -66,8 +66,14 @@
     {
       "id": "confirm-second-harness",
       "kind": "manual-owner",
-      "title": "Confirmation proven in one more harness (Codex)",
-      "evidence": "A spend confirmation and a pick confirmed in the second harness on this commit: the harness and version, and the confirmation records."
+      "title": "Confirmation proven in Codex",
+      "evidence": "A spend confirmation and a pick confirmed in Codex on this commit: the harness's version, and the confirmation records."
+    },
+    {
+      "id": "confirm-copilot-cli",
+      "kind": "manual-owner",
+      "title": "Confirmation proven in GitHub Copilot CLI",
+      "evidence": "A spend confirmation and a pick confirmed in GitHub Copilot CLI on this commit: the harness's version, and the confirmation records."
     },
     {
       "id": "unattended-session",
