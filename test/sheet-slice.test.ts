@@ -298,17 +298,86 @@ test("an explicit grid of columns alone takes its cell height from the count or 
   }
 });
 
-test("an explicit grid of columns alone refuses a count the figures' rows disagree with", () => {
-  // 8 figures in 4 columns and 2 rows: 4 or 12 is a wrong count, never 4 cut cells or 12 slivers.
+/** A sheet of 128 px square cells, a 40 px figure in each listed cell at the given top. */
+function boxSheet(
+  columns: number,
+  rows: number,
+  figures: Array<{ row: number; column: number; top: number; height?: number }>,
+): Raster {
+  const sheet = createRaster(columns * 128, rows * 128);
+  for (let i = 0; i < sheet.data.length; i += 4) sheet.data.set([250, 250, 250, 255], i);
+  for (const { row, column, top, height = 40 } of figures)
+    for (let y = row * 128 + top; y < row * 128 + top + height; y++)
+      for (let x = column * 128 + 44; x < column * 128 + 84; x++)
+        sheet.data.set([60 + 20 * column, 40, 30 + 80 * row, 255], (y * sheet.width + x) * 4);
+  return sheet;
+}
+
+const cells = (columns: number, rows: number) =>
+  Array.from({ length: columns * rows }, (_, i) => ({
+    row: Math.floor(i / columns),
+    column: i % columns,
+    top: 80,
+  }));
+
+const square = (columns: number, rows: number) => ({
+  columns,
+  rows,
+  cell: { width: 128, height: 128 },
+  origin: { x: 0, y: 0 },
+});
+
+test("an explicit grid of columns alone takes its rows from a count, whatever rows the figures' centres cluster into", () => {
+  // A jump: two figures of each row drawn 70 px higher, so the centres cluster into 4 rows.
+  const jump = boxSheet(
+    4,
+    2,
+    cells(4, 2).map((c) => ({ ...c, top: c.column % 2 === 1 ? 10 : 80 })),
+  );
+  // One raised figure in a single row: the centres cluster into 2 rows.
+  const raised = boxSheet(
+    4,
+    1,
+    cells(4, 1).map((c) => ({ ...c, top: c.column === 2 ? 10 : 80 })),
+  );
+  // A figure that reaches down to touch the one below it: 7 sheet-wide components.
+  const touching = boxSheet(4, 2, [
+    ...cells(4, 2)
+      .filter((c) => !(c.row === 0 && c.column === 1))
+      .map((c) => ({ ...c, top: 20, height: 96 })),
+    { row: 0, column: 1, top: 20, height: 108 + 20 },
+  ]);
+  for (const [name, sheet, columns, rows] of [
+    ["jump", jump, 4, 2],
+    ["raised", raised, 4, 1],
+    ["touching", touching, 4, 2],
+  ] as const) {
+    for (const options of [{ grid: { columns }, count: columns * rows }, { grid: { columns } }]) {
+      const result = sliceSheet(sheet, options);
+      const label = `${name} ${JSON.stringify(options)}`;
+      assert.equal(result.figures.length, columns * rows, label);
+      // With a count the rows come from it; without one, figures that do not fill their clustered
+      // rows one per cell fall back to square cells, never a silent cut into thin rows.
+      assert.deepEqual(result.grid, square(columns, rows), label);
+      result.figures.forEach((figure, i) => {
+        assert.equal(figure.cell.row, Math.floor(i / columns), label);
+        assert.equal(figure.cell.column, i % columns, label);
+      });
+    }
+  }
+});
+
+test("an explicit grid of columns alone refuses a count the cells do not hold", () => {
+  // 8 figures in 4 columns and 2 rows: 4 would drop a row, 12 would cut each figure into slivers.
   const sheet = tallCellSheet(4, 2, 64, 128);
-  for (const count of [4, 12]) {
+  for (const [count, reason] of [
+    [4, /4 cells of 4 × 1 hold two or more separate figures/],
+    [12, /make cells 85 px tall, shorter than the typical figure/],
+  ] as const) {
     assert.throws(
       () => sliceSheet(sheet, { grid: { columns: 4 }, count }),
       (error: unknown) =>
-        error instanceof SliceError &&
-        error.found === 8 &&
-        error.expected === count &&
-        /sit in 2 rows of 4 columns/.test(error.message),
+        error instanceof SliceError && error.expected === count && reason.test(error.message),
       `count ${count}`,
     );
   }

@@ -428,6 +428,8 @@ interface Context {
 /** A sliced sheet, plus why each grid cell without a figure has none. */
 interface Sliced extends SliceResult {
   empty: Map<string, string>;
+  /** Given-grid cells that hold more than one separate figure-sized component, as "row r, column c". */
+  crowded?: string[];
 }
 
 const cellKey = (row: number, column: number): string => `${row},${column}`;
@@ -480,8 +482,10 @@ function sliceGivenGrid(ctx: Context, grid: GridSpec): Sliced {
   );
   const figures: SlicedFigure[] = [];
   const empty = new Map<string, string>();
+  const crowded: string[] = [];
   for (const { row, column, box, bg, parts } of cells) {
     const { figures: big, merged } = assign(parts, cutoff);
+    if (big.length > 1) crowded.push(`row ${row + 1}, column ${column + 1}`);
     const main = big.sort((a, b) => b.pixels.length - a.pixels.length)[0];
     if (!main) {
       const largest = Math.max(0, ...parts.map((p) => p.pixels.length));
@@ -498,7 +502,7 @@ function sliceGivenGrid(ctx: Context, grid: GridSpec): Sliced {
     });
   }
   figures.forEach((f, i) => (f.id = i + 1));
-  return { mode: "grid", grid, background: ctx.sheetBg.colour, figures, empty };
+  return { mode: "grid", grid, background: ctx.sheetBg.colour, figures, empty, crowded };
 }
 
 /**
@@ -706,26 +710,23 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
     const cellWidth = options.grid.cellWidth ?? Math.floor(sheet.width / columns);
     const origin = options.grid.origin ?? { x: 0, y: 0 };
     const height = sheet.height - origin.y;
-    // How tall a cell is: given; else the sheet's height over its rows, which are given, follow
-    // from the count (the sheet holds count figures in rows of `columns`, refused when the
-    // figures sit in another number of rows), or are the rows the figures sit in. Square cells only when nothing else says, as on a sheet with no figure.
-    const figures = sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff);
-    const seenRows = figureRows(figures);
+    // How tall a cell is: given; else the sheet's height over its rows. The rows are given, or
+    // follow from the count alone (count figures in rows of `columns`; a wrong count is refused
+    // below, when the cells do not hold that many figures), or, with neither, are the rows the
+    // figures sit in, when the figures fill that many rows of `columns` one per cell. Otherwise
+    // (no figure, a raised figure that clusters as a row of its own, figures that touch and
+    // merge) the cells are square, as with nothing else to go on.
     const countRows = options.count !== undefined ? Math.ceil(options.count / columns) : undefined;
-    // A count whose rows disagree with the rows the figures sit in is a wrong count: refuse it,
-    // never cut cells to fit it (that would drop or split figures to agree with any count).
-    if (
-      options.grid.rows === undefined &&
-      options.grid.cellHeight === undefined &&
-      options.count !== undefined &&
-      countRows !== undefined &&
-      seenRows !== undefined &&
-      countRows !== seenRows
-    ) {
-      throw new SliceError(figures.length, options.count, [
-        `the figures sit in ${seenRows} row${seenRows === 1 ? "" : "s"} of ${columns} column${columns === 1 ? "" : "s"}, ` +
-          `where ${options.count} figures need ${countRows}`,
-      ]);
+    let seenRows: number | undefined;
+    if (countRows === undefined) {
+      const figures = sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff);
+      const clustered = figureRows(figures);
+      if (
+        clustered !== undefined &&
+        figures.length > columns * (clustered - 1) &&
+        figures.length <= columns * clustered
+      )
+        seenRows = clustered;
     }
     const rows =
       options.grid.rows ??
@@ -741,6 +742,30 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
       cell: { width: cellWidth, height: cellHeight },
       origin,
     });
+    // Rows taken from the count are checked against the cut itself, never against where the
+    // figures' centres cluster: a count too small leaves two separate figures in a cell (one
+    // would be dropped), a count too large makes cells shorter than the typical figure (each
+    // would be cut into slivers). Either is a wrong count, refused rather than sliced to fit.
+    if (
+      countRows !== undefined &&
+      options.count !== undefined &&
+      options.grid.rows === undefined &&
+      options.grid.cellHeight === undefined
+    ) {
+      const problems: string[] = [];
+      const crowded = sliced.crowded ?? [];
+      if (crowded.length > 0)
+        problems.push(
+          `${crowded.length} cell${crowded.length === 1 ? "" : "s"} of ${columns} × ${countRows} hold two or more separate figures (${crowded.slice(0, 3).join("; ")}${crowded.length > 3 ? "; …" : ""}), so the sheet holds more than ${options.count}`,
+        );
+      const figures = sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff);
+      const typical = figures.length > 0 ? median(figures.map((f) => f.box.height)) : 0;
+      if (typical > cellHeight)
+        problems.push(
+          `${options.count} figures in rows of ${columns} make cells ${cellHeight} px tall, shorter than the typical figure (${Math.round(typical)} px), so the sheet holds fewer`,
+        );
+      if (problems.length > 0) throw new SliceError(sliced.figures.length, options.count, problems);
+    }
   } else {
     const grid = options.components
       ? undefined
