@@ -32,10 +32,7 @@ describe("near matches", () => {
     p = await makeProject();
     for (const [path, f] of Object.entries(EXTRA)) {
       await writeFile(join(p.root, path), f.caption);
-      await writeFile(
-        join(p.root, path.replace(/\.png$/, ".card.json")),
-        JSON.stringify(f.card),
-      );
+      await writeFile(join(p.root, path.replace(/\.png$/, ".card.json")), JSON.stringify(f.card));
     }
   });
   after(() => cleanup(p.root, p.stateDir));

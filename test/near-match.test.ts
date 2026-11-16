@@ -50,6 +50,9 @@ const slot: SearchSlot = {
       builtFrom: null,
     };
   },
+  async outliers() {
+    return { members: 0, outliers: [] };
+  },
   async find() {
     throw new Error("unused");
   },

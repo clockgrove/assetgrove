@@ -110,8 +110,20 @@ export interface NearMatchQuery {
   limit: number;
 }
 
+export interface SearchOutlier {
+  address: string;
+  distance: number;
+  z: number;
+}
+
+export interface SearchOutliersResult {
+  members: number;
+  outliers: SearchOutlier[];
+}
+
 export interface SearchSlot {
   nearMatch?(query: NearMatchQuery, ctx: SearchContext): Promise<SearchFindResult>;
+  outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult>;
   find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;
