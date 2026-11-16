@@ -300,6 +300,11 @@ async function loadOne(
         ? await (module.default as (c: ExtensionContext) => unknown)(context)
         : module.default;
   } catch (error) {
+    // An extension that cannot run here (the search package on darwin-x64) says so itself.
+    if ((error as { code?: unknown } | null)?.code === "extension_unavailable")
+      throw new ExtensionError("extension_unavailable", `${line}: ${messageOf(error)}`, {
+        cause: error,
+      });
     throw new ExtensionError(
       "extension_refused",
       `${line}: its entry's default export threw: ${messageOf(error)}`,

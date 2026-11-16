@@ -297,7 +297,7 @@ export function loadSettings(options: LoadOptions = {}): Settings {
   const file = parsed.data;
 
   checkProviders(file, path);
-  checkSearch(file, path, projectOf);
+  checkSearch(file, path);
   if (file.stateDir !== undefined) {
     const inside = projectOf(file.stateDir);
     if (inside !== undefined) {
@@ -387,11 +387,7 @@ function completeSearch(search: NonNullable<SettingsFile["search"]>): SearchSett
 }
 
 /** The refusals on the search block zod's per-field schema cannot express. */
-function checkSearch(
-  file: SettingsFile,
-  path: string,
-  projectOf: (target: string) => string | undefined,
-): void {
+function checkSearch(file: SettingsFile, path: string): void {
   const endpoint = file.search?.store?.options?.endpoint;
   if (endpoint !== undefined) {
     const url = new URL(endpoint);
@@ -409,14 +405,6 @@ function checkSearch(
     if (url.protocol !== "https:") {
       throw new SettingsError(
         `${path}: search.store.options.endpoint must be https; got ${shown}.`,
-      );
-    }
-  }
-  for (const [index, folder] of (file.search?.folders ?? []).entries()) {
-    const inside = projectOf(folder);
-    if (inside !== undefined) {
-      throw new SettingsError(
-        `${path}: search.folders.${index} ${folder} is inside the project ${inside}; search folders must live outside every repository.`,
       );
     }
   }
