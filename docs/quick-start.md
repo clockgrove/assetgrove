@@ -6,7 +6,7 @@ You need Node 24, Git with Git LFS, a game repository, and one provider key with
 
 ## 1. Install
 
-Until the 0.1.0 release candidate is published, check this repository out at a pinned commit and install its dependencies:
+Until the 0.2.0 release candidate is published, check this repository out at a pinned commit and install its dependencies:
 
 ```sh
 git clone https://github.com/clockgrove/assetgrove.git && cd assetgrove

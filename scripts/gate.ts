@@ -299,6 +299,26 @@ function checkSearchBench(ctx: Ctx, entry: GateEntry): Outcome {
       run: run.html_url,
     };
   }
+  // A time comparison alone is not enough: a merge-queue commit's committer time is when it was
+  // queued, so the run must also have checked out a commit that holds the bars.
+  if (!run.head_sha) {
+    return {
+      status: "fail",
+      detail: `the bench run ${run.id} names no head commit, so the gate cannot tell it measured the bars' commit ${set.commit}`,
+      run: run.html_url,
+    };
+  }
+  const held = ctx.run(["git", "merge-base", "--is-ancestor", set.commit, run.head_sha], ctx.root);
+  if (held.status !== 0) {
+    return {
+      status: "fail",
+      detail:
+        held.status === 1
+          ? `the bench run's commit ${run.head_sha} does not hold the bars' commit ${set.commit}; run the bench again on a main that holds the bars`
+          : `git merge-base --is-ancestor ${set.commit} ${run.head_sha} failed (fetch main's history): ${tail(held.stderr, 3)}`,
+      run: run.html_url,
+    };
+  }
   const dir = mkdtempSync(join(tmpdir(), "assetgrove-gate-bench-"));
   try {
     const download = ["gh", "run", "download", String(run.id), "--repo", slug];

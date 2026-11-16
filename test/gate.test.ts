@@ -33,6 +33,8 @@ interface BenchWorld {
   barsAt?: string;
   /** The bench run's creation time. */
   benchAt?: string;
+  /** Whether the bench run's head commit holds the bars' commit (default true). */
+  barsInHead?: boolean;
   /** The bench report's lines. */
   report?: object[];
   /** The runs search-bench.yml lists, newest first, and which uploaded the bench report. */
@@ -60,6 +62,8 @@ function passingWith(world: BenchWorld = {}): Runner {
         ? { status: 128, stdout: "", stderr: "no such path" }
         : { status: 0, stdout: BARS, stderr: "" };
     }
+    if (argv[0] === "git" && argv[1] === "merge-base")
+      return { status: world.barsInHead === false ? 1 : 0, stdout: "", stderr: "" };
     if (argv[0] === "gh" && argv[1] === "run" && argv[2] === "download") {
       const dir = argv[argv.indexOf("-D") + 1]!;
       writeFileSync(
@@ -96,6 +100,7 @@ function passingWith(world: BenchWorld = {}): Runner {
         conclusion: "success",
         html_url: `https://example.test/run/${r.id}`,
         created_at: world.benchAt ?? BENCH_AT,
+        head_sha: "c".repeat(40),
       }));
       return { status: 0, stdout: JSON.stringify({ workflow_runs: listed }), stderr: "" };
     }
@@ -297,6 +302,17 @@ test("the search bars entry fails when the bars' commit is not older than the be
     assert.match(report.entries[0]!.detail, /is not older than the bench run/);
     assert.equal(report.ok, false);
   }
+});
+
+test("the search bars entry fails when the bench run is later in time but its head lacks the bars' commit", () => {
+  const report = runGate({
+    entries: [bench()],
+    run: passingWith({ barsInHead: false }),
+    commit: COMMIT,
+  });
+  assert.equal(report.entries[0]!.status, "fail");
+  assert.match(report.entries[0]!.detail, /does not hold the bars' commit a{40}/);
+  assert.equal(report.ok, false);
 });
 
 test("the search bars entry reads the newest run with a bench report and fails on a missed bar, not on an off-box speed bar", () => {
