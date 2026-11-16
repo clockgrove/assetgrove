@@ -14,7 +14,7 @@ import { encodeWebpLossless } from "../image/webp.ts";
 import { matteChecks, matteFigure } from "../sheet/matte.ts";
 import { registerFrames } from "../sheet/register.ts";
 import { sliceSheet, wholeImageFigure } from "../sheet/slice.ts";
-import type { RegisterOptions, SliceOptions, SlicedFigure } from "../sheet/types.ts";
+import type { RegisterOptions, RegisterPin, SliceOptions, SlicedFigure } from "../sheet/types.ts";
 import type { Box, Point, Size } from "../types.ts";
 import type { ImageEngine, ImageItem, OperationImpl } from "./types.ts";
 
@@ -222,6 +222,7 @@ const register: OperationImpl = (items, p) => {
     throw new InputError("register needs a frame size (params.frame or a target profile)");
   if (items.length === 0) throw new InputError("register needs at least one image");
   const families = p["families"] as string[] | undefined;
+  const pins = p["pins"] as RegisterPin[] | undefined;
   const options: RegisterOptions = {
     frame,
     anchor: p["anchor"] as Point,
@@ -230,6 +231,7 @@ const register: OperationImpl = (items, p) => {
     margin: p["margin"] as number,
     clamp: (p["clamp"] as number[]).slice(0, 2) as [number, number],
     ...(families !== undefined && { families }),
+    ...(pins !== undefined && { pins }),
     ...(p["scale"] !== undefined && { scale: p["scale"] as number }),
   };
   const registration = registerFrames(

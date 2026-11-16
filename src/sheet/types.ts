@@ -110,10 +110,16 @@ export interface FrameMeasure {
   area: number;
 }
 
+/**
+ * The point registration puts on anchor.x: `center`, the alpha-weighted centre of mass, or
+ * `footprint`, the centre of the ground footprint (the bottom 10% of the figure's height).
+ */
+export type RegisterPin = "center" | "footprint";
+
 export interface RegisterOptions {
   /** The target's frame size. */
   frame: Size;
-  /** The pivot: the feet baseline goes to anchor.y and the footprint centre to anchor.x. */
+  /** The pivot: the feet baseline goes to anchor.y and each figure's pin point to anchor.x. */
   anchor: Point;
   /** `crisp` resamples nearest-neighbour; `antialiased` filters (premultiplied). */
   edges: "antialiased" | "crisp";
@@ -127,6 +133,11 @@ export interface RegisterOptions {
    * register without normalisation.
    */
   families?: string[];
+  /**
+   * One pin per figure: the point put on anchor.x. Default: every figure's centre of mass. A planted
+   * family pins its footprint; a family whose contacts move pins its centre of mass.
+   */
+  pins?: RegisterPin[];
   /** Bounds of the per-figure normalisation factor. Default [0.8, 1.25]. */
   clamp?: [number, number];
   /** Use this common scale instead of fitting one. */
@@ -138,7 +149,7 @@ export interface RegisteredFrame {
   image: Raster;
   /** Measured on `image`. */
   measure: FrameMeasure;
-  /** Largest of |baseline - anchor.y| and |footX - (anchor.x + 0.5)| (a pixel's centre is x + 0.5), in px. */
+  /** Largest of |baseline - anchor.y| and |pin x - (anchor.x + 0.5)| (a pixel's centre is x + 0.5), in px. */
   jitterPx: number;
   /** The scale and normalisation applied, and the placement, for provenance. */
   transforms: Transform[];

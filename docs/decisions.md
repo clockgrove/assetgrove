@@ -64,7 +64,7 @@ Operations are declared once, by name and parameter schema, in `src/transform/op
 
 ## Sheet generation first
 
-The model generates a whole animation cycle as one contact sheet, because a whole sheet keeps identity consistent; a per-frame reference edit is the fallback for fixing a single frame. Sheets made by other tools take the same import path. A vision model proposes the families, order and mirror pairs, and the author confirms them by setting the grouping file's status to `confirmed`, which Assetgrove never does itself. Registration pins the feet baseline and centre of mass to the anchor with one common scale, and refuses a family whose measured jitter exceeds the bound (1 px by default). Details are in [sheet-import.md](sheet-import.md).
+The model generates a whole animation cycle as one contact sheet, because a whole sheet keeps identity consistent; a per-frame reference edit is the fallback for fixing a single frame. Sheets made by other tools take the same import path. A vision model proposes the families, order and mirror pairs, and the author confirms them by setting the grouping file's status to `confirmed`, which Assetgrove never does itself. Registration pins the feet baseline to the anchor's row with one common scale, and pins each family by the point its motion template keeps still: a planted family's ground footprint (pinning its centre of mass would slide the feet when the head drops or the tail swings), and a moving family's centre of mass (pinning its swinging feet would slide the body). It refuses a family whose measured jitter exceeds the bound (1 px by default). Details are in [sheet-import.md](sheet-import.md).
 
 ## Style profile
 

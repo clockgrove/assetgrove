@@ -57,9 +57,9 @@ import { SliceError } from "./slice.ts";
 import { animationQa } from "../animation/qa.ts";
 import { DEFAULT_DURATION_MS, familyLoops, renderPreviews } from "../animation/run.ts";
 import { splitStrip } from "../animation/strip.ts";
-import { templatesFor, thresholdsFor } from "../animation/templates.ts";
+import { registrationPin, templatesFor, thresholdsFor } from "../animation/templates.ts";
 import type { AnimationReport } from "../animation/types.ts";
-import type { Grouping, MatteQuality, SliceOptions } from "./types.ts";
+import type { Grouping, MatteQuality, RegisterPin, SliceOptions } from "./types.ts";
 import type { ConfirmationRecord, LoadedReference } from "../types.ts";
 import { scoreIdentity } from "../identity.ts";
 import type { CastMember, IdentityRecord, IdentityScore, IdentitySettings } from "../identity.ts";
@@ -659,6 +659,9 @@ export async function writeFamilies(
   const style = record.style;
   const figures: ImageItem[] = [];
   const families: string[] = [];
+  // Each family is pinned by the point its footprint rule keeps still: a planted family's feet, a
+  // moving family's centre of mass.
+  const pins: RegisterPin[] = [];
   const flipSteps = new Map<string, TransformStep>();
   for (const p of plan) {
     let items = p.frames.map((id): ImageItem => ({
@@ -676,6 +679,8 @@ export async function writeFamilies(
     }
     figures.push(...items);
     families.push(...items.map(() => p.family.name));
+    const pin = registrationPin(p.family.name, record.profile, record.gait);
+    pins.push(...items.map(() => pin));
   }
   const registration = runOperation(
     figures,
@@ -685,6 +690,7 @@ export async function writeFamilies(
         frame: record.frame,
         anchor: record.anchor,
         families,
+        pins,
         ...(record.scale !== undefined && { scale: record.scale }),
       },
     },

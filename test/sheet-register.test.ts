@@ -4,6 +4,7 @@ import { createRaster } from "../src/image/raster.ts";
 import type { Raster } from "../src/image/raster.ts";
 import { flipHorizontal } from "../src/image/resample.ts";
 import { animationQa } from "../src/animation/qa.ts";
+import { registrationPin } from "../src/animation/templates.ts";
 import { jitterOf, measureFrame, registerFrames } from "../src/sheet/register.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 
@@ -135,6 +136,7 @@ test("a planted sniff keeps its feet on the same columns while the centre of mas
     anchor: sniffAnchor,
     edges: "crisp",
     scale: 1,
+    pins: figures.map(() => registrationPin("sniff")),
   });
   const anchor = sniffAnchor;
   const [first, ...rest] = reg.frames;
@@ -159,7 +161,12 @@ test("a planted sniff keeps its feet on the same columns while the centre of mas
 test("a planted sniff registered from a sheet passes animation QA's footprint-drift", () => {
   const figures = [0, 3, 6, 3].map(sniffCrop);
   for (const edges of ["crisp", "antialiased"] as const) {
-    const reg = registerFrames(figures, { frame: sniffFrame, anchor: sniffAnchor, edges });
+    const reg = registerFrames(figures, {
+      frame: sniffFrame,
+      anchor: sniffAnchor,
+      edges,
+      pins: figures.map(() => registrationPin("sniff")),
+    });
     const r = animationQa(
       {
         frames: reg.frames.map((f) => f.image),
@@ -178,5 +185,68 @@ test("a planted sniff registered from a sheet passes animation QA's footprint-dr
       (x) => !x.passed && (x.check === "footprint-drift" || x.check === "ground-contact"),
     );
     assert.deepEqual(failing, [], edges);
+  }
+});
+
+/** A walk crop: the body and head never move; the stance foot steps `step` px. */
+function walkCrop(step: number): Raster {
+  const r = createRaster(64, 40);
+  const fill = (x0: number, y0: number, w: number, h: number) => {
+    for (let y = y0; y < y0 + h; y++)
+      for (let x = x0; x < x0 + w; x++) r.data.set([200, 150, 100, 255], (y * 64 + x) * 4);
+  };
+  fill(20, 8, 16, 18); // body and head
+  fill(26 + step, 26, 4, 8); // stance foot, on the ground
+  fill(30 - step, 26, 3, 5); // swinging foot, off the ground
+  return r;
+}
+
+function bodyLeft(img: Raster, row: number): number {
+  for (let x = 0; x < img.width; x++)
+    if ((img.data[(row * img.width + x) * 4 + 3] as number) >= 128) return x;
+  return -1;
+}
+
+test("the pin follows the family's footprint rule: planted families pin the feet, moving ones the centre of mass", () => {
+  assert.equal(registrationPin("sniff"), "footprint");
+  assert.equal(registrationPin("idle"), "footprint");
+  assert.equal(registrationPin("walk"), "center");
+  assert.equal(registrationPin("walk-left"), "center");
+  // A profile template that plants a family pins its feet, whatever its name.
+  assert.equal(
+    registrationPin("walk", {
+      animation: {
+        templates: [
+          {
+            name: "walk",
+            loop: true,
+            frames: { min: 2, max: 16 },
+            beats: [],
+            contact: "all",
+            silhouette: { min: 0, max: 0.4 },
+            footprint: "planted",
+          },
+        ],
+      },
+    }),
+    "footprint",
+  );
+});
+
+test("a walk registered with its family's pin keeps the body still while the stance foot steps", () => {
+  const steps = [-8, -4, 0, 4, 8, 4, 0, -4];
+  const figures = steps.map(walkCrop);
+  for (const edges of ["crisp", "antialiased"] as const) {
+    const options = { frame: sniffFrame, anchor: sniffAnchor, edges, scale: 1 };
+    const walk = registerFrames(figures, {
+      ...options,
+      pins: figures.map(() => registrationPin("walk")),
+    });
+    const lefts = walk.frames.map((f) => bodyLeft(f.image, 20));
+    assert.ok(Math.max(...lefts) - Math.min(...lefts) <= 2, `${edges}: body left edges ${lefts}`);
+    // Pinning the swinging contacts instead slides the body by the whole stride.
+    const feet = registerFrames(figures, { ...options, pins: figures.map(() => "footprint") });
+    const slid = feet.frames.map((f) => bodyLeft(f.image, 20));
+    assert.ok(Math.max(...slid) - Math.min(...slid) >= 12, `${edges}: footprint-pinned ${slid}`);
   }
 });

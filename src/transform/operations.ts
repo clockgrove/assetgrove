@@ -195,7 +195,7 @@ export const OPERATIONS: OperationSpec[] = [
   {
     name: "register",
     summary:
-      "place every image in one frame size with the feet baseline and centre of mass on the anchor, at one common scale",
+      "place every image in one frame size with the feet baseline and its pin point (centre of mass, or ground footprint) on the anchor, at one common scale",
     scope: "all",
     params: {
       type: "object",
@@ -206,6 +206,12 @@ export const OPERATIONS: OperationSpec[] = [
           type: "array",
           items: { type: "string" },
           description: "one family key per image; normalises scale within each family",
+        },
+        pins: {
+          type: "array",
+          items: { type: "string", enum: ["center", "footprint"] },
+          description:
+            "one pin per image, the point put on the anchor's column: center (centre of mass, the default) or footprint (the ground footprint, for a planted family)",
         },
         measureThreshold: {
           type: "integer",
