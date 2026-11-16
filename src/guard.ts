@@ -66,9 +66,9 @@ const PLACEHOLDER_WORDS = [
 /**
  * Whether an assigned value is shaped like a key: a literal of MIN_KEY_VALUE_LENGTH or more
  * characters with no whitespace or brackets, that is not an expression (`os.environ`,
- * `process.env`, `{{`, `${`, a leading `$`) and not an obvious placeholder (`your`, `here`,
- * `example`, `placeholder`, `changeme`, `replace`, `redacted`, `xxxx`, one repeated character, or
- * ending in `...`).
+ * `process.env`, `{{`, `${`, a leading `$`) and not an obvious placeholder: one of the whole words
+ * `your`, `here`, `example`, `placeholder`, `changeme`, `replace`, `redacted` or `xxxx` between
+ * non-alphanumeric separators, one repeated character, or ending in `...`.
  */
 export function isAssignedValue(raw: string): boolean {
   let value = raw.trim();
@@ -83,8 +83,10 @@ export function isAssignedValue(raw: string): boolean {
     return false;
   if (value.includes("{{") || value.includes("${")) return false;
   if (value.endsWith("...") || value.endsWith("\u2026")) return false;
-  const lower = value.toLowerCase();
-  if (PLACEHOLDER_WORDS.some((word) => lower.includes(word))) return false;
+  // A placeholder word counts only as a whole word between separators (`your-api-key-here`), so a
+  // random key that merely contains its letters (`...xHeRe9...`) is still a key.
+  const words = value.toLowerCase().split(/[^a-z0-9]+/);
+  if (words.some((word) => PLACEHOLDER_WORDS.includes(word) || /^x{4,}$/.test(word))) return false;
   if (/^(.)\1*$/su.test(value)) return false;
   return true;
 }

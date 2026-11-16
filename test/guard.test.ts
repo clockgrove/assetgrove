@@ -252,6 +252,18 @@ test("names that only look assigned are not hits: expressions, placeholders, sho
   assert.doesNotThrow(() => checkTrackedKeys(repo, { env: {} }));
 });
 
+test("a placeholder word counts only as a whole word, not inside a key's random text", async () => {
+  const hidden = "sk-proj-AbCxHeRe9dEfyOuR456GhI7";
+  const repo = await repository({
+    "app.env": `${OPENAI}=${hidden}\n`,
+    "sample.env": `${GATEWAY}=sk_REPLACE_with_a_real_key_0001\n`,
+  });
+  assert.deepEqual(
+    findTrackedKeys(repo, { env: {} }).map((h) => h.file),
+    ["app.env"],
+  );
+});
+
 test("a key-shaped literal is refused by name, naming the blob and never the value", async () => {
   const text = `${OPENAI}=${REAL_SHAPED}\n`;
   const repo = await repository({ "app.env": text });
