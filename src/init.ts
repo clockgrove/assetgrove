@@ -300,7 +300,7 @@ function gitSteps(root: string): InitStep[] {
         id: "notice.lfs-metering",
         status: "notice",
         detail:
-          "Your Git host meters LFS storage and bandwidth. The library's current LFS size is unknown without git-lfs (taken as 0.00 MiB).",
+          "Your Git host meters LFS storage and bandwidth. The library's current LFS size cannot be measured without git-lfs.",
       },
     ];
   }

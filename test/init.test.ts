@@ -444,4 +444,9 @@ test("with no git-lfs on PATH init gives a needs-person step", async () => {
   const step = result.json.steps.find((s) => s.id === "git-lfs")!;
   assert.equal(step.status, "needs-person");
   assert.match(step.detail, /git-lfs\.com/);
+  const notice = result.json.steps.find((s) => s.id === "notice.lfs-metering")!;
+  assert.equal(notice.status, "notice");
+  assert.match(notice.detail, /meters LFS storage and bandwidth/);
+  assert.match(notice.detail, /cannot be measured/);
+  assert.doesNotMatch(notice.detail, /MiB/);
 });

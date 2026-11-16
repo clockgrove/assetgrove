@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { InputError } from "../src/errors.ts";
+import { newCard, writeCard } from "../src/library/card.ts";
+import { renderIndex, renderLog } from "../src/library/folder.ts";
 import { appendAnnotation, emptyReview, parseReview, writeReview } from "../src/library/review.ts";
 import {
   BLOCK,
@@ -73,13 +75,28 @@ test("with core.autocrlf true, written records come back byte-identical", () => 
   git(root, "config", "core.autocrlf", "true");
   const lib = join(root, "assets/source");
   const files: Record<string, string> = {
-    "hero.md": "---\nid: hero\n---\n# Hero\n",
-    "index.md": "# Index\n\n- [hero](hero.md)\n",
-    "log.md": "# Log\n\n- picked hero\n",
-    "hero.review.json": '{\n  "versions": []\n}\n',
+    "hero.md": writeCard(
+      newCard(
+        { title: "Hero", description: "A hero.", body: "# Hero\n\nLine two.\n" },
+        { type: "Game Asset", format: "assetgrove-card/1", resource: "hero.png" },
+      ),
+    ),
+    "index.md": renderIndex({
+      name: "source",
+      folders: [],
+      assets: [{ id: "hero", title: "Hero", description: "A hero." }],
+    }),
+    "log.md": renderLog([
+      {
+        at: "2026-01-01T00:00:00Z",
+        action: "pick",
+        asset: { id: "hero", title: "Hero" },
+      },
+    ]),
+    "hero.review.json": writeReview(emptyReview("hero.review.json")),
     "hero.png.provenance.json": '{\n  "model": "scripted"\n}\n',
   };
-  files["hero.review.json"] = writeReview(emptyReview("hero.review.json"));
+  for (const [name, text] of Object.entries(files)) assert.ok(!text.includes("\r"), name);
   for (const [name, text] of Object.entries(files)) writeFileSync(join(lib, name), text);
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "library");

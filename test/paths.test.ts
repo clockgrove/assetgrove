@@ -2,6 +2,7 @@ import "./fixtures/env.ts";
 import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { test } from "node:test";
@@ -141,7 +142,9 @@ test("stage and pick into a target whose path exceeds 260 characters succeed, an
   const runsDir = join(deep, "runs");
   const targetDir = join(deep, "target");
   assert.ok(runsDir.length > 260 && targetDir.length > 260);
-  gitTarget(targetDir);
+  // git init cannot create a directory this deep on Windows: the work tree is the short parent.
+  gitTarget(world.dir);
+  mkdirSync(targetDir, { recursive: true });
 
   const runDir = await stageOne(world, runsDir);
   assert.ok(runDir.length > 260);
