@@ -39,6 +39,12 @@ export interface SearchLibrary {
    * repository's. A shared index keys its rows by this and the game id.
    */
   origin(): Promise<string>;
+  /**
+   * Whether anything the shared index covers (the library root, the style bible and its reference
+   * files) differs between `commit` and HEAD; true when Git cannot tell. Optional: without it a
+   * shared index is fresh only at the commit it was built from.
+   */
+  changedSince?(commit: string): Promise<boolean>;
 }
 
 export interface SearchStoreSettings {

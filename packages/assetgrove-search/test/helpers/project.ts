@@ -32,6 +32,8 @@ export interface ProjectState {
   head: string;
   clean: boolean;
   origin?: string;
+  /** What `changedSince` answers for a commit other than `head`; without it, the method is absent. */
+  changed?: boolean;
 }
 
 export async function writeProject(root: string): Promise<void> {
@@ -58,6 +60,9 @@ export function projectLibrary(root: string, state: ProjectState): SearchLibrary
     head: async () => state.head,
     clean: async () => state.clean,
     origin: async () => state.origin ?? "root-1",
+    ...(state.changed !== undefined && {
+      changedSince: async (commit: string) => commit !== state.head && state.changed === true,
+    }),
   };
 }
 

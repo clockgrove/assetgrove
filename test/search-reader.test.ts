@@ -98,3 +98,42 @@ test("the reader lists picks, runs and folders, loads on demand, and reports Git
   assert.ok(path.startsWith(sheetDir) && path.endsWith(".png"));
   assert.ok(decodePng(new Uint8Array(readFileSync(path))).width > 0);
 });
+
+test("changedSince answers whether a shared index's files changed, not whether HEAD moved", async () => {
+  const lib = fixtureLibrary();
+  const reader = await createLibraryReader({
+    dir: lib.dir,
+    stateDir: stateDir,
+    settings: { folders: [], candidates: true },
+  });
+  git(lib.dir, "add", "-A");
+  git(lib.dir, "commit", "-q", "-m", "fixture");
+  const built = git(lib.dir, "rev-parse", "HEAD");
+  assert.equal(await reader.changedSince(built), false, "HEAD itself");
+
+  // A code commit outside the library root and the bible: nothing indexed changed.
+  mkdirSync(join(lib.dir, "src"), { recursive: true });
+  writeFileSync(join(lib.dir, "src", "main.gd"), "extends Node\n");
+  git(lib.dir, "add", "-A");
+  git(lib.dir, "commit", "-q", "-m", "code");
+  assert.notEqual(git(lib.dir, "rev-parse", "HEAD"), built);
+  assert.equal(await reader.changedSince(built), false, "a code-only commit");
+
+  // A commit under the library root changes it.
+  writeFileSync(
+    join(lib.root, "lantern.md"),
+    `${readFileSync(join(lib.root, "lantern.md"), "utf8")}\nedit\n`,
+  );
+  git(lib.dir, "commit", "-q", "-am", "card");
+  assert.equal(await reader.changedSince(built), true, "a card commit");
+
+  // So does a bible commit, and a commit this clone does not have cannot be told apart.
+  const afterCard = git(lib.dir, "rev-parse", "HEAD");
+  writeFileSync(
+    join(lib.dir, ".assetgrove", "art-direction", "BIBLE.md"),
+    "---\nversion: 4\n---\n",
+  );
+  git(lib.dir, "commit", "-q", "-am", "bible");
+  assert.equal(await reader.changedSince(afterCard), true, "a bible commit");
+  assert.equal(await reader.changedSince("0".repeat(40)), true, "an unknown commit");
+});

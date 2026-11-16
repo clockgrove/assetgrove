@@ -9,7 +9,7 @@ import { LanceStore, type LanceStoreOptions } from "./lance-store.ts";
 import { treeKey, type Library } from "./library.ts";
 import { acquireWriteLock, tryAcquireWriteLock, type WriteLock } from "./lock.ts";
 import type { BuiltFrom, FilterTerm, Hit, Row, Store, StoreQuery } from "./store.ts";
-import { parseWhere } from "./where.ts";
+import { parseWhere, resolveOrdered } from "./where.ts";
 
 /** Reciprocal Rank Fusion's constant (design section 7.5). */
 export const RRF_K = 60;
@@ -126,14 +126,29 @@ export function mergeByScore(lists: Hit[][]): Hit[] {
 }
 
 /**
+ * A store's filter with each `bible<` and `bible>` term resolved to the `bible` values its rows
+ * (under the other terms) hold on the asked side, in version order ("2" before "10").
+ */
+async function ordered(s: Searched): Promise<FilterTerm[]> {
+  return resolveOrdered(s.filter, async (field, others) => {
+    const rows = await s.store.query({ filter: others, limit: Number.MAX_SAFE_INTEGER });
+    const values = rows.map(({ row }) => (row as unknown as Record<string, unknown>)[field]);
+    return values.filter((v): v is string | number | boolean =>
+      ["string", "number", "boolean"].includes(typeof v),
+    );
+  });
+}
+
+/**
  * The shipped ranking: each ranking asked of every store, merged across stores by its own score,
  * then fused once. With no ranking, every store's filtered rows, local first.
  */
 export async function rankAcross(
-  searched: Searched[],
+  asked: Searched[],
   q: { words?: string; limit: number },
   vectors: QueryVectors,
 ): Promise<Hit[]> {
+  const searched = await Promise.all(asked.map(async (s) => ({ ...s, filter: await ordered(s) })));
   const rankings = rankingQueries(q.words?.trim() ?? "", vectors, poolFor(q.limit));
   if (rankings.length === 0) {
     const rows = await Promise.all(

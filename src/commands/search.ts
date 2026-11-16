@@ -130,6 +130,7 @@ function noProject(cause: unknown): LibraryReader {
     head: async () => "",
     clean: async () => false,
     origin: async () => "",
+    changedSince: async () => true,
     loadImageByPath: async () => undefined,
   };
 }

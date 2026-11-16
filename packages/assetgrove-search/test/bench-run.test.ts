@@ -122,7 +122,7 @@ describe("bench on the 20-image fixture", () => {
 });
 
 describe("card texts", () => {
-  it("are written offline with model, prompt and date, and none holds its file stem", async () => {
+  it("are written offline with model, prompt and date", async () => {
     const manifest = buildFixtureManifest();
     const n = await writeCardTexts({
       manifest,
@@ -142,20 +142,41 @@ describe("card texts", () => {
     );
   });
 
-  it("refuses a model that writes the file stem, after one retry", async () => {
+  it("sends the vision model no file name, one call per image", async () => {
     const manifest = buildFixtureManifest();
-    let calls = 0;
-    const leaky: VisionProvider = {
-      describe: async () => {
-        calls++;
-        return { text: "this is characters_1", model: "m" };
+    manifest.images = manifest.images.slice(0, 2);
+    manifest.images[0]!.file = "Bear.png";
+    manifest.images[1]!.file = "red-barrel.png";
+    const captions = new Map([
+      [manifest.images[0]!.id, "a bear"],
+      [manifest.images[1]!.id, "a red barrel"],
+    ]);
+    const source: ImageSource = {
+      bytes: async (image) => Buffer.from(captions.get(image.id)!),
+    };
+    const sent: { image: Uint8Array; prompt: string }[] = [];
+    const recording: VisionProvider = {
+      describe: async (image, prompt) => {
+        sent.push({ image, prompt });
+        return { text: `A picture showing ${Buffer.from(image).toString("utf8")}.`, model: "m" };
       },
     };
-    await assert.rejects(
-      writeCardTexts({ manifest, source: fixtureSource(), provider: leaky }),
-      /file stem/,
-    );
-    assert.equal(calls, 2);
+    assert.equal(await writeCardTexts({ manifest, source, provider: recording }), 2);
+    assert.equal(sent.length, 2);
+    assert.equal(manifest.images[0]!.card?.text, "A picture showing a bear.");
+    assert.equal(manifest.images[1]!.card?.text, "A picture showing a red barrel.");
+    // The caption "a bear" says its subject truthfully, so only the prompt is held to the bare stem.
+    for (const { image, prompt } of sent) {
+      const bytes = Buffer.from(image).toString("latin1").toLowerCase();
+      for (const file of ["bear.png", "red-barrel.png"]) {
+        assert.equal(prompt.toLowerCase().includes(file), false, file);
+        assert.equal(bytes.includes(file), false, file);
+      }
+      for (const stem of ["bear", "red-barrel"]) {
+        assert.equal(prompt.toLowerCase().includes(stem), false, stem);
+      }
+      assert.equal(bytes.includes("red-barrel"), false);
+    }
   });
 
   it("record the spot-check sample", () => {
