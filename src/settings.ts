@@ -118,7 +118,11 @@ const settingsSchema = z.strictObject({
   extensions: z.array(name).optional(),
   environment: z.strictObject({ allow: z.array(name) }).optional(),
   reconcile: z
-    .strictObject({ marginUsd: usd.optional(), marginPct: z.number().finite().min(0).optional() })
+    .strictObject({
+      marginUsd: usd.optional(),
+      marginPct: z.number().finite().min(0).optional(),
+      pendingMaxAgeHours: z.number().finite().positive().optional(),
+    })
     .optional(),
   spend: z.strictObject({ acknowledgedHolds: z.array(hex) }).optional(),
   keyGuard: z.strictObject({ acknowledgedBlobs: z.array(hex) }).optional(),

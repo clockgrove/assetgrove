@@ -3,7 +3,7 @@ import { checkLimit } from "../limits.ts";
 import type { LimitCheck } from "../limits.ts";
 import { createProviders, providerOfAdapter } from "../providers/adapter.ts";
 import { loadScript, spendLedger } from "../providers/index.ts";
-import { retryPending } from "../reconcile.ts";
+import { expiredLookups, retryPending } from "../reconcile.ts";
 import type { ReconcileEntry } from "../reconcile.ts";
 import { limitLabel, readHolds } from "../spend.ts";
 import { refusal, usd } from "./result.ts";
@@ -79,7 +79,13 @@ Spends nothing and writes nothing.`,
         ...h,
         acknowledged: acknowledged.has(h.id.toLowerCase()),
       }));
-      const fields = { ...status, today: { spentUsd: daily?.spentUsd ?? 0 }, holds };
+      const expired = expiredLookups(ctx.settings.stateDir);
+      const fields = {
+        ...status,
+        today: { spentUsd: daily?.spentUsd ?? 0 },
+        holds,
+        expiredLookups: expired,
+      };
       const { caps } = status;
       const human = [
         `spend ledger ${status.ledger}`,
@@ -92,6 +98,10 @@ Spends nothing and writes nothing.`,
         ...holds.map(
           (h) =>
             `  ${h.id} ${h.provider} run ${h.runId}: gap ${usd(h.gapUsd)} (ledger ${usd(h.ledgerUsd)}, provider ${usd(h.providerUsd)})${h.acknowledged ? ", acknowledged" : ", open: paid runs are refused"}`,
+        ),
+        ...expired.map(
+          (e) =>
+            `expired lookup ${e.id} ${e.provider} run ${e.runId}: the provider never reported the call costs; nothing was compared`,
         ),
       ].join("\n");
       return { exitCode: 0, fields, human };
