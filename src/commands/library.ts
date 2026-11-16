@@ -259,8 +259,10 @@ the import <target>/.assetgrove/imports/<run> of a family write-families handed 
 credentials that name the original as a parentOf ingredient, its provenance gets a human-edit step and
 the confirmation, every file the profile's hand-off presets write (the manifest included, review
 pending) is rendered again and read back, and the profile's validator runs under pick's rules (an
-unapproved one exits 8 before any write). A failed read-back (exit 6 handoff_check_failed) or a
-rejecting validator (exit 6 validator_rejected) records no version and puts back every file it wrote. Otherwise the version is appended
+unapproved one exits 8 before any write). A file it cannot read stops it before the first write. A
+failed write, read-back (exit 6 handoff_check_failed) or library write, or a rejecting validator
+(exit 6 validator_rejected), records no version and puts back every file it wrote, through
+symbolic links; a file it could not put back is named in the error. Otherwise the version is appended
 with its confirmation, source type and an adopt annotation, and the card, its lock, the indexes and
 log.md are rewritten. An unchanged file, a Git LFS pointer, edited bytes of another media type, a
 run id that is not one path segment, a missing run or a run without the version's candidate exits 2;
@@ -391,7 +393,10 @@ bytes of an older version exit 2 version_exists.`,
     if (result.validator?.accepted === false) {
       return refusal(
         "validator_rejected",
-        "the target's validator rejected the adopt; no version was recorded",
+        "the target's validator rejected the adopt; no version was recorded" +
+          (result.notRestored
+            ? `; these files could not be put back: ${result.notRestored.join(", ")}`
+            : ""),
         fields,
         human,
       );
