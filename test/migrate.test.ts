@@ -64,6 +64,24 @@ test("migrate moves a target profile from /1 to /2 and changes nothing else", as
   });
 });
 
+test("migrate moves a settings file from /1 to /2 and changes nothing else", async () => {
+  const file = join(await workdir(), "settings.json");
+  const settings = { caps: { runUsd: 3 }, extensions: ["@clockgrove/assetgrove-search"] };
+  await writeFile(file, JSON.stringify({ format: "assetgrove-settings/1", ...settings }));
+  const run = await cli("migrate", file, "--kind", "settings", "--json");
+  assert.equal(run.code, 0);
+  const result = JSON.parse(run.stdout) as Record<string, unknown>;
+  assert.equal(result["status"], "migrated");
+  assert.equal(result["from"], 1);
+  assert.equal(result["format"], "assetgrove-settings/2");
+  assert.deepEqual(JSON.parse(await readFile(file, "utf8")), {
+    format: "assetgrove-settings/2",
+    ...settings,
+  });
+  const again = await cli("migrate", file, "--kind", "settings", "--json");
+  assert.equal((JSON.parse(again.stdout) as Record<string, unknown>)["status"], "current");
+});
+
 test("migrate adds the format line to a Markdown style preset and keeps the prose", async () => {
   const prose = "# X\n\n## Do's and Don'ts\n\nDo.\n";
   const source = serializeBible(
