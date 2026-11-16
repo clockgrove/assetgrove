@@ -156,7 +156,7 @@ test("--dry-run forecasts every 3D call with no key, within $5 for 4 candidates"
   const plan = doc(r)["plan"];
   assert.deepEqual(
     plan.perCandidate.map((c: { operation: string }) => c.operation),
-    ["model3d", "rig3d", "clips3d", "identity"],
+    ["model3d", "model3d-facing", "rig3d", "clips3d", "identity"],
   );
   assert.equal(plan.requested, 4);
   assert.ok(plan.estimateUsd <= 5, `forecast ${plan.estimateUsd}`);
@@ -175,7 +175,7 @@ test("enforce never filters a 3D character on identity: it scores in shadow and 
   // No record check is forecast, because none runs.
   assert.deepEqual(
     doc(dry)["plan"].perCandidate.map((c: { operation: string }) => c.operation),
-    ["model3d", "rig3d", "clips3d", "identity"],
+    ["model3d", "model3d-facing", "rig3d", "clips3d", "identity"],
   );
   const r = await cli([
     "stage",
@@ -206,7 +206,7 @@ test("enforce never filters a 3D character on identity: it scores in shadow and 
   assert.match(low.fields.identity.shadowReason, /enforce does not filter 3D characters/);
   assert.deepEqual(
     low.provenance.calls.map((c: { operation: string }) => c.operation),
-    ["model3d", "rig3d", "clips3d", "identity"],
+    ["model3d", "model3d-facing", "rig3d", "clips3d", "identity"],
   );
 });
 
@@ -283,9 +283,9 @@ test("stage writes rigged candidates with clips, renders and per-candidate QA; p
   const p = c1.provenance;
   assert.deepEqual(
     p.calls.map((c: { operation: string }) => c.operation),
-    ["model3d", "rig3d", "clips3d", "identity"],
+    ["model3d", "model3d-facing", "rig3d", "clips3d", "identity"],
   );
-  assert.ok(Math.abs(p.costUsd - 0.65002) < 1e-9, `cost ${p.costUsd}`);
+  assert.ok(Math.abs(p.costUsd - 0.65005) < 1e-9, `cost ${p.costUsd}`);
   assert.equal(p.outputGrant.relabel, true);
   assert.equal(p.calls[0].referenceHashes.length, 3);
   assert.deepEqual(
@@ -351,7 +351,7 @@ test("a family with no library clip is reported missing and the candidate is kep
   const dry = await cli(["stage", ...w.base, "--dry-run", "--json"]);
   assert.deepEqual(
     doc(dry)["plan"].perCandidate.map((c: { operation: string }) => c.operation),
-    ["model3d", "rig3d", "identity"],
+    ["model3d", "model3d-facing", "rig3d", "identity"],
   );
   const r = await cli([
     "stage",
@@ -369,7 +369,7 @@ test("a family with no library clip is reported missing and the candidate is kep
   assert.deepEqual(c1.fields.clips, []);
   assert.equal(c1.fields.missingClips[0].family, "idle");
   assert.match(c1.fields.missingClips[0].why, /no close quadruped clip/);
-  assert.equal(c1.provenance.calls[1].parameters.rigType, "quadruped");
+  assert.equal(c1.provenance.calls[2].parameters.rigType, "quadruped");
 });
 
 test("over budget fails with the measured value, and the rejection keeps its cost and renders", async () => {

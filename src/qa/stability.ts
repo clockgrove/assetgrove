@@ -102,15 +102,16 @@ export const ANIMATION_VISION_CHECKS: readonly QaCheck[] = [
 ];
 
 /**
- * Look-dev markings (src/model3d/lookdev/markings.ts): its pixels are measured, but in boxes a
- * vision model draws, so the model decides which markings are measured.
+ * Look-dev markings (src/model3d/lookdev/markings.ts): a typed decision judges each marking kept,
+ * drifted or missing on the reference crop and the render crop (version 2, #365; version 1
+ * measured pixels in boxes a vision model drew).
  */
 export const LOOKDEV_MARKINGS_CHECK: QaCheck = {
   id: "lookdev-markings",
-  version: "1",
+  version: "2",
   modelBacked: true,
-  source: "deterministic",
-  operation: "lookdev-markings",
+  source: "decision",
+  operation: "lookdev-marking",
 };
 
 /** The planned run's style verdict (src/planning.ts): a vision model scores each candidate. */

@@ -84,8 +84,19 @@ export function replaceImage(glb: Glb, image: number, png: Uint8Array): void {
  * that name.
  */
 export function setEmissive(glb: Glb, materialName: string, png: Uint8Array, name: string): number {
+  const index = glb.json.materials?.findIndex((m) => m.name === materialName) ?? -1;
+  return index < 0 ? -1 : setEmissiveAt(glb, index, png, name);
+}
+
+/** `setEmissive` on the material at `materialIndex`; -1 when there is none. */
+export function setEmissiveAt(
+  glb: Glb,
+  materialIndex: number,
+  png: Uint8Array,
+  name: string,
+): number {
   const json = glb.json;
-  const material = json.materials?.find((m) => m.name === materialName) as
+  const material = json.materials?.[materialIndex] as
     (Record<string, unknown> & { name?: string }) | undefined;
   if (!material) return -1;
   json.images ??= [];

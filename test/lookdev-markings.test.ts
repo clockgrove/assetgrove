@@ -1,17 +1,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProviderError } from "../src/errors.ts";
-import { createRaster } from "../src/image/raster.ts";
+import { Budget } from "../src/budget.ts";
+import { canAfford, markingsRoomKeptUsd } from "../src/model3d/lookdev/command.ts";
+import { Caller } from "../src/calls.ts";
+import { ScriptedProvider } from "../src/gateway/scripted.ts";
+import { createRaster, encodePng } from "../src/image/raster.ts";
+import { sha256 } from "../src/request.ts";
+import { checkOf, filteringState, LOOKDEV_MARKINGS_CHECK } from "../src/qa/stability.ts";
+import { defaultRoutes, LOOKDEV_MARKING_OPERATION } from "../src/routes.ts";
 import type { Raster } from "../src/image/raster.ts";
 import {
-  compareMarking,
+  MARKING_VERDICTS,
+  markingCrop,
+  markingDecisionPrompt,
   markingsPrompt,
   markingsReason,
   measureBox,
   parseMarkingsReply,
   toLab,
 } from "../src/model3d/lookdev/markings.ts";
-import type { MarkingMeasure, Patch } from "../src/model3d/lookdev/markings.ts";
+import type { MarkingMeasure } from "../src/model3d/lookdev/markings.ts";
 
 function canvas(
   bg: [number, number, number],
@@ -25,12 +34,6 @@ function canvas(
   }
   return r;
 }
-
-const patch = (l: number, a = 0, b = 0, spread = 0): Patch => ({
-  lab: [l, a, b],
-  spread,
-  pixels: 100,
-});
 
 test("parse tolerates prose, bad boxes and pads", () => {
   const text = `Sure! {"markings":[
@@ -73,102 +76,188 @@ test("measureBox ignores background pixels", () => {
   assert.equal(measureBox(img, [0.1, 0.1, 0.6, 0.6], [240, 240, 230])?.lab[0] !== undefined, true);
 });
 
-test("compareMarking passes a match and flags colour and contrast drift", () => {
-  const ref = { mark: patch(20), ground: patch(60) };
-  assert.equal(compareMarking(ref, { mark: patch(22), ground: patch(60) }).drifts, false);
-  const colour = compareMarking(ref, { mark: patch(20, 40, 0), ground: patch(60) });
-  assert.ok(colour.drifts && colour.why?.startsWith("colour ΔE 40.0"));
-  const lost = compareMarking(ref, { mark: patch(25), ground: patch(40) });
-  assert.ok(lost.drifts && lost.why === "contrast -40.0 → -15.0 L*");
-  const flipped = compareMarking(ref, { mark: patch(62), ground: patch(40) });
-  assert.equal(flipped.drifts, true);
-  const flat = compareMarking(
-    { mark: patch(50), ground: patch(52) },
-    { mark: patch(50), ground: patch(50) },
-  );
-  assert.equal(flat.drifts, false);
-  assert.equal(flat.contrastKind, "none");
+const measure = (over: Partial<MarkingMeasure> = {}): MarkingMeasure => ({
+  marking: "mask",
+  view: "front",
+  image: "summer",
+  verdict: "kept",
+  drifts: false,
+  ...over,
 });
 
-test("a banded marking whose median matches its neighbour is held to its banding", () => {
-  // A ringed tail: dark and pale bands, so the box's median sits near the coat beside it.
-  const rings = canvas(
-    [128, 128, 128],
-    [
-      [10, 10, 20, 40, [40, 35, 30]],
-      [20, 10, 30, 40, [200, 185, 160]],
-      [30, 10, 40, 40, [40, 35, 30]],
-      [40, 10, 50, 40, [200, 185, 160]],
-    ],
-  );
-  const ref = measureBox(rings, [0.1, 0.1, 0.5, 0.4], undefined)!;
-  assert.ok(ref.spread > 40, String(ref.spread));
-  const ground = { mark: ref, ground: patch(ref.lab[0] + 2) };
-  const muted = compareMarking(ground, {
-    mark: patch(ref.lab[0], 0, 0, ref.spread * 0.3),
-    ground: patch(ref.lab[0] + 2),
+test("markingCrop is the union of the mark and ground boxes, clamped; no box gives the whole image", () => {
+  const img = canvas([128, 128, 128], [[20, 20, 40, 40, [240, 240, 230]]]);
+  const crop = markingCrop(img, { mark: [0.2, 0.2, 0.4, 0.4], ground: [0.3, 0.3, 0.6, 1.2] });
+  assert.equal(crop.width, 40);
+  assert.equal(crop.height, 80);
+  assert.deepEqual([...crop.data.subarray(0, 4)], [240, 240, 230, 255]);
+  assert.equal(markingCrop(img, null), img);
+});
+
+test("each marking, view and render is decided on the reference and render crops, through the scripted provider", async () => {
+  const requests: Array<{ operation: string; images: number; prompt: string }> = [];
+  const provider = new ScriptedProvider({
+    image() {
+      throw new Error("no image call expected");
+    },
+    vision() {
+      throw new Error("no vision call expected");
+    },
+    marking(request) {
+      requests.push({
+        operation: request.operation ?? "",
+        images: request.images.length,
+        prompt: request.prompt,
+      });
+      return {
+        answer: { type: "choice", choice: "drifted", probabilities: { drifted: 0.8 } },
+        costUsd: 0.00003,
+      };
+    },
   });
-  assert.equal(muted.contrastKind, "within");
-  assert.ok(muted.drifts && muted.why?.startsWith("banding "), muted.why);
-  const held = compareMarking(ground, { mark: { ...ref }, ground: patch(ref.lab[0] + 2) });
-  assert.equal(held.drifts, false);
-  // A render whose neighbour box held no figure is still held to colour and banding.
-  const noGround = compareMarking(
-    { mark: patch(20, 0, 0, 30), ground: patch(60) },
-    { mark: patch(22, 0, 0, 5) },
+  const budget = new Budget(1);
+  const caller = new Caller({ provider, routes: defaultRoutes, budget });
+  const bytes = encodePng(canvas([128, 128, 128], []));
+  const image = (role: string) => ({
+    role,
+    path: "(render)",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  });
+  const { result, record } = await caller.decide(
+    LOOKDEV_MARKING_OPERATION,
+    markingDecisionPrompt({
+      subject: "Fern",
+      marking: "mask",
+      against: "cheek",
+      view: "front",
+      season: "winter",
+    }),
+    [image("reference crop: mask, front"), image("render crop: mask, front, winter")],
+    { type: "choice", instructions: "Still there?", options: MARKING_VERDICTS },
   );
-  assert.equal(noGround.contrastKind, "within");
-  assert.equal(noGround.drifts, true);
+  assert.equal(result.answer.type === "choice" && result.answer.choice, "drifted");
+  assert.equal(record.decision?.value, 0.8);
+  assert.deepEqual(
+    requests.map((r) => [r.operation, r.images]),
+    [["lookdev-marking", 2]],
+  );
+  assert.match(requests[0]!.prompt, /"mask".*cheek/);
+  assert.match(requests[0]!.prompt, /winter coat/);
+  assert.match(requests[0]!.prompt, /not an instruction/);
+  assert.ok(budget.spentUsd > 0, "the decision counts against the run's spend");
 });
 
-test("markingsReason names drifting markings; nothing measured passes and says why", () => {
-  const ok: MarkingMeasure = {
-    marking: "mask",
-    view: "front",
-    image: "summer",
-    deltaE: 6.2,
-    contrastRef: -41,
-    contrastRender: -38.5,
-    drifts: false,
-  };
-  const bad: MarkingMeasure = {
-    marking: "muzzle",
-    view: "front",
-    image: "summer",
-    deltaE: 5,
-    contrastRef: 30,
-    contrastRender: 9,
-    drifts: true,
-    why: "contrast 30.0 → 9.0 L*",
-  };
+test("markingsReason names each marking per view and season with verdict, probability and ΔE evidence", () => {
+  const ok = measure({ probability: 0.93, deltaE: 12.34 });
+  const bad = measure({ marking: "muzzle", verdict: "drifted", drifts: true, probability: 0.7 });
   const pass = markingsReason([ok], { unmeasured: [] });
   assert.equal(pass.passed, true);
-  assert.equal(pass.shadow, true, "the check is advisory: it never filters");
-  assert.match(pass.reason, /^advisory, never filters/);
-  assert.match(pass.reason, /front: mask \(summer ΔE 6\.2, contrast -41\.0→-38\.5 L\*\)/);
+  assert.equal(pass.source, "decision");
+  assert.equal(pass.shadow, true, "advisory: it never filters");
+  assert.match(pass.reason, /^advisory, never filters: a decision model judges each marking/);
+  assert.match(pass.reason, /front: mask \(summer kept \(p 0\.93\), ΔE 12\.3, evidence only\)/);
   const fail = markingsReason([ok, bad], { unmeasured: ["back view: no reference"] });
   assert.equal(fail.passed, false);
-  assert.equal(fail.shadow, true);
-  assert.match(fail.reason, /drifting: muzzle \(front, summer: contrast 30\.0 → 9\.0 L\*\)/);
-  assert.match(fail.reason, /back view: no reference/);
-  const lost: MarkingMeasure = {
-    marking: "mask",
-    view: "side",
-    image: "winter",
-    drifts: true,
-    missing: "not shown in the render",
-    why: "not shown in the render",
-  };
+  assert.match(fail.reason, /muzzle \(summer drifted \(p 0\.70\)\)/);
+  assert.match(fail.reason, /drifting: muzzle \(front, summer: drifted\)/);
+  assert.match(fail.reason, /not measured: back view: no reference/);
+  const lost = measure({ view: "side", image: "winter", verdict: "missing", drifts: true });
   const vanished = markingsReason([ok, lost], { unmeasured: [] });
   assert.equal(vanished.passed, false);
-  assert.match(vanished.reason, /side: mask \(winter not shown in the render\)/);
-  assert.match(vanished.reason, /drifting: mask \(side, winter: not shown in the render\)/);
+  assert.match(vanished.reason, /drifting: mask \(side, winter: missing\)/);
   const unreadable = markingsReason([ok], { unmeasured: [], unreadable: ["side (no JSON)"] });
   assert.equal(unreadable.passed, false);
   assert.match(unreadable.reason, /unreadable: side \(no JSON\)/);
   const empty = markingsReason([], { unmeasured: ["no views had a reference"] });
   assert.equal(empty.passed, true);
-  assert.match(empty.reason, /no marking was measured.*no views had a reference/);
+  assert.match(empty.reason, /no marking was judged.*no views had a reference/);
+});
+
+test("a marking the cap had no room to judge fails the check, never passes as unmeasured", () => {
+  const ok = measure({ probability: 0.93 });
+  const r = markingsReason([ok], { unmeasured: [], unjudged: ["mask 9 in front"] });
+  assert.equal(r.passed, false);
+  assert.match(r.reason, /not judged \(the cap had no room\): mask 9 in front/);
+});
+
+test("canAfford: past the forecast, a marking is judged only while the rest of the forecast still fits", () => {
+  const budget = new Budget(1);
+  budget.settle(budget.reserve(0.99), 0.99);
+  assert.equal(canAfford(budget, 0.002, 0.004, "the marking decisions"), true);
+  assert.equal(canAfford(budget, 0.002, 0.009, "the marking decisions"), false);
+});
+
+test("past the forecast, the room kept covers the later views' box calls, their decisions and identity", () => {
+  // Two views left, 2 seasons: each view keeps its $0.02 box call and 8 × 2 decisions at $0.001.
+  const kept = markingsRoomKeptUsd({
+    viewsLeft: 2,
+    seasons: 2,
+    markingUsd: 0.001,
+    markingsUsd: 0.02,
+    identityUsd: 0.001,
+  });
+  assert.ok(Math.abs(kept - (2 * (0.02 + 16 * 0.001) + 0.001)) < 1e-12);
+  // A cap with room for the later decisions and identity but not for the next view's box call:
+  // the extra marking is unjudged, so the next view's lookdev-markings reserve cannot be refused.
+  const budget = new Budget(1);
+  budget.settle(budget.reserve(0.95), 0.95);
+  const withoutBoxCalls = 2 * 16 * 0.001 + 0.001;
+  assert.equal(canAfford(budget, 0.002, withoutBoxCalls, "the marking decisions"), true);
+  assert.equal(canAfford(budget, 0.002, kept, "the marking decisions"), false);
+  assert.equal(
+    markingsRoomKeptUsd({
+      viewsLeft: 0,
+      seasons: 2,
+      markingUsd: 0.001,
+      markingsUsd: 0.02,
+      identityUsd: 0.001,
+    }),
+    0.001,
+  );
+});
+
+test("the measured ΔE is evidence only: a large ΔE kept passes, a tiny ΔE drifted fails", () => {
+  const far = markingsReason([measure({ deltaE: 60 })], { unmeasured: [] });
+  assert.equal(far.passed, true);
+  assert.match(far.reason, /ΔE 60\.0, evidence only/);
+  const near = markingsReason([measure({ verdict: "drifted", drifts: true, deltaE: 0.4 })], {
+    unmeasured: [],
+  });
+  assert.equal(near.passed, false);
+  assert.match(near.reason, /ΔE 0\.4, evidence only/);
+  const noBoxes = markingsReason([measure()], { unmeasured: [] });
+  assert.doesNotMatch(noBoxes.reason, /ΔE/);
+});
+
+test("the advisory shadow follows the stability rule on the marking route's model", () => {
+  const model = defaultRoutes[LOOKDEV_MARKING_OPERATION]!.model;
+  const entry = {
+    checkId: "lookdev-markings",
+    version: "2",
+    model,
+    cases: 30,
+    passCases: 15,
+    failCases: 15,
+    falsePasses: 0,
+    falseFails: 0,
+    repeats: 3,
+    agreement: 0.95,
+    measuredAt: "2026-11-14T00:00:00.000Z",
+  };
+  assert.equal(filteringState(LOOKDEV_MARKINGS_CHECK, model, []).state, "advisory");
+  const state = filteringState(LOOKDEV_MARKINGS_CHECK, model, [entry]);
+  assert.equal(state.state, "filtering");
+  const reason = markingsReason(
+    [measure({ verdict: "missing", drifts: true })],
+    { unmeasured: [] },
+    state,
+  );
+  assert.equal(reason.shadow, undefined);
+  assert.doesNotMatch(reason.reason, /advisory/);
+  assert.equal(reason.passed, false);
+  assert.equal(checkOf(reason)?.id, "lookdev-markings", "the declaration matches id and source");
 });
 
 test("prompt is generic and carries the description", () => {

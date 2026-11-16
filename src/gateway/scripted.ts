@@ -18,6 +18,8 @@ import type {
 
 import {
   BRIEF_POLICY_OPERATION,
+  LOOKDEV_MARKING_OPERATION,
+  MODEL3D_FACING_OPERATION,
   PROMPT_POLICY_OPERATION,
   REFERENCE_VIEW_OPERATION,
 } from "../routes.ts";
@@ -72,6 +74,20 @@ export interface Script {
   referenceView?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers which way a generated 3D model faces (the `model3d-facing` choice decision). A script
+   * without it answers those from `decide`; its calls do not count toward `decide`'s index.
+   */
+  facing?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
+  /**
+   * Answers whether a look-dev marking is kept (the `lookdev-marking` choice decision). A script
+   * without it answers those from `decide`; its calls do not count toward `decide`'s index.
+   */
+  marking?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -123,6 +139,8 @@ export class ScriptedProvider implements GenerationProvider {
   private policyCount = 0;
   private briefPolicyCount = 0;
   private viewCount = 0;
+  private facingCount = 0;
+  private markingCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -187,6 +205,14 @@ export class ScriptedProvider implements GenerationProvider {
         requestId: `scripted-reference-view-${index}`,
         ...this.script.referenceView(request),
       };
+    }
+    if (request.operation === MODEL3D_FACING_OPERATION && this.script.facing) {
+      const index = this.facingCount++;
+      return { requestId: `scripted-facing-${index}`, ...this.script.facing(request) };
+    }
+    if (request.operation === LOOKDEV_MARKING_OPERATION && this.script.marking) {
+      const index = this.markingCount++;
+      return { requestId: `scripted-marking-${index}`, ...this.script.marking(request) };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

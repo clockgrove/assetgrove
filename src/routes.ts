@@ -24,6 +24,10 @@ export const PROMPT_POLICY_OPERATION = "prompt-policy";
 export const BRIEF_POLICY_OPERATION = "brief-policy";
 /** Which view a 3D request's reference image shows: one typed choice decision per image. */
 export const REFERENCE_VIEW_OPERATION = "reference-view";
+/** Which way a generated 3D model faces (#365): one typed choice decision per candidate. */
+export const MODEL3D_FACING_OPERATION = "model3d-facing";
+/** Whether a look-dev identity marking is kept (#365): one typed choice decision per marking and render. */
+export const LOOKDEV_MARKING_OPERATION = "lookdev-marking";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -226,6 +230,32 @@ export const defaultRoutes: Routes = {
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
     providerTermsAsOf: "2026-11-15",
+  },
+  // Which way a generated 3D model faces (#365): one typed choice decision per candidate on four
+  // free renders of the raw mesh, on the same typed decision model and upper bound.
+  [MODEL3D_FACING_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+  },
+  // Whether each look-dev identity marking is kept, drifted or missing (#365): one typed choice
+  // decision per marking, view and season render, on the same typed decision model and bound.
+  [LOOKDEV_MARKING_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
   },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
@@ -448,6 +478,8 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [PROMPT_POLICY_OPERATION]: "decisions",
   [BRIEF_POLICY_OPERATION]: "decisions",
   [REFERENCE_VIEW_OPERATION]: "decisions",
+  [MODEL3D_FACING_OPERATION]: "decisions",
+  [LOOKDEV_MARKING_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

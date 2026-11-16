@@ -1,15 +1,17 @@
 /**
  * A scripted 3D provider for shared-rig runs: every model call answers with a synthetic
  * plantigrade quadruped facing +x, as Tripo's do
- * (test/fixtures/quadruped.ts). A target that declares a rig template makes
+ * (test/fixtures/quadruped.ts); the facing decision answers "90" (+x) unless `SCRIPT_3D_FACING`
+ * says otherwise. A target that declares a rig template makes
  * no rig or clip call, so those throw.
  */
 import type { Script } from "../../src/gateway/scripted.ts";
-import { referenceView } from "./scripted-views.ts";
+import { facing, referenceView } from "./scripted-views.ts";
 import { syntheticQuadruped } from "./quadruped.ts";
 
 const script: Script = {
   referenceView,
+  facing,
   image() {
     throw new Error("the 3D script makes no images");
   },
