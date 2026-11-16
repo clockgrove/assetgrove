@@ -1,8 +1,8 @@
 /**
  * Near matches before paid generation (design section 7.6): with search loaded and `search.nearMatch`
- * on, the plan step of plan, stage, apply and generate-sheet lists up to three picked assets of
- * exactly the spec's kind and subject. The slot applies the image-similarity threshold it ships
- * when the request has references. A failed search records `searchError` and the plan goes on.
+ * on, the plan step of plan, stage, apply and generate-sheet lists up to three picked assets of the
+ * spec's kind, ranked closest to the request by the slot, for the person to judge: no subject
+ * filter and no similarity cut. A failed search records `searchError` and the plan goes on.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,13 +10,13 @@ import { calling, searchCall } from "../commands/search.ts";
 import type { RunContext } from "../commands/types.ts";
 import type { SearchHit } from "../extension/api.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
+import type { GenerationBrief } from "../planning.ts";
+import { sniffMediaType } from "../request.ts";
 import type { AssetSpec } from "../types.ts";
 import { writeFindSheet } from "./sheet.ts";
 
 /** The most near matches a plan lists. */
 export const NEAR_MATCH_LIMIT = 3;
-
-const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 
 export type NearMatch = SearchHit;
 
@@ -34,6 +34,7 @@ export async function nearMatchesFor(
   spec: Pick<AssetSpec, "kind" | "assetId" | "subject">,
   referencePaths: readonly string[],
   ctx: RunContext,
+  brief?: GenerationBrief,
 ): Promise<NearMatchOutcome> {
   const slot = (ctx.extensions ?? CORE_REGISTRY).search;
   if (slot?.nearMatch === undefined || ctx.settings.search?.nearMatch === false) return {};
@@ -41,13 +42,19 @@ export async function nearMatchesFor(
     const { context, reader } = await searchCall("find", undefined, ctx);
     if (!context.settings.nearMatch) return {};
     const references: Uint8Array[] = [];
-    for (const path of new Set(referencePaths.filter((p) => IMAGE.test(p))))
-      references.push(new Uint8Array(await readFile(path)));
+    for (const path of new Set(referencePaths)) {
+      const bytes = new Uint8Array(await readFile(path));
+      if (sniffMediaType(bytes).startsWith("image/")) references.push(bytes);
+    }
+    const words = [brief?.purpose, brief?.appearsIn, brief?.mood, brief?.context]
+      .filter((v): v is string => typeof v === "string" && v.trim() !== "")
+      .join(" ");
     const result = await calling(() =>
       slot.nearMatch!(
         {
           kind: spec.kind,
           subject: spec.subject ?? spec.assetId,
+          ...(words !== "" && { brief: words }),
           references,
           limit: NEAR_MATCH_LIMIT,
         },

@@ -5,6 +5,7 @@ import { readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { generationTool } from "../mcp.ts";
 import { nearMatchesFor } from "../search/near-match.ts";
 import { planJobs } from "../planning.ts";
+import type { GenerationBrief } from "../planning.ts";
 import { planningContext, providerSet, spendLedger } from "../providers/index.ts";
 import {
   DRY_RUN_PROPERTY,
@@ -68,7 +69,12 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     ...specReads("spec", spec),
     ...forecast.reads,
   };
-  const near = await nearMatchesFor(spec.value, forecast.referencePaths, ctx);
+  const near = await nearMatchesFor(
+    spec.value,
+    forecast.referencePaths,
+    ctx,
+    args.brief ? (await readJson<GenerationBrief>(args.brief)).value : undefined,
+  );
   const work: WorkPlan = await buildWorkPlan(planCommand, args, {
     near,
     inputs: ["spec", "bible", "profile", "brief", "runOptions", "template"],

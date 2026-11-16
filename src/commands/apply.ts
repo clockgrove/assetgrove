@@ -6,7 +6,7 @@ import { readJson } from "../inputs.ts";
 import { nearMatchesFor } from "../search/near-match.ts";
 import type { AssetSpec } from "../types.ts";
 import { applyJobs, applyPlan, planDigest } from "../planning.ts";
-import type { SavedPlan } from "../planning.ts";
+import type { GenerationBrief, SavedPlan } from "../planning.ts";
 import { bindingAllows, readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
 import type { ConfirmationRecord } from "../types.ts";
@@ -43,7 +43,10 @@ async function savedPlanNearMatches(planPath: string, ctx: RunContext) {
     const references = Object.entries(saved.inputs)
       .filter(([name]) => name.startsWith("reference/"))
       .map(([, input]) => input.path);
-    return await nearMatchesFor(spec.value, references, ctx);
+    const briefPath = saved.inputs["brief"]?.path;
+    const brief =
+      briefPath === undefined ? undefined : (await readJson<GenerationBrief>(briefPath)).value;
+    return await nearMatchesFor(spec.value, references, ctx, brief);
   } catch {
     return {};
   }

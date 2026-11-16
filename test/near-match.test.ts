@@ -1,12 +1,12 @@
 /**
  * Near matches before paid generation (issue #240, design section 7.6), with a stub search slot:
- * core lists up to three picks of exactly the spec's kind and subject beside the plan, with a
- * sheet; the digest ignores them; a missing slot or `nearMatch: false` leaves them absent; a
- * failing search records `searchError`.
+ * core lists up to three picks the slot ranks beside the plan, with a sheet, as candidates to look
+ * at; references count by their bytes; the digest ignores them; a missing slot or
+ * `nearMatch: false` leaves them absent; a failing search records `searchError`.
  */
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,13 +28,16 @@ after(async () => {
   await rm(stateDir, { recursive: true, force: true });
 });
 
-const seen: { kind: string; subject: string; references: number }[] = [];
+const seen: { kind: string; subject: string; brief?: string; references: number }[] = [];
 const slot: SearchSlot = {
   async nearMatch(query, ctx) {
-    seen.push({ kind: query.kind, subject: query.subject, references: query.references.length });
-    const rows = (await ctx.library.list(["pick"])).filter(
-      (i) => i.kind === query.kind && i.subject === query.subject,
-    );
+    seen.push({
+      kind: query.kind,
+      subject: query.subject,
+      ...(query.brief !== undefined && { brief: query.brief }),
+      references: query.references.length,
+    });
+    const rows = (await ctx.library.list(["pick"])).filter((i) => i.kind === query.kind);
     return {
       hits: rows.slice(0, query.limit).map((i, n) => ({
         address: i.address,
@@ -44,7 +47,7 @@ const slot: SearchSlot = {
         path: i.path,
         view: "",
         fields: { kind: i.kind, subject: i.subject },
-        sharedText: {},
+        sharedText: { title: "Lantern" },
       })),
       fresh: true,
       builtFrom: null,
@@ -90,38 +93,44 @@ function context(
   } as unknown as RunContext;
 }
 
-test("lists the pick of the same kind and subject, with a sheet, and never another kind or subject", async () => {
+test("lists the picks of the kind, with a sheet", async () => {
   const same = await nearMatchesFor({ kind: "still", assetId: "lantern" }, [], context(slot));
-  assert.deepEqual(
-    same.nearMatches?.map((m) => m.address),
-    ["asset://test-grove/lantern"],
-  );
+  assert.ok((same.nearMatches?.length ?? 0) >= 1);
+  assert.ok(same.nearMatches?.some((m) => m.address === "asset://test-grove/lantern"));
   assert.ok(same.nearMatchSheet && existsSync(same.nearMatchSheet));
   assert.equal(same.searchError, undefined);
-  const subject = await nearMatchesFor(
-    { kind: "still", assetId: "x", subject: "lantern" },
-    [],
-    context(slot),
-  );
-  assert.equal(subject.nearMatches?.length, 1);
   const otherKind = await nearMatchesFor(
     { kind: "sprite-strip", assetId: "lantern" },
     [],
     context(slot),
   );
-  assert.deepEqual(otherKind.nearMatches, []);
-  const otherSubject = await nearMatchesFor({ kind: "still", assetId: "oak" }, [], context(slot));
-  assert.deepEqual(otherSubject.nearMatches, []);
+  assert.ok(otherKind.nearMatches?.every((m) => m.address !== "asset://test-grove/lantern"));
 });
 
-test("hands the slot the reference images only", async () => {
+test("a reference with an unusual extension is still used", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-near-refs-")));
+  try {
+    const odd = join(dir, "lantern.reference-image");
+    copyFileSync(join(lib.dir, "assets", "lantern.png"), odd);
+    const text = join(dir, "notes.png");
+    writeFileSync(text, "not an image");
+    seen.length = 0;
+    await nearMatchesFor({ kind: "still", assetId: "lantern" }, [odd, odd, text], context(slot));
+    assert.deepEqual(seen, [{ kind: "still", subject: "lantern", references: 1 }]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the brief's words reach the slot as one text", async () => {
   seen.length = 0;
-  await nearMatchesFor(
-    { kind: "still", assetId: "lantern" },
-    [join(lib.dir, "assets", "lantern.png"), join(lib.dir, "notes.txt")],
-    context(slot),
-  );
-  assert.deepEqual(seen, [{ kind: "still", subject: "lantern", references: 1 }]);
+  await nearMatchesFor({ kind: "still", assetId: "lantern" }, [], context(slot), {
+    purpose: "a lamp",
+    appearsIn: "the cellar",
+    mood: "calm",
+    context: "",
+  });
+  assert.equal(seen[0]?.brief, "a lamp the cellar calm");
 });
 
 test("is absent with near matches off or the slot empty, and records a failing search", async () => {
@@ -157,9 +166,21 @@ test("the request digest is the same with and without near matches; the spend fo
   const withNear = await buildWorkPlan(spec, {}, { ...parts, near });
   assert.equal(withNear.digest, without.digest);
   assert.equal(without.nearMatches, undefined);
-  assert.equal(withNear.nearMatches?.length, 1);
+  assert.ok((withNear.nearMatches?.length ?? 0) >= 1);
   const form = spendRequest("plan", 1, withNear);
-  assert.match(form.summary, /asset:\/\/test-grove\/lantern/);
+  assert.match(form.summary, /1\. asset:\/\/[^ ]+ "Lantern"/);
+  assert.ok(
+    withNear.nearMatchSheet && form.summary.includes(`contact sheet: ${withNear.nearMatchSheet}`),
+  );
+  assert.doesNotMatch(form.summary, /near match/i);
+  assert.deepEqual(
+    form.details["nearMatches"],
+    withNear.nearMatches?.map((m) => ({ rank: m.rank, address: m.address, title: "Lantern" })),
+  );
+  assert.equal(form.details["nearMatchSheet"], withNear.nearMatchSheet);
   assert.equal(form.id, spendRequest("plan", 1, without).id);
-  assert.doesNotMatch(spendRequest("plan", 1, without).summary, /near matches/);
+  const bare = spendRequest("plan", 1, without);
+  assert.doesNotMatch(bare.summary, /contact sheet|picked assets/);
+  assert.equal(bare.details["nearMatches"], undefined);
+  assert.equal(bare.details["nearMatchSheet"], undefined);
 });

@@ -114,21 +114,35 @@ export function spendShown(
   id: string,
   body: { command: string; jobs: WorkPlan["jobs"]; forecastUsd: number; capUsd: number },
   candidates?: number,
-  nearMatches?: readonly { address: string }[],
+  nearMatches?: readonly { address: string; rank: number; sharedText?: { title?: string } }[],
+  nearMatchSheet?: string,
 ): { summary: string; details: Record<string, unknown> } {
   const providers = [...new Set(body.jobs.map((j) => j.provider).filter(Boolean))];
   return {
     summary:
       `${body.command} would spend up to $${body.forecastUsd.toFixed(4)} (cap $${body.capUsd.toFixed(2)})` +
       (nearMatches !== undefined && nearMatches.length > 0
-        ? `; existing near matches of this kind and subject: ${nearMatches.map((m) => m.address).join(", ")}`
+        ? `; existing picked assets to look at before spending (ranked closest to the request, not checked as matches): ${nearMatches
+            .map(
+              (m, n) =>
+                `${n + 1}. ${m.address}${m.sharedText?.title ? ` "${m.sharedText.title}"` : ""}`,
+            )
+            .join(", ")}` +
+          (nearMatchSheet !== undefined ? `; contact sheet: ${nearMatchSheet}` : "")
         : ""),
     details: {
       command: body.command,
       jobs: body.jobs,
       ...(candidates !== undefined && { candidates }),
       ...(nearMatches !== undefined &&
-        nearMatches.length > 0 && { nearMatches: nearMatches.map((m) => m.address) }),
+        nearMatches.length > 0 && {
+          nearMatches: nearMatches.map((m) => ({
+            rank: m.rank,
+            address: m.address,
+            ...(m.sharedText?.title && { title: m.sharedText.title }),
+          })),
+          ...(nearMatchSheet !== undefined && { nearMatchSheet }),
+        }),
       forecastUsd: body.forecastUsd,
       capUsd: body.capUsd,
       providers,
@@ -152,7 +166,7 @@ export function spendRequest(command: string, round: number, plan: WorkPlan): Ki
   return {
     kind: "spend",
     id: plan.digest,
-    ...spendShown(plan.digest, body, plan.candidates, plan.nearMatches),
+    ...spendShown(plan.digest, body, plan.candidates, plan.nearMatches, plan.nearMatchSheet),
     body,
   };
 }

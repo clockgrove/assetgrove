@@ -22,7 +22,7 @@ const rank = (seed: string, id: string): string =>
 /**
  * Takes about `target` images: the best-ranked image of every (category, pack) cell first (so no
  * stratum is missed, even if that exceeds `target`), then 16-px images up to `minPixel16`, then
- * the rest in seeded order. A variant's source is added too, so same-asset pairs survive.
+ * the rest in seeded order. A variant's source is added too.
  * Deterministic for a seed.
  */
 export function stratifiedSample(

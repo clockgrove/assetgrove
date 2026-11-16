@@ -137,11 +137,16 @@ export interface SearchFindResult {
   builtFrom: { head: string; at: string } | null;
 }
 
-/** Picked assets of exactly this kind and subject (design section 7.6). */
+/**
+ * The picks of `kind` ranked closest to the request's words (kind, subject, brief) fused with image
+ * similarity to `references` (design section 7.6). No subject filter and no similarity threshold.
+ */
 export interface NearMatchQuery {
   kind: string;
   subject: string;
-  /** The images the request sends; with any, a match must clear the package's image threshold. */
+  /** The request's brief as one text: purpose, appearsIn, mood and context, joined by spaces. */
+  brief?: string;
+  /** The images the request sends, found by their bytes. */
   references: Uint8Array[];
   limit: number;
 }
@@ -165,8 +170,8 @@ export interface SearchOutliersResult {
 /** The search slot's operations; each result is a JSON object core passes on as the command's fields. */
 export interface SearchSlot {
   /**
-   * Picked assets of exactly the query's kind and subject; with references only those clearing the
-   * image-similarity threshold the package ships. Optional: a slot without it gives no near matches.
+   * The picks of the query's kind ranked closest to its words (kind, subject, brief) fused with
+   * image similarity to its references; no subject filter, no threshold. Optional: a slot without it gives no near matches.
    */
   nearMatch?(query: NearMatchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;

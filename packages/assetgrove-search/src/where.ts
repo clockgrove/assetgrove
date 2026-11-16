@@ -70,7 +70,10 @@ export function compileFilter(terms: FilterTerm[]): string | undefined {
     .map((t) => {
       const isTags = t.field === "tags" && t.op === "has";
       const known =
-        isTags || t.field === "tree" || (FILTER_FIELDS as readonly string[]).includes(t.field);
+        isTags ||
+        t.field === "tree" ||
+        t.field === "sha256" ||
+        (FILTER_FIELDS as readonly string[]).includes(t.field);
       if (!known) {
         throw new SearchError(
           "invalid_input",

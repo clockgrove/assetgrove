@@ -214,7 +214,7 @@ describe("the relevance record", () => {
     assert.ok(decisions.includes(`POOL_DEPTH = ${POOL_DEPTH}`));
     assert.match(
       decisions,
-      /`words-shipped-p5` bar and the image-similarity threshold rule were set against the old labels/,
+      /`words-shipped-p5` bar was set against the old labels/,
     );
   });
 

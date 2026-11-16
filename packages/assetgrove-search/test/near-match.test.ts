@@ -1,83 +1,195 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { after, before, describe, it } from "node:test";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { after, before, describe, it, mock } from "node:test";
 import { nearMatchesWith, searchSlot } from "../src/extension.ts";
-import { IMAGE_THRESHOLD } from "../src/image-threshold.ts";
+import { ScriptedEmbedder } from "../src/scripted.ts";
 import { cleanup } from "./helpers/fixture.ts";
 import { makeProject, type Project } from "./helpers/project.ts";
 
-const EXTRA: Record<string, { caption: string; card: Record<string, unknown> }> = {
-  "pick/oak.png": {
-    caption: "green oak tree",
-    card: { kind: "sprite", subject: "oak", title: "Oak" },
-  },
-  "pick/oak-night.png": {
-    caption: "dark blue night forest of crows",
-    card: { kind: "sprite", subject: "oak", title: "Oak at night" },
-  },
-  "pick/oak-tile.png": {
-    caption: "green oak tree",
-    card: { kind: "tile", subject: "oak", title: "Oak tile" },
-  },
-  "pick/elm.png": {
-    caption: "green oak tree",
-    card: { kind: "sprite", subject: "elm", title: "Elm" },
-  },
-};
+const addr = (name: string) => `asset://g/pick/${name}`;
 
-describe("near matches", () => {
+async function put(
+  p: Project,
+  name: string,
+  caption: string,
+  card: Record<string, unknown>,
+): Promise<void> {
+  const abs = join(p.root, `pick/${name}.png`);
+  await mkdir(dirname(abs), { recursive: true });
+  await writeFile(abs, caption);
+  await writeFile(abs.replace(/\.png$/, ".card.json"), JSON.stringify(card));
+}
+
+describe("near matches by rank", () => {
   let p: Project;
   before(async () => {
     p = await makeProject();
-    for (const [path, f] of Object.entries(EXTRA)) {
-      await writeFile(join(p.root, path), f.caption);
-      await writeFile(join(p.root, path.replace(/\.png$/, ".card.json")), JSON.stringify(f.card));
-    }
+    await put(p, "garden-lantern", "red lantern glowing beside a wooden door", {
+      kind: "sprite",
+      subject: "garden lantern",
+      title: "Garden lantern",
+      text: "A red lantern glowing beside a door.",
+    });
+    await put(p, "oak", "green oak tree", {
+      kind: "sprite",
+      subject: "oak",
+      title: "Oak",
+      text: "A green oak tree.",
+    });
+    await put(p, "lantern-tile", "red lantern glowing beside a wooden door", {
+      kind: "tile",
+      subject: "porch lantern",
+      title: "Lantern tile",
+      text: "A red lantern glowing beside a door.",
+    });
   });
   after(() => cleanup(p.root, p.stateDir));
 
-  const query = (references: Uint8Array[] = []) => ({
+  const query = (over: Record<string, unknown> = {}) => ({
     kind: "sprite",
-    subject: "oak",
-    references,
+    subject: "porch lantern",
+    references: [] as Uint8Array[],
     limit: 3,
+    ...over,
   });
+  const lanterns = new Set([addr("lantern"), addr("garden-lantern")]);
+  const addresses = (r: { hits: { address: string }[] }) => r.hits.map((h) => h.address);
 
-  it("lists only picks of exactly the kind and subject, without the threshold", async () => {
-    const r = await nearMatchesWith(0.99, query(), p.context());
-    assert.deepEqual(r.hits.map((h) => h.address).sort(), [
-      "asset://g/pick/oak",
-      "asset://g/pick/oak-night",
-    ]);
-  });
-
-  it("leaves out a same-kind, same-subject pick below the threshold when references exist", async () => {
-    const ref = [Buffer.from("green oak tree")];
-    const r = await nearMatchesWith(0.99, query(ref), p.context());
+  it("lists a pick of another subject that ranks close", async () => {
+    const r = await nearMatchesWith(query(), p.context(), { paid: false });
+    assert.ok(addresses(r).includes(addr("garden-lantern")));
     assert.deepEqual(
-      r.hits.map((h) => h.address),
-      ["asset://g/pick/oak"],
+      r.hits.map((h) => h.rank),
+      r.hits.map((_, i) => i + 1),
     );
-    const loose = await nearMatchesWith(-1, query(ref), p.context());
-    assert.equal(loose.hits.length, 2);
   });
 
-  it("lists nothing with references while the shipped threshold is unmeasured", async () => {
-    const r = await nearMatchesWith(null, query([Buffer.from("green oak tree")]), p.context());
-    assert.deepEqual(r.hits, []);
+  it("never lists another kind", async () => {
+    const r = await nearMatchesWith(query({ limit: 10 }), p.context(), { paid: false });
+    assert.ok(!addresses(r).includes(addr("lantern-tile")));
+    assert.ok(!addresses(r).includes(addr("bridge")));
   });
 
-  it("is a method of the slot", async () => {
+  it("is a method of the slot", () => {
     assert.equal(typeof searchSlot.nearMatch, "function");
+  });
+
+  it("uses the brief as words", async () => {
+    const r = await nearMatchesWith(
+      query({ subject: "thing", brief: "green oak tree" }),
+      p.context(),
+      {
+        paid: false,
+      },
+    );
+    assert.equal(r.hits[0]?.address, addr("oak"));
+  });
+
+  it("ranks the pick a reference image matches above one that only shares the words", async () => {
+    const words = query({ subject: "glowing lantern", brief: "tree" });
+    const pos = (r: { hits: { address: string }[] }) => addresses(r).indexOf(addr("oak"));
+    const without = await nearMatchesWith({ ...words, limit: 10 }, p.context(), { paid: false });
+    assert.ok(pos(without) > 0, "without the reference a lantern ranks above the oak");
+    const r = await nearMatchesWith(
+      { ...words, references: [Buffer.from("green oak tree")] },
+      p.context(),
+      { paid: false },
+    );
+    assert.equal(r.hits[0]?.address, addr("oak"));
+  });
+
+  describe("with a paid embedder", () => {
+    it("embeds nothing about the request and still ranks by full text", async () => {
+      const ctx = p.context();
+      await nearMatchesWith(query(), ctx, { paid: true });
+      const texts = mock.method(ScriptedEmbedder.prototype, "embedTexts");
+      const images = mock.method(ScriptedEmbedder.prototype, "embedImages");
+      try {
+        const r = await nearMatchesWith(
+          query({ references: [Buffer.from("green oak tree")] }),
+          ctx,
+          { paid: true },
+        );
+        assert.equal(texts.mock.callCount(), 0);
+        assert.equal(images.mock.callCount(), 0);
+        assert.ok(lanterns.has(r.hits[0]?.address as string));
+      } finally {
+        texts.mock.restore();
+        images.mock.restore();
+      }
+    });
+
+    it("ranks first the pick whose file bytes a reference equals", async () => {
+      const r = await nearMatchesWith(
+        query({ subject: "thing", references: [Buffer.from("green oak tree")] }),
+        p.context(),
+        { paid: true },
+      );
+      assert.equal(r.hits[0]?.address, addr("oak"));
+    });
+
+    it("skips a reference that is not indexed", async () => {
+      const r = await nearMatchesWith(
+        query({ references: [Buffer.from("never indexed bytes")] }),
+        p.context(),
+        { paid: true },
+      );
+      assert.ok(lanterns.has(r.hits[0]?.address as string));
+    });
   });
 });
 
-describe("the shipped image-similarity threshold", () => {
-  it("equals the one docs/decisions.md records", async () => {
-    const text = await readFile(new URL("../../../docs/decisions.md", import.meta.url), "utf8");
-    const m = /Shipped image-similarity threshold: (not yet measured|[0-9.]+)\./.exec(text);
-    assert.ok(m, "docs/decisions.md records the shipped threshold");
-    assert.equal(m[1] === "not yet measured" ? null : Number(m[1]), IMAGE_THRESHOLD);
+describe("a library whose assets share one subject", () => {
+  let p: Project;
+  before(async () => {
+    p = await makeProject();
+    const hero = (title: string, text: string) => ({
+      kind: "sprite",
+      subject: "hero",
+      title,
+      text,
+    });
+    await put(p, "h1", "hero with iron sword", hero("Sword hero", "iron sword"));
+    await put(p, "h2", "hero with wooden shield", hero("Shield hero", "wooden shield"));
+    await put(p, "h3", "hero riding a horse", hero("Rider hero", "riding horse"));
+    await put(p, "h4", "hero asleep", hero("Sleeper", "asleep"));
+    await put(p, "h5", "hero eating soup", hero("Eater", "eating soup"));
+    await put(p, "h6", "hero juggling", hero("Juggler", "juggling"));
+  });
+  after(() => cleanup(p.root, p.stateDir));
+
+  it("lists the three closest to the brief, in order", async () => {
+    const r = await nearMatchesWith(
+      {
+        kind: "sprite",
+        subject: "hero",
+        brief: "riding horse iron sword shield",
+        references: [],
+        limit: 3,
+      },
+      p.context(),
+      { paid: true },
+    );
+    const top = r.hits.map((h) => h.address);
+    assert.equal(top.length, 3);
+    assert.deepEqual(top.slice(0, 2).sort(), [addr("h1"), addr("h3")]);
+    assert.equal(top[2], addr("h2"));
+  });
+
+  it("does the same with the embedder", async () => {
+    const r = await nearMatchesWith(
+      {
+        kind: "sprite",
+        subject: "hero",
+        brief: "hero riding a horse",
+        references: [],
+        limit: 3,
+      },
+      p.context(),
+      { paid: false },
+    );
+    assert.equal(r.hits[0]?.address, addr("h3"));
+    assert.equal(r.hits.length, 3);
   });
 });
