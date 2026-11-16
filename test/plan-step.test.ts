@@ -561,10 +561,15 @@ test("plan's forecast holds the planning call and every job of the later apply",
   }
   const compiler = job(jobs, "compiler")!;
   const policy = job(applyJobs, "prompt-policy")!;
+  // The brief-policy check reads the compiler's text, one decision per protected field.
+  const briefPolicy = job(jobs, "brief-policy")!;
+  assert.ok(briefPolicy.count >= 3, "palette, audience and proportions at least");
+  assert.equal(job(applyJobs, "brief-policy"), undefined, "apply makes no brief-policy call");
   const expected =
     apply["forecastUsd"] +
     compiler.count * compiler.estimatedCostUsd +
-    policy.count * policy.estimatedCostUsd;
+    policy.count * policy.estimatedCostUsd +
+    briefPolicy.count * briefPolicy.estimatedCostUsd;
   assert.ok(Math.abs(forecast["forecastUsd"] - expected) < 1e-9, `${forecast["forecastUsd"]}`);
 });
 
