@@ -181,7 +181,7 @@ function refuseDryRun(name: string, args: PaidArgs, ctx: RunContext): void {
   if (args.dryRun !== true) return;
   throw new InputError(
     hosted(ctx)
-      ? `${name} spends nothing here: it embeds no words and no image, so it has no dry run or estimate`
+      ? `${name} spends nothing here: --outliers embeds nothing, so it has no dry run or estimate`
       : `${name} spends nothing with the local model, so it has no dry run or estimate; dry runs and estimates need search.embedder "route"`,
   );
 }
@@ -319,14 +319,14 @@ async function paidEmbedder(
  * it validates the input, so an argument of the wrong type embeds nothing here and is refused
  * by validation (exit 2 invalid_input).
  */
-function findEmbeds(args: FindArgs): boolean {
-  if (args.outliers !== undefined) return false;
-  const words: unknown = args.words;
-  const like: unknown = args.like;
-  return (
-    (typeof words === "string" && words.trim() !== "") ||
-    (typeof like === "string" && !like.startsWith("asset://"))
-  );
+/**
+ * Whether a hosted find takes its plan step: every find but --outliers (advisory and free, design
+ * 7.5). A find without words or an image file still brings the index up to date first (design
+ * 7.4), so it forecasts and confirms the images that adds; with nothing to embed it pays nothing
+ * and asks nothing.
+ */
+function findPlanned(args: FindArgs): boolean {
+  return args.outliers === undefined;
 }
 
 interface FindArgs extends PaidArgs {
@@ -480,11 +480,11 @@ lists the members of an asset:// folder whose indexed image is off the rest (mea
 to its five nearest neighbours, as a robust z above 3): {set, members, outliers: [{address,
 distance, z}]}; it spends nothing. With the local model find spends nothing and writes only the
 index and the sheet under the state directory.
-With a hosted embedder (search.embedder "route", the embeddings role) a find with words or an
-image file is a paid request: its plan step forecasts the images, card texts and query to embed,
-one spend confirmation covers it, and each embedding is reserved against the caps and journalled
-in its run directory. Without words or an image file it spends nothing: it answers from the
-vectors already in the index and does not bring it up to date (fresh false).`,
+With a hosted embedder (search.embedder "route", the embeddings role) find is a paid request: its
+plan step forecasts the images and card texts that bringing the index up to date embeds, and the
+words or image file to embed, one spend confirmation covers it, and each embedding is reserved
+against the caps and journalled in its run directory. With nothing to embed it pays nothing and
+asks nothing. --outliers stays free: it answers from the vectors already in the index.`,
   input: {
     type: "object",
     properties: {
@@ -526,13 +526,13 @@ vectors already in the index and does not bring it up to date (fresh false).`,
   positionals: [{ name: "words" }],
   effect: { readOnly: true, spends: "conditional", writes: "state" },
   plan: async (args, ctx) => (await findPlan(args, ctx)).work,
-  planned: (args, ctx) => hosted(ctx) && findEmbeds(args),
+  planned: (args, ctx) => hosted(ctx) && findPlanned(args),
   spendsWith: hosted,
   replayFinished: false,
   async run(args, ctx) {
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;
-    if (!(hosted(ctx) && findEmbeds(args))) refuseDryRun("find", args, ctx);
+    if (!(hosted(ctx) && findPlanned(args))) refuseDryRun("find", args, ctx);
     else {
       const { work, forecast } = await findPlan(args, ctx);
       if (args.dryRun || ctx.run === undefined)

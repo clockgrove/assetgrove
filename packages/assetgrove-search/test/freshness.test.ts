@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { appendFile, rm, unlink, writeFile } from "node:fs/promises";
+import { appendFile, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, it } from "node:test";
@@ -333,6 +333,33 @@ describe("the write lock", () => {
       b.close();
     } finally {
       await cleanup(one, two, store);
+    }
+  });
+
+  it("a rebuild's embedder record is written under the write lock, before its refresh", async () => {
+    const one = await fixtureRepo();
+    const store = await tempDir("store");
+    try {
+      const index = await SearchIndex.open({
+        dir: store,
+        embedder: new ScriptedEmbedder(),
+        library: folderLibrary(one),
+        worktree: one,
+      });
+      let held = false;
+      let rows = -1;
+      await index.index({
+        before: async (s) => {
+          held = (await readFile(join(store, "write.lock"), "utf8")).trim() === String(process.pid);
+          rows = (await s.query({ limit: 100 })).length;
+        },
+      });
+      assert.equal(held, true, "the lock is this process's while the record is written");
+      assert.equal(rows, 0, "before the refresh writes any row");
+      await assert.rejects(readFile(join(store, "write.lock")), "released after");
+      index.close();
+    } finally {
+      await cleanup(one, store);
     }
   });
 });

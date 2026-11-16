@@ -124,6 +124,13 @@ describe("the route embedder", () => {
       () => searchSlot.find({ words: "lantern", limit: 1 }, other),
       () => searchSlot.index({}, other),
       () => searchSlot.forecast!({ index: {} }, other),
+      // A plan step's near matches and the free outliers refuse it too (design 7.6, 7.7).
+      () =>
+        searchSlot.nearMatch!(
+          { kind: "still", subject: "lantern", references: [], limit: 3 },
+          other,
+        ),
+      () => searchSlot.outliers(["asset://g/pick/lantern"], other),
     ]) {
       await assert.rejects(attempt(), (e) => {
         assert.ok(e instanceof SearchError);

@@ -10,6 +10,7 @@ import "../../../test/fixtures/env.ts";
 import {
   approve,
   ledgerPath,
+  settingsPath,
   stateDir,
   useAttended,
   writeSettings,
@@ -44,6 +45,8 @@ import { nearMatchesFor } from "../../../src/search/near-match.ts";
 import { requiresUserInteraction, serveMcp, toolAnnotations } from "../../../src/mcp.ts";
 import { loadSettings } from "../../../src/settings.ts";
 import { GAME, fixtureLibrary } from "../../../test/fixtures/library.ts";
+import { drawSubject } from "../../../test/fixtures/synthetic.ts";
+import { encodePng } from "../../../src/image/raster.ts";
 import searchExtension, { nearMatchesWith } from "../src/extension.ts";
 
 const script = fileURLToPath(new URL("./fixtures/embed-script.ts", import.meta.url));
@@ -348,11 +351,60 @@ test("a route whose adapter lacks embed exits 2 route_unavailable before any res
   assert.equal(flow?.providerId, "scripted");
 });
 
+test("a hosted find without words brings the index up to date first: it forecasts the new image, asks once, and a repeat pays nothing", async () => {
+  hosted();
+  assert.equal((await run("search index", {})).exitCode, 0);
+  const folder = realpathSync(mkdtempSync(join(home, "folder-")));
+  writeFileSync(join(folder, "moon.png"), encodePng(drawSubject(40, 11)));
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+    search: Record<string, unknown>;
+  };
+  writeSettings({ ...settings, search: { ...settings.search, folders: [folder] } });
+  useAttended();
+
+  const dry = await run("find", { where: ["source=folder"], dryRun: true });
+  assert.equal(dry.exitCode, 0, JSON.stringify(dry.error));
+  const embed = (dry.fields["plan"] as { embed: { images: number; queries: number } }).embed;
+  assert.equal(embed.images, 1, "the new folder image is forecast");
+  assert.equal(embed.queries, 0);
+
+  const before = { image: calls.image, ledger: embedEntries().length };
+  const asked: ConfirmRequest[] = [];
+  const found = await run("find", { where: ["source=folder"] }, asked);
+  assert.equal(found.exitCode, 0, JSON.stringify(found.error));
+  assert.equal(asked.length, 1, "one spend confirmation");
+  assert.equal(found.fields["fresh"], true);
+  assert.equal(calls.image, before.image + 1);
+  assert.ok(embedEntries().length > before.ledger, "each call reserved");
+  assert.ok(
+    (found.fields["hits"] as { path: string }[]).some((h) => h.path.endsWith("moon.png")),
+    "the new image is found",
+  );
+
+  const again: ConfirmRequest[] = [];
+  const repeat = await run("find", { where: ["source=folder"] }, again);
+  assert.equal(repeat.exitCode, 0, JSON.stringify(repeat.error));
+  assert.equal(again.length, 0, "nothing to pay, nothing to confirm");
+  assert.equal(calls.image, before.image + 1);
+  hosted();
+});
+
 test("an index built by another embedder exits 2 embedder_changed until search index --rebuild", async () => {
   hosted("scripted/embed-a");
   assert.equal((await run("search index", {})).exitCode, 0);
 
   hosted("scripted/embed-b");
+  // A plan step's near matches record the refusal as their searchError (design 7.6) and go on.
+  const cwd = process.cwd();
+  process.chdir(lib.dir);
+  try {
+    const near: RunContext = { settings: loadSettings(), extensions, log: () => {} };
+    const spec = { kind: "still", assetId: "lantern", subject: "lantern" };
+    const outcome = await nearMatchesFor(spec, [], near);
+    assert.match(JSON.stringify(outcome.searchError), /embedder_changed|search index --rebuild/);
+  } finally {
+    process.chdir(cwd);
+  }
   const asked: ConfirmRequest[] = [];
   for (const [name, args] of [
     ["search index", {}],
@@ -439,8 +491,11 @@ test("with the local model find and search index take no tracked-key guard and n
     const paid: RunContext = { settings: loadSettings(), extensions, log: () => {} };
     const refused = await run("find", { words: "lantern" }, [], env);
     assert.equal(refused.error?.code, "key_tracked");
-    // A hosted find that embeds nothing reaches no provider and takes no guard either.
-    const free = await run("find", { where: ["kind=still"] }, [], env);
+    // A hosted find without words still brings the index up to date, which can embed: it takes
+    // the guard too. Only --outliers, advisory and free, reaches no provider and takes none.
+    const where = await run("find", { where: ["kind=still"] }, [], env);
+    assert.equal(where.error?.code, "key_tracked");
+    const free = await run("find", { outliers: `asset://${GAME}/` }, [], env);
     assert.notEqual(free.error?.code, "key_tracked");
     assert.equal(toolAnnotations(spec("find"), paid).openWorldHint, true);
     // A hosted embedder asks a spend confirmation, so the server marks both tools at start,

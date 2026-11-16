@@ -388,13 +388,16 @@ async function outliers(addresses: string[], ctx: SearchContext): Promise<Search
   const embedder = await embedderFor(ctx);
   const local = await localIndex(ctx, embedder);
   await assertSameEmbedder(local.store, embedder, localDir(ctx));
-  // Advisory and free (design 7.5): a hosted embedder without its paid port refreshes nothing.
-  if (!(ctx.settings.embedder === "route" && !ctx.embedder?.embed)) await local.refresh();
-  // Pick and reference rows live in the shared store when one is set (design 7.8): look in both.
+  // Pick and reference rows live in the shared store when one is set (design 7.8): look in both,
+  // and refuse either when another embedder built it (design 7.7).
   const stores: { store: Store; tree: string }[] = [{ store: local.store, tree: local.tree }];
   if (ctx.settings.store) {
-    stores.push({ store: await openRemote(ctx, embedder), tree: await sharedTree(ctx) });
+    const remote = await openRemote(ctx, embedder);
+    await assertSameEmbedder(remote, embedder, remoteWhere(ctx));
+    stores.push({ store: remote, tree: await sharedTree(ctx) });
   }
+  // Advisory and free (design 7.5): a hosted embedder without its paid port refreshes nothing.
+  if (!(ctx.settings.embedder === "route" && !ctx.embedder?.embed)) await local.refresh();
   const members: Member[] = [];
   for (const address of new Set(addresses)) {
     for (const { store, tree } of stores) {
@@ -441,19 +444,22 @@ async function index(
     }
   }
   const local = await localIndex(ctx, embedder);
-  if (options.rebuild) await local.store.recordEmbedder(embedderRecord(embedder));
-  else await assertSameEmbedder(local.store, embedder, localDir(ctx));
-  const result: Record<string, unknown> = { local: await local.index() };
+  if (!options.rebuild) await assertSameEmbedder(local.store, embedder, localDir(ctx));
+  // A rebuild records its embedder under the write lock, before its refresh (design 7.3).
+  const recordUnderLock = options.rebuild
+    ? { before: (store: Store) => store.recordEmbedder(embedderRecord(embedder)) }
+    : {};
+  const result: Record<string, unknown> = { local: await local.index(recordUnderLock) };
   if (!remoteSettings) return result;
   if (!remoteSettings.writer) {
     return { ...result, remote: { written: false, reason: "writer false" } };
   }
   const remote = await openRemote(ctx, embedder);
   const tree = await sharedTree(ctx);
-  if (options.rebuild) await remote.recordEmbedder(embedderRecord(embedder));
-  else await assertSameEmbedder(remote, embedder, remoteSettings.uri);
+  if (!options.rebuild) await assertSameEmbedder(remote, embedder, remoteSettings.uri);
   const lock = await acquireWriteLock(remoteLockDir(ctx, remoteSettings.uri));
   try {
+    if (options.rebuild) await remote.recordEmbedder(embedderRecord(embedder));
     const stats: RefreshStats = await refreshTree({
       store: remote,
       embedder,
@@ -538,6 +544,10 @@ export async function nearMatchesWith(
   const embedder = await embedderFor(ctx);
   const local = await localIndex(ctx, embedder);
   const remote = ctx.settings.store ? await openRemote(ctx, embedder) : undefined;
+  // One embedder per index (design 7.7): an index another embedder built is refused, and the plan
+  // step records the refusal as its searchError (design 7.6).
+  await assertSameEmbedder(local.store, embedder, localDir(ctx));
+  if (remote) await assertSameEmbedder(remote, embedder, remoteWhere(ctx));
   // Refreshing embeds every library file not yet indexed: a paid call before the person confirms
   // spend. Under a paid embedder the index is searched as it stands and reported as not fresh.
   const refreshed = options.paid ? false : (await local.refresh()).fresh;
