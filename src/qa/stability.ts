@@ -1,11 +1,15 @@
 /**
  * Check stability: which QA checks are model-backed, and whether a model-backed check may filter.
  *
- * A model-backed check can give different answers on the same input, so it filters only with a
- * measured entry in `stability.json` for its id, version and the run's model with at least
- * `MIN_CASES` cases, `MIN_REPEATS` repeats and `MIN_AGREEMENT` agreement. Otherwise its reasons
- * are advisory: marked `shadow` (recorded beside QA, never used to filter), and the result's
- * `filtering` field says why.
+ * A model-backed check can answer the same input differently, and can agree with itself while being
+ * wrong (always "passed", always 0.75). So it filters only with a measured entry in `stability.json`
+ * for its id, version and the run's model that is both stable and right against labels: at least
+ * `MIN_REPEATS` repeats and `MIN_AGREEMENT` agreement, and a labelled set with at least
+ * `MIN_CLASS_CASES` should-pass and `MIN_CLASS_CASES` should-fail cases on which the check's
+ * false-pass rate is at most `MAX_FALSE_PASS_RATE` and its false-fail rate at most
+ * `MAX_FALSE_FAIL_RATE`. A class with too few labelled cases is not measured and never qualifies,
+ * as in identity evaluation (src/identity-eval.ts). Otherwise its reasons are advisory: marked
+ * `shadow` (recorded beside QA, never used to filter), and the result's `filtering` field says why.
  */
 import { defaultRoutes } from "../routes.ts";
 import type { Route } from "../routes.ts";
@@ -31,8 +35,16 @@ export interface StabilityEntry {
   checkId: string;
   version: string;
   model: string;
-  /** Distinct inputs measured. */
+  /** Distinct labelled inputs measured: `passCases + failCases`. */
   cases: number;
+  /** Labelled cases the check should pass. */
+  passCases: number;
+  /** Labelled cases the check should fail. */
+  failCases: number;
+  /** Should-fail cases the check passed. */
+  falsePasses: number;
+  /** Should-pass cases the check failed. */
+  falseFails: number;
   /** Times each input was judged. */
   repeats: number;
   /** Share of cases on which every repeat gave the same verdict, 0..1. */
@@ -49,9 +61,14 @@ export interface FilteringState {
   cause?: "no-entry" | "model-differs";
 }
 
-export const MIN_CASES = 30;
 export const MIN_REPEATS = 3;
 export const MIN_AGREEMENT = 0.95;
+/** Labelled cases needed of each class (should-pass, should-fail). */
+export const MIN_CLASS_CASES = 15;
+/** The most should-fail cases a filtering check may pass, as a share of them. */
+export const MAX_FALSE_PASS_RATE = 0.05;
+/** The most should-pass cases a filtering check may fail, as a share of them. */
+export const MAX_FALSE_FAIL_RATE = 0.1;
 
 const image = (id: string): QaCheck => ({
   id,
@@ -133,6 +150,10 @@ export const QA_CHECKS: readonly QaCheck[] = [
 /** The model the coverage rule measures against: the core default vision model. */
 export const DEFAULT_VISION_MODEL = defaultRoutes.vision.model;
 
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 function isEntry(value: unknown): value is StabilityEntry {
   const e = value as Record<string, unknown> | null;
   return (
@@ -141,7 +162,11 @@ function isEntry(value: unknown): value is StabilityEntry {
     typeof e["checkId"] === "string" &&
     typeof e["version"] === "string" &&
     typeof e["model"] === "string" &&
-    typeof e["cases"] === "number" &&
+    isCount(e["cases"]) &&
+    isCount(e["passCases"]) &&
+    isCount(e["failCases"]) &&
+    isCount(e["falsePasses"]) &&
+    isCount(e["falseFails"]) &&
     typeof e["repeats"] === "number" &&
     typeof e["agreement"] === "number" &&
     typeof e["measuredAt"] === "string"
@@ -154,7 +179,16 @@ export function parseStability(value: unknown): StabilityEntry[] {
   for (const [i, entry] of value.entries()) {
     if (!isEntry(entry)) {
       throw new Error(
-        `stability entry ${i + 1} needs checkId, version, model, measuredAt (strings) and cases, repeats, agreement (numbers)`,
+        `stability entry ${i + 1} needs checkId, version, model, measuredAt (strings), cases, passCases, failCases, falsePasses, falseFails (counts) and repeats, agreement (numbers)`,
+      );
+    }
+    if (
+      entry.cases !== entry.passCases + entry.failCases ||
+      entry.falsePasses > entry.failCases ||
+      entry.falseFails > entry.passCases
+    ) {
+      throw new Error(
+        `stability entry ${i + 1} is inconsistent: cases must be passCases + failCases, and wrong answers cannot exceed their class`,
       );
     }
   }
@@ -164,10 +198,28 @@ export function parseStability(value: unknown): StabilityEntry[] {
 /** The measured entries shipped in src/qa/stability.json. */
 export const STABILITY: readonly StabilityEntry[] = parseStability(shipped);
 
-/** Whether an entry is enough for a check to filter. */
+/** An entry's error rates against its labels; a class with no labelled cases has none (`undefined`). */
+export function errorRates(
+  entry: Pick<StabilityEntry, "passCases" | "failCases" | "falsePasses" | "falseFails">,
+): { falsePassRate: number | undefined; falseFailRate: number | undefined } {
+  return {
+    falsePassRate: entry.failCases > 0 ? entry.falsePasses / entry.failCases : undefined,
+    falseFailRate: entry.passCases > 0 ? entry.falseFails / entry.passCases : undefined,
+  };
+}
+
+/** Whether an entry is enough for a check to filter: stable, and right often enough against labels. */
 export function qualifies(entry: StabilityEntry): boolean {
+  const { falsePassRate, falseFailRate } = errorRates(entry);
   return (
-    entry.cases >= MIN_CASES && entry.repeats >= MIN_REPEATS && entry.agreement >= MIN_AGREEMENT
+    entry.repeats >= MIN_REPEATS &&
+    entry.agreement >= MIN_AGREEMENT &&
+    entry.passCases >= MIN_CLASS_CASES &&
+    entry.failCases >= MIN_CLASS_CASES &&
+    falsePassRate !== undefined &&
+    falsePassRate <= MAX_FALSE_PASS_RATE &&
+    falseFailRate !== undefined &&
+    falseFailRate <= MAX_FALSE_FAIL_RATE
   );
 }
 
