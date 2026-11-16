@@ -78,6 +78,12 @@ export interface SearchLibrary {
   head(): Promise<string>;
   /** Whether nothing under the library root differs from HEAD (no change, staged or not, nor untracked file). */
   clean(): Promise<boolean>;
+  /**
+   * The repository's identity across its clones: its root commit ids, sorted and space-joined.
+   * Empty outside Git, before the first commit, or in a shallow clone, whose roots are not the
+   * repository's. A shared index keys its rows by this and the game id.
+   */
+  origin(): Promise<string>;
 }
 
 /** What core hands each search slot call. */

@@ -68,27 +68,59 @@ async function closeCached(key: string): Promise<void> {
   if (p) (await p.catch(() => undefined))?.close();
 }
 
-/** The storage options Lance is given: the settings' endpoint and region, and the named credentials. */
-function storageOptions(store: SearchStoreSettings, env: SearchContext["env"]) {
+/** Per URI scheme, each credential field and the object-store key Lance is handed it under. */
+const CREDENTIAL_KEYS: Record<string, { field: CredentialField; key: string; optional?: true }[]> =
+  {
+    s3: [
+      { field: "accessKeyId", key: "aws_access_key_id" },
+      { field: "secretAccessKey", key: "aws_secret_access_key" },
+      { field: "sessionToken", key: "aws_session_token", optional: true },
+    ],
+    gs: [{ field: "serviceAccountKey", key: "google_service_account_key" }],
+    az: [
+      { field: "accountName", key: "azure_storage_account_name" },
+      { field: "accountKey", key: "azure_storage_account_key" },
+    ],
+  };
+type CredentialField = keyof NonNullable<SearchStoreSettings["credentialsEnv"]>;
+
+const settingsError = (message: string, details: Record<string, unknown>): SearchError =>
+  new SearchError("settings_invalid", message, {
+    details,
+    hint: "Set the variables search.store.credentialsEnv names in the developer settings.",
+  });
+
+/**
+ * The storage options Lance is given: the settings' endpoint and region, and the credentials the
+ * settings name, under the keys the URI's scheme reads. A remote store is never opened without
+ * them, so the object store never authenticates with credentials it finds on the machine.
+ */
+export function storageOptions(store: SearchStoreSettings, env: SearchContext["env"]) {
   const out: Record<string, string> = {};
   if (store.options.endpoint !== undefined) out.endpoint = store.options.endpoint;
   if (store.options.region !== undefined) out.region = store.options.region;
-  const names = store.credentialsEnv;
-  if (names) {
-    const read = (name: string): string => {
-      const v = env[name];
-      if (v === undefined || v === "") {
-        throw new SearchError(
-          "invalid_input",
-          `The store credential variable ${name} is not set in the environment.`,
-          { details: { variable: name } },
-        );
-      }
-      return v;
-    };
-    out.aws_access_key_id = read(names.accessKeyId);
-    out.aws_secret_access_key = read(names.secretAccessKey);
-    if (names.sessionToken !== undefined) out.aws_session_token = read(names.sessionToken);
+  const scheme = store.uri.slice(0, store.uri.indexOf(":"));
+  const keys = CREDENTIAL_KEYS[scheme];
+  const names = store.credentialsEnv ?? {};
+  if (keys === undefined) {
+    throw settingsError(`A ${scheme}:// store is not one search.store accepts.`, { scheme });
+  }
+  for (const { field, key, optional } of keys) {
+    const name = names[field];
+    if (name === undefined) {
+      if (optional) continue;
+      throw settingsError(
+        `search.store.credentialsEnv names no ${field} variable; a ${scheme}:// store is never opened without explicit credentials.`,
+        { field },
+      );
+    }
+    const v = env[name];
+    if (v === undefined || v === "") {
+      throw settingsError(`The store credential variable ${name} is not set in the environment.`, {
+        variable: name,
+      });
+    }
+    out[key] = v;
   }
   return out;
 }
@@ -107,7 +139,23 @@ function openRemote(ctx: SearchContext, embedder: Embedder): Promise<LanceStore>
   );
 }
 
-const sharedTree = (game: string): string => sha256Hex(`game:${game}`);
+/**
+ * A shared index's tree key: the game id and the repository's root commits, so clones of one
+ * repository share rows on every machine while two repositories with the same game id never do.
+ */
+async function sharedTree(ctx: SearchContext): Promise<string> {
+  const origin = await ctx.library.origin();
+  if (origin === "") {
+    throw new SearchError(
+      "invalid_input",
+      "A shared index needs the repository's root commit, and this work tree has none (outside Git, before the first commit, or a shallow clone).",
+      {
+        hint: "Use a full clone with at least one commit, or drop search.store from the settings.",
+      },
+    );
+  }
+  return sha256Hex(`game:${ctx.game}\0origin:${origin}`);
+}
 const remoteLockDir = (ctx: SearchContext, uri: string): string =>
   join(localDir(ctx), "remote", sha256Hex(uri));
 
@@ -243,7 +291,7 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
   const within = (tree: string): FilterTerm[] =>
     q.allGames ? filter : [...filter, { field: "tree", op: "=", value: tree }];
   const answers = [await rank(local.store, q, within(local.tree), vectors)];
-  if (remote) answers.push(await rank(remote, q, within(sharedTree(ctx.game)), vectors));
+  if (remote) answers.push(await rank(remote, q, within(await sharedTree(ctx)), vectors));
   const ranking = vectors.words || vectors.like;
   // One image ranking is comparable across stores by similarity; fused rankings fuse again.
   const similarityOnly = !vectors.words && vectors.like;
@@ -261,7 +309,7 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
   if (!remote) {
     return { hits, fresh: refreshed, builtFrom: (await local.store.builtFrom(local.tree)) ?? null };
   }
-  const built = await remote.builtFrom(sharedTree(ctx.game));
+  const built = await remote.builtFrom(await sharedTree(ctx));
   const fresh = refreshed && built !== undefined && built.head === (await ctx.library.head());
   return { hits, fresh, builtFrom: built ?? null };
 }
@@ -294,7 +342,7 @@ async function index(
     return { ...result, remote: { written: false, reason: "writer false" } };
   }
   const remote = await openRemote(ctx, embedder);
-  const tree = sharedTree(ctx.game);
+  const tree = await sharedTree(ctx);
   const lock = await acquireWriteLock(remoteLockDir(ctx, remoteSettings.uri));
   try {
     const stats: RefreshStats = await refreshTree({
@@ -333,7 +381,7 @@ async function status(ctx: SearchContext): Promise<Record<string, unknown>> {
   const remoteSettings = ctx.settings.store;
   if (remoteSettings) {
     const remote = await openRemote(ctx, real);
-    const built = (await remote.builtFrom(sharedTree(ctx.game))) ?? null;
+    const built = (await remote.builtFrom(await sharedTree(ctx))) ?? null;
     out.remote = {
       uri: remoteSettings.uri,
       writer: remoteSettings.writer,

@@ -81,6 +81,7 @@ test("the reader lists picks, runs and folders, loads on demand, and reports Git
   git(lib.dir, "add", "-A");
   git(lib.dir, "commit", "-q", "-m", "fixture");
   assert.equal(await reader.head(), git(lib.dir, "rev-parse", "HEAD"));
+  assert.equal(await reader.origin(), git(lib.dir, "rev-list", "--max-parents=0", "HEAD").trim());
   assert.equal(await reader.clean(), true);
   writeFileSync(
     join(lib.root, "lantern.md"),

@@ -546,8 +546,52 @@ test("a /2 file with a full search block loads with defaults filled", () => {
     folders: [],
   });
   assert.deepEqual(
-    load({ format: SEARCH_FORMAT, search: { store: { uri: "gs://b/p" } } }).search?.store,
-    { uri: "gs://b/p", options: {}, writer: false },
+    load({
+      format: SEARCH_FORMAT,
+      search: { store: { uri: "gs://b/p", credentialsEnv: { serviceAccountKey: "AG_GCS_KEY" } } },
+    }).search?.store,
+    {
+      uri: "gs://b/p",
+      options: {},
+      credentialsEnv: { serviceAccountKey: "AG_GCS_KEY" },
+      writer: false,
+    },
+  );
+});
+
+test("a remote store must name the credential variables its scheme reads, and only those", () => {
+  const store = (uri: string, credentialsEnv?: Record<string, string>) =>
+    load({
+      format: SEARCH_FORMAT,
+      search: { store: { uri, ...(credentialsEnv && { credentialsEnv }) } },
+    });
+  assert.throws(() => store("s3://b/p"), invalid(/search\.store\.credentialsEnv/));
+  assert.throws(() => store("gs://b/p"), invalid(/search\.store\.credentialsEnv/));
+  assert.throws(
+    () => store("s3://b/p", { accessKeyId: "K" }),
+    invalid(/credentialsEnv for a s3:\/\/ store .*missing secretAccessKey/),
+  );
+  assert.throws(
+    () => store("gs://b/p", { accessKeyId: "K", secretAccessKey: "S" }),
+    invalid(
+      /credentialsEnv for a gs:\/\/ store names serviceAccountKey; missing serviceAccountKey/,
+    ),
+  );
+  assert.throws(
+    () => store("az://b/p", { accountName: "N", accountKey: "K", sessionToken: "T" }),
+    invalid(/credentialsEnv for a az:\/\/ store .*sessionToken is not one/),
+  );
+  assert.deepEqual(
+    store("az://b/p", { accountName: "N", accountKey: "K" }).search?.store?.credentialsEnv,
+    {
+      accountName: "N",
+      accountKey: "K",
+    },
+  );
+  assert.deepEqual(
+    store("s3://b/p", { accessKeyId: "K", secretAccessKey: "S", sessionToken: "T" }).search?.store
+      ?.credentialsEnv,
+    { accessKeyId: "K", secretAccessKey: "S", sessionToken: "T" },
   );
 });
 
@@ -557,7 +601,13 @@ test("a store option other than endpoint and region is refused, naming the field
       () =>
         load({
           format: SEARCH_FORMAT,
-          search: { store: { uri: "s3://b/p", options: { [option]: "x" } } },
+          search: {
+            store: {
+              uri: "s3://b/p",
+              options: { [option]: "x" },
+              credentialsEnv: { accessKeyId: "K", secretAccessKey: "S" },
+            },
+          },
         }),
       invalid(new RegExp(`search\\.store\\.options.*${option}`)),
     );
@@ -567,7 +617,11 @@ test("a store option other than endpoint and region is refused, naming the field
 test("a store uri that is not s3, gs or az is refused", () => {
   for (const uri of ["https://b/p", "file:///tmp/x", "s3://", "b/p"]) {
     assert.throws(
-      () => load({ format: SEARCH_FORMAT, search: { store: { uri } } }),
+      () =>
+        load({
+          format: SEARCH_FORMAT,
+          search: { store: { uri, credentialsEnv: { accessKeyId: "K", secretAccessKey: "S" } } },
+        }),
       invalid(/search\.store\.uri/),
     );
   }
@@ -583,7 +637,13 @@ test("a store endpoint that is http, or carries userinfo or a query, is refused"
       () =>
         load({
           format: SEARCH_FORMAT,
-          search: { store: { uri: "s3://b/p", options: { endpoint } } },
+          search: {
+            store: {
+              uri: "s3://b/p",
+              options: { endpoint },
+              credentialsEnv: { accessKeyId: "K", secretAccessKey: "S" },
+            },
+          },
         }),
       invalid(/search\.store\.options\.endpoint/),
     );

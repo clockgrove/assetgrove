@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import extension, { searchSlot } from "../src/extension.ts";
+import extension, { searchSlot, storageOptions } from "../src/extension.ts";
 import { SearchError } from "../src/errors.ts";
 import { LanceStore } from "../src/lance-store.ts";
 import { ScriptedEmbedder } from "../src/scripted.ts";
@@ -16,7 +16,7 @@ describe("a shared remote store (a local folder URI)", () => {
   let p: Project;
   let remoteDir: string;
   let uri: string;
-  const tree = createHash("sha256").update("game:demo").digest("hex");
+  const tree = createHash("sha256").update("game:demo\0origin:root-1").digest("hex");
   before(async () => {
     p = await makeProject();
     remoteDir = join(await tempDir("remote"), "remote");
@@ -109,9 +109,87 @@ describe("a shared remote store (a local folder URI)", () => {
       searchSlot.find({ words: "x", limit: 1 }, ctx),
       (e) =>
         e instanceof SearchError &&
-        e.code === "invalid_input" &&
+        e.code === "settings_invalid" &&
         e.message.includes("AG_KEY") &&
         !e.message.includes("super-secret-value"),
+    );
+  });
+
+  it("hands each scheme's named credentials to Lance under that scheme's keys, and only those", () => {
+    const env = {
+      K: "k",
+      S: "s",
+      T: "t",
+      G: "{json}",
+      N: "acct",
+      A: "key",
+      AWS_ACCESS_KEY_ID: "no",
+    };
+    const store = (uri: string, credentialsEnv?: Record<string, string>) => ({
+      uri,
+      options: { region: "auto" },
+      ...(credentialsEnv && { credentialsEnv }),
+      writer: false,
+    });
+    assert.deepEqual(
+      storageOptions(
+        store("s3://b/p", { accessKeyId: "K", secretAccessKey: "S", sessionToken: "T" }),
+        env,
+      ),
+      {
+        region: "auto",
+        aws_access_key_id: "k",
+        aws_secret_access_key: "s",
+        aws_session_token: "t",
+      },
+    );
+    assert.deepEqual(storageOptions(store("gs://b/p", { serviceAccountKey: "G" }), env), {
+      region: "auto",
+      google_service_account_key: "{json}",
+    });
+    assert.deepEqual(
+      storageOptions(store("az://b/p", { accountName: "N", accountKey: "A" }), env),
+      {
+        region: "auto",
+        azure_storage_account_name: "acct",
+        azure_storage_account_key: "key",
+      },
+    );
+    for (const s of [
+      store("s3://b/p"),
+      store("gs://b/p", { accessKeyId: "K", secretAccessKey: "S" }),
+      store("az://b/p", { accountName: "N" }),
+    ]) {
+      assert.throws(
+        () => storageOptions(s, env),
+        (e) =>
+          e instanceof SearchError &&
+          e.code === "settings_invalid" &&
+          /never opened without explicit credentials/.test(e.message),
+      );
+    }
+  });
+
+  it("refuses to open a remote store with no credentials named", async () => {
+    const ctx = p.context({ store: { uri: "gs://bucket/search", options: {}, writer: false } });
+    await assert.rejects(
+      searchSlot.find({ words: "x", limit: 1 }, ctx),
+      (e) => e instanceof SearchError && e.code === "settings_invalid",
+    );
+  });
+
+  it("keys shared rows by game and repository: another repository with the same game id shares nothing", async () => {
+    const other = p.context(settings(true), { head: "other-1", clean: true, origin: "root-2" });
+    const r = await searchSlot.find({ words: "lantern", limit: 5 }, other);
+    assert.equal(r.builtFrom, null, "the other repository sees no shared build");
+    assert.ok(r.hits.every((h) => h.source !== "pick" && h.source !== "reference"));
+    const st = await searchSlot.status(other);
+    assert.equal((st.remote as { builtFrom: unknown }).builtFrom, null);
+
+    const shallow = p.context(settings(false), { head: "head-1", clean: true, origin: "" });
+    await assert.rejects(
+      searchSlot.find({ words: "lantern", limit: 1 }, shallow),
+      (e) => e instanceof SearchError && /root commit/.test(e.message),
     );
   });
 });

@@ -33,12 +33,26 @@ export interface SearchLibrary {
   load(item: SearchLibraryItem): Promise<SearchLoadedItem>;
   head(): Promise<string>;
   clean(): Promise<boolean>;
+  /**
+   * The repository's identity across its clones: its root commit ids, sorted and space-joined.
+   * Empty outside Git, before the first commit, or in a shallow clone, whose roots are not the
+   * repository's. A shared index keys its rows by this and the game id.
+   */
+  origin(): Promise<string>;
 }
 
 export interface SearchStoreSettings {
   uri: string;
   options: { endpoint?: string; region?: string };
-  credentialsEnv?: { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
+  /** Per scheme: s3 accessKeyId, secretAccessKey, sessionToken?; gs serviceAccountKey; az accountName, accountKey. */
+  credentialsEnv?: {
+    accessKeyId?: string;
+    secretAccessKey?: string;
+    sessionToken?: string;
+    serviceAccountKey?: string;
+    accountName?: string;
+    accountKey?: string;
+  };
   writer: boolean;
 }
 

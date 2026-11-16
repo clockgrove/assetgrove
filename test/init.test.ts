@@ -320,7 +320,14 @@ test("init reports a step when the search package is installed but not listed, a
 
 test("with a remote store configured, init's output carries the shared-index notice", async () => {
   try {
-    writeSettings({ search: { store: { uri: "s3://team-bucket/assets" } } });
+    writeSettings({
+      search: {
+        store: {
+          uri: "s3://team-bucket/assets",
+          credentialsEnv: { accessKeyId: "AG_KEY_ID", secretAccessKey: "AG_SECRET" },
+        },
+      },
+    });
     const result = await cli(initArgs(tempDir()));
     assert.equal(result.code, 0, result.stderr);
     const notice = result.json.steps.find((s) => s.id === "notice.shared-index");

@@ -31,6 +31,7 @@ export const PROJECT: Record<string, { caption: string; card: Record<string, unk
 export interface ProjectState {
   head: string;
   clean: boolean;
+  origin?: string;
 }
 
 export async function writeProject(root: string): Promise<void> {
@@ -56,6 +57,7 @@ export function projectLibrary(root: string, state: ProjectState): SearchLibrary
     load: (item) => inner.load(item),
     head: async () => state.head,
     clean: async () => state.clean,
+    origin: async () => state.origin ?? "root-1",
   };
 }
 

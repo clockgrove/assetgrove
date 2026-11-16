@@ -234,6 +234,12 @@ export async function createLibraryReader(options: {
       const r = git(project.dir, ["rev-parse", "HEAD"]);
       return r.ok ? r.out.trim() : "";
     },
+    async origin() {
+      const shallow = git(project.dir, ["rev-parse", "--is-shallow-repository"]);
+      if (!shallow.ok || shallow.out.trim() !== "false") return "";
+      const r = git(project.dir, ["rev-list", "--max-parents=0", "HEAD"]);
+      return r.ok ? r.out.split(/\s+/).filter(Boolean).sort().join(" ") : "";
+    },
     async clean() {
       const root = slash(relative(project.dir, project.library.root)) || ".";
       const r = git(project.dir, ["status", "--porcelain", "--untracked-files=all", "--", root]);

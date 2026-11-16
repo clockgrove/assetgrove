@@ -96,6 +96,7 @@ function noProject(cause: unknown): LibraryReader {
     load: refuse,
     head: async () => "",
     clean: async () => false,
+    origin: async () => "",
     loadImageByPath: async () => undefined,
   };
 }
