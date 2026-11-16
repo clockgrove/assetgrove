@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createPlan, planJobs } from "../src/planning.ts";
+import { paletteSwatch } from "../src/request.ts";
 import type { CreatePlanOptions } from "../src/planning.ts";
 import { InputError } from "../src/errors.ts";
 import { failureOutcome } from "../src/commands/result.ts";
@@ -23,8 +24,8 @@ after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-/** An all-ages bible whose content limits include "no war". */
-async function fixture() {
+/** An all-ages bible whose content limits include "no war"; with `locked`, subject "fern" has an identity lock. */
+async function fixture({ locked = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "brief-policy-"));
   roots.push(root);
   const dir = join(root, ".assetgrove/art-direction");
@@ -35,6 +36,17 @@ async function fixture() {
   data.world = "Woodland";
   data.tone.audience = "all-ages";
   data.tone.contentLimits = ["no war", "no gore"];
+  if (locked) {
+    await writeFile(join(dir, "fern-turnaround.png"), paletteSwatch(["#292433"]).bytes);
+    data.identities["fern"] = {
+      version: "1",
+      approved: true,
+      turnaround: "fern-turnaround.png",
+      signatureFeatures: ["long ears", "green scarf"],
+      proportions: "small body, large head",
+      palette: ["#292433"],
+    };
+  }
   const biblePath = join(dir, "BIBLE.md");
   await writeFile(biblePath, serializeBible(data, "## Do's and Don'ts\nDo keep shapes soft.\n"));
   await writeFile(
@@ -52,7 +64,7 @@ async function fixture() {
     rest: Partial<CreatePlanOptions> = {},
   ): Promise<CreatePlanOptions> => ({
     biblePath,
-    specPath: await write("spec", { kind: "still", assetId: "den" }),
+    specPath: await write("spec", { kind: "still", assetId: locked ? "fern" : "den" }),
     runOptionsPath: await write("run-options", { candidates: 1 }),
     ...(brief && { briefPath: await write("brief", brief) }),
     ...rest,
@@ -152,6 +164,45 @@ test("the model is given the brief's free text, the protected fields and the con
     '"palette":["#',
   ])
     assert.ok(request.prompt.includes(part), part);
+});
+
+test("a subject with an identity lock is asked about its identity, with the lock's features", async () => {
+  const f = await fixture({ locked: true });
+  const { scripted, asked } = provider({});
+  const forecast = await planJobs(
+    await f.options({ context: "Fern waving by the pond" }, { provider: scripted }),
+  );
+  assert.equal(scripted.calls.length, 0);
+  const job = forecast.jobs.find((j) => j.operation === BRIEF_POLICY_OPERATION)!;
+  // Five fields, on the brief and on the compiler's text.
+  assert.equal(job.count, 10);
+  const created = await createPlan(
+    await f.options({ context: "Fern waving by the pond" }, { provider: scripted }),
+  );
+  const fields = ["palette", "identity", "audience", "proportions", "contentLimits"];
+  assert.deepEqual(
+    asked.filter((a) => a.target === "brief").map((a) => a.field),
+    fields,
+  );
+  assert.equal(asked.length, job.count);
+  const { request } = asked.find((a) => a.target === "brief" && a.field === "identity")!;
+  assert.ok(
+    request.prompt.includes(
+      '"identity":{"subject":"fern","signatureFeatures":["long ears","green scarf"],"proportions":"small body, large head"}',
+    ),
+  );
+  assert.equal(created.briefPolicy.filter((v) => v.field === "identity").length, 2);
+  // An answer that the brief departs from the lock refuses the plan, naming the field.
+  const refusing = provider({ brief: { identity: 0.9 } });
+  await assert.rejects(
+    createPlan(
+      await f.options(
+        { context: "give Fern short ears and no scarf" },
+        { provider: refusing.scripted },
+      ),
+    ),
+    /protected field identity \(probability 0\.90\)/,
+  );
 });
 
 test("a brief that asks to depart from the palette is refused, naming the field", async () => {
