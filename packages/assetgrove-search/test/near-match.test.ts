@@ -232,7 +232,15 @@ describe("a library whose assets share one subject", () => {
       p.context(),
       { paid: false },
     );
-    assert.equal(r.hits[0]?.address, addr("h3"));
-    assert.equal(r.hits.length, 3);
+    // The scripted embedder is deterministic: the brief's own sprite first, then the next two
+    // by its similarity, and none of the other three that share the subject.
+    assert.deepEqual(
+      r.hits.map((h) => [h.address, h.rank]),
+      [
+        [addr("h3"), 1],
+        [addr("h4"), 2],
+        [addr("h1"), 3],
+      ],
+    );
   });
 });

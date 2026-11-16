@@ -104,8 +104,14 @@ function context(
 
 test("lists the picks of the kind, with a sheet", async () => {
   const same = await nearMatchesFor({ kind: "still", assetId: "lantern" }, [], context(slot));
-  assert.ok((same.nearMatches?.length ?? 0) >= 1);
-  assert.ok(same.nearMatches?.some((m) => m.address === "asset://test-grove/lantern"));
+  assert.deepEqual(
+    same.nearMatches?.map((m) => [m.address, m.rank]),
+    [
+      ["asset://test-grove/big", 1],
+      ["asset://test-grove/lantern", 2],
+      ["asset://test-grove/fern", 3],
+    ],
+  );
   assert.ok(same.nearMatchSheet && existsSync(same.nearMatchSheet));
   assert.equal(same.searchError, undefined);
   const otherKind = await nearMatchesFor(
@@ -113,7 +119,31 @@ test("lists the picks of the kind, with a sheet", async () => {
     [],
     context(slot),
   );
-  assert.ok(otherKind.nearMatches?.every((m) => m.address !== "asset://test-grove/lantern"));
+  assert.deepEqual(
+    otherKind.nearMatches?.map((m) => [m.address, m.rank]),
+    [["asset://test-grove/walk", 1]],
+  );
+});
+
+test("lists at most three when the slot returns more", async () => {
+  let returned = 0;
+  const base = slot.nearMatch;
+  assert.ok(base);
+  const many: SearchSlot = {
+    ...slot,
+    async nearMatch(query, ctx) {
+      const r = await base({ ...query, limit: 10 }, ctx);
+      const hits = [...r.hits, ...r.hits].map((h, n) => ({ ...h, rank: n + 1 }));
+      returned = hits.length;
+      return { ...r, hits };
+    },
+  };
+  const near = await nearMatchesFor({ kind: "still", assetId: "lantern" }, [], context(many));
+  assert.ok(returned > 3);
+  assert.deepEqual(
+    near.nearMatches?.map((m) => m.rank),
+    [1, 2, 3],
+  );
 });
 
 test("a reference with an unusual extension is still used", async () => {
@@ -245,7 +275,7 @@ test("the request digest is the same with and without near matches; the spend fo
   const withNear = await buildWorkPlan(spec, {}, { ...parts, near });
   assert.equal(withNear.digest, without.digest);
   assert.equal(without.nearMatches, undefined);
-  assert.ok((withNear.nearMatches?.length ?? 0) >= 1);
+  assert.equal(withNear.nearMatches?.length, 3);
   const form = spendRequest("plan", 1, withNear);
   assert.match(form.summary, /1\. asset:\/\/[^ ]+ "Lantern"/);
   assert.ok(
