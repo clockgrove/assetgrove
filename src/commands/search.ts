@@ -12,15 +12,20 @@ import type { Env } from "../env.ts";
 import { InputError, ProviderError } from "../errors.ts";
 import { registerKeyEnv } from "../redact.ts";
 import { EXIT } from "../errors.ts";
-import type { SearchContext, SearchQuery, SearchSlot, SearchSource } from "../extension/api.ts";
+import type {
+  SearchContext,
+  SearchOutliersResult,
+  SearchQuery,
+  SearchSlot,
+  SearchSource,
+} from "../extension/api.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { createLibraryReader } from "../search/reader.ts";
 import type { LibraryReader } from "../search/reader.ts";
 import { writeFindSheet } from "../search/sheet.ts";
 import type { SearchSettings, Settings } from "../settings.ts";
-import { formatAddress, parseAddress } from "../tree/address.ts";
+import { folderChildren } from "../audit/members.ts";
 import { openProject, projectDir } from "../tree/project.ts";
-import { readTree } from "../tree/read.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext } from "./types.ts";
 
@@ -141,23 +146,21 @@ interface FindArgs {
  */
 async function folderMembers(dir: string, stateDir: string, set: string): Promise<string[]> {
   const project = await openProject(dir, stateDir);
-  const members: string[] = [];
-  let address: string | undefined = set;
-  while (address !== undefined) {
-    const read = await readTree(project, address);
-    const document = read.document as
-      { kind?: string; children?: { address: string; kind: string }[]; next?: string } | undefined;
-    if (!read.folder || document?.kind !== "folder") {
-      throw new InputError(`--outliers ${set} is not a folder address of the asset tree`);
-    }
-    for (const child of document.children ?? []) {
-      if (child.kind !== "asset" && child.kind !== "candidate") continue;
-      const at = parseAddress(child.address);
-      members.push(formatAddress(at.game, at.segments));
-    }
-    address = document.next;
-  }
-  return members;
+  return (await folderChildren(project, set, "--outliers")).map((m) => m.address);
+}
+
+/**
+ * The embedding outliers of a set's members (design section 8), when a loaded extension fills the
+ * search slot; undefined without one. Free: the slot reads its index, no model is called.
+ */
+export async function setOutliers(
+  addresses: string[],
+  target: string | undefined,
+  ctx: RunContext,
+): Promise<SearchOutliersResult | undefined> {
+  if ((ctx.extensions ?? CORE_REGISTRY).search === undefined) return undefined;
+  const { slot, context } = await searchCall("audit", target, ctx);
+  return calling(() => slot.outliers(addresses, context));
 }
 
 /**

@@ -268,6 +268,18 @@ Makes variations of one still candidate of a staged run: one reference-guided ed
 
 MCP tool: `vary`, arguments `run`, `candidate`, `count`, `cap`, `workItem`, `runs`, `round`.
 
+### `audit`
+
+```text
+audit <set address> [--checks style,identity] [--bible <BIBLE.md>] [--target <dir>] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
+```
+
+The set-level audit. A set is any `asset://` folder of the tree; its members are the assets and run candidates it lists, over every page. Each member with a local image is scored from 0 to 1 for style (one `vision` call: the member against the bible's positive anchors and up to 4 other members) and, where its subject has an identity lock, for identity (one identity decision, which never filters). `--checks` takes `style`, `identity` or both (default), comma-separated or repeated; `--bible` defaults to the project's `.assetgrove/art-direction/BIBLE.md`. It asks for spend once; a repeat returns the finished run (`reused: true`) with no provider call, and an interrupted run resumes from its journal.
+
+It writes `audit.json` and `audit-sheet.png` into its run directory and nothing into the project. `audit.json` holds each member's scores (`members[].style`, `members[].identity`, each with `advisory`), each score's `spread` (`n`, `mean`, `median`, `stdDev`, `min`, `max`, `range`), the set-consistency `bar` docs/decisions.md records, its `judgement` per score (`judged`, `consistent`, `beyond`) and `beyond`, the members more than the bar's distance below a score's median. Under the bar's set size of 5, or with no bar, nothing is judged. Each score is advisory (`filtering`) until its check (`audit-style`, `audit-identity`) has a qualifying stability entry. With the search package loaded, `outliers` lists the set's embedding outliers at no cost; without it `outliers` is `null`. The sheet numbers the members weakest first, numbers only, and `sheet` maps each number to its address. The audit informs a person: it never rejects or approves.
+
+MCP tool: `audit`, arguments `set`, `checks`, `bible`, `target`, `cap`, `workItem`, `runs`, `round`.
+
 ### `op`
 
 ```text
