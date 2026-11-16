@@ -1,6 +1,6 @@
 /**
  * Animation QA of one strip, end to end: the deterministic pixel checks against the family's
- * motion template, the optional identity-flicker and holes vision checks, and the onion-skin sheet
+ * motion template, the optional identity-flicker and holes decisions, and the onion-skin sheet
  * and looping preview the person picking looks at.
  */
 import { mkdir, writeFile } from "node:fs/promises";
@@ -102,8 +102,9 @@ export interface StripQaOptions {
    */
   holeSources?: ReadonlyArray<HoleSource | undefined>;
   /**
-   * Runs the vision checks (identity flicker, and holes on frames with see-through areas inside
-   * the outline) through this caller; omitted, both are skipped.
+   * Runs the model-backed checks (identity flicker per pair, and holes on frames with an image
+   * before background removal or a see-through area inside the outline) through this caller;
+   * omitted, both are skipped.
    */
   vision?: {
     call: Caller;
