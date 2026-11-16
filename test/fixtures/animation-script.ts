@@ -2,7 +2,7 @@
  * A provider script module for `--provider-script` on the animation commands: every flicker call
  * answers "same", unless the pair names frame 3 as its second image, which is labelled a flicker;
  * every holes call answers that the areas are openings between parts; every edit returns a
- * synthetic figure with alpha. Nothing here is real art.
+ * synthetic figure with alpha; every motion-template decision answers walk. Nothing here is real art.
  */
 import { encodePng } from "../../src/image/raster.ts";
 import { syntheticStrip } from "./strip.ts";
@@ -35,4 +35,6 @@ export default {
       costUsd: 0.01,
     };
   },
+  // Every strip these tests draw is a walk cycle, so a family named otherwise is judged a walk.
+  motionTemplate: () => ({ answer: { type: "choice", choice: "walk" }, costUsd: 0.001 }),
 };
