@@ -7,7 +7,8 @@
     "minPixel16": 4
   },
   "prompts": {
-    "7c9eec3e647a": "Describe this game asset image in one or two plain sentences for a searchable card: what it shows, its subject, materials, colours and style. Do not mention a file name or an asset id."
+    "7c9eec3e647a": "Describe this game asset image in one or two plain sentences for a searchable card: what it shows, its subject, materials, colours and style. Do not mention a file name or an asset id.",
+    "c9b4ba0735bd": "A game developer searched a library of game assets for: \"{query}\".\nThe image is one asset from the library. A plain white or transparent background is not part of the asset. The image may be a small sprite scaled up.\n\nQuestion: Would a game developer searching for this query want this image among the results?\nTrue: the image shows what the query asks for, so the developer would want to see it in the results\nFalse: the image shows something else, or only shares a colour, a style or a pack with what the query asks for"
   },
   "images": [
     {
@@ -430,23 +431,419 @@
   "writtenQueries": [
     {
       "id": "wq-1",
-      "text": "knight with sword",
-      "relevant": ["fx-01"]
+      "text": "ground tile",
+      "candidates": [
+        "fx-06",
+        "fx-07",
+        "fx-05",
+        "fx-08",
+        "fx-01",
+        "fx-02",
+        "fx-03",
+        "fx-04",
+        "fx-09",
+        "fx-10"
+      ],
+      "pooledBy": {
+        "embedder": "scripted",
+        "revision": "1",
+        "depth": 10,
+        "rankings": ["image-vector", "card-text-vector", "full-text", "fused"]
+      },
+      "judgements": [
+        {
+          "image": "fx-06",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-07",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-05",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-08",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-01",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-02",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-03",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-04",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-09",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-10",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        }
+      ]
     },
     {
       "id": "wq-2",
-      "text": "red potion",
-      "relevant": ["fx-09"]
+      "text": "pixel sprite",
+      "candidates": [
+        "fx-17",
+        "fx-18",
+        "fx-19",
+        "fx-20",
+        "fx-01",
+        "fx-02",
+        "fx-03",
+        "fx-04",
+        "fx-05",
+        "fx-06"
+      ],
+      "pooledBy": {
+        "embedder": "scripted",
+        "revision": "1",
+        "depth": 10,
+        "rankings": ["image-vector", "card-text-vector", "full-text", "fused"]
+      },
+      "judgements": [
+        {
+          "image": "fx-17",
+          "probability": 1,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-18",
+          "probability": 1,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-19",
+          "probability": 1,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-20",
+          "probability": 1,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-01",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-02",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-03",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-04",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-05",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-06",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        }
+      ]
     },
     {
       "id": "wq-3",
-      "text": "pixel heart",
-      "relevant": ["fx-17"]
+      "text": "game icon",
+      "candidates": [
+        "fx-10",
+        "fx-11",
+        "fx-12",
+        "fx-09",
+        "fx-01",
+        "fx-02",
+        "fx-03",
+        "fx-04",
+        "fx-05",
+        "fx-06",
+        "fx-07",
+        "fx-13",
+        "fx-15",
+        "fx-16"
+      ],
+      "pooledBy": {
+        "embedder": "scripted",
+        "revision": "1",
+        "depth": 10,
+        "rankings": ["image-vector", "card-text-vector", "full-text", "fused"]
+      },
+      "judgements": [
+        {
+          "image": "fx-10",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-11",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-12",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z",
+          "spotCheck": {
+            "by": "fixture",
+            "date": "2026-11-15T00:00:00.000Z"
+          }
+        },
+        {
+          "image": "fx-09",
+          "probability": 0.5,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-01",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-02",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-03",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-04",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-05",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z",
+          "spotCheck": {
+            "by": "fixture",
+            "date": "2026-11-15T00:00:00.000Z"
+          }
+        },
+        {
+          "image": "fx-06",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-07",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-13",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-15",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-16",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        }
+      ]
     },
     {
       "id": "wq-4",
-      "text": "wooden chest",
-      "relevant": ["fx-13"]
+      "text": "armored knight with sword",
+      "candidates": [
+        "fx-01",
+        "fx-04",
+        "fx-18",
+        "fx-14",
+        "fx-02",
+        "fx-05",
+        "fx-08",
+        "fx-03",
+        "fx-06",
+        "fx-07"
+      ],
+      "pooledBy": {
+        "embedder": "scripted",
+        "revision": "1",
+        "depth": 10,
+        "rankings": ["image-vector", "card-text-vector", "full-text", "fused"]
+      },
+      "judgements": [
+        {
+          "image": "fx-01",
+          "probability": 1,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-04",
+          "probability": 1,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-18",
+          "probability": 0.3333333333333333,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-14",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-02",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-05",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-08",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-03",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-06",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        },
+        {
+          "image": "fx-07",
+          "probability": 0,
+          "model": "scripted-judge",
+          "prompt": "c9b4ba0735bd",
+          "date": "2026-11-15T00:00:00.000Z"
+        }
+      ]
     }
   ],
   "pairs": [

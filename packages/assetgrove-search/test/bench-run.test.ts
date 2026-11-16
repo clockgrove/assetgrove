@@ -16,7 +16,7 @@ import {
 import { buildFixtureManifest, fixtureSource } from "../../../bench/search/fixture.ts";
 import { fetchImages, type ImageSource } from "../../../bench/search/fetch.ts";
 import { readLookLibrary, type LookLibrary } from "../../../bench/search/library.ts";
-import { readManifest } from "../../../bench/search/manifest.ts";
+import { droppedQueries, readManifest, relevantOf } from "../../../bench/search/manifest.ts";
 import { allPairs, precisionAt5, similarityThreshold } from "../../../bench/search/metrics.ts";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -50,10 +50,44 @@ describe("bench on the 20-image fixture", () => {
     assert.equal(report.paddedTo, 10_000);
     assert.ok(report.machine.threads >= 1 && report.machine.cpu.length > 0);
     assert.equal(typeof report.threshold, "number");
+    // The fixture's fourth query is judged to have two relevant images: dropped and reported.
+    assert.deepEqual(report.dropped, [
+      { id: "wq-4", text: "armored knight with sword", relevant: 2 },
+    ]);
+    assert.equal(report.entries.find((e) => e.bar === "words-shipped-p5")?.n, 3);
     const lines = formatReport(report).map((l) => JSON.parse(l));
-    assert.equal(lines.length, bars.size + 2);
+    assert.equal(lines.length, bars.size + 3);
     assert.ok("threshold" in lines[bars.size]);
-    assert.ok("machine" in lines[bars.size + 1]);
+    assert.deepEqual(lines[bars.size + 1].dropped, report.dropped);
+    assert.ok("machine" in lines[bars.size + 2]);
+  });
+
+  it("refuses to score by words while a query holds rule-made, unpooled or unjudged labels", async () => {
+    const run = async (edit: (m: Awaited<ReturnType<typeof readManifest>>) => void) => {
+      const manifest = await readManifest(fixtureUrl);
+      edit(manifest);
+      return runBench({
+        manifest,
+        source: fixtureSource(),
+        embedder: new ScriptedEmbedder(),
+        bars: await readBars(),
+        padTo: 0,
+        timedQueries: 1,
+        freshnessFiles: 1,
+      });
+    };
+    await assert.rejects(
+      run((m) => (m.writtenQueries[0]!.relevant = ["fx-05"])),
+      /wq-1 holds rule-made relevance labels/,
+    );
+    await assert.rejects(
+      run((m) => delete m.writtenQueries[1]!.candidates),
+      /wq-2 is not pooled/,
+    );
+    await assert.rejects(
+      run((m) => m.writtenQueries[2]!.judgements!.pop()),
+      /wq-3 has 1 candidates not judged/,
+    );
   });
 });
 
@@ -133,19 +167,19 @@ describe("by-words precision", () => {
     assert.equal(precisionAt5(["x"], ["a"]), 0);
   });
 
-  it("can reach the shipped bar on the committed queries: the best possible mean is 1", async () => {
-    const m = await readManifest(new URL("../../../bench/search/manifest.json", import.meta.url));
-    const scored = m.writtenQueries.filter((q) => q.relevant.length > 0);
-    assert.ok(scored.length >= 25);
-    const best = scored.map((q) => precisionAt5(q.relevant, q.relevant));
+  it("can reach the shipped bar on the judged fixture queries: the best possible mean is 1", async () => {
+    const m = await readManifest(fixtureUrl);
+    const dropped = new Set(droppedQueries(m).map((q) => q.id));
+    const scored = m.writtenQueries.filter((q) => !dropped.has(q.id));
+    assert.equal(scored.length, 3);
+    const best = scored.map((q) => precisionAt5(relevantOf(q), relevantOf(q)));
     assert.equal(best.reduce((a, b) => a + b, 0) / best.length, 1);
   });
 });
 
 describe("manifest building", () => {
-  it("matches the owner's id rule for the female adventurer and finds recolour pairs", async () => {
+  it("finds recolour pairs", async () => {
     const m = await readManifest(new URL("../../../bench/search/manifest.json", import.meta.url));
-    assert.ok(m.writtenQueries.find((q) => q.id === "q14")?.relevant.length);
     assert.ok(m.pairs.length >= 20);
   });
 
