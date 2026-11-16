@@ -1,0 +1,91 @@
+name: Search bench
+
+# The search bench on the labelled library, run by hand only. Two steps, chosen at dispatch:
+# card-texts writes each library image's card text with a vision model (paid, once; the texts are
+# committed afterwards through a pull request), and bench measures search with the LanceDB store and
+# the pinned SigLIP2 model against the bars in docs/decisions.md. Both upload what they produce.
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: Which step to run
+        type: choice
+        options: [bench, card-texts]
+        default: bench
+      max-calls:
+        description: card-texts only - the most vision calls this run may make
+        type: string
+        default: "400"
+
+concurrency:
+  group: search-bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  search-bench:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+
+      - name: Enable pnpm from packageManager
+        run: corepack enable
+
+      - name: Install the core's locked dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install the search package's locked dependencies
+        working-directory: packages/assetgrove-search
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # One vision call per image that has no card text yet; the manifest is saved after each.
+      - name: Write the card texts
+        if: inputs.step == 'card-texts'
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          MAX_CALLS: ${{ inputs.max-calls }}
+        run: node bench/search/write-card-texts.ts --provider gateway --max-calls "$MAX_CALLS"
+
+      - name: Upload the manifest with its card texts
+        if: always() && inputs.step == 'card-texts'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: search-bench-manifest
+          path: bench/search/manifest.json
+          if-no-files-found: error
+
+      # The pinned model, each file checked against the hash the package records.
+      - name: Download the pinned model
+        if: inputs.step == 'bench'
+        run: >-
+          node --input-type=module -e
+          "const { setupModel } = await import('./packages/assetgrove-search/src/setup.ts');
+          const out = await setupModel({ modelsDir: process.env.RUNNER_TEMP + '/models', onProgress: (m) => console.log(m) });
+          console.log('installed', out.dir);"
+
+      - name: Run the bench
+        if: inputs.step == 'bench'
+        shell: bash
+        run: |
+          set -o pipefail
+          node bench/search/run.ts --embedder siglip2 --models "$RUNNER_TEMP/models" | tee search-bench.txt
+
+      - name: Upload the bench report
+        if: always() && inputs.step == 'bench'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: search-bench-report
+          path: search-bench.txt
+          if-no-files-found: warn
