@@ -298,6 +298,41 @@ test("plan counts an ambiguous name's reading for its own check and its apply's,
     (j) => j.operation === "prompt-policy",
   );
   assert.equal(applyJob?.count, 2);
+
+  // The same plan without the name: 3 (plan's one, apply's two) and apply's 1, so the readings are
+  // one for plan's check, one for apply's, counted again by apply itself.
+  const plain = await planWorld("a round lantern icon in a heavy storm");
+  const plainDry = await cli([
+    ...plain.planArgs,
+    "--provider-script",
+    provider.script,
+    "--dry-run",
+    "--json",
+  ]);
+  assert.equal(plainDry.code, 0, plainDry.stdout + plainDry.stderr);
+  const plainJob = (doc(plainDry)["jobs"] as PlanJob[]).find(
+    (j) => j.operation === "prompt-policy",
+  );
+  assert.equal(plainJob?.count, 3);
+  assert.equal(job!.count - plainJob!.count, 2, "one reading for plan's check, one for apply's");
+  const plainMade = await cli([...plain.planArgs, "--json"]);
+  assert.equal(plainMade.code, 0, plainMade.stdout + plainMade.stderr);
+  const plainApply = await cli([
+    "apply",
+    plain.planFile,
+    "--out",
+    join(plain.world.dir, "apply-runs"),
+    "--provider-script",
+    provider.script,
+    "--dry-run",
+    "--json",
+  ]);
+  assert.equal(plainApply.code, 0, plainApply.stdout + plainApply.stderr);
+  const plainApplyJob = (doc(plainApply)["jobs"] as PlanJob[]).find(
+    (j) => j.operation === "prompt-policy",
+  );
+  assert.equal(plainApplyJob?.count, 1);
+  assert.equal(applyJob!.count - plainApplyJob!.count, 1, "apply counts the reading once");
 });
 
 /**
