@@ -4,7 +4,7 @@
  */
 import { InputError } from "../errors.ts";
 import { readAccessor, writeAccessorElement } from "./glb.ts";
-import type { Glb, GltfDocument, GltfNode } from "./glb.ts";
+import type { Glb, GltfAccessor, GltfDocument, GltfNode } from "./glb.ts";
 
 export type Mat4 = Float64Array;
 export type Vec3 = [number, number, number];
@@ -556,6 +556,122 @@ export function keepClips(glb: Glb, keep: number[]): void {
   glb.json.animations = keep.flatMap((i) => (animations[i] ? [animations[i]] : []));
   if (glb.json.animations.length === 0) delete glb.json.animations;
   trackCache.delete(glb);
+}
+
+/**
+ * The animations whose keyframes change. A still take, such as a bind or T-pose take, holds every
+ * channel at one value from its first keyframe to its last; it is left out. No name is read.
+ */
+export function movingAnimations(glb: Glb, tolerance = 1e-5): number[] {
+  const moving: number[] = [];
+  (glb.json.animations ?? []).forEach((animation, index) => {
+    const moves = animation.samplers.some((sampler) => {
+      const keys = glb.json.accessors?.[sampler.input]?.count ?? 0;
+      if (keys < 2) return false;
+      const values = readAccessor(glb, sampler.output);
+      // A cubic spline stores in-tangent, value, out-tangent per keyframe; only values count.
+      const stride = sampler.interpolation === "CUBICSPLINE" ? 3 : 1;
+      const width = values.length / (keys * stride);
+      const at = stride === 3 ? width : 0;
+      for (let k = 1; k < keys; k++) {
+        for (let c = 0; c < width; c++) {
+          const first = values[at + c]!;
+          if (Math.abs(values[k * stride * width + at + c]! - first) > tolerance) return true;
+        }
+      }
+      return false;
+    });
+    if (moves) moving.push(index);
+  });
+  return moving;
+}
+
+/**
+ * Copies one animation of `from` onto `base`: its keyframes become new float accessors at the end
+ * of `base`'s binary chunk, and each channel's target node is the node of `base` with the same
+ * name (or, when the name is missing or ambiguous and both have as many nodes, the same index).
+ * Throws an InputError, leaving `base` unchanged, when a target node has no counterpart.
+ */
+export function appendAnimation(base: Glb, from: Glb, animation: number): void {
+  const source = from.json.animations?.[animation];
+  if (!source) throw new InputError(`animation ${animation} does not exist`);
+  const fromNodes = from.json.nodes ?? [];
+  const baseNodes = base.json.nodes ?? [];
+  const countOf = (nodes: GltfNode[], name: string) => nodes.filter((n) => n.name === name).length;
+  const nodeMap = new Map<number, number>();
+  for (const channel of source.channels) {
+    const node = channel.target.node;
+    if (node === undefined || nodeMap.has(node)) continue;
+    const name = fromNodes[node]?.name;
+    let target: number | undefined;
+    if (name !== undefined && countOf(fromNodes, name) === 1) {
+      if (countOf(baseNodes, name) === 1) target = baseNodes.findIndex((n) => n.name === name);
+    } else if (fromNodes.length === baseNodes.length && baseNodes[node]) target = node;
+    if (target === undefined) {
+      throw new InputError(
+        `the animation animates node "${name ?? node}" the first clip's model does not have`,
+      );
+    }
+    nodeMap.set(node, target);
+  }
+
+  const chunks: Uint8Array[] = [];
+  let length = base.bin.byteLength + ((4 - (base.bin.byteLength % 4)) % 4);
+  const json = base.json;
+  const accessors = (json.accessors ??= []);
+  const bufferViews = (json.bufferViews ??= []);
+  const copied = new Map<number, number>();
+  const copy = (index: number, bounds: boolean): number => {
+    const done = copied.get(index);
+    if (done !== undefined) return done;
+    const accessor = from.json.accessors?.[index];
+    if (!accessor) throw new InputError(`accessor ${index} does not exist`);
+    const values = readAccessor(from, index);
+    const bytes = new Uint8Array(values.length * 4);
+    const view = new DataView(bytes.buffer);
+    values.forEach((v, i) => view.setFloat32(i * 4, v, true));
+    chunks.push(bytes);
+    bufferViews.push({ buffer: 0, byteOffset: length, byteLength: bytes.byteLength });
+    length += bytes.byteLength;
+    const out: GltfAccessor = {
+      bufferView: bufferViews.length - 1,
+      componentType: 5126,
+      count: accessor.count,
+      type: accessor.type,
+      ...(bounds && accessor.min && { min: accessor.min }),
+      ...(bounds && accessor.max && { max: accessor.max }),
+    };
+    accessors.push(out);
+    copied.set(index, accessors.length - 1);
+    return accessors.length - 1;
+  };
+  const samplers = source.samplers.map((sampler) => ({
+    input: copy(sampler.input, true),
+    output: copy(sampler.output, false),
+    ...(sampler.interpolation !== undefined && { interpolation: sampler.interpolation }),
+  }));
+  const bin = new Uint8Array(length);
+  bin.set(base.bin);
+  let offset = base.bin.byteLength + ((4 - (base.bin.byteLength % 4)) % 4);
+  for (const chunk of chunks) {
+    bin.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  base.bin = bin;
+  const buffer = (json.buffers ??= [{ byteLength: 0 }])[0];
+  if (buffer) buffer.byteLength = length;
+  (json.animations ??= []).push({
+    ...(source.name !== undefined && { name: source.name }),
+    channels: source.channels.map((channel) => ({
+      sampler: channel.sampler,
+      target: {
+        ...channel.target,
+        ...(channel.target.node !== undefined && { node: nodeMap.get(channel.target.node)! }),
+      },
+    })),
+    samplers,
+  });
+  trackCache.delete(base);
 }
 
 /**

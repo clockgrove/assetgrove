@@ -1,4 +1,6 @@
 import { ProviderError } from "../errors.ts";
+import { parseGlb } from "../model3d/glb.ts";
+import { movingAnimations } from "../model3d/scene.ts";
 import { isQuotaRefusal, ProviderQuotaError } from "./failure.ts";
 import type {
   AnimateRequest,
@@ -194,7 +196,8 @@ export class TripoProvider implements GenerationProvider {
       bake_animation: true,
       export_with_geometry: true,
     });
-    return { ...result, ...this.#cost(credits) };
+    const tied = request.clips.length === 1 ? tieClip(request.clips[0]!, result.glb) : undefined;
+    return { ...result, ...(tied && { animations: tied }), ...this.#cost(credits) };
   }
 
   #cost(credits: number | undefined): { costUsd?: number } {
@@ -314,6 +317,21 @@ export class TripoProvider implements GenerationProvider {
       ...(typeof credits === "number" && { credits }),
     };
   }
+}
+
+/**
+ * Which animation of a one-clip retarget is the clip: the one animation that moves. A bind or
+ * T-pose take Tripo adds holds still, and names are never read. Undefined when the model does not
+ * parse or not exactly one animation moves; the caller then names the clip unmatched.
+ */
+function tieClip(clip: string, glb: Uint8Array): Record<string, number> | undefined {
+  let moving: number[];
+  try {
+    moving = movingAnimations(parseGlb(glb));
+  } catch {
+    return undefined;
+  }
+  return moving.length === 1 ? { [clip]: moving[0]! } : undefined;
 }
 
 /** Whether Tripo answered a task lookup with an error about that task, not about the account or itself. */

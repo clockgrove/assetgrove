@@ -119,7 +119,10 @@ export interface GenerationProvider {
   generateModel?(request: ModelRequest): Promise<ModelResult>;
   /** Rigs a model the provider made earlier (by its handle) for a gait. */
   rigModel?(request: RigRequest): Promise<ModelResult>;
-  /** Retargets library clips onto a rigged model (by its handle); one model with every clip. */
+  /**
+   * Retargets library clips onto a rigged model (by its handle). The result holds the requested
+   * clips' animations; Assetgrove sends one clip per call and reads no animation names.
+   */
   animateModel?(request: AnimateRequest): Promise<ModelResult>;
 }
 
@@ -169,7 +172,7 @@ export interface AnimateRequest {
   model: string;
   /** The provider's handle of the rigged model. */
   source: string;
-  /** Library clip IDs, in order; the result holds one animation per clip, in this order. */
+  /** Library clip IDs; Assetgrove sends one per call so the result's animation is that clip's. */
   clips: string[];
   providerOptions?: Record<string, Record<string, unknown>>;
 }
@@ -179,6 +182,11 @@ export interface ModelResult extends ProviderResult {
   handle: string;
   /** The model as binary glTF. */
   glb: Uint8Array;
+  /**
+   * For an animate call: the index, in `glb`, of each requested library clip's animation. An
+   * adapter that cannot tell leaves it out.
+   */
+  animations?: Record<string, number>;
 }
 
 /**

@@ -26,8 +26,20 @@ export interface Projection {
   color: Raster;
   /** Per texel, the summed view weights; 0 = unseen. */
   weight: Float32Array;
-  /** The share of covered texels with weight > 0. */
+  /**
+   * The share of visible texels (see `visible`) that take a colour from the views: what the views
+   * painted of the surface a viewer can see.
+   */
   coverage: number;
+  /**
+   * Per texel, 1 where at least one view's camera sees it: the texel faces the camera (facing at
+   * least MIN_FACING), projects inside the frame and passes the depth test. Counted before the
+   * edit's background and the silhouette guard, so a texel those leave unpainted still counts.
+   * Hidden UV area (a mouth interior, inner or overlapping shells) is not visible.
+   */
+  visible: Uint8Array;
+  /** The share of all UV-covered texels with weight > 0, for comparison with `coverage`. */
+  uvCoverage: number;
 }
 
 const FACING_POWER = 4;
@@ -165,6 +177,7 @@ export function projectViews(
   const sumSq = new Float32Array(total);
   const weight = new Float32Array(total);
   const largest = new Float32Array(total);
+  const visible = new Uint8Array(total);
 
   let minP = [Infinity, Infinity, Infinity];
   let maxP = [-Infinity, -Infinity, -Infinity];
@@ -212,9 +225,10 @@ export function projectViews(
         const iy = Math.floor(sy);
         if (!(d > 0) || ix < 0 || iy < 0 || ix >= px || iy >= px) continue;
         const pixel = iy * px + ix;
-        if (edge[pixel] || background?.[pixel]) continue;
         const tolerance = 0.005 * distance + 0.003 * diagonal + (1.5 * d) / camera.focal / facing;
         if (Math.abs(depth[pixel]! - d) > tolerance) continue;
+        visible[i] = 1;
+        if (edge[pixel] || background?.[pixel]) continue;
         const border = Math.min(ix, iy, px - 1 - ix, px - 1 - iy);
         const apparent = ((Math.sqrt(facing) * camera.focal) / d) * smoothstep(0, fade, border + 1);
         visit(i, image, pixel, facing, apparent);
@@ -266,9 +280,11 @@ export function projectViews(
   const color = createRaster(size, size);
   let seen = 0;
   let count = 0;
+  let visibleCount = 0;
   for (let i = 0; i < total; i++) {
     if (!covered[i]) continue;
     count++;
+    if (visible[i]) visibleCount++;
     const w = sharpWeight[i]!;
     if (weight[i]! <= 0 || w <= 0) continue;
     seen++;
@@ -277,7 +293,14 @@ export function projectViews(
     color.data[i * 4 + 2] = Math.round(sum[i * 3 + 2]! / w);
     color.data[i * 4 + 3] = 255;
   }
-  return { color, weight, coverage: count === 0 ? 0 : seen / count };
+  return {
+    color,
+    weight,
+    // A painted texel passed the visibility test, so `seen` is a share of `visibleCount`.
+    coverage: visibleCount === 0 ? 0 : seen / visibleCount,
+    visible,
+    uvCoverage: count === 0 ? 0 : seen / count,
+  };
 }
 
 /** A separable box blur of `values` over seen, covered texels only (the mean of those in reach). */

@@ -46,7 +46,7 @@ function cli(args: string[], extraEnv: Record<string, string> = {}): Promise<Res
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Doc = Record<string, any>;
 const doc = (r: Result): Doc => JSON.parse(r.stdout);
-const checksOf = (c: Doc): Record<string, { passed: boolean; reason: string }> =>
+const checksOf = (c: Doc): Record<string, { passed: boolean; reason: string; shadow?: boolean }> =>
   Object.fromEntries(c["reasons"].map((x: { check: string }) => [x.check, x]));
 
 const GROOM = {
@@ -304,6 +304,7 @@ test("look-dev gives a rigged model its look, maps and eyes; pick hands it all o
     "groom-summer-render",
     "groom-winter-render",
     "lookdev-albedo-coverage",
+    "lookdev-registration",
     "lookdev-seams",
     "eyes-catch-light",
     "gltf-validator",
@@ -376,6 +377,16 @@ test("look-dev gives a rigged model its look, maps and eyes; pick hands it all o
     /no marking was judged.*three-quarter \(the references have no three-quarter view\)/,
   );
   assert.equal(c.provenance.parameters.lookdev.sourceModelSha256, sha256(inputBytes));
+  // Coverage is over the texels a camera sees; registration records each view's overlap.
+  const { coverage, uvCoverage, registration } = c.provenance.parameters.lookdev;
+  assert.ok(coverage >= 0.9 && coverage >= uvCoverage, `coverage ${coverage}, uv ${uvCoverage}`);
+  assert.match(checks["lookdev-albedo-coverage"]!.reason, /texels a restyled view's camera sees/);
+  assert.equal(Object.keys(registration).length, 8);
+  // Registration names a moved figure; it never filters.
+  assert.equal(checks["lookdev-registration"]!.shadow, true);
+  assert.match(checks["lookdev-registration"]!.reason, /^recorded, never filters/);
+  for (const [view, overlap] of Object.entries(registration))
+    assert.ok((overlap as number) >= 0.9, `${view}: ${String(overlap)}`);
   assert.ok(c.provenance.outputGrant);
   assert.deepEqual(c.provenance.parameters.lookdev.seasons, ["summer", "winter"]);
 

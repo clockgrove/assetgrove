@@ -73,7 +73,10 @@ test("measureBox ignores background pixels", () => {
   assert.equal(p.pixels, 400);
   assert.ok(p.lab[0] > 90);
   assert.equal(measureBox(img, [0.7, 0.7, 0.9, 0.9], undefined), undefined);
-  assert.equal(measureBox(img, [0.1, 0.1, 0.6, 0.6], [240, 240, 230])?.lab[0] !== undefined, true);
+  // With a figure mask, pixels count by the mask, not by their colour: a pale figure pixel stays.
+  const mask = new Uint8Array(img.width * img.height).fill(1);
+  assert.equal(measureBox(img, [0.1, 0.1, 0.6, 0.6], mask)?.lab[0] !== undefined, true);
+  assert.equal(measureBox(img, [0.1, 0.1, 0.6, 0.6], new Uint8Array(mask.length)), undefined);
 });
 
 const measure = (over: Partial<MarkingMeasure> = {}): MarkingMeasure => ({

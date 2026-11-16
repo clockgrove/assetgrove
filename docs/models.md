@@ -76,9 +76,9 @@ A `sprite-strip` needs an `edit` route; with none, it exits 2 `route_unavailable
 | --------- | --------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------- |
 | `model3d` | `tripo/v2.5-20250123`             | `multiview_to_model` with texture and PBR (`image_to_model` when there is only one view): 30 credits | $0.50             |
 | `rig3d`   | `tripo/animate-rig-v2.0-20250506` | `animate_rig` with `rig_type` from the gait: 25 credits. The v1 rigger refuses quadrupeds.           | $0.30             |
-| `clips3d` | `tripo/animate-retarget`          | `animate_retarget` with every library clip the spec needs, in one call                               | $0.20             |
+| `clips3d` | `tripo/animate-retarget`          | `animate_retarget` with one library clip the spec needs, one call per clip                           | $0.20             |
 
-One candidate is one `model3d`, one `model3d-facing`, one `rig3d`, one `clips3d` (left out when the library has none of the families) and one `identity` call. That is $1.002 reserved per candidate, or $4.008 for 4 candidates against the $5 cap.
+One candidate is one `model3d`, one `model3d-facing`, one `rig3d`, one `clips3d` per library clip the spec needs (none when the library has none of the families) and one `identity` call. With one clip that is $1.002 reserved per candidate, or $4.008 for 4 candidates against the $5 cap; each further clip adds $0.20 per candidate.
 
 The `clips3d` route's `library` maps gait → family → `{ clip, loop }`. Tripo's library:
 

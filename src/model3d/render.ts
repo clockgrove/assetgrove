@@ -832,30 +832,25 @@ function drawFur(
   }
 }
 
+/** The figure of a render as a mask (1 = figure): the pixels the depth buffer drew (finite depth). */
+export function figureMask(depth: Float64Array): Uint8Array {
+  const mask = new Uint8Array(depth.length);
+  for (let i = 0; i < depth.length; i++) mask[i] = Number.isFinite(depth[i]!) ? 1 : 0;
+  return mask;
+}
+
 /**
- * Speckle: the share of the figure's pixels (those differing from `background`) whose luminance
- * differs from the median of their 3×3 neighbourhood by more than `threshold` (0–255). Isolated
- * bright or dark pixels, the noise a hit-or-miss strand pattern makes, score; smooth shading and
- * clean edges do not.
+ * Speckle: the share of the figure's pixels (those set in `figure`, the render's depth mask) whose
+ * luminance differs from the median of their 3×3 neighbourhood by more than `threshold` (0–255).
+ * Isolated bright or dark pixels, the noise a hit-or-miss strand pattern makes, score; smooth
+ * shading and clean edges do not.
  */
-export function speckle(
-  raster: Raster,
-  background: [number, number, number] = [BACKGROUND, BACKGROUND, BACKGROUND],
-  threshold = 24,
-): number {
+export function speckle(raster: Raster, figure: Uint8Array, threshold = 24): number {
   const { width, height, data } = raster;
   const lum = new Float32Array(width * height);
-  const figure = new Uint8Array(width * height);
   for (let i = 0; i < lum.length; i++) {
     const o = i * 4;
     lum[i] = 0.2126 * data[o]! + 0.7152 * data[o + 1]! + 0.0722 * data[o + 2]!;
-    figure[i] =
-      Math.abs(data[o]! - background[0]) +
-        Math.abs(data[o + 1]! - background[1]) +
-        Math.abs(data[o + 2]! - background[2]) >
-      6
-        ? 1
-        : 0;
   }
   let pixels = 0;
   let speckled = 0;

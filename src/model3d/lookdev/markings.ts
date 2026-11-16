@@ -237,13 +237,18 @@ function borderColour(image: Raster): [number, number, number] {
   return [median(ch[0]!), median(ch[1]!), median(ch[2]!)];
 }
 
+/**
+ * The colour of the pixels in `box` (fractions of the image). With the render's `figure` mask
+ * (1 = figure, one entry per pixel), only figure pixels count; without it (a reference image),
+ * pixels within the tolerance of the image's border colour are left out.
+ */
 export function measureBox(
   image: Raster,
   box: Box,
-  background: [number, number, number] | undefined,
+  figure: Uint8Array | undefined,
 ): Patch | undefined {
   if (image.width === 0 || image.height === 0) return undefined;
-  const bg = background ?? borderColour(image);
+  const bg = figure ? undefined : borderColour(image);
   const x0 = Math.max(0, Math.floor(box[0] * image.width));
   const x1 = Math.min(image.width, Math.ceil(box[2] * image.width));
   const y0 = Math.max(0, Math.floor(box[1] * image.height));
@@ -255,7 +260,12 @@ export function measureBox(
       const r = image.data[i]!;
       const g = image.data[i + 1]!;
       const b = image.data[i + 2]!;
-      if (Math.abs(r - bg[0]) + Math.abs(g - bg[1]) + Math.abs(b - bg[2]) <= BACKGROUND_TOLERANCE) {
+      if (figure) {
+        if (!figure[y * image.width + x]) continue;
+      } else if (
+        Math.abs(r - bg![0]) + Math.abs(g - bg![1]) + Math.abs(b - bg![2]) <=
+        BACKGROUND_TOLERANCE
+      ) {
         continue;
       }
       const lab = toLab(r, g, b);

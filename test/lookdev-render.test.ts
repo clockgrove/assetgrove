@@ -7,6 +7,7 @@ import {
   closeUpCamera,
   renderView,
   renderViewWithDepth,
+  figureMask,
   speckle,
   strandCoverage,
   viewCamera,
@@ -90,10 +91,14 @@ test("the fur preview is soft: no speckle on the body or at the silhouette", () 
       shells: 16,
       strandsPerUv: 512,
     });
-    const bare = renderView(glb, base);
-    const furry = renderView(glb, { ...base, fur });
-    assert.ok(differs(bare, furry));
-    assert.ok(speckle(furry) - speckle(bare) < 0.001, `yaw ${yawDeg}: ${speckle(furry)}`);
+    const bare = renderViewWithDepth(glb, base);
+    const furry = renderViewWithDepth(glb, { ...base, fur });
+    assert.ok(differs(bare.raster, furry.raster));
+    const furSpeckle = speckle(furry.raster, figureMask(furry.depth));
+    assert.ok(
+      furSpeckle - speckle(bare.raster, figureMask(bare.depth)) < 0.001,
+      `yaw ${yawDeg}: ${furSpeckle}`,
+    );
   }
 });
 
@@ -101,11 +106,12 @@ test("speckle counts isolated pixels and ignores smooth shading", () => {
   const smooth = createRaster(32, 32);
   for (let y = 0; y < 32; y++)
     for (let x = 0; x < 32; x++) smooth.data.set([60 + x * 2, 60 + y, 50, 255], (y * 32 + x) * 4);
-  assert.equal(speckle(smooth), 0);
+  const all = new Uint8Array(32 * 32).fill(1);
+  assert.equal(speckle(smooth, all), 0);
   const noisy = createRaster(32, 32);
   noisy.data.set(smooth.data);
   for (let i = 0; i < 32 * 32; i += 7) noisy.data.set([250, 250, 250, 255], i * 4);
-  assert.ok(speckle(noisy) > 0.05);
+  assert.ok(speckle(noisy, all) > 0.05);
 });
 
 test("strand coverage thins toward the tips and scales with density", () => {
