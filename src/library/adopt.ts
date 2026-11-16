@@ -13,6 +13,8 @@ import {
   signCredentials,
 } from "../credentials.ts";
 import type { CredentialSettings, SignerRecord } from "../credentials.ts";
+import { digestOf } from "../confirm/records.ts";
+import type { KindRequest } from "../confirm/index.ts";
 import { InputError } from "../errors.ts";
 import { HandoffCheckError } from "../handoff/presets/index.ts";
 import type { HandoffProblem } from "../handoff/presets/index.ts";
@@ -23,7 +25,7 @@ import { relativeRecordPath } from "../paths.ts";
 import { acquireLibraryLock } from "../runs/lock.ts";
 import { pixelHash } from "../transform/run.ts";
 import type { TransformStep } from "../transform/types.ts";
-import type { Provenance, TargetProfile } from "../types.ts";
+import type { ConfirmationRecord, Provenance, TargetProfile } from "../types.ts";
 import { sha256Hex } from "./canonical.ts";
 import { parseCard } from "./card.ts";
 import { parseLfsPointer } from "./lfs.ts";
@@ -45,7 +47,64 @@ export interface AdoptOptions {
   /** The AI-made version the card locks, as handed off. */
   originalPath: string;
   settings: { stateDir: string; contentCredentials?: CredentialSettings };
+  /** The person's confirmation of this adopt (`adoptRequest`), recorded on the new version. */
+  confirmation?: ConfirmationRecord;
   now?: () => Date;
+}
+
+/** What an adopt write request names: the asset, its working media and the original, by path. */
+export interface AdoptRequestFiles {
+  target: string;
+  asset: string;
+  media: string;
+  original: string;
+}
+
+/**
+ * The write request a person confirms before an adopt (design section 7): its body names the
+ * asset, the working media and the original by path and by sha256, so a confirmation covers these
+ * bytes only, and `assetgrove confirm` rebuilds it from the files and requires the same id.
+ */
+export async function adoptRequest(files: AdoptRequestFiles): Promise<KindRequest> {
+  const hash = async (path: string) => {
+    const bytes = await readIfPresent(path);
+    if (bytes === undefined) throw new InputError(`cannot read ${path}`);
+    return sha256Hex(bytes);
+  };
+  const body = {
+    action: "adopt",
+    target: resolve(files.target),
+    asset: files.asset,
+    media: resolve(files.media),
+    original: resolve(files.original),
+    mediaSha256: await hash(files.media),
+    originalSha256: await hash(files.original),
+  };
+  const id = digestOf(body);
+  return {
+    kind: "write",
+    id,
+    summary: `adopt the hand edit ${body.media} as the next version of ${body.asset}`,
+    details: {
+      asset: body.asset,
+      media: body.media,
+      mediaSha256: body.mediaSha256,
+      original: body.original,
+      originalSha256: body.originalSha256,
+      digest: id,
+    },
+    body,
+  };
+}
+
+/** The working media of an asset as its card names it, for `adoptRequest`. */
+export function adoptMediaPath(profile: TargetProfile, targetDir: string, assetId: string): string {
+  const config = libraryConfig(profile, resolve(targetDir));
+  const found = scanCards(config.root).find((card) => card.id === assetId);
+  if (!found || found.resource === undefined || found.sha256 === undefined) {
+    throw new InputError(`no asset "${assetId}" with a card and a locked file in ${config.root}`);
+  }
+  return join(found.dir, found.resource);
 }
 
 export interface AdoptResult {
@@ -241,6 +300,7 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
       run: "",
       candidate: "",
       action: "adopt",
+      ...(options.confirmation && { confirmation: options.confirmation }),
       now: (options.now ?? (() => new Date()))(),
       assetgrove: assetgroveVersion(),
     });

@@ -1,6 +1,7 @@
 /** `library adopt` (issue #251): a hand edit becomes the next version with credentials naming its original. */
-import "./fixtures/env.ts";
+import { resetSettings, stateDir, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,10 @@ import { test } from "node:test";
 import { credentialProblem, readCredentials } from "../src/credentials.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
+import { confirmCommand } from "../src/commands/confirm.ts";
+import { libraryAdoptCommand } from "../src/commands/library.ts";
+import { runCommand } from "../src/commands/runner.ts";
+import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { adoptHandEdit } from "../src/library/adopt.ts";
 import { parseReview } from "../src/library/review.ts";
 import { loadSettings } from "../src/settings.ts";
@@ -129,4 +134,51 @@ test("an asset with a provenance file of its own gets it rewritten with the adop
   assert.equal(own.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
   assert.equal(own.steps.at(-1).op, "adopt-hand-edit");
   assert.ok(own.contentCredentials);
+});
+
+test("library adopt asks a person first: attended with no TTY it exits 8 and writes nothing; after confirm <id> the version records the confirmation", async (t) => {
+  t.after(() => resetSettings());
+  useAttended();
+  const { targetDir, media, original, options } = await handedOff();
+  const profilePath = join(targetDir, "adopt-profile.json");
+  await writeFile(profilePath, JSON.stringify(options.profile));
+  await edit(media);
+  const editedBytes = await readFile(media);
+  const args = { target: targetDir, profile: profilePath, asset: "fern-shelter", original };
+  const context = (prompt?: ConfirmPort) => ({
+    settings: loadSettings(),
+    log: () => {},
+    ...(prompt && { prompt }),
+  });
+  const reviewPath = join(targetDir, "assets/source/fern/fern-shelter.review.json");
+  const versions = async () => parseReview(await readFile(reviewPath, "utf8"), "review").versions;
+
+  const refused = await runCommand(libraryAdoptCommand, args, context());
+  assert.equal(refused.exitCode, 8);
+  assert.equal(refused.error?.code, "confirmation_required");
+  const id = (refused.error as unknown as { confirmation: { id: string; kind: string } })
+    .confirmation;
+  assert.equal(id.kind, "write");
+  assert.ok(existsSync(join(stateDir, "pending", `${id.id}.json`)));
+  assert.deepEqual(await readFile(media), editedBytes, "the media is not signed or replaced");
+  assert.equal((await versions()).length, 1);
+
+  const asked: ConfirmRequest[] = [];
+  const port: ConfirmPort = {
+    method: "tty",
+    confirm: async (request) => {
+      asked.push(request);
+      return true;
+    },
+  };
+  const confirmed = await runCommand(confirmCommand, { id: id.id }, context(port));
+  assert.equal(confirmed.exitCode, 0, confirmed.error?.message);
+  assert.equal(asked[0]!.details["asset"], "fern-shelter");
+
+  const adopted = await runCommand(libraryAdoptCommand, args, context());
+  assert.equal(adopted.exitCode, 0, adopted.error?.message);
+  const stack = await versions();
+  assert.equal(stack.length, 2);
+  assert.equal(stack[1]!.confirmation?.method, "terminal");
+  assert.equal(stack[1]!.confirmation?.digest, id.id);
 });

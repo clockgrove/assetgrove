@@ -6,7 +6,8 @@ import { join, resolve } from "node:path";
 import { EXIT, InputError } from "../errors.ts";
 import { BIBLE_PATH, PROFILE_PATH } from "../init.ts";
 import { loadProfile } from "../inputs.ts";
-import { adoptHandEdit } from "../library/adopt.ts";
+import { requireConfirmation } from "../confirm/index.ts";
+import { adoptHandEdit, adoptMediaPath, adoptRequest } from "../library/adopt.ts";
 import {
   bibleVersionOf,
   libraryDrift,
@@ -214,7 +215,10 @@ export const libraryAdoptCommand = defineCommand<AdoptArgs>({
 version the card locks (its sha256 must equal lock.sha256). The new file carries the IPTC mark
 compositeWithTrainedAlgorithmicMedia and signed C2PA content credentials that record the edit with the
 original as a parentOf ingredient; the version is appended with the annotation action adopt, under the
-library write lock. Exits 2 when the file is unchanged, is not a PNG, JPEG or WebP, or the original is not
+library write lock. A person confirms the adopt of these bytes (a write request, design section 7) through
+headless settings, a record at <configDir>/confirmations/<hex>.json, an MCP client's form, the TTY, or exit 8
+confirmation_required and \`assetgrove confirm <hex>\`; the version records the confirmation. Agents never
+confirm an adopt. Exits 2 when the file is unchanged, is not a PNG, JPEG or WebP, or the original is not
 the locked version; exit 6 handoff_check_failed when the written file does not read back.`,
   input: {
     ...input(false),
@@ -230,12 +234,23 @@ the locked version; exit 6 handoff_check_failed when the written file does not r
     required: ["asset", "original"],
   },
   effect: { readOnly: false, spends: "never", writes: "target" },
+  confirm: "write",
   async run(args, ctx) {
     if (args.asset === undefined || args.original === undefined) {
       throw new InputError("missing required option --asset and --original");
     }
     const { targetDir, profile } = await open(args);
+    const confirmation = await requireConfirmation(
+      await adoptRequest({
+        target: targetDir,
+        asset: args.asset,
+        media: adoptMediaPath(profile, targetDir, args.asset),
+        original: resolve(args.original),
+      }),
+      { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
+    );
     const result = await adoptHandEdit({
+      confirmation,
       profile,
       targetDir,
       assetId: args.asset,
