@@ -501,7 +501,7 @@ function filledSilhouette(mask: Uint8Array, width: number, height: number): Uint
   return outside.map((v) => (v ? 0 : 1));
 }
 
-/** How well the edited figure must overlap the render's before the edit counts as the same figure. */
+/** The overlap under which `lookdev-registration` names a view: recorded, never a filter. */
 const MIN_OVERLAP = 0.9;
 
 /**
@@ -522,9 +522,11 @@ export function register(
   const sized =
     edited.width === size && edited.height === height ? edited : resize(edited, size, height);
   // The edit's figure is all that its border-connected background is not, so a gap the figure
-  // encloses (between the legs) counts as figure there; the render's mask is filled the same way.
-  const figure = filledSilhouette(mask, size, height);
-  const target = maskBox(figure, size);
+  // encloses (between the legs) counts as figure there and the edit cannot tell it apart. The
+  // overlap is scored against the exact mask on every pixel but those gaps, which count on
+  // neither side; the filled silhouette only sets the fit's starting box and area.
+  const filled = filledSilhouette(mask, size, height);
+  const target = maskBox(filled, size);
   const background = editedBackground(sized, undefined, 24, 0);
   const foreground = new Uint8Array(background.length);
   for (let i = 0; i < foreground.length; i++) foreground[i] = background[i] ? 0 : 1;
@@ -545,7 +547,9 @@ export function register(
     let either = 0;
     for (let y = 0; y < height; y += stride) {
       for (let x = 0; x < size; x += stride) {
-        const m = figure[y * size + x]!;
+        const i = y * size + x;
+        if (filled[i] && !mask[i]) continue;
+        const m = mask[i]!;
         const f = sampleAt(p, x, y);
         if (m && f) both++;
         if (m || f) either++;
@@ -570,7 +574,7 @@ export function register(
     }
     return { n, cx: cx / n, cy: cy / n };
   };
-  const t = stats(figure, size);
+  const t = stats(filled, size);
   const f = stats(foreground, sized.width);
   const area = Math.sqrt(f.n / t.n);
   const starts: Fit[] = [
@@ -1585,12 +1589,13 @@ export async function lookDev(
     check: "lookdev-registration",
     passed: moved.length === 0,
     reason:
-      `overlap of each restyled view's figure with the render's figure (limit ${MIN_OVERLAP}): ` +
+      `recorded, never filters: overlap of each restyled view's figure with the render's figure (named under ${MIN_OVERLAP}): ` +
       overlaps.map(([k, o]) => `${k} ${o.toFixed(3)}`).join(", ") +
       (moved.length > 0
-        ? `; ${moved.join(", ")} under the limit: the edit moved or reshaped the figure`
+        ? `; ${moved.join(", ")} under ${MIN_OVERLAP}: the edit moved or reshaped the figure`
         : ""),
     source: "deterministic",
+    shadow: true,
   });
   const seamsBefore = seamError(parseGlb(options.model.bytes), source, textured.image);
   const seamsAfter = seamError(written, albedo, textured.image);

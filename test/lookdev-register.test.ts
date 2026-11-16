@@ -184,7 +184,7 @@ test("luminance, speckle and markings count the pale outline pixels the mask hol
   assert.equal(outline?.pixels, n);
 });
 
-test("a gap the figure encloses is figure on both sides, so a faithful edit overlaps fully", () => {
+test("a gap the figure encloses counts on neither side, so a faithful edit overlaps fully", () => {
   // The body has a hole the ground shows through (between the legs, seen at three-quarter).
   const hole = (x: number, y: number) => x >= 56 && x < 72 && y >= 80 && y < 100;
   const { raster, mask } = render();
