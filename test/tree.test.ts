@@ -33,7 +33,16 @@ after(() => rm(lib.dir, { recursive: true, force: true }));
 const staleness = new StalenessCache(stateDir);
 /** Caches a staleness answer as `library judge-stale` would; a read never makes one. */
 const judged = (sha256: string, from: string, to: string, redo: boolean) =>
-  staleness.set({ sha256, from, to, redo, model: "test", at: "2026-11-16T00:00:00.000Z" });
+  staleness.set({
+    sha256,
+    from,
+    to,
+    redo,
+    history: true,
+    thumbnail: true,
+    model: "test",
+    at: "2026-11-16T00:00:00.000Z",
+  });
 // fern was made under bible 2 and judged to need redoing under 3.
 judged(lib.versions["fern"]!.at(-1)!, "2", "3", true);
 

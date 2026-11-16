@@ -221,3 +221,84 @@ test("judge-stale judges each asset once, given the diff, its subject and thumbn
   );
   assert.deepEqual(rolled["stale"], []);
 });
+
+const judge = (...more: string[]) =>
+  cli([
+    "library",
+    "judge-stale",
+    ...target,
+    ...runs,
+    "--provider-script",
+    script,
+    ...more,
+    "--json",
+  ]);
+
+test("a lost cache is refilled by running judge-stale again, from its journal and with no new call", async () => {
+  // A version nothing was judged against, so the first run judges all six.
+  writeBible("5", "blue");
+  const first = await judge("--round", "5");
+  assert.equal(first.code, 0, first.stdout + first.stderr);
+  await rm(join(stateDir, "staleness"), { recursive: true, force: true });
+  const lost = doc(await cli(["library", "drift", ...target, "--json"]));
+  assert.ok(lost["otherVersion"].every((o: Doc) => o.judgement === "unjudged"));
+  const before = judgeCalls();
+  const again = await judge("--round", "5");
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  assert.deepEqual(doc(again)["stale"], ["lantern"]);
+  assert.equal(judgeCalls(), before, "the journal answers; nothing is paid twice");
+  const drift = doc(await cli(["library", "drift", ...target, "--json"]));
+  assert.deepEqual(
+    drift["stale"].map((s: Doc) => s.asset),
+    ["lantern"],
+  );
+  assert.equal(drift["otherVersion"].filter((o: Doc) => o.judgement === "unjudged").length, 0);
+  writeBible("3", "amber");
+});
+
+test("--asset narrows what is judged, not the count of assets made under another version", async () => {
+  writeBible("4", "blue");
+  const one = doc(await judge("--asset", "lantern", "--round", "6"));
+  assert.equal(one["otherVersion"], 6);
+  assert.deepEqual(
+    one["judged"].map((j: Doc) => j.asset),
+    ["lantern"],
+  );
+  writeBible("3", "amber");
+});
+
+test("an asset with no thumbnail on this machine is left unjudged: no call, nothing cached", async () => {
+  // A version no answer is cached for, and rock's media replaced by bytes that do not decode.
+  writeBible("7", "blue");
+  const find = (dir: string): string | undefined => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === ".git" || e.name === ".assetgrove") continue;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        const hit = find(p);
+        if (hit) return hit;
+      } else if (e.name === "rock.png") return p;
+    }
+    return undefined;
+  };
+  const rock = find(lib.dir)!;
+  const bytes = readFileSync(rock);
+  writeFileSync(rock, "not an image");
+  try {
+    const before = judgeCalls();
+    const dry = doc(await judge("--asset", "rock", "--dry-run"));
+    assert.equal(
+      (dry["jobs"] as Doc[]).reduce((n, j) => n + (j.count as number), 0),
+      0,
+    );
+    const result = doc(await judge("--asset", "rock", "--round", "7"));
+    assert.deepEqual(result["noThumbnail"], ["rock"]);
+    assert.deepEqual(result["judged"], []);
+    assert.equal(judgeCalls(), before);
+    const drift = doc(await cli(["library", "drift", ...target, "--json"]));
+    assert.equal(drift["otherVersion"].find((o: Doc) => o.asset === "rock").judgement, "unjudged");
+  } finally {
+    writeFileSync(rock, bytes);
+    writeBible("3", "amber");
+  }
+});

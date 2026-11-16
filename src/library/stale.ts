@@ -54,6 +54,13 @@ export interface StalenessAnswer {
   redo: boolean;
   /** The probability the model gave that it should be redone, when it reported one. */
   probability?: number;
+  /**
+   * True when the call was given the bible's diff from its Git history; false when the history
+   * held no text of `from` and the call was given the current bible instead.
+   */
+  history: boolean;
+  /** True: the call was shown the asset's thumbnail (an asset with none is left unjudged). */
+  thumbnail: true;
   model: string;
   at: string;
 }
@@ -80,7 +87,8 @@ export class StalenessCache {
         value.sha256 !== sha256 ||
         value.from !== from ||
         value.to !== to ||
-        typeof value.redo !== "boolean"
+        typeof value.redo !== "boolean" ||
+        value.thumbnail !== true
       )
         return undefined;
       return value as StalenessAnswer;
@@ -239,18 +247,11 @@ export async function stalenessThumbnail(subject: StaleSubject): Promise<LoadedR
 }
 
 /** The text the staleness call is given. */
-export function stalenessPrompt(
-  subject: StaleSubject,
-  to: string,
-  change: BibleChange,
-  shown: boolean,
-): string {
+export function stalenessPrompt(subject: StaleSubject, to: string, change: BibleChange): string {
   return [
     `An asset in a game's library was made under version "${subject.from}" of the game's style bible (its art direction). The bible is now at version "${to}".`,
     `The asset: kind ${subject.kind ?? "unknown"}, subject ${subject.subject ?? "unknown"}, tags ${subject.tags.length > 0 ? subject.tags.join(", ") : "none"}.`,
-    shown
-      ? "The image is its thumbnail."
-      : "No image of the asset is available here; judge from its kind, subject and tags.",
+    "The image is its thumbnail.",
     `The bible's change between the two versions (a unified diff: - lines are version "${subject.from}", + lines are the current text):`,
     change.diff,
   ].join("\n");
@@ -267,7 +268,8 @@ export const STALENESS_QUESTION = {
 
 /**
  * Judges one asset: one `bible-staleness` decision through the caller (inside the run's budget),
- * cached by the asset's sha256 and the version pair.
+ * shown its thumbnail (`stalenessThumbnail`), cached by the asset's sha256 and the version pair.
+ * An asset with no thumbnail on this machine is never judged: the caller leaves it unjudged.
  */
 export async function judgeStaleness(
   caller: Caller,
@@ -275,12 +277,14 @@ export async function judgeStaleness(
   to: string,
   change: BibleChange,
   cache: StalenessCache,
+  images: LoadedReference[],
   now: () => Date = () => new Date(),
 ): Promise<StalenessAnswer> {
-  const images = await stalenessThumbnail(subject);
+  if (images.length === 0)
+    throw new ProviderError(`${subject.asset}: no thumbnail, so its staleness is not judged`);
   const { result, record } = await caller.decide(
     STALENESS_OPERATION,
-    stalenessPrompt(subject, to, change, images.length > 0),
+    stalenessPrompt(subject, to, change),
     images,
     { ...STALENESS_QUESTION },
   );
@@ -293,6 +297,8 @@ export async function judgeStaleness(
     to,
     redo: probability >= 0.5,
     probability: Math.round(probability * 1e4) / 1e4,
+    history: change.commit !== null,
+    thumbnail: true,
     model: record.model,
     at: now().toISOString(),
   };

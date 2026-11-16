@@ -199,9 +199,9 @@ Whether such an asset is stale is a decision, not the version alone: a typo fix 
 
 - the bible's change between the two versions: the newest commit of the bible file whose text carries the card's version, diffed against the working file with `git diff` (at most 12,000 characters). When the Git history holds no text of that version, the call is told so and given the current bible;
 - the asset's kind, subject and tags;
-- its thumbnail (a PNG of at most 512 px, a strip's key frames, a 3D asset's turntable row); none when its bytes are not on this machine.
+- its thumbnail (a PNG of at most 512 px, a strip's key frames, a 3D asset's turntable row). An asset with no thumbnail on this machine (a Git LFS pointer, an undecodable file, a GLB with no turntable renders) is not judged and no call is made: it stays `unjudged`, `library judge-stale` lists it under `noThumbnail`, and a later run judges it once its bytes are here.
 
-It answers whether the change means the asset should be redone (probability 0.5 or more is yes). Each answer is cached by the asset's sha256 (`lock.sha256`) and the pair of versions in `<stateDir>/staleness/`, so a later run, `library drift` and the `stale/` view read it with no call. A card with no `lock.sha256` is counted but cannot be judged. Reading `asset://` never makes the call: reads show the exact count and what is cached, and the calls run only in `library judge-stale`, which a person starts.
+It answers whether the change means the asset should be redone (probability 0.5 or more is yes). Each answer is cached by the asset's sha256 (`lock.sha256`) and the pair of versions in `<stateDir>/staleness/`, with `history` (whether the call was given the diff from the bible's Git history, or the current bible instead), so a later run, `library drift` and the `stale/` view read it with no call. A finished `library judge-stale` run is not returned as it ended: run again with the same request, it runs in its run directory, its journal answering every call it holds, so a lost or moved cache is refilled with no call paid twice. A card with no `lock.sha256` is counted but cannot be judged. Reading `asset://` never makes the call: reads show the exact count and what is cached, and the calls run only in `library judge-stale`, which a person starts.
 
 - **`library adopt`** is described under [Review actions](#review-actions).
 

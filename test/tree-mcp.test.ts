@@ -34,6 +34,8 @@ new StalenessCache(stateDir).set({
   from: "2",
   to: "3",
   redo: true,
+  history: true,
+  thumbnail: true,
   model: "test",
   at: "2026-11-16T00:00:00.000Z",
 });
