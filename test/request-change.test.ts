@@ -560,7 +560,14 @@ test("a view region on a 3D asset runs another round of the 3D kind with the not
       referenceLicense: "NOASSERTION",
       version: "2026-11-10",
       palette: PALETTE,
-      references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "fern" })),
+      references: roles.map((role) => ({
+        path: `refs/${role}.png`,
+        role,
+        subject: "fern",
+        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+          role
+        ],
+      })),
       perspective: "refs/turnaround-front.png",
       subjects: { fern: { description: "a lean grey fox" } },
     }),
