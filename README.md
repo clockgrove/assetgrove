@@ -90,6 +90,7 @@ The package ships its skills under `skills/`. Install them into your harness wit
 - `fix-frame --strip <strip> --family <name> --profile <profile.json> --frame <n> --from <n> --out <dir>`: regenerate one frame by a reference-guided edit within a cap, recorded in provenance.
 - `compare <before> <candidate>`: write a numbers-only compare sheet (before, candidate, difference map, region outlines) and report `outsideChange`; free.
 - `vary --run <dir> --candidate <id> [--count n]`: make variations of one candidate through the edit route, with a contact and a compare sheet; asks for spend once.
+- `audit <set address> [--checks style,identity]`: score every asset of a tree folder for style, and for identity where its subject has a lock; reports each score's spread, the assets beyond the set-consistency bar and, with search loaded, embedding outliers; writes `audit.json` and a score-ordered sheet to its run folder; asks for spend once.
 - `stage`, `apply` and `generate-sheet` take `--note <text>` (with `--round n`) for another round; the note passes the prompt policy and changes the digest.
 - `op <operation> <input...> --out <path>`: run one image operation (crop, trim, pad, scale, slice, matte, apply-style, register, join, flip, renditions, convert) on any image, with a provenance record. Options: `--params <json>`, `--profile <profile.json>`.
 - `recipe <recipe.json> <input...> --out <path>`: run a recipe of operations, deterministically. See [docs/transform.md](docs/transform.md).

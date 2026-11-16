@@ -99,6 +99,14 @@ export const LOOKDEV_MARKINGS_CHECK: QaCheck = {
 /** The planned run's style verdict (src/planning.ts): a vision model scores each candidate. */
 export const STYLE_SCORE_CHECK: QaCheck = vision("style-score", "planned-qa");
 
+/**
+ * The set-level audit's scores (src/commands/audit.ts): a vision model scores each member's style
+ * against the bible's look and the set, and the identity decision model scores its likeness to its
+ * subject's lock. They never filter; the audit marks each score advisory until it qualifies here.
+ */
+export const AUDIT_STYLE_CHECK: QaCheck = vision("audit-style", "vision");
+export const AUDIT_IDENTITY_CHECK: QaCheck = vision("audit-identity", "identity");
+
 /** The material pipeline's lit checks (src/material/pipeline.ts): a vision model judges the renders. */
 export const MATERIAL_LIT_CHECKS: readonly QaCheck[] = [
   "flat-albedo",
@@ -118,6 +126,8 @@ export const QA_CHECKS: readonly QaCheck[] = [
   LOOKDEV_MARKINGS_CHECK,
   STYLE_SCORE_CHECK,
   ...MATERIAL_LIT_CHECKS,
+  AUDIT_STYLE_CHECK,
+  AUDIT_IDENTITY_CHECK,
 ];
 
 /** The model the coverage rule measures against: the core default vision model. */

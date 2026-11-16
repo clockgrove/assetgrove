@@ -628,6 +628,24 @@ const rows: Row[] = [
     prepare: async () => ({ address: `asset://${GAME}/lantern/image`, target: await library() }),
   },
   {
+    tool: "audit",
+    script: () =>
+      moduleScript(
+        "audit-provider.mjs",
+        `export default {
+  image() { throw new Error("no image generation"); },
+  vision() { return { text: '{"styleScore": 0.8, "reason": "same look"}', costUsd: 0.0001 }; },
+  decide() { return { answer: { type: "boolean", probability: 0 }, costUsd: 0.00001 }; },
+};`,
+      ),
+    prepare: async () => ({
+      set: `asset://${GAME}/by-tag/prop/`,
+      target: await library(),
+      bible: (await identityWorld()).bible,
+      checks: ["style"],
+    }),
+  },
+  {
     tool: "op",
     prepare: async () => {
       const input = join(work, "in.png");

@@ -2,6 +2,7 @@ import { animationQaCommand } from "./animation-qa.ts";
 import { applyCommand } from "./apply.ts";
 import { approveCommand, reviewCommand } from "./review.ts";
 import { cardEditCommand } from "./card.ts";
+import { auditCommand } from "./audit.ts";
 import { bibleCommand } from "./bible.ts";
 import { catCommand, lsCommand } from "./browse.ts";
 import { compareCommand } from "./compare.ts";
@@ -72,6 +73,7 @@ export const commands: readonly CommandSpec[] = [
   fixFrameCommand,
   compareCommand,
   varyCommand,
+  auditCommand,
   opCommand,
   recipeCommand,
   opsCommand,
