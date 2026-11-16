@@ -203,14 +203,14 @@ MCP tool: `write_families`, arguments `import`, `target`, `grouping`, `jitterBou
 ### `identity-eval`
 
 ```text
-identity-eval [--bible <BIBLE.md>] --cases <cases.json> [--profile <profile.json>] [--log <identity-eval.jsonl>] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+identity-eval [--bible <BIBLE.md>] --cases <cases.json> [--profile <profile.json>] [--log <identity-eval.jsonl>] [--record] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
-Scores every case of a local labelled image set against its subject's identity lock and reports accuracy per threshold, the recommended threshold, accuracy at the profile's threshold and agreement with the cases' QA verdicts. Paid gateway calls. Writes one JSON line per case to `--log` and nothing else beside its run directory; never filters or approves. Keep the set and the log local.
+Scores every case of a local labelled image set against its subject's identity lock and reports accuracy per threshold, the recommended threshold (among those whose false-accept rate is within the enforce bar, the one with the fewest false rejects; "none meets the bar" otherwise), accuracy at the profile's threshold and agreement with the cases' QA verdicts. Paid gateway calls. Writes one JSON line per case to `--log`; `--record` writes the recommended threshold, with the eval that produced it, to `identity-thresholds.json` beside `--bible`, keyed by question and decision model, which enforce mode requires (refused when none meets the bar). Writes nothing else beside its run directory; never filters or approves. Keep the set and the log local.
 
 Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `forecastUsd`, `capUsd`, `paid`, `inputs` hashes, `options`, the 64-hex request `digest` and `runDir`) with no provider call, no ledger entry and nothing written; the `estimate` tool returns the same document. A real run first writes `request.json` in its run directory `r-<first 16 hex of the digest>` under `--runs`, takes its `lock` (one a live process holds exits 2 `run_in_progress`), journals every call as `calls/<callKey>.json`, and writes `state.json` and `run.json` there. Repeating a request that finished returns its run with `reused: true` and no provider call; repeating an interrupted one pays only for the calls its journal lacks. `--round` (default 1) is part of the digest: a new round is a new run.
 
-MCP tool: `identity_eval`, arguments `bible`, `cases`, `profile`, `log`, `cap`, `workItem`, `runs`, `round`.
+MCP tool: `identity_eval`, arguments `bible`, `cases`, `profile`, `log`, `record`, `cap`, `workItem`, `runs`, `round`.
 
 ### `identity-check`
 

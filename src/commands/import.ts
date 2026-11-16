@@ -104,7 +104,14 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   const subject = args.subject ?? args.asset;
   const sheet = await readBytes(args.sheet, "sheet");
   const digitalSourceType = declarationOption(args.digitalSourceType);
-  const lock = await lockFor(args.lockBible, args.identityMode, subject, profile.value);
+  const providers = await providerSet(args.providerScript, ctx);
+  const lock = await lockFor(
+    args.lockBible,
+    args.identityMode,
+    subject,
+    profile.value,
+    providers.routes,
+  );
   const operations = [
     ...(args.noPropose ? [] : ["vision"]),
     ...(lock && lock.settings.mode !== "off"
@@ -115,7 +122,6 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
       : []),
   ];
   // Always made: the prompt policy's model check runs on the bible's prompt text (makes no call).
-  const providers = await providerSet(args.providerScript, ctx);
   const jobs =
     operations.length > 0
       ? jobsOf(

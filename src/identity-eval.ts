@@ -429,7 +429,9 @@ export async function evaluateIdentity(options: {
   // 2D case recommends nothing.
   const basis = trusted.filter((r) => r.medium === "2d");
   const points = basis.map((r) => ({ score: r.score!.score!, same: r.same }));
-  const { rows, recommended } = sweepThresholds(points);
+  const { rows, recommended } = sweepThresholds(points, {
+    maxFalseAcceptRate: IDENTITY_ENFORCE_BAR.falseAcceptRate,
+  });
   const at = (threshold: number): ThresholdRow => {
     const falseRejects = points.filter((p) => p.same && p.score < threshold).length;
     const falseAccepts = points.filter((p) => !p.same && p.score >= threshold).length;

@@ -70,6 +70,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
     args.identityMode,
     spec.value.subject ?? spec.value.assetId,
     profile.value,
+    routes,
   );
   const perCall = [
     ...planSheet(spec.value, profile.value, routes),

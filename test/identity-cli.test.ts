@@ -45,6 +45,29 @@ async function fixture() {
   };
   const bible = join(art, "BIBLE.md");
   await writeFile(bible, serializeBible(data, "# Synthetic\n\n## Do's and Don'ts\nDo.\n"));
+  await writeFile(
+    join(art, "identity-thresholds.json"),
+    JSON.stringify({
+      format: "assetgrove-identity-thresholds/1",
+      entries: [
+        {
+          question: "score",
+          model: "perplexity/pplx-decider-v1.2",
+          threshold: 0.68,
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          eval: {
+            casesFile: "cases.json",
+            casesSha256: "0".repeat(64),
+            cases: 4,
+            scored: 4,
+            falseAcceptRate: 0,
+            falseRejectRate: 0,
+            barMet: true,
+          },
+        },
+      ],
+    }),
+  );
   await writeFile(join(root, "sheet.png"), syntheticSheet().png);
   await writeFile(join(root, "profile.json"), JSON.stringify(syntheticProfile()));
   return { root, bible };
@@ -169,6 +192,7 @@ test("identity-eval reports accuracy per threshold, the recommendation and agree
       join(f.root, "cases.json"),
       "--log",
       log,
+      "--record",
       "--provider-script",
       SCRIPT,
       "--json",
@@ -177,6 +201,17 @@ test("identity-eval reports accuracy per threshold, the recommendation and agree
   );
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
+  const recorded = JSON.parse(
+    await readFile(join(f.bible, "..", "identity-thresholds.json"), "utf8"),
+  );
+  assert.equal(recorded.format, "assetgrove-identity-thresholds/1");
+  assert.equal(recorded.entries.length, 1);
+  assert.equal(recorded.entries[0].question, "score");
+  assert.equal(recorded.entries[0].model, report.model);
+  assert.equal(recorded.entries[0].threshold, report.recommended.threshold);
+  assert.equal(recorded.entries[0].eval.casesFile, join("..", "cases.json"));
+  assert.equal(recorded.entries[0].eval.scored, 4);
+  assert.equal(recorded.entries[0].eval.barMet, true);
   assert.equal(report.scored, 4);
   assert.equal(report.recommended.accuracy, 1);
   assert.equal(report.qaAgreement.rate, 0.75);

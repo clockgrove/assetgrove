@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
-import { ProviderError } from "../src/errors.ts";
+import { InputError, ProviderError } from "../src/errors.ts";
 import { applyPlan, createPlan } from "../src/planning.ts";
 import { IDENTITY_CHECK_OPERATION, defaultRoutes } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
@@ -28,7 +28,36 @@ function modeOf(operations: readonly string[]): string | undefined {
   return undefined;
 }
 
-async function fixture(withLock = true) {
+/** Writes the bible's own identity-eval record, as `identity-eval --record` does, for the default routes' models. */
+async function recordThresholds(dir: string, thresholds: { score: number; cast: number }) {
+  const entry = (question: "score" | "cast", model: string, threshold: number) => ({
+    question,
+    model,
+    threshold,
+    recordedAt: "2026-01-01T00:00:00.000Z",
+    eval: {
+      casesFile: "cases.json",
+      casesSha256: "0".repeat(64),
+      cases: 10,
+      scored: 10,
+      falseAcceptRate: 0,
+      falseRejectRate: 0,
+      barMet: true,
+    },
+  });
+  await writeFile(
+    join(dir, "identity-thresholds.json"),
+    JSON.stringify({
+      format: "assetgrove-identity-thresholds/1",
+      entries: [
+        entry("score", defaultRoutes["identity"]!.model, thresholds.score),
+        entry("cast", defaultRoutes["identity-cast"]!.model, thresholds.cast),
+      ],
+    }),
+  );
+}
+
+async function fixture(withLock = true, withRecord = true) {
   const root = await mkdtemp(join(tmpdir(), "identity-plan-"));
   roots.push(root);
   const dir = join(root, ".assetgrove/art-direction");
@@ -49,6 +78,7 @@ async function fixture(withLock = true) {
     };
   }
   const biblePath = join(dir, "BIBLE.md");
+  if (withRecord) await recordThresholds(dir, { score: 0.68, cast: 0.5 });
   await writeFile(
     biblePath,
     serializeBible(data, "## Do's and Don'ts\nDo preserve identity. Don't add text.\n"),
@@ -92,12 +122,13 @@ async function run(
   options: {
     profile?: Partial<TargetProfile>;
     withLock?: boolean;
+    withRecord?: boolean;
     identityMode?: string;
     routes?: Routes;
     provider?: ScriptedProvider;
   } = {},
 ) {
-  const f = await fixture(options.withLock ?? true);
+  const f = await fixture(options.withLock ?? true, options.withRecord ?? true);
   const provider = options.provider ?? scripted(answers);
   const specPath = join(f.root, "spec.json");
   const runOptionsPath = join(f.root, "run-options.json");
@@ -227,6 +258,46 @@ test("the cast question with no threshold set plans, scores and records at 0.5",
   // The score question keeps 0.68.
   const score = await run([3.6]);
   assert.equal(score.run.identity?.threshold, 0.68);
+});
+
+test("enforce mode refuses a bible with no identity-eval of its own, naming the bible and model", async () => {
+  await assert.rejects(
+    run([3.6], { profile: { identity: { mode: "enforce" } }, withRecord: false }),
+    (error: unknown) =>
+      error instanceof InputError &&
+      /enforce needs an identity-eval of this bible for this model/.test(error.message) &&
+      /BIBLE\.md/.test(error.message) &&
+      error.message.includes(defaultRoutes["identity"]!.model) &&
+      /identity-eval --record/.test(error.message),
+  );
+  const shadow = await run([3.6], { withRecord: false });
+  assert.equal(shadow.run.identity?.threshold, 0.68);
+});
+
+test("enforce mode uses the recorded threshold; the profile's own threshold still wins", async () => {
+  const f = await fixture();
+  await recordThresholds(join(f.root, ".assetgrove/art-direction"), { score: 0.4, cast: 0.5 });
+  const specPath = join(f.root, "spec.json");
+  const runOptionsPath = join(f.root, "run-options.json");
+  const profilePath = join(f.root, "profile.json");
+  await writeFile(specPath, JSON.stringify(spec));
+  await writeFile(runOptionsPath, JSON.stringify({ candidates: 1 }));
+  const plan = async (identity: object) => {
+    await writeFile(profilePath, JSON.stringify(syntheticProfile({ identity })));
+    return createPlan({ biblePath: f.biblePath, specPath, runOptionsPath, profilePath });
+  };
+  const recorded = await applyPlan((await plan({ mode: "enforce" })).plan, {
+    provider: scripted([2]),
+    outDir: join(f.root, "runs"),
+  });
+  assert.equal(recorded.run.identity?.threshold, 0.4);
+  assert.equal(recorded.run.filtered, 0);
+  const explicit = await applyPlan((await plan({ mode: "enforce", threshold: 0.68 })).plan, {
+    provider: scripted([2]),
+    outDir: join(f.root, "runs2"),
+  });
+  assert.equal(explicit.run.identity?.threshold, 0.68);
+  assert.equal(explicit.run.filtered, 1);
 });
 
 test("a subject with no lock is not scored and its plan has no identity check", async () => {

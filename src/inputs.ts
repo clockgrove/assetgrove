@@ -8,7 +8,7 @@ import {
 } from "./bible.ts";
 import { InputError } from "./errors.ts";
 import { readFormat } from "./formats.ts";
-import { identitySettings, loadCast, loadIdentity } from "./identity.ts";
+import { identitySettings, identitySettingsFor, loadCast, loadIdentity } from "./identity.ts";
 import { readJson } from "./json.ts";
 import { parseDigitalSourceType } from "./metadata.ts";
 import type { DigitalSourceType } from "./metadata.ts";
@@ -94,8 +94,9 @@ export async function lockFor(
   identityMode: string | undefined,
   subject: string,
   profile: TargetProfile,
+  routes: Record<string, { model: string }>,
 ) {
-  const settings = identitySettings(profile, identityMode);
+  identitySettings(profile, identityMode);
   if (lockBible === undefined) {
     if (identityMode !== undefined)
       throw new InputError("--identity-mode needs --lock-bible <BIBLE.md>");
@@ -103,7 +104,9 @@ export async function lockFor(
   }
   const doc = await loadBible(lockBible);
   const loaded = await loadIdentity(doc, subject);
-  if (!loaded || settings.mode === "off") return undefined;
+  if (!loaded) return undefined;
+  const settings = await identitySettingsFor(profile, identityMode, doc, routes);
+  if (settings.mode === "off") return undefined;
   return {
     ...loaded,
     settings,
