@@ -285,6 +285,24 @@ test("the tree's find, like and where paths over MCP with a hosted embedder make
       clientInfo: { name: "hosted-test", version: "0.0.0" },
     });
     input.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    // The server passes its settings to the mark: with a hosted embedder, find and search_index
+    // are paid tools that need the person and reach the provider.
+    const listed = await request("tools/list", {});
+    const tools = (
+      listed["result"] as {
+        tools: {
+          name: string;
+          _meta?: Record<string, unknown>;
+          annotations?: { openWorldHint?: boolean };
+        }[];
+      }
+    ).tools;
+    for (const name of ["find", "search_index"]) {
+      const tool = tools.find((t) => t.name === name);
+      assert.ok(tool, `${name} is listed`);
+      assert.equal(tool._meta?.["anthropic/requiresUserInteraction"], true, name);
+      assert.equal(tool.annotations?.openWorldHint, true, name);
+    }
     for (const path of ["like/lantern", `where/${encodeURIComponent("kind=still")}`]) {
       const answer = await read(`asset://${GAME}/${path}`);
       assert.equal(answer["error"], undefined, `${path}: ${JSON.stringify(answer["error"])}`);
