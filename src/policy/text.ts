@@ -88,6 +88,41 @@ export interface PromptPolicyRecord {
    * policy objected only to text the compiler wrote, so the person's request is not refused.
    */
   fallback?: string;
+  /**
+   * How the run's check read each ambiguous name a person-written part holds (`readingTerms`):
+   * the protected name, an ordinary word, or an unrelated name. Only `protected` refuses.
+   */
+  readings?: PolicyReading[];
+}
+
+/** What an ambiguous name in a request refers to, as the reading call answers. */
+export type NameReading = "protected" | "word" | "other-name";
+
+/** One ambiguous name's reading in a prompt-policy record. */
+export interface PolicyReading {
+  term: string;
+  kind: BlockKind;
+  reading: NameReading;
+  /** The answer's route, `<provider>:prompt-policy:<model>`. */
+  model: string;
+  /** The model's probability for the option it chose, when it reported one. */
+  probability?: number;
+}
+
+/**
+ * The ambiguous names the run's check reads one by one: each distinct term with a hit in a
+ * person-written part, with that hit's part and context. A term held only by compiler-written text
+ * is left to the Boolean call and its template fallback.
+ */
+export function readingTerms(hits: readonly PolicyHit[] | undefined): PolicyHit[][] {
+  const byTerm = new Map<string, PolicyHit[]>();
+  for (const hit of hits ?? []) {
+    if (hit.ambiguous !== true || modelWritten({ label: hit.part })) continue;
+    const list = byTerm.get(hit.term) ?? [];
+    list.push(hit);
+    byTerm.set(hit.term, list);
+  }
+  return [...byTerm.values()];
 }
 
 /** One model answer in a prompt-policy record. */
@@ -107,10 +142,13 @@ export class PromptRefusedError extends Error {
   readonly code = "prompt_refused";
   readonly policy: PromptPolicyRecord;
   constructor(policy: PromptPolicyRecord, where = "the prompt") {
+    const named = policy.readings?.find((r) => r.reading === "protected");
     super(
-      policy.match === undefined && policy.probability !== undefined
-        ? `${where} reads as a request for a protected style, work, character or real person (the prompt-policy model check gives ${policy.probability.toFixed(2)}, refused at 0.5 or more): describe the look in plain visual words and anchor it with reference images`
-        : `${where} names "${policy.match?.term ?? ""}" (${policy.match?.kind ?? "term"}), which the prompt policy refuses: describe the look in plain visual words and anchor it with reference images, or add the term to promptPolicy.allow in the developer settings if it is not a name`,
+      named !== undefined
+        ? `${where} uses "${named.term}" as the protected ${named.kind} name (the prompt-policy reading call, ${named.model}): describe the look in plain visual words and anchor it with reference images`
+        : policy.match === undefined && policy.probability !== undefined
+          ? `${where} reads as a request for a protected style, work, character or real person (the prompt-policy model check gives ${policy.probability.toFixed(2)}, refused at 0.5 or more): describe the look in plain visual words and anchor it with reference images`
+          : `${where} names "${policy.match?.term ?? ""}" (${policy.match?.kind ?? "term"}), which the prompt policy refuses: describe the look in plain visual words and anchor it with reference images, or add the term to promptPolicy.allow in the developer settings if it is not a name`,
     );
     this.name = "PromptRefusedError";
     this.policy = policy;

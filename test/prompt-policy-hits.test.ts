@@ -187,7 +187,7 @@ test("the model check is given labelled parts and the hits; exit 9 follows only 
   assert.deepEqual(await refuse.events(), ["prompt-policy"], "no other call ran");
 });
 
-test("an ambiguous name is decided by the model check and its answer recorded, with no allow entry", async () => {
+test("an ambiguous name is read by the model check and its answer recorded, with no allow entry", async () => {
   writeSettings({});
   const { world, flags } = await stageWorld();
   const provider = await recorder(world.dir, ALLOW);
@@ -203,8 +203,17 @@ test("an ambiguous name is decided by the model check and its answer recorded, w
   assert.deepEqual(policy.allowedBy, []);
   assert.equal(policy.hits[0].term, AMBIGUOUS);
   assert.equal(policy.hits[0].ambiguous, true);
-  assert.equal(policy.probability, 0.1, "the model's answer on it");
-  assert.match((await provider.requests())[0]!, /also an ordinary word or a given name/);
+  assert.equal(policy.probability, 0.1, "the model's answer on the request");
+  // The reading call read it as an ordinary word (the script's default), and the Boolean call is
+  // told so rather than given it as a flagged word (#366; test/prompt-policy-readings.test.ts).
+  assert.deepEqual(
+    policy.readings.map((r: Doc) => [r.term, r.reading]),
+    [[AMBIGUOUS, "word"]],
+  );
+  assert.match(
+    (await provider.requests())[0]!,
+    /already read in their sentences as not the protected name/,
+  );
 });
 
 /** A world with a Markdown bible whose Don'ts forbid imitation, a default template and a plan. */

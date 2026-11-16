@@ -1,6 +1,7 @@
 /**
  * The prompt policy's model check (design section 16). After confirmation, a run's first job is
- * one Boolean decide call on the `prompt-policy` operation (the decisions role) about the prompt
+ * one Choice decide call per ambiguous name a person-written part holds (the protected name, an
+ * ordinary word or an unrelated name; only the first refuses), then one Boolean decide call on the `prompt-policy` operation (the decisions role) about the prompt
  * text the plan step collected, given as labelled parts with the blocklist's phrase and
  * ambiguous-name hits and the words around them. A probability of 0.5 or more refuses the request
  * with exit 9 `prompt_refused`, unless it objects only to text the prompt compiler wrote: a second
@@ -15,9 +16,11 @@ import { ProviderError } from "../errors.ts";
 import type { DecisionQuestion } from "../gateway/provider.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
-import { asParts, modelWritten, PromptRefusedError } from "./text.ts";
+import { asParts, modelWritten, PromptRefusedError, readingTerms } from "./text.ts";
 import type {
+  NameReading,
   PolicyHit,
+  PolicyReading,
   PromptPart,
   PromptPartLabel,
   PromptPolicyCheck,
@@ -61,16 +64,20 @@ const PART_TITLES: Readonly<Record<PromptPartLabel, string>> = {
 export function promptPolicyPrompt(
   text: string | readonly PromptPart[],
   hits: readonly PolicyHit[] = [],
+  readings: readonly PolicyReading[] = [],
 ): string {
   if (typeof text === "string")
     return `Game-asset generation request (prompt text, verbatim between the markers):\n<<<\n${text}\n>>>`;
   const sections = text
     .filter((p) => p.text.trim().length > 0)
     .map((p) => `[${p.label}] ${PART_TITLES[p.label]}:\n<<<\n${p.text}\n>>>`);
-  const flagged = hits.map(
-    (h) =>
-      `- "${h.term}" (${h.ambiguous ? `${h.kind} name that is also an ordinary word or a given name` : h.kind}) in [${h.part}]: "... ${h.context} ..."`,
-  );
+  const read = new Set(readings.map((r) => r.term));
+  const flagged = hits
+    .filter((h) => !read.has(h.term))
+    .map(
+      (h) =>
+        `- "${h.term}" (${h.ambiguous ? `${h.kind} name that is also an ordinary word or a given name` : h.kind}) in [${h.part}]: "... ${h.context} ..."`,
+    );
   return [
     "Game-asset generation request, in labelled parts (each verbatim between the markers):",
     ...sections,
@@ -80,7 +87,90 @@ export function promptPolicyPrompt(
           ...flagged,
         ]
       : []),
+    ...(readings.length > 0
+      ? [
+          "Flagged names already read in their sentences as not the protected name (do not count them as one):",
+          ...readings.map(
+            (r) =>
+              `- "${r.term}": ${r.reading === "word" ? "an ordinary word" : "an unrelated name"}`,
+          ),
+        ]
+      : []),
   ].join("\n");
+}
+
+/** The Choice question an ambiguous name's reading call answers: what the word refers to here. */
+export function nameReadingQuestion(term: string, kind: string): DecisionQuestion {
+  return {
+    type: "choice",
+    instructions: `The blocklist flagged "${term}", the name of a ${kind} whose work, look or likeness generated art must not copy, and also an ordinary word or a given name. Read the sentences it appears in and the labelled request. Which does "${term}" refer to in this request?`,
+    options: {
+      protected: `the protected ${kind} "${term}" itself: the request names it to copy or evoke its work, look or likeness`,
+      word: `an ordinary word with its everyday meaning (for example weather, a size or a kind of thing), not the ${kind}`,
+      "other-name": `an unrelated name: a different person, character, place or thing that happens to share the name, not the ${kind}`,
+    },
+  };
+}
+
+/** The text a reading call is given: the term, its kind, its sentences and the labelled parts. */
+export function nameReadingPrompt(
+  hits: readonly PolicyHit[],
+  parts: readonly PromptPart[],
+): string {
+  const first = hits[0]!;
+  return [
+    `Flagged word: "${first.term}" (blocklist kind: ${first.kind}; also an ordinary word or a given name).`,
+    "Where it appears, with the words around it:",
+    ...hits.map((h) => `- in [${h.part}]: "... ${h.context} ..."`),
+    promptPolicyPrompt(parts),
+  ].join("\n");
+}
+
+/** The term a reading call asks about; for scripted providers and tests. */
+export function nameReadingAsked(prompt: string): string | undefined {
+  return /^Flagged word: "([^"]*)"/m.exec(prompt)?.[1];
+}
+
+/**
+ * One Choice decide call on `prompt-policy` per ambiguous name a person-written part holds
+ * (`readingTerms`). A call that fails or answers out of type throws (exit 4).
+ */
+export async function readAmbiguousNames(
+  caller: Caller,
+  parts: readonly PromptPart[],
+  hits: readonly PolicyHit[] | undefined,
+): Promise<PolicyReading[]> {
+  const readings: PolicyReading[] = [];
+  for (const group of readingTerms(hits)) {
+    const { term, kind } = group[0]!;
+    let result;
+    try {
+      result = await caller.decide(
+        PROMPT_POLICY_OPERATION,
+        nameReadingPrompt(group, parts),
+        [],
+        nameReadingQuestion(term, kind),
+      );
+    } catch (error) {
+      if (classify(error).code !== "internal_error") throw error;
+      throw new ProviderError(
+        `the prompt-policy check could not read "${term}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    const { answer } = result.result;
+    if (answer.type !== "choice")
+      throw new ProviderError(`the prompt-policy check did not choose a reading of "${term}"`);
+    const probability = result.record.decision?.value;
+    readings.push({
+      term,
+      kind,
+      reading: answer.choice as NameReading,
+      model: result.record.route,
+      ...(probability !== undefined && { probability }),
+    });
+  }
+  return readings;
 }
 
 /** The route the model check would run on; throws `RouteUnavailableError` when none serves it. */
@@ -104,12 +194,13 @@ export async function decidePromptPolicy(
   caller: Caller,
   text: string | readonly PromptPart[],
   hits: readonly PolicyHit[] = [],
+  readings: readonly PolicyReading[] = [],
 ): Promise<PromptModelVerdict> {
   let result;
   try {
     result = await caller.decide(
       PROMPT_POLICY_OPERATION,
-      promptPolicyPrompt(text, hits),
+      promptPolicyPrompt(text, hits, readings),
       [],
       PROMPT_POLICY_QUESTION,
     );
@@ -134,7 +225,10 @@ export async function decidePromptPolicy(
 }
 
 /**
- * The run's prompt-policy job: decides on the labelled `parts` with the record's hits and returns
+ * The run's prompt-policy job. First, one reading call per ambiguous name a person-written part
+ * holds (`readAmbiguousNames`): a `protected` reading throws `PromptRefusedError` with the
+ * readings recorded, and no other call runs. Then it decides on the labelled `parts` with the
+ * record's hits (minus the names read as not protected) and returns
  * the plan step's record with the model and probability added; throws `PromptRefusedError` (exit
  * 9) at 0.5 or more. When the parts hold model-written text and the check refuses, a second call
  * on the person-written parts alone decides: if it allows, the record is allowed with `fallback`
@@ -143,10 +237,15 @@ export async function decidePromptPolicy(
 export async function checkPromptModel(
   caller: Caller,
   parts: string | readonly PromptPart[],
-  record: PromptPolicyRecord,
+  given: PromptPolicyRecord,
 ): Promise<PromptPolicyRecord> {
   const all = asParts(parts);
-  const verdict = await decidePromptPolicy(caller, all, record.hits);
+  // Each ambiguous name a person wrote is read in its sentence first; a protected reading refuses.
+  const readings = await readAmbiguousNames(caller, all, given.hits);
+  const record: PromptPolicyRecord = readings.length > 0 ? { ...given, readings } : given;
+  if (readings.some((r) => r.reading === "protected"))
+    throw new PromptRefusedError({ ...record, verdict: "refused" }, "the request's prompt text");
+  const verdict = await decidePromptPolicy(caller, all, record.hits, readings);
   const first = answer("all", verdict);
   const checked = (
     decided: PromptModelVerdict,
@@ -171,7 +270,7 @@ export async function checkPromptModel(
   // person's parts and the bible's rules alone with the same question and cut, decides.
   const personHits = record.hits?.filter((h) => !modelWritten({ label: h.part })) ?? [];
   const second = person.some((p) => p.text.trim())
-    ? await decidePromptPolicy(caller, person, personHits)
+    ? await decidePromptPolicy(caller, person, personHits, readings)
     : undefined;
   if (second?.refused)
     throw new PromptRefusedError(

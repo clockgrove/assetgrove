@@ -14,10 +14,8 @@ import {
   bibleReads,
   specReads,
   buildWorkPlan,
-  policyJobOf,
   paidBy,
 } from "../runs/plan.ts";
-import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { AssetSpec } from "../types.ts";
 import { dryRunOutcome, formatWork } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -59,13 +57,10 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
   });
-  // The apply after this plan runs its own prompt-policy check first: forecast it too, with its
-  // second call when the compiler can run and so write model-written text.
+  // The apply after this plan runs its own prompt-policy check first: buildWorkPlan forecasts it
+  // too, with its readings, and its second call when the compiler can write model-written text.
   const compiles = forecast.jobs.some((j) => j.operation === "compiler");
-  const jobs = [
-    policyJobOf(providers.routes[PROMPT_POLICY_OPERATION]!, compiles),
-    ...forecast.jobs,
-  ];
+  const jobs = forecast.jobs;
   const reads = {
     ...(await bibleReads("bible", args.bible)),
     ...specReads("spec", spec),
@@ -87,6 +82,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     providers,
     candidates: forecast.candidates,
     promptAllow: ctx.settings.promptPolicy.allow,
+    applyPolicy: { modelWritten: compiles },
   });
   return { profile, work };
 }
