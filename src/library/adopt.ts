@@ -645,6 +645,8 @@ export interface AdoptResult {
   library?: LibraryResult;
   contentCredentials?: CredentialsResult;
   validator?: ValidatorResult;
+  /** A rejected adopt: each file that could not be put back, with the reason. */
+  notRestored?: string[];
 }
 
 /**
@@ -736,5 +738,6 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
     ...(written.library && { library: written.library }),
     ...(written.contentCredentials && { contentCredentials: written.contentCredentials }),
     ...(written.validator && { validator: written.validator }),
+    ...(written.notRestored && { notRestored: written.notRestored }),
   };
 }

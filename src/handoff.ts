@@ -10,7 +10,7 @@ import type { ContentSigner, SignerRecord } from "./credentials.ts";
 import { requireLfsMedia } from "./gitlfs.ts";
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { DigitalSourceType } from "./metadata.ts";
@@ -46,10 +46,12 @@ import { acquireLibraryLock } from "./runs/lock.ts";
 import {
   assetgroveVersion,
   commitLibraryWrite,
+  libraryWritePaths,
   prepareLibraryWrite,
   writeAtomic,
 } from "./library/write.ts";
 import type { CandidateReview, LibraryPlan } from "./library/write.ts";
+import { WriteJournal } from "./library/undo.ts";
 import type { VersionStatus } from "./library/review.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
 import type { PresetRegistry, ResolvedPreset } from "./handoff/presets/index.ts";
@@ -310,6 +312,25 @@ export interface TargetWriteResult {
   /** The card, review record, indexes and log the hand-off wrote. */
   library?: LibraryResult;
   validator?: ValidatorResult;
+  /**
+   * An adopt the validator rejected: each file that could not be put back, with the reason. Absent
+   * when every file was.
+   */
+  notRestored?: string[];
+}
+
+/**
+ * The failure that stopped an adopt, with each file that could not be put back named in its
+ * message and listed as `notRestored`; the error itself when every file was put back.
+ */
+async function undone(journal: WriteJournal, error: unknown): Promise<unknown> {
+  const failed = await journal.restore();
+  if (failed.length === 0) return error;
+  const note = `; these files could not be put back: ${failed.join(", ")}`;
+  const stopped = error instanceof Error ? error : new Error(String(error));
+  stopped.message += note;
+  (stopped as Error & { notRestored?: string[] }).notRestored = failed;
+  return stopped;
 }
 
 /** A hand-off checked and rendered, with nothing written yet (see `prepareTargetWrite`). */
@@ -651,8 +672,10 @@ function credentialSigner(
 /**
  * Writes a prepared hand-off under the library write lock, each file through a temporary file
  * renamed over it: the media, its files and provenance, then each preset's check, then the library
- * (review record, card, indexes, log); then runs the approved validator. An adopt runs its
- * validator before the library, and a failed check or a rejection puts back every file it wrote.
+ * (review record, card, indexes, log); then runs the approved validator. An adopt reads every file
+ * before its first write (a file it cannot read stops it there), writes through symbolic links,
+ * runs its validator before the library, and when any step fails, the validator rejects or the
+ * library write fails, puts back every file it wrote (see `WriteJournal`).
  */
 export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
   const lock = acquireLibraryLock(prepared.targetDir, prepared.gate.settings.stateDir);
@@ -664,30 +687,40 @@ export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<
 }
 
 async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
-  const { targetDir, guard, presets, presetContext, presetFiles, writes } = prepared;
+  const { writes } = prepared;
   await prepared.write.adopt?.underLock?.();
+  if (prepared.write.adopt === undefined) {
+    for (const [path, content] of writes) await writeAtomic(path, content);
+    return await commitWritten(prepared);
+  }
   // An adopt that fails puts back every file it wrote, so no file describes an unrecorded version.
-  const before =
-    prepared.write.adopt === undefined
-      ? undefined
-      : await Promise.all(
-          writes.map(([path]) =>
-            readFile(path).then(
-              (bytes) => new Uint8Array(bytes),
-              () => undefined,
-            ),
-          ),
-        );
-  const restore = async () => {
-    if (before === undefined) return;
-    for (const [i, [path]] of writes.entries()) {
-      const bytes = before[i];
-      if (bytes === undefined) await rm(path, { force: true });
-      else await writeAtomic(path, bytes);
-    }
-  };
-  for (const [path, content] of writes) await writeAtomic(path, content);
+  // Every file is read before the first write: one that cannot be read stops the adopt here.
+  const journal = new WriteJournal();
+  for (const [path] of writes) await journal.snapshot(path);
+  for (const path of libraryWritePaths(prepared.library)) await journal.snapshot(path);
+  let result: TargetWriteResult;
+  try {
+    for (const [path, content] of writes) await journal.write(path, content);
+    result = await commitWritten(prepared, journal);
+  } catch (error) {
+    throw await undone(journal, error);
+  }
+  if (result.validator?.accepted === false) {
+    const failed = await journal.restore();
+    if (failed.length > 0) result.notRestored = failed;
+  }
+  return result;
+}
 
+/**
+ * Everything after a hand-off's files are written: the read-back, the validator and the library.
+ * An adopt (given its `journal`) runs the validator before the library and stops at a rejection.
+ */
+async function commitWritten(
+  prepared: PreparedTargetWrite,
+  journal?: WriteJournal,
+): Promise<TargetWriteResult> {
+  const { targetDir, guard, presets, presetContext, presetFiles, writes } = prepared;
   const result: TargetWriteResult = {
     mediaPath: prepared.mediaPath,
     manifestPath: prepared.manifestPath,
@@ -755,44 +788,36 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     };
     problems.push(...(await fileProblems(rel, await read(rel), type, expected, "sidecar")));
   }
-  if (problems.length > 0) {
-    await restore();
-    throw new HandoffCheckError(problems);
-  }
+  if (problems.length > 0) throw new HandoffCheckError(problems);
   // An adopt's validator runs before the library, so a rejection records no version.
   if (write.adopt !== undefined) {
-    let validator: ValidatorResult | undefined;
-    try {
-      validator = await runValidator(prepared);
-    } catch (error) {
-      await restore();
-      throw error;
-    }
+    const validator = await runValidator(prepared);
     if (validator !== undefined) result.validator = validator;
-    if (validator?.accepted === false) {
-      await restore();
-      return result;
-    }
+    if (validator?.accepted === false) return result;
   }
   // Every preset check passed: the version goes into the library.
-  const library = await commitLibraryWrite(prepared.library, {
-    mediaBytes: prepared.mediaBytes,
-    provenance: prepared.provenance,
-    ...(prepared.provenanceBytes !== undefined && { provenanceBytes: prepared.provenanceBytes }),
-    ...(prepared.contentSha256 !== undefined && { contentSha256: prepared.contentSha256 }),
-    spec: write.spec,
-    run: String(write.run["runId"] ?? ""),
-    candidate: String(write.run["candidateId"] ?? ""),
-    ...(write.confirmation && { confirmation: write.confirmation }),
-    ...(write.answers && { answers: write.answers.answers }),
-    ...(write.candidateReview && { candidateReview: write.candidateReview }),
-    ...(write.adopt !== undefined && {
-      action: "adopt" as const,
-      digitalSourceType: prepared.provenance.digitalSourceType,
-    }),
-    now: (write.now ?? (() => new Date()))(),
-    assetgrove: assetgroveVersion(),
-  });
+  const library = await commitLibraryWrite(
+    prepared.library,
+    {
+      mediaBytes: prepared.mediaBytes,
+      provenance: prepared.provenance,
+      ...(prepared.provenanceBytes !== undefined && { provenanceBytes: prepared.provenanceBytes }),
+      ...(prepared.contentSha256 !== undefined && { contentSha256: prepared.contentSha256 }),
+      spec: write.spec,
+      run: String(write.run["runId"] ?? ""),
+      candidate: String(write.run["candidateId"] ?? ""),
+      ...(write.confirmation && { confirmation: write.confirmation }),
+      ...(write.answers && { answers: write.answers.answers }),
+      ...(write.candidateReview && { candidateReview: write.candidateReview }),
+      ...(write.adopt !== undefined && {
+        action: "adopt" as const,
+        digitalSourceType: prepared.provenance.digitalSourceType,
+      }),
+      now: (write.now ?? (() => new Date()))(),
+      assetgrove: assetgroveVersion(),
+    },
+    journal,
+  );
   result.library = {
     ...library,
     files: library.files.map((path) => relativeRecordPath(targetDir, path)),

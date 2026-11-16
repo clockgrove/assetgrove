@@ -23,6 +23,7 @@ import {
 import { InputError } from "../errors.ts";
 import type { AssetSpec, ConfirmationRecord, Provenance, TargetProfile } from "../types.ts";
 import { sha256Hex } from "./canonical.ts";
+import type { WriteJournal } from "./undo.ts";
 import {
   checkCardPaths,
   machineFields,
@@ -463,10 +464,18 @@ export async function writeAtomic(path: string, content: string | Uint8Array): P
   }
 }
 
-/** Writes `text` atomically unless the file already holds it; whether it wrote. */
-export async function writeIfChanged(path: string, text: string): Promise<boolean> {
+/**
+ * Writes `text` atomically unless the file already holds it, through `journal` when given (so it
+ * can be put back); whether it wrote.
+ */
+export async function writeIfChanged(
+  path: string,
+  text: string,
+  journal?: WriteJournal,
+): Promise<boolean> {
   if ((await readText(path)) === text) return false;
-  await writeAtomic(path, text);
+  if (journal) await journal.write(path, text);
+  else await writeAtomic(path, text);
   return true;
 }
 
@@ -611,6 +620,7 @@ export interface LibraryWriteResult {
 export async function commitLibraryWrite(
   plan: LibraryPlan,
   input: LibraryVersionInput,
+  journal?: WriteJournal,
 ): Promise<LibraryWriteResult> {
   const { config, assetId, dir } = plan;
   const files: string[] = [];
@@ -663,11 +673,13 @@ export async function commitLibraryWrite(
   }
   for (const [path, bytes] of copies) {
     if (!existsSync(path)) {
-      await writeAtomic(path, bytes);
+      if (journal) await journal.write(path, bytes);
+      else await writeAtomic(path, bytes);
       files.push(path);
     }
   }
-  if (await writeIfChanged(plan.reviewPath, writeReview(record))) files.push(plan.reviewPath);
+  if (await writeIfChanged(plan.reviewPath, writeReview(record), journal))
+    files.push(plan.reviewPath);
 
   // 4. The card: machine fields from the records; person fields set once, then kept.
   const fields = machineFields({
@@ -696,25 +708,30 @@ export async function commitLibraryWrite(
         },
         fields,
       );
-  if (await writeIfChanged(plan.cardPath, writeCard(card))) files.push(plan.cardPath);
+  if (await writeIfChanged(plan.cardPath, writeCard(card), journal)) files.push(plan.cardPath);
   const title = (card.data as { title: string }).title;
 
   // 5. Each index.md from the library root down.
   const cards = scanCards(config.root);
-  files.push(...(await writeIndexes(config, cards)));
+  files.push(...(await writeIndexes(config, cards, journal)));
 
   // 6. log.md, projected from the review records, unless logs are off.
   if (config.log) {
     files.push(
-      ...(await writeLogs(config, cards, {
-        dir,
-        assetId,
-        title,
-        record,
-        at,
-        bibleVersion: input.provenance.bibleVersion,
-        before: plan.cards,
-      })),
+      ...(await writeLogs(
+        config,
+        cards,
+        {
+          dir,
+          assetId,
+          title,
+          record,
+          at,
+          bibleVersion: input.provenance.bibleVersion,
+          before: plan.cards,
+        },
+        journal,
+      )),
     );
   }
 
@@ -728,8 +745,33 @@ export async function commitLibraryWrite(
   };
 }
 
+/**
+ * The existing library files `commitLibraryWrite` may rewrite for `plan`: the review record, the
+ * card, each folder's `index.md` from the library root down to every card and to the asset, and
+ * the asset folder's and the root's `log.md` when logs are on. An adopt reads each before its
+ * first write, so one it cannot read stops it there.
+ */
+export function libraryWritePaths(plan: LibraryPlan): string[] {
+  const { config } = plan;
+  const folders = new Set<string>([config.root]);
+  for (const dir of [plan.dir, ...plan.cards.map((card) => card.dir)]) {
+    for (let folder = dir; within(config.root, folder); folder = dirname(folder)) {
+      folders.add(folder);
+      if (folder === config.root) break;
+    }
+  }
+  const paths = [plan.reviewPath, plan.cardPath];
+  for (const folder of [...folders].sort()) paths.push(join(folder, "index.md"));
+  if (config.log) paths.push(join(plan.dir, "log.md"), join(config.root, "log.md"));
+  return [...new Set(paths)];
+}
+
 /** Writes each `index.md` from the library root down to every card; the files it changed. */
-export async function writeIndexes(config: LibraryConfig, cards: FoundCard[]): Promise<string[]> {
+export async function writeIndexes(
+  config: LibraryConfig,
+  cards: FoundCard[],
+  journal?: WriteJournal,
+): Promise<string[]> {
   const files: string[] = [];
   const folders = new Set<string>([config.root]);
   for (const found of cards) {
@@ -755,7 +797,7 @@ export async function writeIndexes(config: LibraryConfig, cards: FoundCard[]): P
         })),
     });
     const path = join(folder, "index.md");
-    if (await writeIfChanged(path, text)) files.push(path);
+    if (await writeIfChanged(path, text, journal)) files.push(path);
   }
   return files;
 }
@@ -782,6 +824,7 @@ export async function writeLogs(
   config: LibraryConfig,
   cards: FoundCard[],
   subject: LogSubject,
+  journal?: WriteJournal,
 ): Promise<string[]> {
   const files: string[] = [];
   const { dir, assetId, title, record, at } = subject;
@@ -821,7 +864,7 @@ export async function writeLogs(
       }
     }
     const path = join(folder, "log.md");
-    if (await writeIfChanged(path, renderLog(entries))) files.push(path);
+    if (await writeIfChanged(path, renderLog(entries), journal)) files.push(path);
   }
   return files;
 }
