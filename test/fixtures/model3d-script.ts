@@ -6,10 +6,12 @@
  */
 import type { Script } from "../../src/gateway/scripted.ts";
 import { syntheticCharacter } from "./glb.ts";
+import { referenceView } from "./scripted-views.ts";
 
 const triangles = Number(process.env["SCRIPT_3D_TRIANGLES"] ?? 300);
 
 const script: Script = {
+  referenceView,
   image() {
     throw new Error("the 3D script makes no images");
   },

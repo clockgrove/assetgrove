@@ -644,8 +644,33 @@ test("a view region on a 3D asset runs another round of the 3D kind with the not
     );
     assert.equal(flat.exitCode, 2, "a region on a 3D asset names its view");
 
-    const done = await runCommand(requestChangeCommand, { ...args, bible }, context());
+    // A round on a bible whose side reference declares no view judges that view: the call is in
+    // the confirmed forecast, and its answer lands in the sha256 cache under the state directory.
+    const judged = join(dir, "bible-judged.json");
+    const declared = JSON.parse(await readFile(bible, "utf8"));
+    for (const r of declared.references) if (r.role === "turnaround-side") delete r.view;
+    await writeFile(judged, JSON.stringify(declared));
+    const stateDir = await mkdtemp(join(tmpdir(), "assetgrove-request-change-state-"));
+    const judging = (): RunContext => ({ ...context(), settings: { ...loadSettings(), stateDir } });
+    const before = process.env["SCRIPT_REFERENCE_VIEWS"];
+    process.env["SCRIPT_REFERENCE_VIEWS"] = JSON.stringify({ "turnaround-side": "left" });
+    let done: Awaited<ReturnType<typeof runCommand>>;
+    try {
+      const dry = await runCommand(
+        requestChangeCommand,
+        { ...args, bible: judged, dryRun: true },
+        judging(),
+      );
+      assert.equal(dry.exitCode, 0, dry.error?.message);
+      const jobs = dry.fields["jobs"] as Array<{ operation: string; count: number }>;
+      assert.equal(jobs.find((j) => j.operation === "reference-view")?.count, 1);
+      done = await runCommand(requestChangeCommand, { ...args, bible: judged }, judging());
+    } finally {
+      if (before === undefined) delete process.env["SCRIPT_REFERENCE_VIEWS"];
+      else process.env["SCRIPT_REFERENCE_VIEWS"] = before;
+    }
     assert.equal(done.exitCode, 0, done.error?.message);
+    assert.equal(readdirSync(join(stateDir, "reference-views")).length, 1);
     const f = done.fields as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     assert.equal(f.job, "3d-round");
     assert.equal(f.requests[0].view, 2);
