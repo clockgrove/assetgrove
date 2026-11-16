@@ -34,9 +34,16 @@ async function download(url: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-export async function fetchImages(manifest: Manifest, dir: string): Promise<ImageSource> {
+/** Fetches each listed image once (a manifest, or any list of manifest images), by id. */
+export async function fetchImages(
+  library: Pick<Manifest, "images">,
+  dir: string,
+): Promise<ImageSource> {
   await mkdir(dir, { recursive: true });
-  for (const image of manifest.images) {
+  const seen = new Set<string>();
+  for (const image of library.images) {
+    if (seen.has(image.id)) continue;
+    seen.add(image.id);
     const path = join(dir, `${image.id}.bin`);
     const cached = await readFile(path).catch(() => undefined);
     if (cached && sha256(cached) === image.sha256) continue;
