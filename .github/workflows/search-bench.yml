@@ -1,19 +1,21 @@
 name: Search bench
 
-# The search bench on the labelled library, run by hand only. Two steps, chosen at dispatch:
-# card-texts writes each library image's card text with a vision model (paid, once; the texts are
-# committed afterwards through a pull request), and bench measures search with the LanceDB store and
-# the pinned SigLIP2 model against the bars in docs/decisions.md. Both upload what they produce.
+# The search bench on the labelled library, run by hand only. Three steps, chosen at dispatch:
+# card-texts writes each library image's card text with a vision model, and relevance pools each
+# written query's candidates and has a decision model judge each one against its image (both paid,
+# once; what they write is committed afterwards through a pull request). bench measures search with
+# the LanceDB store and the pinned SigLIP2 model against the bars in docs/decisions.md. Each uploads
+# what it produces.
 on:
   workflow_dispatch:
     inputs:
       step:
         description: Which step to run
         type: choice
-        options: [bench, card-texts]
+        options: [bench, card-texts, relevance]
         default: bench
       max-calls:
-        description: card-texts only - the most vision calls this run may make
+        description: card-texts and relevance - the most model calls this run may make
         type: string
         default: "400"
 
@@ -68,12 +70,34 @@ jobs:
 
       # The pinned model, each file checked against the hash the package records.
       - name: Download the pinned model
-        if: inputs.step == 'bench'
+        if: inputs.step == 'bench' || inputs.step == 'relevance'
         run: >-
           node --input-type=module -e
           "const { setupModel } = await import('./packages/assetgrove-search/src/setup.ts');
           const out = await setupModel({ modelsDir: process.env.RUNNER_TEMP + '/models', onProgress: (m) => console.log(m) });
           console.log('installed', out.dir);"
+
+      # The candidates of each written query: the union of the top results of every ranking the bench
+      # scores. No model call.
+      - name: Pool the candidates of each written query
+        if: inputs.step == 'relevance'
+        run: node bench/search/judge-relevance.ts --pool --embedder siglip2 --models "$RUNNER_TEMP/models"
+
+      # One decision call per candidate not yet judged; the manifest is saved after each.
+      - name: Judge each candidate against its query
+        if: inputs.step == 'relevance'
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          MAX_CALLS: ${{ inputs.max-calls }}
+        run: node bench/search/judge-relevance.ts --provider gateway --max-calls "$MAX_CALLS"
+
+      - name: Upload the manifest with its judgements
+        if: always() && inputs.step == 'relevance'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: search-bench-manifest
+          path: bench/search/manifest.json
+          if-no-files-found: error
 
       - name: Run the bench
         if: inputs.step == 'bench'
