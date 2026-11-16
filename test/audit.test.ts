@@ -176,6 +176,9 @@ test("an audit scores the set once, reports the spread and the members beyond th
   assert.equal(made.filter((c) => c.kind === "vision").length, 6);
   assert.equal(made.filter((c) => c.operation === "identity").length, 6);
   assert.deepEqual(snapshot(lib.dir), target, "nothing is written into the target");
+  // One spend confirmation covers the run (headless settings here), copied into run.json.
+  const record = JSON.parse(readFileSync(join(d.runDir, "run.json"), "utf8"));
+  assert.equal(record.confirmation.kind, "spend");
 
   const audit = JSON.parse(await readFile(join(d.runDir, "audit.json"), "utf8"));
   assert.deepEqual(audit.members, d.members);
