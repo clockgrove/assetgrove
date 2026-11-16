@@ -314,12 +314,18 @@ async function paidEmbedder(
   };
 }
 
-/** Whether a find query embeds: words, or an image file to rank by look. */
+/**
+ * Whether a find query embeds: words, or an image file to rank by look. The runner asks before
+ * it validates the input, so an argument of the wrong type embeds nothing here and is refused
+ * by validation (exit 2 invalid_input).
+ */
 function findEmbeds(args: FindArgs): boolean {
   if (args.outliers !== undefined) return false;
+  const words: unknown = args.words;
+  const like: unknown = args.like;
   return (
-    (args.words !== undefined && args.words.trim() !== "") ||
-    (args.like !== undefined && !args.like.startsWith("asset://"))
+    (typeof words === "string" && words.trim() !== "") ||
+    (typeof like === "string" && !like.startsWith("asset://"))
   );
 }
 

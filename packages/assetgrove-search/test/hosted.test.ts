@@ -41,7 +41,7 @@ import { routeDataFlows } from "../../../src/dataflows.ts";
 import { coreExtension } from "../../../src/extensions/core.ts";
 import { ExtensionRegistry } from "../../../src/extensions/registry.ts";
 import { nearMatchesFor } from "../../../src/search/near-match.ts";
-import { serveMcp, toolAnnotations } from "../../../src/mcp.ts";
+import { requiresUserInteraction, serveMcp, toolAnnotations } from "../../../src/mcp.ts";
 import { loadSettings } from "../../../src/settings.ts";
 import { GAME, fixtureLibrary } from "../../../test/fixtures/library.ts";
 import searchExtension, { nearMatchesWith } from "../src/extension.ts";
@@ -415,6 +415,7 @@ test("with the local model find and search index take no tracked-key guard and n
       const outcome = await run(command, args, [], env);
       assert.notEqual(outcome.error?.code, "key_tracked", command);
       assert.equal(toolAnnotations(spec(command), local).openWorldHint, false, command);
+      assert.equal(requiresUserInteraction(spec(command), false, local), false, command);
     }
 
     hosted();
@@ -425,8 +426,27 @@ test("with the local model find and search index take no tracked-key guard and n
     const free = await run("find", { where: ["kind=still"] }, [], env);
     assert.notEqual(free.error?.code, "key_tracked");
     assert.equal(toolAnnotations(spec("find"), paid).openWorldHint, true);
+    // A hosted embedder asks a spend confirmation, so the server marks both tools at start,
+    // except under headless settings.
+    for (const command of ["find", "search index"]) {
+      assert.equal(requiresUserInteraction(spec(command), false, paid), true, command);
+      assert.equal(requiresUserInteraction(spec(command), true, paid), false, command);
+    }
   } finally {
     process.chdir(cwd);
+  }
+});
+
+test("a hosted find with words or like of the wrong type exits 2 invalid_input, as with the local model", async () => {
+  for (const args of [{ words: 5 }, { like: 7 }]) {
+    hosted();
+    const paid = await run("find", args);
+    assert.equal(paid.exitCode, 2, JSON.stringify(args));
+    assert.equal(paid.error?.code, "invalid_input", JSON.stringify(args));
+    writeSettings({ search: { embedder: "scripted" } });
+    useAttended();
+    const local = await run("find", args);
+    assert.equal(local.error?.code, "invalid_input", JSON.stringify(args));
   }
 });
 

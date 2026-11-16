@@ -144,12 +144,28 @@ const outputSchema = {
 const HEADLESS_ANSWERS: ReadonlySet<string> = new Set(["spend", "pick", "write"]);
 
 /**
- * Whether a tool is marked as requiring the person (`anthropic/requiresUserInteraction`): every
- * tool with a confirmation, except spend, pick and write tools when the settings are headless.
+ * The confirmation a tool asks for under these settings: its command's `confirm`, or spend for a
+ * command that spends only under some settings (find and search index with a hosted embedder).
  */
-export function requiresUserInteraction(spec: CommandSpec, headless: boolean): boolean {
-  if (spec.confirm === undefined) return false;
-  return !(headless && HEADLESS_ANSWERS.has(spec.confirm));
+function toolConfirm(spec: CommandSpec, ctx?: RunContext): string | undefined {
+  if (spec.confirm !== undefined) return spec.confirm;
+  if (ctx !== undefined && spec.spendsWith !== undefined && canSpend(spec, ctx)) return "spend";
+  return undefined;
+}
+
+/**
+ * Whether a tool is marked as requiring the person (`anthropic/requiresUserInteraction`): every
+ * tool with a confirmation under the server's settings, except spend, pick and write tools when
+ * the settings are headless.
+ */
+export function requiresUserInteraction(
+  spec: CommandSpec,
+  headless: boolean,
+  ctx?: RunContext,
+): boolean {
+  const confirm = toolConfirm(spec, ctx);
+  if (confirm === undefined) return false;
+  return !(headless && HEADLESS_ANSWERS.has(confirm));
 }
 
 /**
@@ -438,7 +454,7 @@ function createServer(
     const listed = {
       "~standard": { ...input["~standard"], validate: (value: unknown) => ({ value }) },
     };
-    const marked = requiresUserInteraction(spec, headless);
+    const marked = requiresUserInteraction(spec, headless, ctx);
     server.registerTool(
       spec.tool,
       {
