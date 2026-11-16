@@ -90,6 +90,7 @@ async function pickedStill(
   manifestFields: Record<string, unknown> = {},
   manifestLayout = "manifests/{{spec.assetId}}.json",
   validator?: string,
+  style?: TargetProfile["style"],
 ): Promise<Picked> {
   const world = await syntheticWorld();
   gitTarget(world.targetDir);
@@ -106,6 +107,7 @@ async function pickedStill(
     },
   };
   Object.assign(world.profile, profile);
+  if (style !== undefined) world.profile.style = style;
   delete world.profile.validator;
   if (validator !== undefined) {
     // A validator script in the target, approved for its exact command.
@@ -496,17 +498,54 @@ test("library adopt updates provenance a manifest embeds in place and keeps the 
   assert.equal(manifest.contentHash, record.versions[1]!.sha256);
 });
 
-test("library adopt refuses an edit that fails the free QA checks before asking anyone", async () => {
-  const p = await pickedStill();
+/** Gives every visible pixel of the picked file, kept at `original.png`, alpha 128; returns how many. */
+async function softenVisible(p: Picked): Promise<number> {
   await copyFile(p.mediaPath, originalOf(p));
   const raster = decodeImage(new Uint8Array(await readFile(p.mediaPath)));
-  for (let i = 3; i < raster.data.length; i += 4) raster.data[i] = 128;
+  let softened = 0;
+  for (let i = 3; i < raster.data.length; i += 4) {
+    if (raster.data[i] !== 0) {
+      raster.data[i] = 128;
+      softened++;
+    }
+  }
   await writeFile(p.mediaPath, encodePng(raster));
+  return softened;
+}
+
+test("library adopt refuses an edit that breaks its binary-alpha style before asking anyone, naming the rule and the count", async () => {
+  const p = await pickedStill({}, undefined, undefined, { alpha: { mode: "binary" } });
+  const softened = await softenVisible(p);
   useAttended();
   const out = await cli(["library", "adopt", p.cardPath, "--original", originalOf(p), "--json"]);
   assert.equal(out.code, 5, out.stdout + out.stderr);
-  assert.equal(doc(out)["error"].code, "qa_found_nothing");
+  const error = doc(out)["error"];
+  assert.equal(error.code, "qa_found_nothing");
+  assert.match(
+    error.message,
+    new RegExp(
+      `transparency: ${softened} of \\d+ pixels have partial alpha; the asset's style allows only alpha 0 or 255 \\(alpha mode binary\\)`,
+    ),
+  );
   assert.equal((await review(p.reviewPath)).versions.length, 1);
+});
+
+test("library adopt accepts soft alpha in an edit of an asset whose style allows it", async () => {
+  const p = await pickedStill({}, undefined, undefined, { alpha: { mode: "soft" } });
+  await softenVisible(p);
+  useAttended();
+  const out = await confirmed([
+    "library",
+    "adopt",
+    p.cardPath,
+    "--original",
+    originalOf(p),
+    "--json",
+  ]);
+  assert.equal(out.code, 0, out.stdout + out.stderr);
+  const qa = doc(out)["qa"] as { check: string; passed: boolean; reason: string }[];
+  assert.match(qa.find((r) => r.check === "transparency")!.reason, /alpha mode soft/);
+  assert.equal((await review(p.reviewPath)).versions.length, 2);
 });
 
 test("library adopt runs the profile's validator under pick's rules: unapproved it exits 8 before any write, and a rejection exits 6 and records no version", async () => {
