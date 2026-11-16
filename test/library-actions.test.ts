@@ -548,6 +548,28 @@ test("library adopt accepts soft alpha in an edit of an asset whose style allows
   assert.equal((await review(p.reviewPath)).versions.length, 2);
 });
 
+test("library adopt refuses an edit that fills every transparent pixel of an original that had one", async () => {
+  const p = await pickedStill({}, undefined, undefined, { alpha: { mode: "binary" } });
+  await copyFile(p.mediaPath, originalOf(p));
+  const raster = decodeImage(new Uint8Array(await readFile(p.mediaPath)));
+  let filled = 0;
+  for (let i = 3; i < raster.data.length; i += 4) {
+    if (raster.data[i] === 0) {
+      raster.data[i] = 255;
+      filled++;
+    }
+  }
+  assert.ok(filled > 0, "the picked original has a transparent pixel");
+  await writeFile(p.mediaPath, encodePng(raster));
+  useAttended();
+  const out = await cli(["library", "adopt", p.cardPath, "--original", originalOf(p), "--json"]);
+  assert.equal(out.code, 5, out.stdout + out.stderr);
+  const error = doc(out)["error"];
+  assert.equal(error.code, "qa_found_nothing");
+  assert.match(error.message, /transparency: no pixel is transparent/);
+  assert.equal((await review(p.reviewPath)).versions.length, 1);
+});
+
 test("library adopt runs the profile's validator under pick's rules: unapproved it exits 8 before any write, and a rejection exits 6 and records no version", async () => {
   const p = await pickedStill({}, undefined, "process.exit(0);\n");
   await handEdit(p.mediaPath);
