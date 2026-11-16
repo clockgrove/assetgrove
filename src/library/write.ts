@@ -255,6 +255,11 @@ export async function prepareLibraryWrite(input: {
    * current version exits 2 `version_changed`. Left out, nothing is compared.
    */
   replaces?: string | null;
+  /**
+   * The request_change this candidate answers: made on another current version than
+   * `version` exits 2 `version_changed`.
+   */
+  answers?: { version: string; answers: string[] };
 }): Promise<LibraryPlan> {
   const config = libraryConfig(input.profile, input.targetDir);
   const assetId = assetIdOf(input.spec);
@@ -301,6 +306,9 @@ export async function prepareLibraryWrite(input: {
       `asset "${assetId}" is now at ${current === undefined ? "no version" : `version ${versions.length} (sha256 ${current})`}, not the ${input.replaces === null ? "empty asset" : `version ${input.replaces}`} this pick confirmed replacing; pick again`,
     );
   }
+  if (input.answers !== undefined && sha256 !== current && current !== input.answers.version) {
+    throw changeVersionChanged(assetId, versions.length, current, input.answers.version);
+  }
   const source = [input.provenancePath, input.manifestPath].find(
     (path) => path !== undefined && within(config.root, resolve(path)),
   );
@@ -314,6 +322,19 @@ export async function prepareLibraryWrite(input: {
     ...(source !== undefined && { provenanceSource: resolve(source) }),
     cards,
   };
+}
+
+/** The error for a candidate made on a version that is no longer the asset's current one. */
+export function changeVersionChanged(
+  assetId: string,
+  count: number,
+  current: string | undefined,
+  made: string,
+): AssetIdError {
+  return new AssetIdError(
+    "version_changed",
+    `asset "${assetId}" is now at ${current === undefined ? "no version" : `version ${count} (sha256 ${current})`}, not version ${made} this candidate was made on by request_change; request the change again on the current version`,
+  );
 }
 
 /** Bytes identical to a version other than the current one exit 2 `version_exists`. */
@@ -552,6 +573,8 @@ export interface LibraryVersionInput {
   run: string;
   candidate: string;
   confirmation?: ConfirmationRecord;
+  /** The ids of the change requests (editing annotations) the version answers. */
+  answers?: string[];
   candidateReview?: CandidateReview;
   now: Date;
   /** The annotation's action for the new version; `pick` or `replace` when absent. */
@@ -607,8 +630,13 @@ export async function commitLibraryWrite(
         operator: input.confirmation.operator,
       }),
     };
+    const editing = new Set(
+      record.annotations.filter((a) => a.motivation === "editing").map((a) => a.id),
+    );
+    const answers = (input.answers ?? []).filter((id) => editing.has(id));
     record = appendVersion(record, {
       sha256,
+      ...(answers.length > 0 && { answers }),
       ...(input.provenanceBytes !== undefined && {
         provenanceSha256: sha256Hex(input.provenanceBytes),
       }),
@@ -624,7 +652,16 @@ export async function commitLibraryWrite(
       motivation: "moderating",
       created: at,
       target: { source: resource, "ag:version": sha256 },
-      "ag:action": input.action ?? (first ? "pick" : "replace"),
+      "ag:action": answers.length > 0 ? "answer" : (input.action ?? (first ? "pick" : "replace")),
+      ...(answers.length > 0 && {
+        body: [
+          {
+            type: "TextualBody",
+            purpose: "commenting",
+            value: `answers ${answers.join(", ")}`,
+          },
+        ],
+      }),
     });
   }
   for (const [path, bytes] of copies) {

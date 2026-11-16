@@ -171,6 +171,24 @@ async function place(region: Region, width: number, height: number): Promise<Pla
   return { rect, inside: (x, y) => maskInside(mask, x, y) };
 }
 
+/**
+ * The regions as one mask at the given size, in the region convention: opaque white inside any
+ * region, transparent outside. A mask file of another size is resized by nearest neighbour.
+ */
+export async function regionMask(
+  regions: readonly Region[],
+  width: number,
+  height: number,
+): Promise<Raster> {
+  const placed = await Promise.all(regions.map((r) => place(r, width, height)));
+  const out = createRaster(width, height);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (placed.some((p) => p.inside(x, y)))
+        out.data.set([255, 255, 255, 255], (y * width + x) * 4);
+  return out;
+}
+
 /** What comparing one candidate with the version before gives. */
 export interface Comparison {
   before: Raster;

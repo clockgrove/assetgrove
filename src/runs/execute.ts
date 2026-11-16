@@ -112,14 +112,26 @@ export function needsSpendConfirmation(plan: WorkPlan): boolean {
  */
 export function spendShown(
   id: string,
-  body: { command: string; jobs: WorkPlan["jobs"]; forecastUsd: number; capUsd: number },
+  body: {
+    command: string;
+    jobs: WorkPlan["jobs"];
+    forecastUsd: number;
+    capUsd: number;
+    options?: Record<string, unknown>;
+  },
   candidates?: number,
   nearMatches?: readonly { address: string }[],
 ): { summary: string; details: Record<string, unknown> } {
   const providers = [...new Set(body.jobs.map((j) => j.provider).filter(Boolean))];
+  const region = body.options?.["region"];
+  const regions =
+    Array.isArray(region) && region.every((r) => typeof r === "string")
+      ? (region as string[])
+      : undefined;
+  const summary = `${body.command} would spend up to $${body.forecastUsd.toFixed(4)} (cap $${body.capUsd.toFixed(2)})`;
   return {
     summary:
-      `${body.command} would spend up to $${body.forecastUsd.toFixed(4)} (cap $${body.capUsd.toFixed(2)})` +
+      (regions ? `${summary}; regions: ${regions.map((r, i) => `${i + 1}) ${r}`).join("; ")}` : summary) +
       (nearMatches !== undefined && nearMatches.length > 0
         ? `; existing near matches of this kind and subject: ${nearMatches.map((m) => m.address).join(", ")}`
         : ""),
@@ -129,6 +141,7 @@ export function spendShown(
       ...(candidates !== undefined && { candidates }),
       ...(nearMatches !== undefined &&
         nearMatches.length > 0 && { nearMatches: nearMatches.map((m) => m.address) }),
+      ...(regions && { regions }),
       forecastUsd: body.forecastUsd,
       capUsd: body.capUsd,
       providers,

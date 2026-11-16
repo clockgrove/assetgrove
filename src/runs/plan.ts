@@ -246,6 +246,11 @@ export interface WorkPlanParts {
   promptText?: readonly string[];
   /** The plan step's near matches (src/search/near-match.ts); kept out of the digest. */
   near?: NearMatchOutcome;
+  /**
+   * Hashes the request names without a file to read (the sha256 of the version a change request
+   * edits), name to sha256: added to `inputs`, so they are in the digest.
+   */
+  hashes?: Record<string, string>;
 }
 
 /** What the plan step reads from a command's provider set: its routes and its providers' billing. */
@@ -335,6 +340,7 @@ export async function buildWorkPlan(
     const hash = await hashIfReadable(path);
     if (hash !== undefined) inputs[name] = hash;
   }
+  for (const [name, hash] of Object.entries(parts.hashes ?? {})) inputs[name] ??= hash;
   const promptFiles: Record<string, string> = {};
   for (const [name, path] of Object.entries(paths))
     if (path !== undefined) promptFiles[name] = path;

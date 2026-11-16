@@ -43,6 +43,7 @@ import {
   searchSetupCommand,
   searchStatusCommand,
 } from "./search.ts";
+import { requestChangeCommand } from "./request-change.ts";
 import { stageCommand } from "./stage.ts";
 import type { CommandSpec } from "./types.ts";
 import { varyCommand } from "./vary.ts";
@@ -74,6 +75,7 @@ export const commands: readonly CommandSpec[] = [
   compareCommand,
   varyCommand,
   auditCommand,
+  requestChangeCommand,
   opCommand,
   recipeCommand,
   opsCommand,

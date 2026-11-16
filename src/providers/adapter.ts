@@ -27,7 +27,8 @@ import {
 import type { Route } from "../routes.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
-export type Capability = "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate";
+export type Capability =
+  "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate" | "mask";
 
 /** What an adapter is given to make one provider instance. */
 export interface AdapterContext {
@@ -112,7 +113,7 @@ export const anthropicAdapter: ProviderAdapter = {
  */
 export const openaiAdapter: ProviderAdapter = {
   id: "openai",
-  capabilities: ["image", "edit", "vision", "decide"],
+  capabilities: ["image", "edit", "vision", "decide", "mask"],
   defaultKeyEnv: "OPENAI_API_KEY",
   fixedHosts: [new URL(OPENAI_BASE_URL).host],
   endpointFromSettings: false,
@@ -188,7 +189,7 @@ const NO_SCRIPT: Script = {
 
 export const scriptedAdapter: ProviderAdapter = {
   id: "scripted",
-  capabilities: ["image", "edit", "vision", "decide", "model", "rig", "animate"],
+  capabilities: ["image", "edit", "vision", "decide", "model", "rig", "animate", "mask"],
   fixedHosts: [],
   endpointFromSettings: false,
   defaultRoutes,

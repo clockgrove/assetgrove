@@ -52,6 +52,11 @@ export interface Script {
    * ledger and need a declared limit, and tests can prove the limits offline.
    */
   paid?: boolean;
+  /**
+   * Test only: narrows the capabilities the scripted adapter declares for this module (for example,
+   * without `mask`).
+   */
+  capabilities?: string[];
   /** Test only: the provider's limit reading, as a real adapter reads its balance. */
   limitReading?(): LimitReading | Promise<LimitReading>;
   /** Test only: how the provider's usage is reconciled, as a real adapter declares it. */
@@ -100,6 +105,10 @@ export class ScriptedProvider implements GenerationProvider {
       ...(read !== undefined && { readLimit: async () => read() }),
       ...(cost !== undefined && { callCost: async (requestId: string) => cost(requestId) }),
     };
+  }
+
+  declares(capability: string): boolean {
+    return this.script.capabilities?.includes(capability) ?? true;
   }
 
   async generateImage(request: ImageRequest): Promise<ImageResult> {

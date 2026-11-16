@@ -14,8 +14,17 @@ import { fileURLToPath } from "node:url";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { ProviderError } from "../src/errors.ts";
+import { openAiMask } from "../src/gateway/openai.ts";
 import type { Script } from "../src/gateway/scripted.ts";
-import { createProvider } from "../src/providers/adapter.ts";
+import { ScriptedProvider } from "../src/gateway/scripted.ts";
+import { createRaster, decodePng, encodePng, getPixel, setPixel } from "../src/image/raster.ts";
+import {
+  createProvider,
+  gatewayAdapter,
+  openaiAdapter,
+  scriptedAdapter,
+} from "../src/providers/adapter.ts";
+import { ProviderSet } from "../src/providers/set.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { DEFAULT_CAPS } from "../src/settings.ts";
 import { SpendLedger } from "../src/spend.ts";
@@ -200,4 +209,60 @@ test("a provider error whose response body holds text never shows that body in t
       server.close();
     }
   }
+});
+
+test("the openai and scripted adapters declare mask; the gateway adapter does not", () => {
+  assert.ok(openaiAdapter.capabilities.includes("mask"));
+  assert.ok(scriptedAdapter.capabilities.includes("mask"));
+  assert.ok(!gatewayAdapter.capabilities.includes("mask"));
+});
+
+test("openAiMask makes region pixels transparent and the rest opaque", () => {
+  const raster = createRaster(2, 1);
+  setPixel(raster, 0, 0, [255, 255, 255, 255]);
+  setPixel(raster, 1, 0, [0, 0, 0, 255]);
+  const out = decodePng(openAiMask(encodePng(raster)));
+  assert.equal(getPixel(out, 0, 0)[3], 0);
+  assert.equal(getPixel(out, 1, 0)[3], 255);
+});
+
+test("an image call with a mask sends it, records it, and keys the call by it", () =>
+  cleared(async () => {
+    const provider = new ScriptedProvider(script(false));
+    const call = new Caller({
+      provider,
+      providerName: "scripted",
+      budget: new Budget(5),
+      routes: defaultRoutes,
+    });
+    const mask = {
+      role: "mask",
+      path: "mask.png",
+      mediaType: "image/png",
+      bytes: new Uint8Array([9, 8]),
+      sha256: "a".repeat(64),
+    };
+    await call.image("edit", "a fox", [], undefined, { mask });
+    const sent = provider.calls[0];
+    assert.ok(sent?.kind === "image");
+    assert.deepEqual([...sent.request.mask!.bytes], [9, 8]);
+    assert.deepEqual(call.records[0]?.parameters.mask, { path: "mask.png", sha256: mask.sha256 });
+  }));
+
+test("ProviderSet.declares is narrowed by the script's capabilities", () => {
+  const settings = {
+    providers: { scripted: { limit: { kind: "prepaid", usd: 10 } } },
+    roles: {},
+    routes: {},
+    path: "settings.json",
+  };
+  const route = { provider: "scripted", model: "m" } as never;
+  const full = ProviderSet.fromSettings(settings as never, { script: script(false) });
+  assert.equal(full.declares(route, "mask"), true);
+  const narrowed = ProviderSet.fromSettings(settings as never, {
+    script: { ...script(false), capabilities: ["image", "edit"] },
+  });
+  assert.equal(narrowed.declares(route, "mask"), false);
+  assert.equal(narrowed.declares(route, "edit"), true);
+  assert.equal(narrowed.declares({ provider: "nope", model: "m" } as never, "edit"), false);
 });
