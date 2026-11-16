@@ -9,14 +9,19 @@
  * `parentOf` ingredient; the provenance gets a `human-edit` step.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import type { ApprovalGate } from "../approvals.ts";
 import { digestOf } from "../confirm/records.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import { InputError } from "../errors.ts";
-import { prepareTargetWrite, commitTargetWrite } from "../handoff.ts";
+import {
+  commitTargetWrite,
+  prepareTargetWrite,
+  provenanceLayout,
+  sameFilePath,
+} from "../handoff.ts";
 import type {
   CredentialsResult,
   LibraryResult,
@@ -24,13 +29,18 @@ import type {
   ValidatorResult,
 } from "../handoff.ts";
 import type { PresetRegistry } from "../handoff/presets/index.ts";
+import { markableMediaType } from "../handoff/mark-check.ts";
 import { decodeImage } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { loadStyleBible } from "../inputs.ts";
-import { readRun } from "../loop.ts";
+import { readRun, RUN_FILE } from "../loop.ts";
 import type { RunRecord, StagedCandidate } from "../loop.ts";
 import { DIGITAL_SOURCE_TYPES } from "../metadata.ts";
-import { readRecordPath } from "../paths.ts";
+import { readRecordPath, relativeRecordPath } from "../paths.ts";
+import { GLB_MEDIA_TYPE, parseGlb } from "../model3d/glb.ts";
+import { shapeModelHandoff } from "../model3d/handoff.ts";
+import { familyHandoff, IMPORT_FILE, readImport } from "../sheet/import.ts";
+import { read as readKtx2 } from "ktx-parse";
 import { deterministicChecks } from "../qa.ts";
 import { sha256 as sha256Of, sniffMediaType } from "../request.ts";
 import { DEFAULT_RUNS } from "../runs/plan.ts";
@@ -109,14 +119,17 @@ export interface AdoptRequestFiles {
 
 /**
  * The adopt request: a pick confirmation whose digest covers the asset id, the edited file's
- * sha256, the version it replaces, the original and the review record's head (design section 3.3),
- * so a stored confirmation stops applying once the record gains a line.
+ * sha256, the version it replaces, the original, the review record's head (design section 3.3) and,
+ * as pick's does, the run that made the asset and the sha256 of the profile that drives the
+ * hand-off, so a stored confirmation stops applying once the record gains a line or the run record
+ * changes.
  */
 export function adoptRequest(
   asset: LoadedAsset,
   edited: WorkingFile,
   original: WorkingFile,
   files: AdoptRequestFiles,
+  source: AdoptSource,
 ): KindRequest {
   const current = currentVersion(asset.record)!;
   const head = recordHead(asset.record);
@@ -130,6 +143,10 @@ export function adoptRequest(
     original: resolve(files.original),
     originalSha256: original.sha256,
     target: resolve(files.target),
+    run: source.run,
+    runRecord: source.record,
+    profile: source.profile.name,
+    profileSha256: source.profileSha256,
     head,
   };
   const id = digestOf(body);
@@ -137,7 +154,9 @@ export function adoptRequest(
   return {
     kind: "pick",
     id,
-    summary: `adopt the hand-edited ${asset.resource} as version ${number + 1} of ${asset.assetId} (sha256 ${edited.sha256}), replacing version ${number} (sha256 ${current.sha256})`,
+    summary:
+      `adopt the hand-edited ${asset.resource} as version ${number + 1} of ${asset.assetId} (sha256 ${edited.sha256}), replacing version ${number} (sha256 ${current.sha256}); ` +
+      `handed off by the profile ${source.profile.name} (sha256 ${source.profileSha256}) of the ${source.kind} ${source.run} (${source.record})`,
     details: {
       asset: asset.assetId,
       card: body.card,
@@ -145,6 +164,10 @@ export function adoptRequest(
       sha256: edited.sha256,
       replaces: { version: number, sha256: current.sha256 },
       original: body.original,
+      run: source.run,
+      runRecord: source.record,
+      profile: source.profile.name,
+      profileSha256: source.profileSha256,
       lastAnnotation: head.last,
       digest: id,
     },
@@ -162,11 +185,14 @@ export async function rebuildAdoptRequest(
     return undefined;
   }
   const asset = await loadAsset(locateAsset(card));
-  return adoptRequest(asset, await workingFile(asset), await originalFile(asset, original), {
-    card,
-    original,
-    target,
-  });
+  const edited = await workingFile(asset);
+  return adoptRequest(
+    asset,
+    edited,
+    await originalFile(asset, original),
+    { card, original, target },
+    await adoptSource(asset, target, edited.bytes),
+  );
 }
 
 /** The project directory of an asset: the Git top level of its folder, else undefined. */
@@ -182,11 +208,30 @@ export function projectOf(location: AssetLocation): string | undefined {
   }
 }
 
-/** What the hand-off of an adopt renders from: the run that made the asset, as `pick` uses it. */
+/** Where a project keeps its sheet imports, as `import` and `generate-sheet` default. */
+export const DEFAULT_IMPORTS = ".assetgrove/imports";
+
+/** A run or import id the review record names: one path segment, never `.` or `..`. */
+const SAFE_SEGMENT = /^(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
+
+/** What the hand-off of an adopt renders from: the run or import that made the asset, as `pick` and `write-families` use it. */
 export interface AdoptSource {
+  /** A staged run (`pick`) or a sheet import (`write-families`). */
+  kind: "run" | "import";
+  /** The run or import id. */
+  run: string;
+  /** The candidate id, or the family's name. */
+  candidate: string;
+  /** The run's or import's record file. */
+  record: string;
   profile: TargetProfile;
+  /** The sha256 of the profile's canonical JSON, confirmed with the adopt. */
+  profileSha256: string;
   spec: AssetSpec;
   bibleVersion: string;
+  /** The version's media type and extension, as the run staged it. */
+  mediaType: string;
+  extension: string;
   /** The candidate's output fields, which the templates read as `output.*`. */
   fields: Record<string, unknown>;
   sidecars?: Array<{
@@ -196,15 +241,22 @@ export interface AdoptSource {
     field: string;
     extra?: Record<string, unknown>;
   }>;
-  /** The candidate's provenance, used when the card names no provenance inside the library. */
+  /** The candidate's provenance, used when no provenance is found where the layout puts it. */
   provenance?: Provenance;
 }
 
 /**
  * The run that made the asset: the newest version with a run id, read from the project's runs
- * directory `<target>/.assetgrove/runs/<run>`. Exit 2 when it is not there.
+ * directory `<target>/.assetgrove/runs/<run>` or, for a family `write-families` handed off, its
+ * import `<target>/.assetgrove/imports/<run>`. `edited` is the strip a family's fields are measured
+ * from. Exit 2 when the id is not one path segment, when neither record is there, or when the run
+ * lacks the version's candidate.
  */
-export async function adoptSource(asset: LoadedAsset, targetDir: string): Promise<AdoptSource> {
+export async function adoptSource(
+  asset: LoadedAsset,
+  targetDir: string,
+  edited: Uint8Array,
+): Promise<AdoptSource> {
   const made = [...asset.record.versions]
     .reverse()
     .find((v) => v.run !== undefined && v.run !== "");
@@ -213,20 +265,36 @@ export async function adoptSource(asset: LoadedAsset, targetDir: string): Promis
       `${asset.reviewPath} names no run that made ${asset.assetId}; adopt renders the hand-off again from it`,
     );
   }
-  const runDir = join(resolve(targetDir), DEFAULT_RUNS, made.run!);
+  const id = made.run!;
+  if (!SAFE_SEGMENT.test(id)) {
+    throw new InputError(
+      `${asset.reviewPath} names the run "${id}" for ${asset.assetId}, which is not one path segment; adopt reads only a run or import of the project`,
+    );
+  }
+  const target = resolve(targetDir);
+  const runDir = join(target, DEFAULT_RUNS, id);
+  const importDir = join(target, DEFAULT_IMPORTS, id);
+  if (existsSync(join(importDir, IMPORT_FILE)) && !existsSync(join(runDir, RUN_FILE))) {
+    return importSource(asset, target, importDir, id, made.candidate ?? "", edited);
+  }
   let run: RunRecord;
   try {
     run = await readRun(runDir);
   } catch {
     throw new InputError(
-      `the run ${made.run} that made ${asset.assetId} is not in ${runDir}; adopt renders the hand-off (its manifest and preset files) again from it`,
+      `the run ${id} that made ${asset.assetId} is in neither ${runDir} nor ${importDir}; adopt renders the hand-off (its manifest and preset files) again from it`,
     );
   }
   const candidate: StagedCandidate | undefined = run.candidates.find(
     (c) => c.id === made.candidate,
   );
+  if (candidate === undefined) {
+    throw new InputError(
+      `the run ${id} in ${runDir} has no candidate "${made.candidate ?? ""}", which made version ${asset.record.versions.indexOf(made) + 1} of ${asset.assetId}; adopt renders the hand-off again from it`,
+    );
+  }
   const sidecars: NonNullable<AdoptSource["sidecars"]> = [];
-  for (const staged of candidate?.sidecars ?? []) {
+  for (const staged of candidate.sidecars ?? []) {
     const bytes = new Uint8Array(
       await readFile(join(runDir, readRecordPath(staged.file, "staged file"))),
     );
@@ -241,14 +309,105 @@ export async function adoptSource(asset: LoadedAsset, targetDir: string): Promis
       ...(staged.extra !== undefined && { extra: staged.extra }),
     });
   }
+  const extension = asset.resource.includes(".") ? asset.resource.split(".").pop()! : "";
   return {
+    kind: "run",
+    run: id,
+    candidate: candidate.id,
+    record: join(runDir, RUN_FILE),
     profile: run.profile,
+    profileSha256: digestOf(run.profile),
     spec: run.spec,
     bibleVersion: run.bibleVersion,
-    fields: candidate?.fields ?? {},
+    mediaType:
+      candidate.mediaType ?? markableMediaType(asset.resource) ?? "application/octet-stream",
+    extension: candidate.extension ?? extension,
+    fields: candidate.fields ?? {},
     ...(sidecars.length > 0 && { sidecars }),
-    ...(candidate && { provenance: candidate.provenance }),
+    ...(candidate.provenance !== undefined && { provenance: candidate.provenance }),
   };
+}
+
+/** A family `write-families` handed off from an import: its spec and fields measured from `edited`. */
+async function importSource(
+  asset: LoadedAsset,
+  target: string,
+  importDir: string,
+  id: string,
+  family: string,
+  edited: Uint8Array,
+): Promise<AdoptSource> {
+  const record = await readImport(importDir);
+  if (family === "") {
+    throw new InputError(`${asset.reviewPath} names no family of the import ${id}`);
+  }
+  const raster = rasterOf(edited);
+  if (raster === undefined) {
+    throw new InputError(`the edited ${asset.resource} is not a PNG strip of family ${family}`);
+  }
+  const count = Math.max(1, Math.floor(raster.width / record.frame.width));
+  const preliminary = familyHandoff(record, family, raster, count, 0);
+  const source: AdoptSource = {
+    kind: "import",
+    run: id,
+    candidate: family,
+    record: join(importDir, IMPORT_FILE),
+    profile: record.profile,
+    profileSha256: digestOf(record.profile),
+    spec: preliminary.spec,
+    bibleVersion: record.bibleVersion,
+    mediaType: "image/png",
+    extension: "png",
+    fields: preliminary.fields,
+  };
+  // The registration jitter is the family's as written; a hand edit does not register it again.
+  const provenance = await currentProvenance(asset, source, target).catch(() => undefined);
+  const jitter = provenance?.parameters?.["jitterPx"];
+  if (typeof jitter === "number") source.fields = { ...source.fields, jitterPx: jitter };
+  return source;
+}
+
+/** Whether `bytes` are a file of `mediaType`, read by its own signature or parser. */
+export function isMediaType(bytes: Uint8Array, mediaType: string): boolean {
+  switch (mediaType) {
+    case "image/png":
+    case "image/jpeg":
+    case "image/webp":
+    case "audio/wav":
+      return sniffMediaType(bytes) === mediaType;
+    case GLB_MEDIA_TYPE:
+      try {
+        parseGlb(bytes);
+        return true;
+      } catch {
+        return false;
+      }
+    case "model/gltf+json":
+      try {
+        const json = JSON.parse(Buffer.from(bytes).toString("utf8")) as { asset?: unknown };
+        return json !== null && typeof json === "object" && typeof json.asset === "object";
+      } catch {
+        return false;
+      }
+    case "image/ktx2":
+      try {
+        readKtx2(bytes);
+        return true;
+      } catch {
+        return false;
+      }
+    default:
+      return true;
+  }
+}
+
+/** Exit 2 when the edited bytes are not the version's media type, so the hand-off can mark them. */
+export function requireMediaType(asset: LoadedAsset, edited: WorkingFile, source: AdoptSource) {
+  if (!isMediaType(edited.bytes, source.mediaType)) {
+    throw new InputError(
+      `the edited ${asset.resource} is not ${source.mediaType}, the media type of ${asset.assetId}'s version; save the edit in the same format`,
+    );
+  }
 }
 
 /** Provenance: generator and route are strings. */
@@ -276,32 +435,108 @@ function findProvenance(value: unknown, depth = 0): Provenance | undefined {
 
 /**
  * The asset's current provenance: the record its card's `provenance` source names (a file of its
- * own, or a manifest in the library that embeds it), else the candidate's from the run.
+ * own, or a manifest in the library that embeds it), else the one where the profile's layout puts
+ * it for this asset, inside the library root or not, else the candidate's from the run. A
+ * `human-edit` step made on the current version, left by an adopt that never recorded its version,
+ * is dropped with the steps after it.
  */
 export async function currentProvenance(
   asset: LoadedAsset,
   source: AdoptSource,
+  targetDir: string,
 ): Promise<Provenance> {
   const sources = (asset.card.data["sources"] ?? []) as { id?: string; resource?: string }[];
   const named = sources.find((s) => s.id === "provenance");
+  let found: Provenance | undefined;
   if (typeof named?.resource === "string") {
     const path = libraryPath(asset.config.root, asset.dir, named.resource, asset.cardPath);
-    let value: unknown;
-    try {
-      value = JSON.parse(await readFile(path, "utf8"));
-    } catch (error) {
-      throw new InputError(
-        `${path}: provenance is not readable JSON (${(error as Error).message})`,
-      );
-    }
-    const found = findProvenance(value);
+    found = await provenanceIn(path);
     if (found === undefined) throw new InputError(`${path} holds no provenance record`);
-    return found;
+  } else {
+    const target = resolve(targetDir);
+    const rel = provenanceLayout(
+      {
+        profile: source.profile,
+        spec: source.spec,
+        bibleVersion: source.bibleVersion,
+        output: {
+          bytes: new Uint8Array(),
+          mediaType: source.mediaType,
+          extension: source.extension,
+          fields: source.fields,
+        },
+        provenance: source.provenance ?? ({} as Provenance),
+        run: { runId: "", candidateId: "", pickedAt: "" },
+        targetDir: target,
+      },
+      relativeRecordPath(target, mediaIn(target, asset.mediaPath)),
+    );
+    if (rel !== undefined && existsSync(join(target, rel))) {
+      found = await provenanceIn(join(target, rel));
+    }
+    found ??= source.provenance;
   }
-  if (source.provenance === undefined) {
+  if (found === undefined) {
     throw new InputError(`no provenance of ${asset.assetId} to add the human-edit step to`);
   }
-  return source.provenance;
+  return withoutUnrecordedEdit(found, currentVersion(asset.record)?.sha256);
+}
+
+/** The asset's media as a path under the target, through the target's own spelling when they differ. */
+function mediaIn(target: string, mediaPath: string): string {
+  const rel = relative(target, resolve(mediaPath));
+  if (!rel.startsWith("..")) return resolve(mediaPath);
+  try {
+    return join(target, relative(realpathSync.native(target), realpathSync.native(mediaPath)));
+  } catch {
+    return resolve(mediaPath);
+  }
+}
+
+/** The provenance record in a JSON file (its own, or a manifest that embeds it). */
+async function provenanceIn(path: string): Promise<Provenance | undefined> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new InputError(`${path}: provenance is not readable JSON (${(error as Error).message})`);
+  }
+  return findProvenance(value);
+}
+
+/**
+ * The provenance without what an adopt that recorded no version left in it: a `human-edit` step
+ * made on the current version (an adopt that is recorded makes its own version current) and every
+ * step and command after it.
+ */
+export function withoutUnrecordedEdit(
+  provenance: Provenance,
+  current: string | undefined,
+): Provenance {
+  const steps = provenance.steps ?? [];
+  const at = steps.findIndex(
+    (step) =>
+      step.op === "human-edit" &&
+      (step.params as Record<string, unknown> | undefined)?.["original"] === current,
+  );
+  if (at === -1) return provenance;
+  const recorded = (steps[at]!.params as Record<string, unknown> | undefined)?.["commands"];
+  const commands = typeof recorded === "number" ? recorded : undefined;
+  return {
+    ...provenance,
+    steps: steps.slice(0, at),
+    ...(commands !== undefined &&
+      provenance.commands !== undefined && { commands: provenance.commands.slice(0, commands) }),
+  };
+}
+
+/**
+ * Whether a provenance record describes an adopted edit that no version records: it carries a
+ * `human-edit` step made on the current version (`library check`, `provenance_unrecorded`).
+ */
+export function describesUnrecordedEdit(value: unknown, current: string | undefined): boolean {
+  const provenance = findProvenance(value);
+  return provenance !== undefined && withoutUnrecordedEdit(provenance, current) !== provenance;
 }
 
 /** A PNG or JPEG decoded; undefined for other media. */
@@ -392,8 +627,9 @@ export interface AdoptResult {
 export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult> {
   const { asset, edited, original } = options;
   const targetDir = resolve(options.targetDir);
-  const source = options.source ?? (await adoptSource(asset, targetDir));
-  const base = await currentProvenance(asset, source);
+  const source = options.source ?? (await adoptSource(asset, targetDir, edited.bytes));
+  requireMediaType(asset, edited, source);
+  const base = await currentProvenance(asset, source, targetDir);
   const now = options.now ?? (() => new Date());
   const at = now().toISOString();
   const composite = DIGITAL_SOURCE_TYPES.composite;
@@ -403,7 +639,13 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
   };
   const humanEdit: TransformStep = {
     op: "human-edit",
-    params: { adoptedAt: at, original: original.sha256, edited: edited.sha256 },
+    params: {
+      adoptedAt: at,
+      original: original.sha256,
+      edited: edited.sha256,
+      // The commands recorded before this edit; an adopt that records no version left the rest.
+      commands: base.commands?.length ?? 0,
+    },
     engine: { name: "human", version: "1" },
     inputs: pixels(original.bytes),
     outputs: pixels(edited.bytes),
@@ -414,18 +656,25 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
     steps: [...(base.steps ?? []), humanEdit],
     ...(options.confirmation && { confirmation: options.confirmation }),
   };
-  const mediaType = sniffMediaType(edited.bytes);
-  const extension = asset.resource.includes(".") ? asset.resource.split(".").pop()! : "";
+  // A 3D output takes the shape its target declares, as at pick (assetgrove#137).
+  const shaped =
+    source.mediaType === GLB_MEDIA_TYPE && source.profile.model3d !== undefined
+      ? shapeModelHandoff(source.profile, {
+          bytes: edited.bytes,
+          fields: source.fields,
+          sidecars: source.sidecars ?? [],
+        })
+      : { bytes: edited.bytes, fields: source.fields, sidecars: source.sidecars ?? [] };
   const prepared = await prepareTargetWrite({
     profile: source.profile,
     spec: source.spec,
     bibleVersion: source.bibleVersion,
     output: {
-      bytes: edited.bytes,
-      mediaType,
-      extension,
-      fields: source.fields,
-      ...(source.sidecars && { sidecars: source.sidecars }),
+      bytes: shaped.bytes,
+      mediaType: source.mediaType,
+      extension: source.extension,
+      fields: shaped.fields,
+      ...(shaped.sidecars.length > 0 && { sidecars: shaped.sidecars }),
     },
     provenance,
     // A hand edit comes from no run or candidate.
@@ -441,9 +690,9 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
     },
     now,
   });
-  if (prepared.mediaPath !== resolve(asset.mediaPath)) {
+  if (!sameFilePath(prepared.mediaPath, asset.mediaPath)) {
     throw new InputError(
-      `the profile of run that made ${asset.assetId} now writes its media to ${prepared.mediaPath}, not ${asset.mediaPath}; adopt hands the edit off to the file it was made at`,
+      `the profile of the ${source.kind} that made ${asset.assetId} now writes its media to ${prepared.mediaPath}, not ${asset.mediaPath}; adopt hands the edit off to the file it was made at`,
     );
   }
   const written = await commitTargetWrite(prepared);

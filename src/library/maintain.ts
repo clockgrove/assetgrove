@@ -32,6 +32,7 @@ import {
   renderLog,
 } from "./folder.ts";
 import type { LogEntry } from "./folder.ts";
+import { describesUnrecordedEdit } from "./adopt.ts";
 import { readMedia } from "./lfs.ts";
 import { libraryPath } from "./paths.ts";
 import {
@@ -328,6 +329,24 @@ export async function readLibrary(
           (key) => !isDeepStrictEqual(asset.card!.parsed.data[key], next.data[key]),
         );
         if (differs) problem(asset.cardPath, "machine_field_mismatch");
+      }
+      // A provenance (a file of its own, or a manifest that embeds it) left by an adopt that
+      // recorded no version describes bytes no version records.
+      const named = (
+        (asset.card.parsed.data["sources"] ?? []) as { id: string; resource: string }[]
+      ).find((source) => source.id === "provenance");
+      if (named !== undefined && asset.review) {
+        const path = join(asset.dir, named.resource);
+        const json = await readText(path);
+        let value: unknown;
+        try {
+          value = json === undefined ? undefined : JSON.parse(json);
+        } catch {
+          value = undefined;
+        }
+        if (describesUnrecordedEdit(value, currentVersion(asset.review.record)?.sha256)) {
+          problem(path, "provenance_unrecorded");
+        }
       }
       const resource = String(asset.card.parsed.data["resource"]);
       const media = join(asset.dir, resource);

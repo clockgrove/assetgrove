@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, readFile, readdir, writeFile } from "node:fs/promises";
+import { copyFile, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -539,6 +539,85 @@ test("library adopt runs the profile's validator under pick's rules: unapproved 
   assert.match(doc(rejected)["validator"].output, /manifest refused/);
   assert.deepEqual(await Promise.all(library.map((path) => text(path))), kept);
   assert.equal((await review(p.reviewPath)).versions.length, 1);
+  // Every file the rejected adopt wrote is put back: the person's edit, the manifest and the
+  // provenance describe no unrecorded version.
+  const rejectedAt = await snapshot(p.world.targetDir);
+  const again = await cli(args);
+  assert.equal(again.code, 6, again.stdout + again.stderr);
+  assert.deepEqual(await snapshot(p.world.targetDir), rejectedAt);
+  const provenancePath = `${p.mediaPath}.provenance.json`;
+  assert.equal(
+    JSON.parse(await text(provenancePath)).steps.some((s: { op: string }) => s.op === "human-edit"),
+    false,
+  );
+
+  // Approved and accepting, the retry records one human-edit step and one validator entry for it.
+  await writeFile(checkPath, "process.exit(0);\n");
+  approveProfile(
+    { validator: { command: [process.execPath, checkPath, "{{manifest}}"] } },
+    { targetDir: p.world.targetDir },
+  );
+  const accepted = await cli(args);
+  assert.equal(accepted.code, 0, accepted.stdout + accepted.stderr);
+  const provenance = JSON.parse(await text(provenancePath));
+  const ops = provenance.steps.map((s: { op: string }) => s.op);
+  assert.equal(ops.filter((op: string) => op === "human-edit").length, 1, ops.join());
+  assert.equal(
+    provenance.commands.filter((c: { kind: string }) => c.kind === "validator").length,
+    2,
+    "the pick's validator and the adopt's",
+  );
+});
+
+test("library check reports a provenance that describes an adopted edit no version records", async () => {
+  const p = await pickedStill();
+  await writeFile(
+    join(p.world.targetDir, ".gitattributes"),
+    "*.png filter=lfs diff=lfs merge=lfs -text\n",
+  );
+  const check = () =>
+    cli([
+      ...["library", "check", "--target", p.world.targetDir],
+      ...["--profile", join(p.world.dir, "profile.json"), "--json"],
+    ]);
+  const ok = await check();
+  assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+  // What an adopt that crashed before recording its version would leave in the provenance.
+  const provenancePath = `${p.mediaPath}.provenance.json`;
+  const provenance = JSON.parse(await text(provenancePath));
+  const current = (await review(p.reviewPath)).versions[0]!.sha256;
+  provenance.steps.push({
+    op: "human-edit",
+    params: { original: current, edited: "0".repeat(64) },
+    engine: { name: "human", version: "1" },
+    inputs: [],
+    outputs: [],
+  });
+  await writeFile(provenancePath, JSON.stringify(provenance, null, 2));
+  const bad = await check();
+  assert.equal(bad.code, 6, bad.stdout + bad.stderr);
+  assert.deepEqual(doc(bad)["error"].problems, [
+    { file: "lantern.png.provenance.json", code: "provenance_unrecorded" },
+  ]);
+});
+
+test("library adopt reaches a project through a linked path, as the default target's real path names it", async () => {
+  const p = await pickedStill();
+  const linked = join(p.world.dir, "linked");
+  await symlink(p.world.targetDir, linked, "junction");
+  await handEdit(p.mediaPath);
+  useAttended();
+  const out = await confirmed([
+    "library",
+    "adopt",
+    join(linked, "props", "lantern.md"),
+    "--original",
+    originalOf(p),
+    "--json",
+  ]);
+  assert.equal(out.code, 0, out.stdout + out.stderr);
+  assert.equal(doc(out)["version"], 2);
+  assert.equal((await review(p.reviewPath)).versions.length, 2);
 });
 
 test("card edit changes title, description, tags and body, records one annotation and logs one line; a machine field exits 2 card_field_owned", async () => {

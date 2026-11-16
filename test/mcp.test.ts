@@ -901,6 +901,12 @@ export default {
       const profile = join(work, "library-profile.json");
       await writeFile(profile, JSON.stringify(syntheticProfile()));
       const target = join(work, "target");
+      // The run that made the asset, in the project's runs directory, where adopt reads it.
+      const record = await readFile(join(target, "assets/source/fern/fern-shelter.review.json"));
+      const run = /"run":"([^"]+)"/.exec(record.toString("utf8"))![1]!;
+      await cp(join(paths.world(), "runs", run), join(target, ".assetgrove/runs", run), {
+        recursive: true,
+      });
       const media = join(target, "assets/source/fern/shelter.png");
       const original = join(work, "original.png");
       await cp(media, original);

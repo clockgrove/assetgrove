@@ -13,6 +13,7 @@ import {
   adoptHandEdit,
   adoptRequest,
   adoptSource,
+  requireMediaType,
   currentProvenance,
   freeChecks,
   originalFile,
@@ -249,19 +250,21 @@ equal lock.sha256). The free QA checks run again on the edited file (transparenc
 provenance records, and the palette of --bible when given); a failure exits 5 qa_found_nothing. A person
 then confirms like a pick: a record at <configDir>/confirmations/<hex>.json for its digest, an MCP
 client's form, the TTY, or exit 8 confirmation_required and \`assetgrove confirm <hex>\`; the digest
-covers the asset id, the file's sha256, the version it replaces, the original and the review record's
-head, so it asks again once the record changes. Under headless settings it exits 8
-confirmation_required and writes nothing. The edit is then handed off as pick hands off, from the run
-that made the asset (<target>/.assetgrove/runs/<run>; the target is --target, else the Git top level
-of the asset's folder): the file is marked compositeWithTrainedAlgorithmicMedia and signed with C2PA
+covers the asset id, the file's sha256, the version it replaces, the original, the run that made the
+asset, its profile's sha256 and the review record's head, so it asks again once the record or the run
+changes. Under headless settings it exits 8 confirmation_required and writes nothing. The edit is then
+handed off as pick hands off, from the run that made the asset (<target>/.assetgrove/runs/<run>, or
+the import <target>/.assetgrove/imports/<run> of a family write-families handed off; the target is
+--target, else the Git top level of the asset's folder), in the version's media type: the file is marked compositeWithTrainedAlgorithmicMedia and signed with C2PA
 credentials that name the original as a parentOf ingredient, its provenance gets a human-edit step and
 the confirmation, every file the profile's hand-off presets write (the manifest included, review
 pending) is rendered again and read back, and the profile's validator runs under pick's rules (an
 unapproved one exits 8 before any write). A failed read-back (exit 6 handoff_check_failed) or a
-rejecting validator (exit 6 validator_rejected) records no version. Otherwise the version is appended
+rejecting validator (exit 6 validator_rejected) records no version and puts back every file it wrote. Otherwise the version is appended
 with its confirmation, source type and an adopt annotation, and the card, its lock, the indexes and
-log.md are rewritten. An unchanged file, a Git LFS pointer or a missing run exits 2; bytes of an older
-version exit 2 version_exists.`,
+log.md are rewritten. An unchanged file, a Git LFS pointer, edited bytes of another media type, a
+run id that is not one path segment, a missing run or a run without the version's candidate exits 2;
+bytes of an older version exit 2 version_exists.`,
   input: {
     type: "object",
     properties: {
@@ -306,13 +309,19 @@ version exit 2 version_exists.`,
     const before = await loadAsset(location);
     const edited = await workingFile(before);
     const original = await originalFile(before, files.original);
-    const request = adoptRequest(before, edited, original, files);
+    // The run or import that made the asset drives the hand-off; its profile is confirmed with it.
+    const source = await adoptSource(before, targetDir, edited.bytes);
+    const request = adoptRequest(before, edited, original, files, source);
     // Headless settings never adopt: refused before any check reads or writes more.
     if (ctx.settings.mode === "headless") {
       return headlessRefusal(request, { asset: before.assetId, sha256: edited.sha256 }, "adopt");
     }
-    const source = await adoptSource(before, targetDir);
-    const qa = await freeChecks(edited.bytes, await currentProvenance(before, source), args.bible);
+    requireMediaType(before, edited, source);
+    const qa = await freeChecks(
+      edited.bytes,
+      await currentProvenance(before, source, targetDir),
+      args.bible,
+    );
     const failed = qa.filter((r) => !r.passed);
     if (failed.length > 0) {
       return refusal(
@@ -336,9 +345,16 @@ version exit 2 version_exists.`,
       // Under the lock: the record, the file and the original are still what the person confirmed.
       async underLock() {
         const now = await loadAsset(location);
+        const file = await workingFile(now);
         requireSameRequest(
           request,
-          adoptRequest(now, await workingFile(now), await originalFile(now, files.original), files),
+          adoptRequest(
+            now,
+            file,
+            await originalFile(now, files.original),
+            files,
+            await adoptSource(now, targetDir, file.bytes),
+          ),
         );
       },
     });
