@@ -8,7 +8,7 @@ import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
 import { configHome, configOverride, SettingsError, stateHome, type Env } from "./env.ts";
-import { FormatError, readFormat } from "./formats.ts";
+import { FormatError, formatLine, readFormat } from "./formats.ts";
 import { grantProblems } from "./license.ts";
 
 export { SettingsError } from "./env.ts";
@@ -46,12 +46,37 @@ const limitSchema = z
     path: ["acceptUnlimited"],
   });
 
+const envName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name");
+
+const storeSchema = z.strictObject({
+  uri: z
+    .string()
+    .refine((uri) => /^(s3|gs|az):\/\/\S+$/.test(uri), "must be an s3://, gs:// or az:// URI"),
+  options: z.strictObject({ endpoint: z.url().optional(), region: name.optional() }).optional(),
+  credentialsEnv: z
+    .strictObject({
+      accessKeyId: envName,
+      secretAccessKey: envName,
+      sessionToken: envName.optional(),
+    })
+    .optional(),
+  writer: z.boolean().optional(),
+});
+
+const searchSchema = z.strictObject({
+  store: storeSchema.optional(),
+  embedder: z.enum(["local", "scripted"]).optional(),
+  model: z.enum(["siglip2-base"]).optional(),
+  candidates: z.boolean().optional(),
+  nearMatch: z.boolean().optional(),
+  folders: z.array(z.string().refine(isAbsolute, "must be an absolute path")).optional(),
+});
+
 const providerSchema = z.strictObject({
   adapter: name.optional(),
-  keyEnv: z
-    .string()
-    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name")
-    .optional(),
+  keyEnv: envName.optional(),
   baseURL: z.url().optional(),
   free: z.boolean().optional(),
   usdPerCredit: z.number().finite().positive().optional(),
@@ -114,6 +139,7 @@ const settingsSchema = z.strictObject({
   confirmedBy: z
     .record(name, z.strictObject({ method: name, at: name, client: z.string().optional() }))
     .optional(),
+  search: searchSchema.optional(),
 });
 
 /** The settings file as written, after validation. */
@@ -223,7 +249,7 @@ export function loadSettings(options: LoadOptions = {}): Settings {
     }
     refuseConfigDir(configDir, projectOf(configDir));
     refuseDefaultStateDir(defaultStateDir, projectOf(defaultStateDir));
-    return complete({ format: "assetgrove-settings/1" }, path, configDir, false, defaultStateDir);
+    return complete({ format: formatLine("settings") }, path, configDir, false, defaultStateDir);
   }
 
   const real = realpathSync.native(path);
@@ -271,6 +297,7 @@ export function loadSettings(options: LoadOptions = {}): Settings {
   const file = parsed.data;
 
   checkProviders(file, path);
+  checkSearch(file, path, projectOf);
   if (file.stateDir !== undefined) {
     const inside = projectOf(file.stateDir);
     if (inside !== undefined) {
@@ -336,7 +363,63 @@ function complete(
     promptPolicy: { allow: file.promptPolicy?.allow ?? [] },
     ...(file.contentCredentials && { contentCredentials: file.contentCredentials }),
     confirmedBy: file.confirmedBy ?? {},
+    ...(file.search && { search: completeSearch(file.search) }),
   };
+}
+
+function completeSearch(search: NonNullable<SettingsFile["search"]>): SearchSettings {
+  const { store } = search;
+  return {
+    ...(store && {
+      store: {
+        uri: store.uri,
+        options: store.options ?? {},
+        ...(store.credentialsEnv && { credentialsEnv: store.credentialsEnv }),
+        writer: store.writer ?? false,
+      },
+    }),
+    embedder: search.embedder ?? "local",
+    model: search.model ?? "siglip2-base",
+    candidates: search.candidates ?? true,
+    nearMatch: search.nearMatch ?? true,
+    folders: search.folders ?? [],
+  };
+}
+
+/** The refusals on the search block zod's per-field schema cannot express. */
+function checkSearch(
+  file: SettingsFile,
+  path: string,
+  projectOf: (target: string) => string | undefined,
+): void {
+  const endpoint = file.search?.store?.options?.endpoint;
+  if (endpoint !== undefined) {
+    const url = new URL(endpoint);
+    const shown = `${url.protocol}//${url.host}${url.pathname}`;
+    if (url.username !== "" || url.password !== "") {
+      throw new SettingsError(
+        `${path}: search.store.options.endpoint ${shown} carries a user name or password; settings never hold a key. Name the variables with credentialsEnv.`,
+      );
+    }
+    if (url.search !== "") {
+      throw new SettingsError(
+        `${path}: search.store.options.endpoint ${shown} carries a query string; settings never hold a key. Name the variables with credentialsEnv.`,
+      );
+    }
+    if (url.protocol !== "https:") {
+      throw new SettingsError(
+        `${path}: search.store.options.endpoint must be https; got ${shown}.`,
+      );
+    }
+  }
+  for (const [index, folder] of (file.search?.folders ?? []).entries()) {
+    const inside = projectOf(folder);
+    if (inside !== undefined) {
+      throw new SettingsError(
+        `${path}: search.folders.${index} ${folder} is inside the project ${inside}; search folders must live outside every repository.`,
+      );
+    }
+  }
 }
 
 /** Endpoint and reference refusals zod's per-field schema cannot express. */

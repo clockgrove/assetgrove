@@ -14,12 +14,13 @@ import { digestOf } from "./confirm/records.ts";
 import type { ConfirmRequest } from "./confirm/prompt.ts";
 import { withConfigOverride } from "./env.ts";
 import { InputError } from "./errors.ts";
+import { formatLine } from "./formats.ts";
 import { CORE_ADAPTERS, createProvider } from "./providers/adapter.ts";
 import { LIMIT_KINDS, loadSettings } from "./settings.ts";
 import type { ProviderLimit, Settings } from "./settings.ts";
 import { readHolds } from "./spend.ts";
 
-const FORMAT = "assetgrove-settings/1";
+const FORMAT = formatLine("settings");
 
 export const CAP_FIELDS = ["runUsd", "dailyUsd", "workItemUsd"] as const;
 export type CapField = (typeof CAP_FIELDS)[number];
@@ -288,12 +289,15 @@ export function setInPlace(text: string, path: string[], value: unknown): string
 }
 
 /** The parts of the file being edited a change depends on, read from its text, not the context. */
-function current(text: string): Pick<Settings, "providers"> & { acknowledgedHolds: string[] } {
+function current(
+  text: string,
+): Pick<Settings, "providers"> & { acknowledgedHolds: string[]; format: unknown } {
   const doc = parse(text) as unknown;
   const object = (v: unknown): Record<string, unknown> =>
     typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   const holds = object(object(doc)["spend"])["acknowledgedHolds"];
   return {
+    format: object(doc)["format"],
     providers: object(object(doc)["providers"]) as Settings["providers"],
     acknowledgedHolds: Array.isArray(holds)
       ? holds.filter((id): id is string => typeof id === "string")
@@ -374,6 +378,7 @@ export async function applySettingsChange(
     written.push("spend.acknowledgedHolds");
   }
   if (written.length === 0) return { path, written, notWritten };
+  if (now.format !== FORMAT) set(["format"], FORMAT);
   for (const field of written) set(["confirmedBy", field], confirmedBy);
 
   // Check the result as the settings would load it before it replaces the file.

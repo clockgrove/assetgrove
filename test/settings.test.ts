@@ -203,7 +203,7 @@ for (const field of ["apiKey", "key", "token", "secret", "APIKEY"]) {
 test("a missing, unknown or newer format is refused", () => {
   assert.throws(() => load({}), invalid(/no format line/));
   assert.throws(() => load({ format: "assetgrove-recipe/1" }), invalid(/unknown format/));
-  assert.throws(() => load({ format: "assetgrove-settings/2" }), invalid(/newer/));
+  assert.throws(() => load({ format: "assetgrove-settings/3" }), invalid(/newer/));
   assert.throws(() => load("{not json"), invalid(/not valid JSON/));
 });
 
@@ -492,4 +492,118 @@ test("a role or route outputGrant that is not a whole grant is settings_invalid"
     roles: { image: { provider: "scripted", model: "m", outputGrant: { license: "CC-BY-4.0" } } },
   };
   assert.throws(() => load(settings), invalid(/roles\.image\.outputGrant is not a grant/));
+});
+
+const SEARCH_FORMAT = "assetgrove-settings/2";
+
+test("a /1 file migrates to /2 in memory and keeps its values", () => {
+  const settings = load({ format: FORMAT, caps: { runUsd: 3 } });
+  assert.equal(settings.migratedFrom, 1);
+  assert.equal(settings.caps.runUsd, 3);
+  assert.equal(settings.search, undefined);
+});
+
+test("a /2 file without a search block leaves search absent", () => {
+  const settings = load({ format: SEARCH_FORMAT });
+  assert.equal(settings.migratedFrom, undefined);
+  assert.equal(settings.search, undefined);
+});
+
+test("a /2 file with a full search block loads with defaults filled", () => {
+  const folder = join(tempDir(), "concept-art");
+  const full = load({
+    format: SEARCH_FORMAT,
+    search: {
+      store: {
+        uri: "s3://bucket/prefix",
+        options: { endpoint: "https://acct.r2.cloudflarestorage.com", region: "auto" },
+        credentialsEnv: { accessKeyId: "AG_R2_KEY_ID", secretAccessKey: "AG_R2_SECRET" },
+        writer: true,
+      },
+      embedder: "scripted",
+      candidates: false,
+      folders: [folder],
+    },
+  });
+  assert.deepEqual(full.search, {
+    store: {
+      uri: "s3://bucket/prefix",
+      options: { endpoint: "https://acct.r2.cloudflarestorage.com", region: "auto" },
+      credentialsEnv: { accessKeyId: "AG_R2_KEY_ID", secretAccessKey: "AG_R2_SECRET" },
+      writer: true,
+    },
+    embedder: "scripted",
+    model: "siglip2-base",
+    candidates: false,
+    nearMatch: true,
+    folders: [folder],
+  });
+  assert.deepEqual(load({ format: SEARCH_FORMAT, search: {} }).search, {
+    embedder: "local",
+    model: "siglip2-base",
+    candidates: true,
+    nearMatch: true,
+    folders: [],
+  });
+  assert.deepEqual(
+    load({ format: SEARCH_FORMAT, search: { store: { uri: "gs://b/p" } } }).search?.store,
+    { uri: "gs://b/p", options: {}, writer: false },
+  );
+});
+
+test("a store option other than endpoint and region is refused, naming the field", () => {
+  for (const option of ["accessKey", "profile"]) {
+    assert.throws(
+      () =>
+        load({
+          format: SEARCH_FORMAT,
+          search: { store: { uri: "s3://b/p", options: { [option]: "x" } } },
+        }),
+      invalid(new RegExp(`search\\.store\\.options.*${option}`)),
+    );
+  }
+});
+
+test("a store uri that is not s3, gs or az is refused", () => {
+  for (const uri of ["https://b/p", "file:///tmp/x", "s3://", "b/p"]) {
+    assert.throws(
+      () => load({ format: SEARCH_FORMAT, search: { store: { uri } } }),
+      invalid(/search\.store\.uri/),
+    );
+  }
+});
+
+test("a store endpoint that is http, or carries userinfo or a query, is refused", () => {
+  for (const endpoint of [
+    "http://acct.example.com",
+    "https://u:p@acct.example.com",
+    "https://acct.example.com/?k=v",
+  ]) {
+    assert.throws(
+      () =>
+        load({
+          format: SEARCH_FORMAT,
+          search: { store: { uri: "s3://b/p", options: { endpoint } } },
+        }),
+      invalid(/search\.store\.options\.endpoint/),
+    );
+  }
+});
+
+test("a search folder inside a project is refused", () => {
+  const repo = gitRepo();
+  assert.throws(
+    () =>
+      loadSettings({
+        env: {
+          ASSETGROVE_CONFIG: settingsFile({
+            format: SEARCH_FORMAT,
+            search: { folders: [join(repo, "art")] },
+          }),
+          HOME: tempDir(),
+        },
+        cwd: repo,
+      }),
+    invalid(/search\.folders\.0/),
+  );
 });

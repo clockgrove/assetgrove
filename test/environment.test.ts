@@ -209,3 +209,23 @@ test("spend check and spend reconcile refuse a refused environment before any pr
     server.close();
   }
 });
+
+test("an AWS variable that can redirect index data is refused unless environment.allow lists it", async () => {
+  for (const name of ["AWS_ENDPOINT_URL", "AWS_PROFILE"]) {
+    const env: NodeJS.ProcessEnv = {
+      ...cleanEnv(),
+      [name]: "synthetic",
+      ASSETGROVE_CONFIG: await settings([]),
+    };
+    const refused = await cli(await stageArgs(), env);
+    assert.equal(refused.code, 2, refused.stderr);
+    assert.equal(JSON.parse(refused.stdout).error.code, "settings_invalid");
+    assert.match(refused.stdout, new RegExp(`${name} is set`));
+
+    const allowed = await cli(await stageArgs(), {
+      ...env,
+      ASSETGROVE_CONFIG: await settings([name]),
+    });
+    assert.equal(allowed.code, 0, allowed.stderr);
+  }
+});

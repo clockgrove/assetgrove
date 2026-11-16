@@ -3,20 +3,31 @@ import { EXIT, EXIT_MEANING } from "../errors.ts";
 import { InputError } from "../errors.ts";
 import { commands } from "../commands/registry.ts";
 import { createRunContext, settingsScope } from "../commands/context.ts";
-import { commandUsage, errorOutcome, parseCommandLine, runCommand } from "../commands/runner.ts";
+import {
+  availableCommands,
+  commandUsage,
+  errorOutcome,
+  parseCommandLine,
+  runCommand,
+} from "../commands/runner.ts";
 import { resultDocument } from "../commands/result.ts";
-import type { Outcome } from "../commands/types.ts";
+import type { CommandSpec, Outcome } from "../commands/types.ts";
 import { WORK_ITEM_ENV } from "../spend.ts";
 
-/** The CLI's own help: every registry command with its summary, the options, spend and exits. */
-export function mainUsage(): string {
-  const width = Math.max(...commands.map((c) => c.name.length));
+/**
+ * The CLI's own help: every command `listed` (core's, and each slot command whose slot is
+ * filled; core's alone by default) with its summary, the options, spend and exits.
+ */
+export function mainUsage(
+  listed: readonly CommandSpec[] = availableCommands(commands, undefined),
+): string {
+  const width = Math.max(...listed.map((c) => c.name.length));
   const exits = Object.entries(EXIT_MEANING).map(([exit, meaning]) => `${exit} ${meaning}`);
   return [
     "Usage: assetgrove <command> [options]",
     "",
     "Commands:",
-    ...commands.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
+    ...listed.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
     "",
     "Options:",
     "  --json       print exactly one JSON document on stdout (logs stay on stderr)",
@@ -48,6 +59,19 @@ function emit(json: boolean, command: string | null, outcome: Outcome): number {
   return outcome.exitCode;
 }
 
+/**
+ * The commands help lists: a slot command only when the settings load an extension that fills its
+ * slot. Settings or extensions that cannot load leave core's commands alone.
+ */
+async function listedCommands(): Promise<CommandSpec[]> {
+  try {
+    const ctx = await createRunContext({ log: () => {} });
+    return availableCommands(commands, ctx.extensions);
+  } catch {
+    return availableCommands(commands, undefined);
+  }
+}
+
 /** Runs one command line and returns its exit code. */
 export async function main(argv: string[]): Promise<number> {
   const json = argv.includes("--json");
@@ -63,8 +87,9 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT.invalid_input;
   }
   if (first === "--help" || first === "-h" || first === "help") {
-    const usage = mainUsage();
-    const fields = { usage, commands: commands.map((c) => c.name) };
+    const listed = await listedCommands();
+    const usage = mainUsage(listed);
+    const fields = { usage, commands: listed.map((c) => c.name) };
     return emit(json, null, { exitCode: 0, fields, human: usage });
   }
   if (first === "--version") {

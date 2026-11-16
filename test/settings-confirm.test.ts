@@ -245,7 +245,7 @@ test("a change to a hand-laid file inserts its fields and leaves every other byt
   );
   const expected = [
     "{",
-    `  "format": "assetgrove-settings/1",`,
+    `  "format": "assetgrove-settings/2",`,
     `  "stateDir": ${JSON.stringify(stateDir)},`,
     `  "caps":   { "dailyUsd": 10, "runUsd": 7 },`,
     `  "providers": {`,

@@ -17,7 +17,7 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 
 ```jsonc
 {
-  "format": "assetgrove-settings/1",
+  "format": "assetgrove-settings/2",
   "stateDir": "/abs/path",
   "headless": { "operator": "ci:example/repo" },
   "caps": { "runUsd": 5, "dailyUsd": 10, "workItemUsd": 5 },
@@ -54,12 +54,25 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
   "promptPolicy": { "allow": ["term"] },
   "contentCredentials": { "certificate": "/abs/chain.pem", "privateKey": "/abs/signer.key" },
   "confirmedBy": { "caps": { "method": "elicitation", "at": "...", "client": "..." } },
+  "search": {
+    "store": {
+      "uri": "s3://bucket/prefix",
+      "options": { "endpoint": "https://<account>.r2.cloudflarestorage.com", "region": "auto" },
+      "credentialsEnv": { "accessKeyId": "AG_R2_KEY_ID", "secretAccessKey": "AG_R2_SECRET" },
+      "writer": true,
+    },
+    "embedder": "local",
+    "model": "siglip2-base",
+    "candidates": true,
+    "nearMatch": true,
+    "folders": ["/abs/concept-art"],
+  },
 }
 ```
 
 | Field                  | Meaning                                                                                                                                                                                                                                                   | Default                                                                                       |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `format`               | `assetgrove-settings/1`. Required.                                                                                                                                                                                                                        | —                                                                                             |
+| `format`               | `assetgrove-settings/2`; a /1 file loads and is moved forward in memory. Required.                                                                                                                                                                        | —                                                                                             |
 | `stateDir`             | Absolute directory for run state; never inside a project.                                                                                                                                                                                                 | `<stateHome>/assetgrove` (`$XDG_STATE_HOME` or `~/.local/state`; `%LOCALAPPDATA%` on Windows) |
 | `headless.operator`    | Present: headless mode, run by this operator. Set only by an operator outside the repository.                                                                                                                                                             | attended                                                                                      |
 | `caps`                 | `runUsd`, `dailyUsd`, `workItemUsd`. Shared files may lower them, never raise them.                                                                                                                                                                       | 5 / 10 / 5                                                                                    |
@@ -75,6 +88,8 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 | `promptPolicy.allow`   | Prompt-policy allow terms.                                                                                                                                                                                                                                | none                                                                                          |
 | `contentCredentials`   | `certificate` (a PEM chain, signer first) and `privateKey` (a PEM PKCS#8 key: ECDSA P-256 or P-384, Ed25519 or RSA), absolute paths outside every project, that sign the C2PA manifests hand-off writes. See [Content credentials](#content-credentials). | the local development certificate                                                             |
 | `confirmedBy.<path>`   | Who confirmed a field: `method`, `at`, `client`.                                                                                                                                                                                                          | none                                                                                          |
+
+`search` is optional; absent, `Settings.search` is absent too. The local store is always `<stateDir>/search`. Present, `search` is filled with `embedder: "local"` (or `"scripted"`), `model: "siglip2-base"`, `candidates: true`, `nearMatch: true` and `folders: []`. `search.store` adds a shared remote store: `uri` is an `s3://`, `gs://` or `az://` URI; `options` takes only `endpoint` (https, no user name, password or query) and `region`, default `{}`; `credentialsEnv` names the variables that hold the store's `accessKeyId`, `secretAccessKey` and optional `sessionToken`, never the values; `writer` (default `false`) is true on the one machine that builds the shared index, and `false` makes the store read-only on this machine. The URI, the options and the credential variable names come only from settings. `folders` are absolute paths outside every project, indexed beside the library.
 
 ## Content credentials
 
@@ -92,6 +107,9 @@ Loading throws `SettingsError`, with the code `settings_invalid`, when:
 - any field anywhere is named `apiKey`, `key`, `token` or `secret` (in any case); the keys of `providers`, `roles`, `routes` and `confirmedBy` are ids, not field names, so a provider called `key` is accepted;
 - `stateDir` is relative or inside a project, or, when it is not set, the default one under the state home is inside a project;
 - `contentCredentials.certificate` or `contentCredentials.privateKey` is relative or inside a project;
+- `search.store.uri` is not an `s3://`, `gs://` or `az://` URI, or `search.store.options` has any field but `endpoint` and `region`;
+- a `search.store.options.endpoint` is not https or carries a user name, a password or a query string;
+- a `search.folders` entry is relative or inside a project;
 - a `baseURL` carries a user name, a password or a query string (the message shows only its origin and path);
 - a `baseURL` is neither https nor http on a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`);
 - `free` is set on a provider without a loopback `baseURL`;
@@ -270,11 +288,11 @@ A person edits every other field by hand. Headless mode is set only by an operat
 
 ## Format lines
 
-`readFormat(kind, value, source)` checks `format: "assetgrove-<kind>/<n>"` for `target-profile`, `style-bible`, `style-preset`, `recipe`, `settings` and `blocklist`, all currently at /1. It refuses with `format_unsupported` (`FormatError`), with reason `missing` (the message names the line to add), `too_new` or `unknown`. An older version moves forward in memory through steps registered with `registerMigration(kind, from, migrate)`, and the result reports `migratedFrom`.
+`readFormat(kind, value, source)` checks `format: "assetgrove-<kind>/<n>"` for `target-profile`, `style-bible`, `style-preset`, `recipe`, `settings` and `blocklist`, all currently at /1 except `target-profile` and `settings`, at /2. A `settings` /1 file is valid as /2 (the `search` block is optional), so its migration changes nothing; `settings change` rewrites an older format line to the current one when it writes. It refuses with `format_unsupported` (`FormatError`), with reason `missing` (the message names the line to add), `too_new` or `unknown`. An older version moves forward in memory through steps registered with `registerMigration(kind, from, migrate)`, and the result reports `migratedFrom`.
 
 ## Environment
 
-Settings and the refusal rule read the environment through `src/env.ts`. The only variable that steers spend is `ASSETGROVE_WORK_ITEM`; the adapters read only their key variables (`keyEnv`). `checkEnvironment(allow, env)` refuses with `settings_invalid` when `NODE_EXTRA_CA_CERTS`, `NODE_USE_SYSTEM_CA`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` is set, in either case, and `environment.allow` does not list it. Each of these can redirect a key or unwrap the TLS that carries it. The check runs at MCP server start and before every command that can send a key: every paid command, `spend check` and `spend reconcile`. `settings check` lists the refused variables and, when any is, reads no provider. A validator or material command runs with every key variable removed from its environment, and its output is redacted.
+Settings and the refusal rule read the environment through `src/env.ts`. The only variable that steers spend is `ASSETGROVE_WORK_ITEM`; the adapters read only their key variables (`keyEnv`). `checkEnvironment(allow, env)` refuses with `settings_invalid` when `NODE_EXTRA_CA_CERTS`, `NODE_USE_SYSTEM_CA`, `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_USE_ENV_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, or one of the AWS variables Lance's object store reads (`AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ALLOW_HTTP`) is set, in either case, and `environment.allow` does not list it. Each of these can redirect a key or index data, or unwrap the TLS that carries a key; no variable may redirect search index data. The check runs at MCP server start and before every command that can send a key: every paid command, `spend check` and `spend reconcile`. `settings check` lists the refused variables and, when any is, reads no provider. A validator or material command runs with every key variable removed from its environment, and its output is redacted.
 
 ## Tests
 

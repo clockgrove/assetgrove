@@ -26,8 +26,9 @@ import { afterEach, beforeEach } from "node:test";
 import { commandIdentity, scriptIdentity } from "../../src/approvals.ts";
 import type { CommandIdentity, CommandKind } from "../../src/approvals.ts";
 import { REFUSED_VARIABLES } from "../../src/env.ts";
+import { formatLine } from "../../src/formats.ts";
 
-const FORMAT = "assetgrove-settings/1";
+const FORMAT = formatLine("settings");
 
 const root = mkdtempSync(join(realpathSync(tmpdir()), "assetgrove-test-"));
 

@@ -61,8 +61,9 @@ export function windowsSearchPath(env: Env = process.env): {
 
 /**
  * Variables that redirect or unwrap the TLS carrying a key (a CA, the system CA store, TLS checks
- * off, a proxy) or the provider SDKs' endpoint variables; each is refused in either case unless
- * allowed.
+ * off, a proxy), the provider SDKs' endpoint variables, or the AWS variables Lance's object store
+ * reads, which can redirect search index data (design section 7.2); each is refused in either case
+ * unless allowed.
  */
 export const REFUSED_VARIABLES = [
   "NODE_EXTRA_CA_CERTS",
@@ -74,6 +75,17 @@ export const REFUSED_VARIABLES = [
   "ALL_PROXY",
   "ANTHROPIC_BASE_URL",
   "OPENAI_BASE_URL",
+  "AWS_ENDPOINT_URL",
+  "AWS_ENDPOINT_URL_S3",
+  "AWS_REGION",
+  "AWS_DEFAULT_REGION",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_PROFILE",
+  "AWS_CONFIG_FILE",
+  "AWS_SHARED_CREDENTIALS_FILE",
+  "AWS_ALLOW_HTTP",
 ] as const;
 
 /** The set variables `checkEnvironment` would refuse, by the name they are set under. */
@@ -98,7 +110,7 @@ export function checkEnvironment(allow: readonly string[] = [], env: Env = proce
   const refused = refusedVariables(allow, env);
   if (refused.length === 0) return;
   throw new SettingsError(
-    `${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} set; each can redirect a key or unwrap the TLS that carries it. Unset ${refused.length === 1 ? "it" : "them"}, or list ${refused.length === 1 ? "it" : "them"} in the settings file's environment.allow.`,
+    `${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} set; each can redirect a key or index data, or unwrap the TLS that carries a key. Unset ${refused.length === 1 ? "it" : "them"}, or list ${refused.length === 1 ? "it" : "them"} in the settings file's environment.allow.`,
   );
 }
 
