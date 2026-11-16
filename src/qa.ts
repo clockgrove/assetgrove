@@ -9,6 +9,8 @@ export interface SpecExpectation {
   palette: string[];
   /** Default true. */
   requireTransparentPixel?: boolean;
+  /** Absent means binary with today's wording, as generated candidates are checked. */
+  alpha?: "binary" | "soft";
 }
 
 function det(check: string, passed: boolean, reason: string): Reason {
@@ -27,10 +29,22 @@ export function deterministicChecks(strip: Raster, expected: SpecExpectation): R
   }
   const needTransparent = expected.requireTransparentPixel ?? true;
   let transparency: Reason;
-  if (soft > 0) {
+  if (soft > 0 && expected.alpha === undefined) {
     transparency = det("transparency", false, `${soft} of ${total} pixels have partial alpha`);
+  } else if (soft > 0 && expected.alpha === "binary") {
+    transparency = det(
+      "transparency",
+      false,
+      `${soft} of ${total} pixels have partial alpha; the asset's style allows only alpha 0 or 255 (alpha mode binary)`,
+    );
   } else if (needTransparent && transparent === 0) {
     transparency = det("transparency", false, "no pixel is transparent");
+  } else if (soft > 0) {
+    transparency = det(
+      "transparency",
+      true,
+      `${soft} of ${total} pixels have partial alpha, which the asset's style allows (alpha mode soft); ${transparent} transparent`,
+    );
   } else {
     transparency = det(
       "transparency",

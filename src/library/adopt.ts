@@ -46,7 +46,15 @@ import { sha256 as sha256Of, sniffMediaType } from "../request.ts";
 import { DEFAULT_RUNS } from "../runs/plan.ts";
 import { pixelHash } from "../transform/run.ts";
 import type { TransformStep } from "../transform/types.ts";
-import type { AssetSpec, ConfirmationRecord, Provenance, Reason, TargetProfile } from "../types.ts";
+import type {
+  AssetSpec,
+  ConfirmationRecord,
+  Provenance,
+  Reason,
+  StyleProfile,
+  TargetProfile,
+} from "../types.ts";
+import { resolveStyle } from "../style.ts";
 import { loadAsset, locateAsset } from "./actions.ts";
 import type { AssetLocation, LoadedAsset } from "./actions.ts";
 import { sha256Hex } from "./canonical.ts";
@@ -553,15 +561,35 @@ export function rasterOf(bytes: Uint8Array): Raster | undefined {
 /**
  * The free QA checks of an edited raster (src/qa.ts): transparency, the frame count of the
  * provenance's `frame` and `frameCount` (else one frame of the whole image) and, with a bible, its
- * palette. Media that is not a raster gets no checks.
+ * palette. Media that is not a raster gets no checks. With `asset`, the transparency check follows
+ * the asset: partial alpha fails only when its style's alpha mode is binary (default soft), and a
+ * transparent pixel is required only when `original` (the version replaced) has one.
  */
 export async function freeChecks(
   bytes: Uint8Array,
   provenance: Provenance,
   biblePath: string | undefined,
+  asset?: { style?: StyleProfile; original?: Uint8Array },
 ): Promise<Reason[]> {
   const raster = rasterOf(bytes);
   if (raster === undefined) return [];
+  let transparencyRule: { alpha: "binary" | "soft"; requireTransparentPixel: boolean } | undefined;
+  if (asset !== undefined) {
+    const before = asset.original === undefined ? undefined : rasterOf(asset.original);
+    let hasTransparent = false;
+    if (before !== undefined) {
+      for (let i = 3; i < before.data.length; i += 4) {
+        if (before.data[i] === 0) {
+          hasTransparent = true;
+          break;
+        }
+      }
+    }
+    transparencyRule = {
+      alpha: resolveStyle({ ...(asset.style?.alpha && { alpha: asset.style.alpha }) }).alpha.mode,
+      requireTransparentPixel: hasTransparent,
+    };
+  }
   const parameters = provenance.parameters ?? {};
   const frame = parameters["frame"] as { width?: unknown; height?: unknown } | undefined;
   const frameCount = parameters["frameCount"];
@@ -577,6 +605,7 @@ export async function freeChecks(
       : { width: raster.width, height: raster.height },
     frameCount: framed ? frameCount : 1,
     palette: palette ?? [],
+    ...transparencyRule,
   });
   return palette === undefined ? reasons.filter((r) => r.check !== "palette") : reasons;
 }

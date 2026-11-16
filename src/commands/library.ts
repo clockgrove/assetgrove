@@ -321,6 +321,7 @@ bytes of an older version exit 2 version_exists.`,
       edited.bytes,
       await currentProvenance(before, source, targetDir),
       args.bible,
+      { style: source.profile.style, original: original.bytes },
     );
     const failed = qa.filter((r) => !r.passed);
     if (failed.length > 0) {
