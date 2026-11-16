@@ -489,3 +489,49 @@ test("pendingMaxAgeHours is honoured and the expired lookup shows in spend statu
   const human = await cli(["spend", "status"]);
   assert.match(human.stdout, /expired lookup .*nothing was compared/);
 });
+
+test("a settled estimate is settled once while another call of the run is still pending", async () => {
+  const stateDir = await freshState();
+  settings(stateDir);
+  const { args, dir } = await stageArgs();
+  const flag = join(dir, "vision-reported.txt");
+  const path = join(dir, "mixed-script.mjs");
+  await writeFile(
+    path,
+    `import { existsSync } from "node:fs";
+import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
+export default {
+  paid: true,
+  reconcile: "per-call-cost",
+  callCost: (id) =>
+    id.startsWith("scripted-image-") ? 0.0001
+    : !id.startsWith("scripted-vision-") ? 0
+    : existsSync(${JSON.stringify(flag)}) ? 0.05 : undefined,
+  image: (r, i) => base.image(r, i),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+};`,
+  );
+  approve(path);
+  const r = await cli([...args, "--provider-script", path]);
+  assert.equal(r.code, 0, r.stderr);
+  const [entry] = await runReconcile(r);
+  assert.equal(entry?.status, "pending", JSON.stringify(entry));
+  const settles = async () =>
+    (await readLines<{ op: string }>(join(stateDir, "spend.jsonl"))).filter(
+      (e) => e.op === "settle",
+    ).length;
+  const once = await settles();
+  assert.ok(once > 0, "the estimate is settled on the first pass");
+  const retry = await cli(["spend", "reconcile", "--provider-script", path, "--json"]);
+  assert.equal(retry.code, 0, retry.stderr);
+  assert.equal(await settles(), once, "a retry appends no second settle");
+  await writeFile(flag, "");
+  const done = await cli(["spend", "reconcile", "--provider-script", path, "--json"]);
+  const result = JSON.parse(done.stdout) as { reconciled: ReconcileEntry[] };
+  assert.deepEqual(
+    result.reconciled.map((e) => e.status),
+    ["reconciled"],
+  );
+  assert.equal(await settles(), once);
+  assert.equal(existsSync(join(stateDir, "holds.jsonl")), false, "no hold");
+});

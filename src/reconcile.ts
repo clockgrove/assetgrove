@@ -313,8 +313,8 @@ async function perCall(
       unmatched++;
       continue;
     }
-    looked.push(call);
     if (cost === undefined) {
+      looked.push(call);
       waiting.push(call);
       if (retry) break;
       continue;
@@ -322,8 +322,11 @@ async function perCall(
     if (call.costSource === "estimate" && call.id !== undefined) {
       if (Math.abs(call.ledgerUsd - cost) > EPSILON) ledger.settle(call.id, cost, call.requestId);
       settled++;
+      // The pending record keeps the settled cost, so a retry finds nothing left to settle.
+      looked.push({ ...call, ledgerUsd: cost });
       continue;
     }
+    looked.push(call);
     ledgerUsd += call.ledgerUsd;
     providerUsd += cost;
   }
