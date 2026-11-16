@@ -13,6 +13,7 @@ import { extname, join, relative, sep } from "node:path";
 import { turntableViews } from "../compare.ts";
 import { InputError } from "../errors.ts";
 import { BIBLE_PATH } from "../init.ts";
+import { findProvenance } from "../library/adopt.ts";
 import { MACHINE_FIELDS } from "../library/card.ts";
 import { sha256Hex } from "../library/canonical.ts";
 import { logEntriesFromReview, renderLog } from "../library/folder.ts";
@@ -383,8 +384,9 @@ function shapeFrom(kind: unknown, parameters: unknown): ThumbShape {
 function shapeOf(project: Project, asset: Asset): ThumbShape {
   if (asset.kind !== "sprite-strip") return "image";
   const path = sourcePath(project, asset, "provenance");
-  const record = path === undefined ? undefined : readJsonObject(path);
-  return shapeFrom(asset.kind, record?.["parameters"]);
+  // The record may be the file itself or embedded in a manifest, as `library check` finds it.
+  const record = path === undefined ? undefined : findProvenance(readJsonObject(path));
+  return shapeFrom(asset.kind, record?.parameters);
 }
 
 function stillAsset(view: View, id: string): Asset {

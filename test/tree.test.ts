@@ -536,3 +536,34 @@ test("a run candidate's strip thumbnail uses the frame its provenance records", 
     await rm(l.dir, { recursive: true, force: true });
   }
 });
+
+test("a library strip reads as the key frames its provenance records, embedded or not", async () => {
+  const l = fixtureLibrary();
+  try {
+    const path = join(l.root, "walk.png.provenance.json");
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    const strip = { strip: { width: 16, height: 32, count: 8 } } as const;
+    const expected = decodePng(
+      thumbnail([readFileSync(join(l.root, "walk.png"))], strip, READ_LIMIT)!,
+    );
+    assert.notDeepEqual([expected.width, expected.height], [128, 32]);
+    record.parameters = { frame: { width: 16, height: 32 }, frameCount: 8 };
+    const shapes = async () => {
+      const open = await openProject(l.dir, stateDir);
+      return Promise.all(
+        ["walk/image", "walk/versions/1"].map(async (address) => {
+          const image = png(images(await readTree(open, A(address)))[0]!);
+          return [image.width, image.height];
+        }),
+      );
+    };
+    // The record as its own file.
+    writeFileSync(path, JSON.stringify(record));
+    for (const shape of await shapes()) assert.deepEqual(shape, [expected.width, expected.height]);
+    // The record embedded in a manifest, as `library check` and `disclosure` find it.
+    writeFileSync(path, JSON.stringify({ manifest: { assertions: [{ data: record }] } }));
+    for (const shape of await shapes()) assert.deepEqual(shape, [expected.width, expected.height]);
+  } finally {
+    await rm(l.dir, { recursive: true, force: true });
+  }
+});

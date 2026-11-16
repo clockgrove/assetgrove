@@ -597,8 +597,16 @@ export function resolveRoute(
   if (override !== undefined) {
     const same = fallback?.provider === override.provider && fallback?.model === override.model;
     if (same) {
+      // A date belongs to the terms text it was recorded for: new text without its own date
+      // drops the default's date rather than claiming it.
+      const { providerTermsAsOf: inheritedAsOf, ...base } = fallback!;
+      const keepAsOf =
+        override.providerTerms === undefined && inheritedAsOf !== undefined
+          ? { providerTermsAsOf: inheritedAsOf }
+          : {};
       route = {
-        ...fallback!,
+        ...base,
+        ...keepAsOf,
         ...(override.estimatedCostUsd !== undefined && {
           estimatedCostUsd: override.estimatedCostUsd,
         }),
