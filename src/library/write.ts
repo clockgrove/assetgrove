@@ -363,6 +363,9 @@ export interface CurrentVersion {
   /** The current version's sha256 and position; absent before the first pick. */
   sha256?: string;
   version?: number;
+  /** The run and candidate the current version was picked from. */
+  run?: string;
+  candidate?: string;
   /** Whether the working media differs from the card's `lock.sha256`. */
   outsideChange: boolean;
 }
@@ -399,10 +402,13 @@ export async function currentVersion(
       outsideChange = held !== card.sha256;
     }
   }
-  const sha256 = versions.at(-1)?.sha256;
+  const last = versions.at(-1);
+  const sha256 = last?.sha256;
   return {
     assetId,
     ...(sha256 !== undefined && { sha256, version: versions.length }),
+    ...(last?.run !== undefined && { run: last.run }),
+    ...(last?.candidate !== undefined && { candidate: last.candidate }),
     outsideChange,
   };
 }
@@ -653,15 +659,6 @@ export async function commitLibraryWrite(
       created: at,
       target: { source: resource, "ag:version": sha256 },
       "ag:action": answers.length > 0 ? "answer" : (input.action ?? (first ? "pick" : "replace")),
-      ...(answers.length > 0 && {
-        body: [
-          {
-            type: "TextualBody",
-            purpose: "commenting",
-            value: `answers ${answers.join(", ")}`,
-          },
-        ],
-      }),
     });
   }
   for (const [path, bytes] of copies) {

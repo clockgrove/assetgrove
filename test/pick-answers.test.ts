@@ -86,7 +86,7 @@ test("picking a candidate of a request_change run answers its request", async ()
   const moderating = after.annotations.find(
     (a) => (a as { "ag:action"?: string })["ag:action"] === "answer",
   )!;
-  assert.match(JSON.stringify(moderating.body), new RegExp(`answers ${request}`));
+  assert.equal(moderating.body, undefined, "the answer is recorded only in versions[].answers");
   const log = join(dir, "assets/log.md");
   if (existsSync(log)) assert.match(await readFile(log, "utf8"), /answers #[0-9a-f]{16}/);
 

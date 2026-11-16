@@ -201,7 +201,8 @@ test("a box region on a still with a mask-capable route makes masked edits; the 
     );
     const target = editing[0]!.target as Record<string, unknown>;
     assert.equal(target["ag:version"], v1);
-    assert.equal((target["selector"] as { value: string }).value, "xywh=pixel:0,0,10,10");
+    // The 10 px box on the 40×40 still is recorded in percent, so it fits a version of another size.
+    assert.equal((target["selector"] as { value: string }).value, "xywh=percent:0,0,25,25");
     // The reference is copied beside the record under its sha256.
     const refSha = sha(await readFile(ref));
     const copied = join(p.dir, "assets", "lamp.review", `${refSha}.png`);
@@ -396,6 +397,19 @@ test("picking a candidate appends the version answering the request and logs it;
     assert.equal(versionStatus(record, record.versions[1]!.sha256), "pending");
     const log = await readFile(join(p.dir, "assets", "log.md"), "utf8");
     assert.match(log, new RegExp(`answer .*answers ${first.requests[0]!.id}`));
+    const moderating = record.annotations.find(
+      (a) => (a as { "ag:action"?: string })["ag:action"] === "answer",
+    )!;
+    assert.equal(moderating.body, undefined, "the answer is recorded only in versions[].answers");
+
+    // Re-picking the same candidate completes the pick again: no version_changed, no new version.
+    const again = await runCommand(
+      pickCommand,
+      { run: first.runDir, candidate: "c1", target: p.dir },
+      context(),
+    );
+    assert.equal(again.exitCode, 0, again.error?.message);
+    assert.equal(parseReview(await readFile(p.review, "utf8"), p.review).versions.length, 2);
 
     const stale = await runCommand(
       pickCommand,

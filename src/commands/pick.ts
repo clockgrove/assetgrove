@@ -31,7 +31,12 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
     );
   const current = await currentVersion(run.profile, run.spec, resolve(args.target));
   const change = run.changeRequest;
-  if (change !== undefined && current.sha256 !== change.version) {
+  // Re-running an interrupted pick completes it: when the current version is this run's own
+  // candidate (the one named, or any when none is), the pick already appended it.
+  const picked =
+    current.run === run.runId &&
+    (args.candidate === undefined || current.candidate === args.candidate);
+  if (change !== undefined && current.sha256 !== change.version && !picked) {
     throw changeVersionChanged(
       current.assetId,
       current.version ?? 0,

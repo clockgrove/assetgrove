@@ -33,6 +33,7 @@ import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { loadStyleBible } from "../inputs.ts";
+import { imageSize } from "../model3d/scene.ts";
 import { loadAsset, locateAsset, withLibraryLock, writeAsset } from "../library/actions.ts";
 import type { LoadedAsset } from "../library/actions.ts";
 import { sha256Hex } from "../library/canonical.ts";
@@ -234,15 +235,25 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   };
 }
 
-/** A media-fragment box selector for a box region. */
-function selectorOf(region: Region): Record<string, unknown> | undefined {
+/**
+ * A media-fragment box selector for a box region, in percent of the image it was drawn on (design
+ * section 3.1), so it fits a version of another size. A pixel box converts through `size`, the
+ * frame's or the image's; only when no size is known (a 3D view) does it stay in pixels.
+ */
+function selectorOf(
+  region: Region,
+  size: { width: number; height: number } | undefined,
+): Record<string, unknown> | undefined {
   if (region.shape.kind !== "box") return undefined;
   const { unit, x, y, width, height } = region.shape;
-  return {
-    type: "FragmentSelector",
-    conformsTo: MEDIA_FRAGMENTS,
-    value: `xywh=${unit === "percent" ? "percent:" : "pixel:"}${x},${y},${width},${height}`,
-  };
+  const pct = (value: number, of: number) => Number(((value * 100) / of).toFixed(4));
+  const value =
+    unit === "percent"
+      ? `xywh=percent:${x},${y},${width},${height}`
+      : size !== undefined && size.width > 0 && size.height > 0
+        ? `xywh=percent:${pct(x, size.width)},${pct(y, size.height)},${pct(width, size.width)},${pct(height, size.height)}`
+        : `xywh=pixel:${x},${y},${width},${height}`;
+  return { type: "FragmentSelector", conformsTo: MEDIA_FRAGMENTS, value };
 }
 
 /** Copies a mask or reference into `<assetId>.review/<sha256>.<ext>`; its path from the record. */
@@ -279,7 +290,13 @@ async function copyBeside(
 async function recordRequests(
   args: RequestChangeArgs,
   ctx: RunContext,
-  prepared: { asset: LoadedAsset; version: Version; regions: Region[] },
+  prepared: {
+    asset: LoadedAsset;
+    version: Version;
+    regions: Region[];
+    bytes: Uint8Array;
+    source: RunRecord;
+  },
   runId: string,
 ): Promise<{ annotations: Annotation[]; files: string[] }> {
   const location = locateAsset(args.address);
@@ -306,7 +323,12 @@ async function recordRequests(
           : undefined;
       const refs = [];
       for (const path of region.refs) refs.push(await copyBeside(asset, path, files));
-      const selector = selectorOf(region);
+      const selector = selectorOf(
+        region,
+        region.frame !== undefined
+          ? profileFrame(prepared.source.profile)
+          : imageSize(prepared.bytes),
+      );
       const input = {
         type: "Annotation",
         motivation: "editing",
