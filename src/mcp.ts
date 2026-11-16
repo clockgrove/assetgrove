@@ -39,7 +39,9 @@ import type { GenerationProvider } from "./gateway/provider.ts";
 import { PlanChangedError, applyPlan, createPlan, savePlan } from "./planning.ts";
 import type { SpendLedger } from "./spend.ts";
 import { projectDir } from "./tree/project.ts";
+import { runFind } from "./commands/search.ts";
 import { TreeServer } from "./tree/serve.ts";
+import type { SearchRunner } from "./tree/serve.ts";
 
 export interface ToolContext {
   provider?: GenerationProvider;
@@ -289,6 +291,20 @@ async function callContext(server: RunContext, args: Arguments): Promise<RunCont
 }
 
 /**
+ * The tree's search paths, while a loaded extension fills the search slot: each runs the `find`
+ * command's own search (settings read at the call, like every tool call), so the paths and the
+ * command return the same hits. A resource read writes no sheet and never spends.
+ */
+function searchRunner(ctx: RunContext, dir: string): SearchRunner | undefined {
+  if (ctx.extensions?.search === undefined) return undefined;
+  return async (query) => {
+    const call = await callContext(ctx, {});
+    const { fields } = await runFind({ ...query, target: dir }, call, { sheet: false });
+    return fields;
+  };
+}
+
+/**
  * `ls`, `cat` and the search commands read the tree the server serves unless the call names
  * another project.
  */
@@ -490,7 +506,13 @@ export async function serveMcp(
   const codec = formStateCodec();
   const dir = projectDir(options.target);
   const handle = serveStdio(
-    ({ era }) => createServer(ctx, codec, new TreeServer(dir, ctx.settings.stateDir), era),
+    ({ era }) =>
+      createServer(
+        ctx,
+        codec,
+        new TreeServer(dir, ctx.settings.stateDir, searchRunner(ctx, dir)),
+        era,
+      ),
     {
       transport: new StdioServerTransport(input, output),
       onerror: (error) => ctx.log(redact(`mcp: ${error.message}`)),

@@ -101,7 +101,19 @@ export interface SearchFindResult {
   builtFrom: { head: string; at: string } | null;
 }
 
+export interface SearchOutlier {
+  address: string;
+  distance: number;
+  z: number;
+}
+
+export interface SearchOutliersResult {
+  members: number;
+  outliers: SearchOutlier[];
+}
+
 export interface SearchSlot {
+  outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult>;
   find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;
