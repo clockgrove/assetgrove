@@ -2,7 +2,7 @@ import "./fixtures/env.ts";
 import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -553,4 +553,27 @@ test("import and generate-sheet hash the identity threshold record they filter a
   await writeFile(path, JSON.stringify(record));
   for (const [name, args] of Object.entries(requests))
     assert.notEqual(await digest(args), first[name], `${name}: a re-recorded threshold`);
+});
+
+test("identity-eval --record compares bibles by real path: a case reaching --bible through a link is its own", async () => {
+  const f = await fixture();
+  await symlink(join(f.root, "art"), join(f.root, "linked"), "dir");
+  const cases = [
+    { image: "sheet.png", subject: "bram", same: true, bible: "linked/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: true, bible: "linked/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: false, bible: "linked/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: false, bible: "linked/BIBLE.md" },
+  ];
+  await writeFile(join(f.root, "cases.json"), JSON.stringify(cases));
+  const result = await exec(
+    process.execPath,
+    [
+      CLI,
+      "identity-eval",
+      ...["--bible", f.bible, "--cases", join(f.root, "cases.json"), "--record"],
+      ...["--provider-script", SCRIPT, "--json"],
+    ],
+    { env: env("4,4,0,0") },
+  );
+  assert.equal(JSON.parse(result.stdout).ok, true);
 });

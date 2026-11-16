@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { InputError } from "../errors.ts";
 import { loadBible } from "../bible.ts";
@@ -98,8 +98,10 @@ async function prepare(args: IdentityEvalArgs, ctx: RunContext) {
   // Checked before any call: a record is the bible's own, so every case must be judged against it.
   if (args.record) {
     if (args.bible === undefined) throw new InputError("--record needs --bible <BIBLE.md>");
-    const own = (await loadBible(args.bible)).path;
-    const others = set.bibles.filter((path) => path !== own);
+    // Compared by real path: a case may reach the same bible through a link or another spelling.
+    const own = await realpath((await loadBible(args.bible)).path);
+    const real = await Promise.all(set.bibles.map(async (path) => [path, await realpath(path)]));
+    const others = real.filter(([, path]) => path !== own).map(([typed]) => typed as string);
     if (others.length > 0)
       throw new InputError(
         `--record records a threshold for ${args.bible} alone, but cases name other bibles: ${others.join(", ")}`,
