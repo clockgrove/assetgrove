@@ -216,7 +216,7 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
     report = {
       ...base,
       reasons,
-      passed: reasons.every((r) => r.passed || r.shadow),
+      passed: !base.pending?.length && reasons.every((r) => r.passed || r.shadow),
       identityFlicker: "checked",
       holes: "checked",
       filtering: ANIMATION_VISION_CHECKS.map(
@@ -259,16 +259,26 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
 export function formatReport(report: StripQaResult["report"]): string[] {
   const failed = report.reasons.filter((r) => !r.passed && !r.shadow);
   const advisory = report.reasons.filter((r) => !r.passed && r.shadow);
+  const pending = report.pending ?? [];
   const lines = [
     `${report.family}: ${report.frameCount} frames, template ${report.template ?? (report.templateSource === "undecided" ? "undecided" : "none")}` +
       (report.gait !== undefined ? `, gait ${report.gait}` : "") +
       ", " +
-      (report.passed ? "all checks passed" : `${failed.length} check(s) failed`) +
+      (failed.length > 0
+        ? `${failed.length} check(s) failed`
+        : pending.length > 0
+          ? "no check failed"
+          : "all checks passed") +
+      (pending.length > 0
+        ? `, ${pending.length} check(s) pending (${pending.map((p) => p.check).join(", ")} not run: template undecided)`
+        : "") +
       (report.identityFlicker === "skipped" ? " (identity flicker and holes not checked)" : ""),
   ];
   for (const r of failed) lines.push(`  ${r.check} [${r.source}]: ${r.reason}`);
   // An advisory check is recorded beside QA: its verdict is shown, but it filtered nothing.
   for (const r of advisory)
     lines.push(`  ${r.check} [${r.source}; failed, not filtered]: ${r.reason}`);
+  // A pending check was not run: it is neither passed nor failed.
+  for (const p of pending) lines.push(`  ${p.check} [pending]: ${p.reason}`);
   return lines;
 }

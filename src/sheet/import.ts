@@ -181,6 +181,12 @@ export interface ImportRecord {
     files: string[];
     /** The motion template the confirmed grouping declared for a family, by family. */
     templates?: Record<string, string>;
+    /**
+     * By family, the animation checks not run on the written strip because its template is
+     * undecided (ground-contact, footprint-drift, loop-seam): pending until `animation-qa --import`
+     * decides the template and runs them.
+     */
+    pending?: Record<string, string[]>;
   }>;
   /**
    * The common scale fitted on the first write, reused by every later write of this import so all
@@ -1049,6 +1055,15 @@ export async function writeFamilies(
         templates: Object.fromEntries(
           grouping.families.flatMap((f) =>
             f.template !== undefined ? [[f.name, f.template] as const] : [],
+          ),
+        ),
+      }),
+      ...(written.some((w) => w.animation.pending?.length) && {
+        pending: Object.fromEntries(
+          written.flatMap((w) =>
+            w.animation.pending?.length
+              ? [[w.name, w.animation.pending.map((p) => p.check)] as const]
+              : [],
           ),
         ),
       }),

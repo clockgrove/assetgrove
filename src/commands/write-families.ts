@@ -86,7 +86,11 @@ export const writeFamiliesCommand = defineCommand<WriteFamiliesArgs>({
 target with review pending, registered within the jitter bound in pixels. The grouping's status
 grants nothing: a person confirms the write of these families and this grouping digest (design
 section 7) through headless settings, a record at <configDir>/confirmations/<hex>.json, an MCP client's form, the TTY,
-or exit 8 confirmation_required and \`assetgrove confirm <hex>\`. Agents never confirm a write.`,
+or exit 8 confirmation_required and \`assetgrove confirm <hex>\`. Agents never confirm a write.
+It spends nothing, so it asks no motion-template question: a family no grouping or spec declares a
+template for, that no template is named for and no recorded decision chose one for, is written as
+undecided, its ground-contact, footprint-drift and loop-seam checks pending ("not run: template
+undecided") until \`animation-qa --import\` decides the template and runs them.`,
   input: {
     type: "object",
     properties: {

@@ -107,7 +107,7 @@ test("a hop passes ground-contact under play and fails it under walk", () => {
   assert.ok(failed(walk, "ground-contact").length > 0);
 });
 
-test("a profile-added template matches its family, and walk-right gets none", () => {
+test("a profile-added template matches its family; walk-right and fly get none, left undecided without a decision", () => {
   const sleep = {
     name: "sleep",
     loop: true,
@@ -125,11 +125,21 @@ test("a profile-added template matches its family, and walk-right gets none", ()
   assert.equal(r.template, "sleep");
   const none = run({ count: 4, style: "flat", motion: "idle" }, "fly");
   assert.equal(none.template, undefined);
-  assert.match(
-    none.reasons[0]!.reason,
-    /no motion template is declared for family fly and none is named fly/,
+  assert.equal(none.templateSource, "undecided");
+  // Undecided, the template checks are pending: not run, not passing.
+  assert.equal(none.passed, false);
+  assert.deepEqual(
+    none.pending?.map((p) => p.check),
+    ["ground-contact", "footprint-drift", "loop-seam"],
   );
-  assert.equal(none.reasons[0]!.passed, true);
+  assert.match(
+    none.pending![0]!.reason,
+    /^not run: template undecided \(no motion template is declared for family fly and none is named fly/,
+  );
+  assert.equal(
+    none.reasons.some((r) => /not applicable without a motion template/.test(r.reason)),
+    false,
+  );
 });
 
 test("a frame count outside the template range fails template", () => {

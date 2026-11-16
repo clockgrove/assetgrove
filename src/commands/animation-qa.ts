@@ -130,6 +130,7 @@ A family no spec or grouping declares a template for, and that no template is na
 one motion-template decision per run, logged to motion-template.jsonl; --no-vision skips only
 the vision checks, so such a run still needs a key (declare template for one that needs none).
 With none chosen, ground contact, footprint drift and the loop seam are not applicable.
+--import decides and checks a family write-families left undecided (its checks pending there).
 --dry-run prints the planned calls, the cost forecast and the spend left under the daily and
 work-item limits, writes nothing and needs no key.
 Give --strip, --family and --profile for one strip, or --import for every family of an import.

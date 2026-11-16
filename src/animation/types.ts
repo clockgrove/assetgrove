@@ -159,8 +159,16 @@ export interface AnimationReport {
   frameCount: number;
   /** The strip's figure height in px: the median over non-empty frames of baseline − top + 1; 0 when all are empty. */
   figureHeightPx: number;
+  /** True only when every check ran and passed: false while a check failed or is still pending. */
   passed: boolean;
   reasons: AnimationReason[];
+  /**
+   * Checks not run, each with why: with the template undecided (no declaration, no template of the
+   * family's name, no recorded decision and no call in this run, as in `write-families`),
+   * ground-contact, footprint-drift and loop-seam wait for `animation-qa`, which decides the
+   * template and runs them. A pending check is neither passing nor "not applicable".
+   */
+  pending?: Array<{ check: string; reason: string }>;
   measures: AnimationFrameMeasure[];
   /** Consecutive distances: distances[i] is between frame i+1 and i+2 (1-based); the seam last. */
   silhouetteChange: number[];

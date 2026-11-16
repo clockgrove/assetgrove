@@ -178,20 +178,30 @@ export function checkAnimation(
       ...(at !== undefined && { frames: at }),
     });
 
-  // With no template nothing says the cycle loops or where the feet are, so the seam, contact and
-  // footprint checks are not applicable.
+  // With no template nothing says the cycle loops or where the feet are. Decided as none, the seam,
+  // contact and footprint checks are not applicable; undecided, they are not run but pending (left
+  // for animation-qa, which decides the template), so the strip is never read as checked.
   const loop = template ? template.loop : false;
+  const undecided = !template && choice.source === "undecided";
+  const pending: Array<{ check: string; reason: string }> = [];
+  const notRun = `not run: template undecided (${describeChoice(family, choice)})`;
   const notApplicable = template
     ? ""
     : `${describeChoice(family, choice)}; not applicable without a motion template`;
+  /** A template check with no template: pending while undecided, else not applicable. */
+  const withoutTemplate = (check: string) =>
+    undecided ? pending.push({ check, reason: notRun }) : add(check, true, notApplicable);
   const silhouette = template?.silhouette ?? DEFAULT_SILHOUETTE;
 
   if (!template) {
-    add(
-      "template",
-      true,
-      `${describeChoice(family, choice)}; ground contact, footprint drift and the loop seam are not applicable`,
-    );
+    // Undecided, there is no template reason: what was not run is listed under pending.
+    if (!undecided) {
+      add(
+        "template",
+        true,
+        `${describeChoice(family, choice)}; ground contact, footprint drift and the loop seam are not applicable`,
+      );
+    }
   } else {
     const { min, max } = template.frames;
     const ok = count >= min && count <= max;
@@ -269,15 +279,15 @@ export function checkAnimation(
         },
       ];
     });
-  if (groundFails.length === 0) {
+  if (!template) {
+    withoutTemplate("ground-contact");
+  } else if (groundFails.length === 0) {
     add(
       "ground-contact",
       true,
-      !template
-        ? notApplicable
-        : mustTouch.size === 0
-          ? `${template.name} has no contact frames to check`
-          : `frames ${[...mustTouch].join(", ")} rest on the ground line ${anchor.y}`,
+      mustTouch.size === 0
+        ? `${template.name} has no contact frames to check`
+        : `frames ${[...mustTouch].join(", ")} rest on the ground line ${anchor.y}`,
     );
   }
   for (const g of groundFails) add("ground-contact", false, g.text, [g.f]);
@@ -315,7 +325,7 @@ export function checkAnimation(
     .join("; ");
   const noted = (text: string) => (ruleNote ? `${text} (${ruleNote})` : text);
   if (!template) {
-    add("footprint-drift", true, notApplicable);
+    withoutTemplate("footprint-drift");
   } else if (template.footprint === "moving") {
     // The contacts move by design, so a frame is held to its own phase: with two or more strides
     // per cycle, the same frame one stride earlier (frame f against f − count/strides); with one,
@@ -444,7 +454,7 @@ export function checkAnimation(
       );
     }
     if (!template) {
-      add("loop-seam", true, notApplicable);
+      withoutTemplate("loop-seam");
     } else if (!loop) {
       add("loop-seam", true, `the ${template.name} template does not loop; no seam to check`);
     } else {
@@ -471,8 +481,9 @@ export function checkAnimation(
     ...(gait !== undefined && { gait }),
     frameCount: count,
     figureHeightPx,
-    passed: reasons.every((r) => r.passed),
+    passed: pending.length === 0 && reasons.every((r) => r.passed),
     reasons,
+    ...(pending.length > 0 && { pending }),
     measures,
     silhouetteChange: seamChange === undefined ? changes : [...changes, seamChange],
     thresholds,
