@@ -1564,7 +1564,7 @@ export async function applyPlan(
       runDir,
       prepared.spec,
       run.candidates,
-      refs.filter((r) => r.role !== "palette" && r.role !== "perspective").map((r) => r.bytes),
+      contactSheetReferences(refs).map((r) => r.bytes),
       prepared.profile,
     );
     if (contact !== undefined) run.contactSheet = contact;
@@ -1572,6 +1572,18 @@ export async function applyPlan(
     await savePlan(plan, join(runDir, "plan.json"));
   }
   return { run, runDir };
+}
+
+/** The reference roles a reviewer compares a candidate against on the contact sheet. */
+export const CONTACT_REFERENCE_ROLE_PREFIXES = ["identity:", "key-pose:", "positive:"] as const;
+
+/**
+ * The references drawn beside each candidate on a planned run's contact sheet: the identity
+ * turnaround and references, the approved key pose and the positive anchors. Negative anchors
+ * (counterexamples), the palette swatch and anything else are not targets, so they are left off.
+ */
+export function contactSheetReferences<T extends { role: string }>(refs: readonly T[]): T[] {
+  return refs.filter((r) => CONTACT_REFERENCE_ROLE_PREFIXES.some((p) => r.role.startsWith(p)));
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   planDigest,
   savePlan,
   assertOriginalDescription,
+  contactSheetReferences,
 } from "../src/planning.ts";
 import type { CreatePlanOptions, SavedPlan } from "../src/planning.ts";
 import { InputError } from "../src/errors.ts";
@@ -1020,4 +1021,25 @@ test("apply with a template fallback generates from the template's prompt and re
   const image = provider.calls.filter((c) => c.kind === "image").at(-1);
   assert.equal(image?.request.prompt, template.plan.prompts.images[0]);
   assert.equal(run.candidates[0]?.provenance.prompt, template.plan.prompts.generation);
+});
+
+test("the contact sheet shows identity, key-pose and positive references, never a negative anchor or the palette", () => {
+  const roles = [
+    "positive:composition",
+    "negative:unwanted-outline",
+    "identity:approved-turnaround",
+    "identity:approved-reference",
+    "key-pose:approved",
+    "palette",
+    "perspective",
+  ];
+  assert.deepEqual(
+    contactSheetReferences(roles.map((role) => ({ role }))).map((r) => r.role),
+    [
+      "positive:composition",
+      "identity:approved-turnaround",
+      "identity:approved-reference",
+      "key-pose:approved",
+    ],
+  );
 });
