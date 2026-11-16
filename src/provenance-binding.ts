@@ -7,8 +7,8 @@
  * describes and of its canonical content) must hold when present.
  *
  * A record that nothing outside the file names is accepted only when it is bound (and its calls
- * name each model the media's mark names), or when it records no call and the mark names no model:
- * media made outside Assetgrove. An unbound record with calls, such as one 0.1.0 wrote, is refused
+ * name each model the media's mark names), or when it records no call and the mark neither names a
+ * model nor says a model made the media (its digital source type): media made outside Assetgrove. An unbound record with calls, such as one 0.1.0 wrote, is refused
  * with the one command that hands its media off again.
  */
 import { readdir, readFile } from "node:fs/promises";
@@ -18,7 +18,12 @@ import { canonicalJson, sha256Hex } from "./library/canonical.ts";
 import { parseReview } from "./library/review.ts";
 import { readRun } from "./loop.ts";
 import type { RunRecord } from "./loop.ts";
-import { readMarkedCallsSha256, readMarkedModels } from "./metadata.ts";
+import {
+  DIGITAL_SOURCE_TYPES,
+  readDigitalSourceType,
+  readMarkedCallsSha256,
+  readMarkedModels,
+} from "./metadata.ts";
 import type { Provenance, ProvenanceBinding } from "./types.ts";
 
 /** A provenance file that is not the record of the media it is named with: exit 2. */
@@ -141,13 +146,20 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   const plural = (n: string[]) => (n.length === 1 ? "" : "s");
 
   if (binding === undefined) {
+    // The digital source type is all the mark of a 0.1.0 hand-off or a staged candidate carries.
+    const source = markRead(() => readDigitalSourceType(media.bytes, media.mediaType));
+    const modelMade = MODEL_MADE.has(source ?? "");
     // No call, no binding, and nothing outside the file says a model made the media.
-    if (calls.length === 0 && names.length === 0) return { ...own, madeOutsideAssetgrove: true };
+    if (calls.length === 0 && names.length === 0 && !modelMade) {
+      return { ...own, madeOutsideAssetgrove: true };
+    }
     // Unbound, and nothing outside the file vouches for it: a record 0.1.0 wrote, or a staged
     // record moved out of its run. Its contents are not taken as written.
     throw refuse(
       calls.length === 0
-        ? `it records no model call and no binding, but the media's own mark names the model${plural(names)} ${names.join(", ")}`
+        ? names.length > 0
+          ? `it records no model call and no binding, but the media's own mark names the model${plural(names)} ${names.join(", ")}`
+          : `it records no model call and no binding, but the media's own mark says a model made it (its digital source type is ${source})`
         : `it records ${callCount} but is not bound to the media, and nothing beside the media (its mark's calls sha256, a library review record or a run record) vouches for it`,
       `Hand the media off again so its record is written and bound: ${upToDateCommand(record)}`,
     );
@@ -161,6 +173,12 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   }
   return own;
 }
+
+/** The digital source types Assetgrove marks on media a model made, in whole or in part. */
+const MODEL_MADE = new Set<string>([
+  DIGITAL_SOURCE_TYPES.generated,
+  DIGITAL_SOURCE_TYPES.composite,
+]);
 
 /**
  * The one command that hands the media of an unbound record off again, so its record is written

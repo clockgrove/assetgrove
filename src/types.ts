@@ -347,7 +347,8 @@ export interface Provenance {
   contentCredentials?: import("./credentials.ts").SignerRecord;
   /**
    * Set when the media was made outside Assetgrove: its record came with no model call and no
-   * binding, and the media's mark names no model (src/provenance-binding.ts).
+   * binding, and the media's mark neither names a model nor says a model made it
+   * (src/provenance-binding.ts).
    */
   madeOutsideAssetgrove?: true;
   /** The record's tie to the bytes it describes, written last by each writer (src/provenance-binding.ts). */
