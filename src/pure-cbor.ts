@@ -4,4 +4,6 @@
  * binary (docs/decisions.md, "Content credentials"). Imported before `@auth0/cose`, because cbor-x
  * reads the variable once, when it loads.
  */
-process.env["CBOR_NATIVE_ACCELERATION_DISABLED"] ??= "true";
+import { disableNativeCbor } from "./env.ts";
+
+disableNativeCbor();

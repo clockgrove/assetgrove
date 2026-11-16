@@ -31,6 +31,14 @@ export function workItemEnv(env: Env = process.env): string | undefined {
   return env["ASSETGROVE_WORK_ITEM"];
 }
 
+/**
+ * Sets `CBOR_NATIVE_ACCELERATION_DISABLED` to `true` unless it is set, so cbor-x (which
+ * `@auth0/cose` uses) never loads the optional `cbor-extract` native addon (src/pure-cbor.ts).
+ */
+export function disableNativeCbor(env: Env = process.env): void {
+  env["CBOR_NATIVE_ACCELERATION_DISABLED"] ??= "true";
+}
+
 /** Whether `$GIT_DIR` is set to a non-empty value. */
 export function gitDirSet(env: Env = process.env): boolean {
   return Boolean(env["GIT_DIR"]);
