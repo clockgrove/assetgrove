@@ -233,6 +233,63 @@ test("openai-compatible is paid unless free on loopback, and its structured-outp
   }
 });
 
+test("a choice decision through structured output answers one option with its probability", async () => {
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "chatcmpl-2",
+          object: "chat.completion",
+          created: 0,
+          model: "local-chat",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: JSON.stringify({ choice: "left", probability: 0.8 }),
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const baseURL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  try {
+    const { provider, id } = createProvider(
+      "chat",
+      { adapter: "openai-compatible", baseURL, free: true },
+      { env: {} },
+    );
+    const routes = {
+      ...defaultRoutes,
+      "reference-view": { provider: id, model: "local-chat", estimatedCostUsd: 0 },
+    } as Routes;
+    const caller = new Caller({ provider, providerName: id, budget: new Budget(1), routes });
+    const { result, record } = await caller.decide("reference-view", "Which view?", [], {
+      type: "choice",
+      instructions: "Choose the view.",
+      options: { front: "from the front", left: "its left side" },
+    });
+    assert.deepEqual(result.answer, {
+      type: "choice",
+      choice: "left",
+      probabilities: { left: 0.8 },
+    });
+    assert.equal(record.decision?.question, "choice");
+    assert.equal(record.decision?.label, "left");
+    assert.equal(record.decision?.value, 0.8);
+  } finally {
+    server.close();
+  }
+});
+
 test("each direct route carries its own model's estimate, not another model's", () => {
   // gpt-image-2 on the gateway is bounded at 0.25 (0.30 for a sheet); an edit on it is the same model.
   assert.equal(OPENAI_DEFAULT_ROUTES["still"]!.estimatedCostUsd, 0.25);
