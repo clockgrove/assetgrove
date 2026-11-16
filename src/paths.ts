@@ -60,6 +60,20 @@ function windowsProblem(segment: string): string | undefined {
 }
 
 /**
+ * `name` as one file-name segment `windowsProblem` accepts: each character Windows refuses
+ * (`<>:"|?*`, a backslash, a control character) and `/` becomes `-`, a trailing dot or space
+ * becomes `-`, a device name gets a `_` prefix, and `""`, `.` and `..` become `artifact`.
+ */
+export function safeFileName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  let safe = name.replace(/[<>:"|?*\\/\u0000-\u001f]/g, "-");
+  if (safe === "" || safe === "." || safe === "..") return "artifact";
+  safe = safe.replace(/[. ]$/, "-");
+  if (RESERVED_NAME.test(safe)) safe = `_${safe}`;
+  return safe;
+}
+
+/**
  * Refuses, before anything is written, a set of `/`-separated relative paths in which two name the
  * same file or differ only by case, or a segment Windows cannot hold: one with `<>:"|?*`, a
  * backslash or a control character, one ending in a dot or a space, or a device name such as `con`

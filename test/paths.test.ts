@@ -13,7 +13,7 @@ import type { Generator } from "../src/generators/generator.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { stage } from "../src/loop.ts";
 import { defaultRoutes } from "../src/routes.ts";
-import { checkWrites, readRecordPath, recordPath } from "../src/paths.ts";
+import { checkWrites, readRecordPath, recordPath, safeFileName } from "../src/paths.ts";
 import { gitTarget } from "./fixtures/git.ts";
 import { shelterSpec, syntheticWorld as plainWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
@@ -216,4 +216,84 @@ test("staged and rejected candidates record their artifacts with / separators", 
   ]);
   assert.deepEqual(run.candidates[0]?.artifacts, record.candidates[0].artifacts);
   await readFile(join(runDir, `c1-${kind}`, "report.json"));
+});
+
+test("safeFileName maps names the path rules refuse to names checkWrites accepts", () => {
+  const cases: Array<[string, string]> = [
+    ["a:b", "a-b"],
+    ["x.", "x-"],
+    ["nul.txt", "_nul.txt"],
+    ["..", "artifact"],
+    ["", "artifact"],
+    ["ok.png", "ok.png"],
+  ];
+  for (const [name, safe] of cases) {
+    assert.equal(safeFileName(name), safe);
+    checkWrites([safe]);
+  }
+});
+
+test("a generator's artifact names the path rules refuse never lose the paid candidate", async () => {
+  const world = await syntheticWorld();
+  const base = imageGenerators.find((g) => g.kind === shelterSpec.kind) as Generator;
+  const names = [
+    "view:front.png",
+    "con",
+    "Sheet.png",
+    "sheet.png",
+    "ok.png",
+    "sub\\back.png",
+    "dir/side.png",
+  ];
+  const withNames: Generator = {
+    ...base,
+    async generate(input) {
+      const generated = await base.generate(input);
+      return {
+        ...generated,
+        qa: input.index === 0 ? generated.qa : { ...generated.qa, passed: false },
+        artifacts: names.map((name, i) => ({ name, bytes: new Uint8Array([i]) })),
+      };
+    },
+  };
+  const { run, runDir } = await stage({
+    spec: shelterSpec,
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: world.profile,
+    routes: defaultRoutes,
+    provider: scriptedProvider(),
+    providerName: "scripted",
+    generators: [withNames],
+    runsDir: world.runsDir,
+    candidates: 2,
+  });
+  const kind = shelterSpec.kind;
+  const record = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
+  assert.equal(record.candidates.length, 1);
+  for (const [id, entry] of [
+    ["c1", record.candidates[0]],
+    ["c2", record.rejections[0]],
+  ] as const) {
+    const dir = `${id}-${kind}`;
+    assert.deepEqual(entry.artifacts, [
+      `${dir}/view-front.png`,
+      `${dir}/_con`,
+      `${dir}/Sheet.png`,
+      `${dir}/sheet-2.png`,
+      `${dir}/ok.png`,
+      `${dir}/back.png`,
+      `${dir}/side.png`,
+    ]);
+    assert.deepEqual(entry.artifactNames, [
+      { file: `${dir}/view-front.png`, original: "view:front.png" },
+      { file: `${dir}/_con`, original: "con" },
+      { file: `${dir}/sheet-2.png`, original: "sheet.png" },
+      { file: `${dir}/back.png`, original: "sub\\back.png" },
+    ]);
+    checkWrites(entry.artifacts);
+    for (const file of entry.artifacts) await readFile(join(runDir, file));
+  }
+  assert.deepEqual(run.candidates[0]?.artifactNames, record.candidates[0].artifactNames);
 });
