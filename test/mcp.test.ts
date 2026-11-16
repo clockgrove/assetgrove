@@ -129,7 +129,9 @@ function normalise(value: unknown): unknown {
       // A plan's digest covers its creation time.
       .replace(/"digest":"[0-9a-f]{64}"/g, '"digest":"<digest>"')
       // A signed image's bytes: its C2PA manifest holds random identifiers and a fresh signature.
-      .replace(/("version":\d+,"sha256":)"[0-9a-f]{64}"/g, '$1"<signed>"'),
+      .replace(/("version":\d+,"sha256":)"[0-9a-f]{64}"/g, '$1"<signed>"')
+      // An annotation's id hashes its creation time.
+      .replace(/#[0-9a-f]{16}/g, "#<annotation>"),
   );
 }
 
@@ -201,6 +203,17 @@ test("tools/list names equal the registry's tool names and no tool takes a CLI-o
     version: version["version"],
   });
 });
+
+/** The card the pick row wrote into the work directory's target. */
+async function pickedCard(): Promise<string> {
+  const target = join(work, "target");
+  for (const entry of await readdir(target, { recursive: true })) {
+    const path = join(target, entry.toString());
+    if (!path.endsWith(".md") || /(^|[\\/])(index|log)\.md$/.test(path)) continue;
+    if ((await readFile(path, "utf8")).includes("type: Game Asset")) return path;
+  }
+  throw new Error("the pick row wrote no card");
+}
 
 /**
  * One row per tool: `prepare` builds what the call needs in the work directory and returns its
@@ -555,6 +568,9 @@ const rows: Row[] = [
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
+  { tool: "review", prepare: async () => ({ address: await pickedCard(), comment: "a row" }) },
+  { tool: "approve", prepare: async () => ({ address: await pickedCard() }), exitCode: 8 },
+  { tool: "card_edit", prepare: async () => ({ address: await pickedCard(), title: "A row" }) },
   {
     tool: "compare",
     prepare: async () => {
@@ -888,6 +904,12 @@ export default {
       const profile = join(work, "library-profile.json");
       await writeFile(profile, JSON.stringify(syntheticProfile()));
       const target = join(work, "target");
+      // The run that made the asset, in the project's runs directory, where adopt reads it.
+      const record = await readFile(join(target, "assets/source/fern/fern-shelter.review.json"));
+      const run = /"run":"([^"]+)"/.exec(record.toString("utf8"))![1]!;
+      await cp(join(paths.world(), "runs", run), join(target, ".assetgrove/runs", run), {
+        recursive: true,
+      });
       const media = join(target, "assets/source/fern/shelter.png");
       const original = join(work, "original.png");
       await cp(media, original);
@@ -896,6 +918,8 @@ export default {
       await writeFile(media, encodePng(edited));
       return { target, profile, asset: "fern-shelter", original };
     },
+    // Headless settings never adopt (design section 3.3): exit 8 and nothing written.
+    exitCode: 8,
   },
   { tool: "settings", prepare: async () => ({ action: "path" }) },
   // Headless settings: the change exits 8 confirmation_required and writes nothing.

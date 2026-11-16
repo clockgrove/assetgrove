@@ -1,13 +1,26 @@
 /**
- * `library check`, `library rebuild`, `library stats` and `library drift` (design sections 1.4
- * and 4): the library's records against their projections, and reports computed from the cards.
+ * `library check`, `library rebuild`, `library stats`, `library drift` and `library adopt` (design
+ * sections 1.4 and 4): the library's records against their projections, reports computed from the
+ * cards, and a person's hand edit handed off as a new version.
  */
 import { join, resolve } from "node:path";
 import { EXIT, InputError } from "../errors.ts";
 import { BIBLE_PATH, PROFILE_PATH } from "../init.ts";
 import { loadProfile } from "../inputs.ts";
-import { requireConfirmation } from "../confirm/index.ts";
-import { adoptHandEdit, adoptMediaPath, adoptRequest } from "../library/adopt.ts";
+import { loadAsset, locateAsset } from "../library/actions.ts";
+import { targetVersion } from "../library/review.ts";
+import {
+  adoptHandEdit,
+  adoptRequest,
+  adoptSource,
+  requireMediaType,
+  currentProvenance,
+  freeChecks,
+  originalFile,
+  projectOf,
+  workingFile,
+} from "../library/adopt.ts";
+import { libraryConfig, scanCards } from "../library/write.ts";
 import {
   bibleVersionOf,
   libraryDrift,
@@ -17,6 +30,8 @@ import {
 } from "../library/maintain.ts";
 import type { LibraryState } from "../library/maintain.ts";
 import { acquireLibraryLock } from "../runs/lock.ts";
+import { refusal } from "./result.ts";
+import { annotationFields, headlessRefusal, personConfirms, requireSameRequest } from "./review.ts";
 import { defineCommand } from "./types.ts";
 import type { JsonSchemaObject, Outcome } from "./types.ts";
 
@@ -202,68 +217,184 @@ Read-only.`,
   },
 });
 
-interface AdoptArgs extends LibraryArgs {
+interface AdoptArgs {
+  address?: string;
   asset?: string;
   original?: string;
+  target?: string;
+  profile?: string;
+  bible?: string;
+}
+
+/** The card of the asset an adopt names: its address, or its id in the library of the target's profile. */
+async function adoptCard(args: AdoptArgs): Promise<string> {
+  if ((args.address === undefined) === (args.asset === undefined)) {
+    throw new InputError("give the asset's card, media or review record, or --asset <id>");
+  }
+  if (args.address !== undefined) return args.address;
+  const { targetDir, profile } = await open(args);
+  const config = libraryConfig(profile, targetDir);
+  const found = scanCards(config.root).find((card) => card.id === args.asset);
+  if (!found) throw new InputError(`no asset "${args.asset}" with a card in ${config.root}`);
+  return join(found.dir, `${found.id}.md`);
 }
 
 export const libraryAdoptCommand = defineCommand<AdoptArgs>({
   name: "library adopt",
   tool: "library_adopt",
-  summary: "adopt a person's hand edit of an asset as its next version, with C2PA credentials",
-  details: `Takes the asset's working media, edited by hand, as the next version. --original is the AI-made
-version the card locks (its sha256 must equal lock.sha256). The new file carries the IPTC mark
-compositeWithTrainedAlgorithmicMedia and signed C2PA content credentials that record the edit with the
-original as a parentOf ingredient; the version is appended with the annotation action adopt, under the
-library write lock. A person confirms the adopt of these bytes (a write request, design section 7) through
-headless settings, a record at <configDir>/confirmations/<hex>.json, an MCP client's form, the TTY, or exit 8
-confirmation_required and \`assetgrove confirm <hex>\`; the version records the confirmation. Agents never
-confirm an adopt. Exits 2 when the file is unchanged, is not a PNG, JPEG or WebP, or the original is not
-the locked version; exit 6 handoff_check_failed when the written file does not read back.`,
+  summary: "hand off a person's edit of an asset as its next version, with a person's confirmation",
+  details: `For a picked asset whose working file a person edited, so it differs from the card's
+lock.sha256 (design section 4). Name the asset by its card, media or review record, or by --asset <id>
+in the library of --target's profile. --original is the AI-made version the card locks (its sha256 must
+equal lock.sha256). The free QA checks run again on the edited file (transparency, the frame count its
+provenance records, and the palette of --bible when given); a failure exits 5 qa_found_nothing. A person
+then confirms like a pick: a record at <configDir>/confirmations/<hex>.json for its digest, an MCP
+client's form, the TTY, or exit 8 confirmation_required and \`assetgrove confirm <hex>\`; the digest
+covers the asset id, the file's sha256, the version it replaces, the original, the run that made the
+asset, its profile's sha256 and the review record's head, so it asks again once the record or the run
+changes. Under headless settings it exits 8 confirmation_required and writes nothing. The edit is then
+handed off as pick hands off, from the run that made the asset (<target>/.assetgrove/runs/<run>, or
+the import <target>/.assetgrove/imports/<run> of a family write-families handed off; the target is
+--target, else the Git top level of the asset's folder), in the version's media type: the file is marked compositeWithTrainedAlgorithmicMedia and signed with C2PA
+credentials that name the original as a parentOf ingredient, its provenance gets a human-edit step and
+the confirmation, every file the profile's hand-off presets write (the manifest included, review
+pending) is rendered again and read back, and the profile's validator runs under pick's rules (an
+unapproved one exits 8 before any write). A failed read-back (exit 6 handoff_check_failed) or a
+rejecting validator (exit 6 validator_rejected) records no version and puts back every file it wrote. Otherwise the version is appended
+with its confirmation, source type and an adopt annotation, and the card, its lock, the indexes and
+log.md are rewritten. An unchanged file, a Git LFS pointer, edited bytes of another media type, a
+run id that is not one path segment, a missing run or a run without the version's candidate exits 2;
+bytes of an older version exit 2 version_exists.`,
   input: {
-    ...input(false),
+    type: "object",
     properties: {
-      ...input(false).properties,
+      address: {
+        type: "string",
+        description: "the asset's card, media or review record (or give --asset)",
+        placeholder: "<address>",
+      },
       asset: { type: "string", description: "the asset id", placeholder: "<id>" },
       original: {
         type: "string",
         description: "the AI-made version that was handed off",
         placeholder: "<file>",
       },
+      target: {
+        type: "string",
+        description:
+          "the target directory (default: the Git top level of the asset's folder, or . with --asset)",
+        placeholder: "<target directory>",
+      },
+      profile: PROFILE,
+      bible: {
+        type: "string",
+        description: "the style bible whose palette the palette check uses",
+        placeholder: "<bible.json>",
+      },
     },
-    required: ["asset", "original"],
+    required: ["original"],
+    additionalProperties: false,
   },
+  positionals: [{ name: "address" }],
   effect: { readOnly: false, spends: "never", writes: "target" },
-  confirm: "write",
+  confirm: "pick",
   async run(args, ctx) {
-    if (args.asset === undefined || args.original === undefined) {
-      throw new InputError("missing required option --asset and --original");
-    }
-    const { targetDir, profile } = await open(args);
-    const confirmation = await requireConfirmation(
-      await adoptRequest({
-        target: targetDir,
-        asset: args.asset,
-        media: adoptMediaPath(profile, targetDir, args.asset),
-        original: resolve(args.original),
-      }),
-      { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
+    if (args.original === undefined) throw new InputError("missing required option --original");
+    const cardPath = await adoptCard(args);
+    const location = locateAsset(cardPath);
+    const targetDir = resolve(
+      args.target ?? (args.asset !== undefined ? "." : (projectOf(location) ?? ".")),
     );
+    const files = { card: cardPath, original: resolve(args.original), target: targetDir };
+    const before = await loadAsset(location);
+    const edited = await workingFile(before);
+    const original = await originalFile(before, files.original);
+    // The run or import that made the asset drives the hand-off; its profile is confirmed with it.
+    const source = await adoptSource(before, targetDir, edited.bytes);
+    const request = adoptRequest(before, edited, original, files, source);
+    // Headless settings never adopt: refused before any check reads or writes more.
+    if (ctx.settings.mode === "headless") {
+      return headlessRefusal(request, { asset: before.assetId, sha256: edited.sha256 }, "adopt");
+    }
+    requireMediaType(before, edited, source);
+    const qa = await freeChecks(
+      edited.bytes,
+      await currentProvenance(before, source, targetDir),
+      args.bible,
+    );
+    const failed = qa.filter((r) => !r.passed);
+    if (failed.length > 0) {
+      return refusal(
+        "qa_found_nothing",
+        `the edited ${before.resource} fails the free QA checks: ${failed.map((r) => `${r.check}: ${r.reason}`).join("; ")}`,
+        { asset: before.assetId, sha256: edited.sha256, qa },
+        failed.map((r) => `QA ${r.check}: ${r.reason}`).join("\n"),
+      );
+    }
+    const confirmation = await personConfirms(request, ctx);
+    const gate = { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) };
     const result = await adoptHandEdit({
-      confirmation,
-      profile,
+      asset: before,
       targetDir,
-      assetId: args.asset,
-      originalPath: resolve(args.original),
-      settings: ctx.settings,
+      edited,
+      original,
+      source,
+      gate,
+      ...(ctx.extensions && { registry: ctx.extensions }),
+      confirmation,
+      // Under the lock: the record, the file and the original are still what the person confirmed.
+      async underLock() {
+        const now = await loadAsset(location);
+        const file = await workingFile(now);
+        requireSameRequest(
+          request,
+          adoptRequest(
+            now,
+            file,
+            await originalFile(now, files.original),
+            files,
+            await adoptSource(now, targetDir, file.bytes),
+          ),
+        );
+      },
     });
-    const human = [
-      `adopted ${result.assetId} as version ${result.version} (sha256 ${result.sha256})`,
-      ...result.files.map((f) => `  ${f}`),
-      ...(result.contentCredentials.warning
-        ? [`warning: ${result.contentCredentials.warning}`]
-        : []),
-    ].join("\n");
-    return { exitCode: 0, fields: { ...result }, human };
+    const record = result.library
+      ? (await loadAsset(location)).record.annotations.findLast(
+          (a) => a["ag:action"] === "adopt" && targetVersion(a) === result.sha256,
+        )
+      : undefined;
+    const fields = {
+      ...result,
+      qa,
+      ...(record && { annotation: annotationFields(record) }),
+      confirmation,
+    };
+    const lines = [
+      result.version === undefined
+        ? `handed off ${before.resource}; no version recorded`
+        : `adopted ${before.resource} as version ${result.version} of ${result.assetId} (${confirmation.method})`,
+      ...result.files.map((f) => `wrote ${f}`),
+    ];
+    if (result.contentCredentials) {
+      const { subject, warning } = result.contentCredentials;
+      lines.push(`C2PA content credentials signed by ${subject}`);
+      if (warning) lines.push(`warning: ${warning}`);
+    }
+    if (result.validator) {
+      lines.push(
+        `target validator ${result.validator.accepted ? "accepted" : "REJECTED"} the adopt` +
+          (result.validator.output ? `:\n${result.validator.output}` : ""),
+      );
+    }
+    const human = lines.join("\n");
+    if (result.validator?.accepted === false) {
+      return refusal(
+        "validator_rejected",
+        "the target's validator rejected the adopt; no version was recorded",
+        fields,
+        human,
+      );
+    }
+    return { exitCode: 0, fields, human };
   },
 });

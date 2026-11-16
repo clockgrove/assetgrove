@@ -12,17 +12,18 @@ import type { ConfirmRequest } from "../confirm/prompt.ts";
 import { spendShown } from "../runs/execute.ts";
 import type { WorkPlan } from "../runs/plan.ts";
 import { pickRequest } from "./pick.ts";
+import { rebuildApproveRequest } from "./review.ts";
 import { applySettingsChange, rebuiltSettingsRequest } from "../settings-write.ts";
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import { writeRequest } from "./write-families.ts";
-import { adoptRequest } from "../library/adopt.ts";
+import { rebuildAdoptRequest } from "../library/adopt.ts";
 
 /**
  * A pending spend, pick or write request as a person is shown it, rebuilt from what its id hashes
  * and never from the saved summary, details or choices: a spend's from its verified body; a
  * pick's and a write's by making the request again from its body (the run's candidates, the
- * import and the grouping; an adopt's media and original) and requiring the same id. Undefined when the request does not hold.
+ * import and the grouping; an approve's or adopt's card) and requiring the same id. Undefined when the request does not hold.
  */
 async function shownRequest(request: ConfirmRequest): Promise<KindRequest | undefined> {
   if (!verifiedRequest(request)) return undefined;
@@ -48,7 +49,17 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
       return { kind: "spend", id: request.id, body, ...shown };
     }
     let rebuilt: KindRequest;
-    if (request.kind === "pick") {
+    if (
+      request.kind === "pick" &&
+      (body["command"] === "approve" || body["command"] === "library adopt")
+    ) {
+      const again =
+        body["command"] === "approve"
+          ? await rebuildApproveRequest(body)
+          : await rebuildAdoptRequest(body);
+      if (again === undefined) return undefined;
+      rebuilt = again;
+    } else if (request.kind === "pick") {
       const run = text(body["run"]);
       const target = text(body["target"]);
       const candidate = text(body["candidate"]);
@@ -58,19 +69,6 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
         target,
         ...(candidate !== undefined && { candidate }),
       });
-    } else if (body["action"] === "adopt") {
-      const target = text(body["target"]);
-      const asset = text(body["asset"]);
-      const media = text(body["media"]);
-      const original = text(body["original"]);
-      if (
-        target === undefined ||
-        asset === undefined ||
-        media === undefined ||
-        original === undefined
-      )
-        return undefined;
-      rebuilt = await adoptRequest({ target, asset, media, original });
     } else {
       const importDir = text(body["import"]);
       const targetDir = text(body["target"]);

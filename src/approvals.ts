@@ -209,7 +209,9 @@ export function commandIdentity(kind: CommandKind, argv: string[], cwd: string):
   const files: Record<string, string> = {};
   for (const arg of argv) {
     if (arg === "" || arg.includes("{{")) continue;
-    const path = resolve(full, arg);
+    // An absolute argument is compared by its real path, as the cwd is: a file inside the project
+    // named through a symlink or an 8.3 short path is still hashed, so changing it asks again.
+    const path = isAbsolute(arg) ? real(arg) : resolve(full, arg);
     const rel = relative(full, path);
     if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || !isFile(path)) continue;
     files[toPosix(rel)] = sha256Hex(readFileSync(path));

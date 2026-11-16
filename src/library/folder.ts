@@ -284,7 +284,7 @@ export function logEntriesFromReview(
     if (action === undefined || action === "resolve") continue;
     const parts: string[] = [];
     const target = annotation.target;
-    if (action === "pick" || action === "replace" || action === "answer") {
+    if (action === "pick" || action === "replace" || action === "answer" || action === "adopt") {
       const sha = typeof target === "string" ? undefined : target["ag:version"];
       const index = record.versions.findIndex((v) => v.sha256 === sha);
       if (sha !== undefined && index >= 0) parts.push(`version ${index + 1}`);

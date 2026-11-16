@@ -437,7 +437,8 @@ export function currentVersion(record: ReviewRecord): Version | undefined {
   return record.versions.at(-1);
 }
 
-function targetVersion(annotation: Annotation): string | undefined {
+/** The version an annotation targets, by sha256. */
+export function targetVersion(annotation: Annotation): string | undefined {
   const target = annotation.target;
   return typeof target === "string" ? undefined : target["ag:version"];
 }
@@ -487,4 +488,24 @@ export function checkReviewPaths(
   source: string,
 ): void {
   for (const path of reviewPaths(record)) libraryPath(libraryRoot, recordDir, path, source);
+}
+
+/** The head of a record: its last annotation's id and a hash of every item line. */
+export interface RecordHead {
+  /** The last annotation's id (by `created`, then id), or null when there is none. */
+  last: string | null;
+  /** The sha256 of the canonical version and annotation lines, joined by newlines. */
+  items: string;
+}
+
+/**
+ * The record's head (design section 3.3): a digest that holds it changes once any line is added,
+ * whether by a review action, a pull or a union merge, so a stored confirmation cannot be replayed.
+ */
+export function recordHead(record: ReviewRecord): RecordHead {
+  const lines = [
+    ...record.versions.map((v) => leadingKeyLine(v, "sha256")),
+    ...record.annotations.map((a) => leadingKeyLine(a, "id")),
+  ];
+  return { last: record.annotations.at(-1)?.id ?? null, items: sha256Hex(lines.join("\n")) };
 }
