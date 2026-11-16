@@ -68,7 +68,7 @@ test("opaque colours are palette colours and used palette is exact", () => {
   assert.deepEqual(out.palette, ["#d03030", "#30a040"]);
 });
 
-test("bottom-centre sits on the anchor and bounds equal the union box", () => {
+test("the bottom row is the anchor's row, the box centred on its column, and bounds equal the union box and bounds equal the union box", () => {
   const out = postprocessFrames([blobFrame(true), blobFrame(true, 2)], options);
   let x0 = 99;
   let y0 = 99;
@@ -77,7 +77,7 @@ test("bottom-centre sits on the anchor and bounds equal the union box", () => {
   for (let i = 0; i < 2; i++) {
     const box = opaqueBox(out.strip, { x: i * 16, y: 0, ...frame });
     assert.ok(box);
-    assert.equal(box.y + box.height, anchor.y);
+    assert.equal(box.y + box.height - 1, anchor.y);
     assert.ok(Math.abs(box.x + box.width / 2 - anchor.x) <= 0.5);
     x0 = Math.min(x0, box.x);
     y0 = Math.min(y0, box.y);

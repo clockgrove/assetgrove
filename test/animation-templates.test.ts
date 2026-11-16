@@ -82,10 +82,12 @@ test("templates: invalid data is refused with the field named", () => {
 
 test("thresholds: defaults, profile overrides and refusals", () => {
   assert.deepEqual(thresholdsFor({}), DEFAULT_THRESHOLDS);
-  const t = thresholdsFor({ animation: { thresholds: { anchorDriftPx: 3, flickerCutoff: 0.8 } } });
-  assert.equal(t.anchorDriftPx, 3);
+  const t = thresholdsFor({
+    animation: { thresholds: { footprintDrift: 0.3, flickerCutoff: 0.8 } },
+  });
+  assert.equal(t.footprintDrift, 0.3);
   assert.equal(t.flickerCutoff, 0.8);
-  assert.equal(t.groundTolerancePx, DEFAULT_THRESHOLDS.groundTolerancePx);
+  assert.equal(t.groundTolerance, DEFAULT_THRESHOLDS.groundTolerance);
   assert.throws(() => thresholdsFor({ animation: { thresholds: { bogus: 1 } as never } }), /bogus/);
   assert.throws(
     () => thresholdsFor({ animation: { thresholds: { flickerCutoff: 2 } } }),
@@ -98,9 +100,9 @@ test("gaits: a template's gait rules are data, validated with the field named", 
   assert.deepEqual(walk.gaits?.["quadruped"], {
     strides: 1,
     footprintBand: 0.3,
-    footprintDriftPx: 12,
+    footprintDrift: 0.2,
   });
-  const hexapod = { footprint: "moving", strides: 3, footprintDriftPx: 4, footprintBand: 0.2 };
+  const hexapod = { footprint: "moving", strides: 3, footprintDrift: 0.04, footprintBand: 0.2 };
   const parsed = parseTemplate({ ...walk, gaits: { ...walk.gaits, hexapod } });
   assert.deepEqual(parsed.gaits?.["hexapod"], hexapod);
   const bad = (gaits: unknown, field: RegExp) =>
@@ -130,4 +132,48 @@ test("gaits: the spec's gait wins over the profile's; none is never guessed", ()
   assert.equal(four.template.footprint, "moving");
   assert.deepEqual(withGait(walk, "biped"), { template: walk, applied: false });
   assert.deepEqual(withGait(walk, undefined), { template: walk, applied: false });
+});
+
+test("the pixel-unit keys are refused with the fraction that replaces them", () => {
+  for (const [key, text] of [
+    [
+      "anchorDriftPx",
+      /anchorDriftPx was removed: drift is now footprintDrift, a fraction of the figure's height/,
+    ],
+    [
+      "groundTolerancePx",
+      /groundTolerancePx was removed: .*groundTolerance, a fraction of the figure's height/,
+    ],
+    [
+      "footprintDriftPx",
+      /footprintDriftPx was removed: .*footprintDrift, a fraction of the figure's height/,
+    ],
+  ] as const) {
+    assert.throws(
+      () => thresholdsFor({ animation: { thresholds: { [key]: 1 } as never } }),
+      (e: unknown) => e instanceof InputError && text.test(e.message),
+      key,
+    );
+  }
+  const walk = templateFor("walk", BUILTIN_TEMPLATES)!;
+  const { footprintDrift: _kept, ...rest } = walk;
+  void _kept;
+  const removed =
+    /footprintDriftPx was removed: it is now footprintDrift, a fraction of the figure's height/;
+  assert.throws(
+    () => parseTemplate({ ...rest, footprintDriftPx: 6 }),
+    (e: unknown) => e instanceof InputError && removed.test(e.message),
+  );
+  assert.throws(
+    () => parseTemplate({ ...walk, gaits: { quadruped: { footprintDriftPx: 12 } } }),
+    (e: unknown) => e instanceof InputError && removed.test(e.message),
+  );
+  assert.throws(
+    () => parseTemplate({ ...walk, footprintDrift: 1.5 }),
+    /footprintDrift must be a fraction/,
+  );
+  assert.throws(
+    () => thresholdsFor({ animation: { thresholds: { footprintDrift: 2 } } }),
+    /footprintDrift must be within 0\.\.1/,
+  );
 });

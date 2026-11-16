@@ -9,9 +9,8 @@ import type { TargetProfile } from "../types.ts";
 import type { AnimationThresholds, GaitRule, MotionTemplate } from "./types.ts";
 
 export const DEFAULT_THRESHOLDS: AnimationThresholds = {
-  groundTolerancePx: 1,
-  anchorDriftPx: 1,
-  footprintDriftPx: 2,
+  groundTolerance: 0.02,
+  footprintDrift: 0.03,
   loopSeamRatio: 1.5,
   loopSeamFloor: 0.02,
   flickerCutoff: 0.7,
@@ -49,12 +48,12 @@ export const BUILTIN_TEMPLATES: readonly MotionTemplate[] = [
     silhouette: { min: 0.01, max: 0.4 },
     footprint: "moving",
     strides: 2,
-    footprintDriftPx: 6,
+    footprintDrift: 0.2,
     gaits: {
       // Four legs: the contact pattern runs once per cycle and two or three feet are down at
       // once, so the footprint is every foot near the ground (the bottom 30% of the figure), held
       // to the loop's mean.
-      quadruped: { strides: 1, footprintBand: 0.3, footprintDriftPx: 12 },
+      quadruped: { strides: 1, footprintBand: 0.3, footprintDrift: 0.2 },
     },
   },
   {
@@ -95,7 +94,7 @@ export const BUILTIN_TEMPLATES: readonly MotionTemplate[] = [
     contact: "beats",
     silhouette: { min: 0.01, max: 0.5 },
     footprint: "moving",
-    footprintDriftPx: 8,
+    footprintDrift: 0.12,
   },
   {
     name: "shelter",
@@ -180,7 +179,9 @@ export function parseTemplate(value: unknown, index = 0): MotionTemplate {
     for (const [gait, r] of Object.entries(gaitsRaw)) {
       if (!GAIT_NAME.test(gait)) fail(where, `gaits.${gait}: ${GAIT_NAME_RULE}`);
       if (!isRecord(r)) fail(where, `gaits.${gait} must be an object`);
-      const unknown = Object.keys(r).filter((k) => !GAIT_FIELDS.includes(k));
+      const unknown = Object.keys(r).filter(
+        (k) => !GAIT_FIELDS.includes(k) && k !== "footprintDriftPx",
+      );
       if (unknown.length > 0) {
         fail(
           where,
@@ -210,17 +211,23 @@ export function parseTemplate(value: unknown, index = 0): MotionTemplate {
 
 const GAIT_NAME = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 const GAIT_NAME_RULE = "a gait name is lowercase words joined by '-' or '_', for example quadruped";
-const GAIT_FIELDS = ["footprint", "strides", "footprintDriftPx", "footprintBand"];
+const GAIT_FIELDS = ["footprint", "strides", "footprintDrift", "footprintBand"];
 
 /** The footprint fields of a template or of one of its gait rules, validated. */
 function gaitRule(value: Record<string, unknown>, where: string, prefix: string): GaitRule {
+  if (value["footprintDriftPx"] !== undefined) {
+    fail(
+      where,
+      `${prefix}footprintDriftPx was removed: it is now footprintDrift, a fraction of the figure's height`,
+    );
+  }
   const footprint = value["footprint"];
   if (footprint !== undefined && footprint !== "planted" && footprint !== "moving") {
     fail(where, `${prefix}footprint must be "planted" or "moving"`);
   }
-  const drift = value["footprintDriftPx"];
-  if (drift !== undefined && (typeof drift !== "number" || !(drift >= 0))) {
-    fail(where, `${prefix}footprintDriftPx must be a number of px, 0 or more`);
+  const drift = value["footprintDrift"];
+  if (drift !== undefined && (typeof drift !== "number" || !(drift >= 0 && drift <= 1))) {
+    fail(where, `${prefix}footprintDrift must be a fraction of the figure's height, 0 to 1`);
   }
   const strides = value["strides"];
   if (strides !== undefined && (!Number.isInteger(strides) || !((strides as number) >= 1))) {
@@ -236,7 +243,7 @@ function gaitRule(value: Record<string, unknown>, where: string, prefix: string)
   return {
     ...(footprint !== undefined && { footprint }),
     ...(strides !== undefined && { strides: strides as number }),
-    ...(drift !== undefined && { footprintDriftPx: drift }),
+    ...(drift !== undefined && { footprintDrift: drift }),
     ...(band !== undefined && { footprintBand: band }),
   };
 }
@@ -299,12 +306,22 @@ export function templateFor(
     .sort((a, b) => b.name.length - a.name.length)[0];
 }
 
+const REMOVED_THRESHOLDS: Record<string, string> = {
+  groundTolerancePx: "ground contact is now groundTolerance, a fraction of the figure's height",
+  anchorDriftPx: "drift is now footprintDrift, a fraction of the figure's height",
+  footprintDriftPx: "it is now footprintDrift, a fraction of the figure's height",
+};
+
 /** The defaults with the profile's thresholds over them, validated. */
 export function thresholdsFor(profile?: Pick<TargetProfile, "animation">): AnimationThresholds {
   const own = profile?.animation?.thresholds ?? {};
   if (!isRecord(own)) throw new InputError("animation.thresholds must be an object");
   const merged = { ...DEFAULT_THRESHOLDS };
   for (const [key, value] of Object.entries(own)) {
+    const removed = REMOVED_THRESHOLDS[key];
+    if (removed !== undefined) {
+      throw new InputError(`animation threshold ${key} was removed: ${removed}`);
+    }
     if (!(key in DEFAULT_THRESHOLDS)) {
       throw new InputError(
         `unknown animation threshold "${key}" (known: ${Object.keys(DEFAULT_THRESHOLDS).join(", ")})`,
@@ -313,7 +330,14 @@ export function thresholdsFor(profile?: Pick<TargetProfile, "animation">): Anima
     if (typeof value !== "number" || !(value >= 0)) {
       throw new InputError(`animation threshold ${key} must be a number, 0 or more`);
     }
-    if ((key === "flickerCutoff" || key === "holeCutoff" || key === "edgeHaloShare") && value > 1) {
+    if (
+      (key === "flickerCutoff" ||
+        key === "holeCutoff" ||
+        key === "edgeHaloShare" ||
+        key === "groundTolerance" ||
+        key === "footprintDrift") &&
+      value > 1
+    ) {
       throw new InputError(`animation threshold ${key} must be within 0..1`);
     }
     merged[key as keyof AnimationThresholds] = value;

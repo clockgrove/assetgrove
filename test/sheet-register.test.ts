@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createRaster } from "../src/image/raster.ts";
 import type { Raster } from "../src/image/raster.ts";
 import { flipHorizontal } from "../src/image/resample.ts";
+import { animationQa } from "../src/animation/qa.ts";
 import { jitterOf, measureFrame, registerFrames } from "../src/sheet/register.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 
@@ -109,4 +110,73 @@ test("flipHorizontal mirrors and the flipped figure registers", () => {
   assert.ok(Math.abs(m.centerX + mf.centerX - src.width) < 1e-6);
   const reg = registerFrames([flipped], { frame, anchor, edges: "antialiased" });
   assert.ok(reg.jitterPx <= 1);
+});
+
+function sniffCrop(headDrop: number): Raster {
+  const r = createRaster(64, 40);
+  const fill = (x0: number, y0: number, w: number, h: number) => {
+    for (let y = y0; y < y0 + h; y++)
+      for (let x = x0; x < x0 + w; x++) r.data.set([200, 150, 100, 255], (y * 64 + x) * 4);
+  };
+  fill(12, 12, 10, 14); // body
+  fill(12, 26, 3, 6); // rear leg
+  fill(19, 26, 3, 6); // front leg: the feet are identical in every crop
+  fill(22 + headDrop, 8 + headDrop * 2, 8, 6); // head goes down and forward, above the feet
+  return r;
+}
+
+const sniffFrame = { width: 64, height: 48 };
+const sniffAnchor = { x: 32, y: 44 };
+
+test("a planted sniff keeps its feet on the same columns while the centre of mass moves", () => {
+  const figures = [0, 3, 6].map(sniffCrop);
+  const reg = registerFrames(figures, {
+    frame: sniffFrame,
+    anchor: sniffAnchor,
+    edges: "crisp",
+    scale: 1,
+  });
+  const anchor = sniffAnchor;
+  const [first, ...rest] = reg.frames;
+  for (const f of rest) {
+    assert.ok(Math.abs(f.measure.footX - (anchor.x + 0.5)) <= 0.5);
+    assert.ok(
+      Math.abs(f.measure.centerX - (first as (typeof reg.frames)[number]).measure.centerX) > 0.5,
+    );
+    const rowOf = (img: Raster) => {
+      const cols: number[] = [];
+      for (let x = 0; x < img.width; x++)
+        if ((img.data[(anchor.y * img.width + x) * 4 + 3] as number) >= 128) cols.push(x);
+      return cols;
+    };
+    assert.deepEqual(rowOf(f.image), rowOf((first as (typeof reg.frames)[number]).image));
+  }
+  assert.ok(
+    Math.abs((first as (typeof reg.frames)[number]).measure.footX - (anchor.x + 0.5)) <= 0.5,
+  );
+});
+
+test("a planted sniff registered from a sheet passes animation QA's footprint-drift", () => {
+  const figures = [0, 3, 6, 3].map(sniffCrop);
+  for (const edges of ["crisp", "antialiased"] as const) {
+    const reg = registerFrames(figures, { frame: sniffFrame, anchor: sniffAnchor, edges });
+    const r = animationQa(
+      {
+        frames: reg.frames.map((f) => f.image),
+        frame: sniffFrame,
+        anchor: sniffAnchor,
+        family: "sniff",
+      },
+      {},
+      {
+        alpha: { mode: edges === "crisp" ? "binary" : "soft", threshold: 128 },
+        color: { rule: "full", palette: [] },
+        edges,
+      },
+    );
+    const failing = r.reasons.filter(
+      (x) => !x.passed && (x.check === "footprint-drift" || x.check === "ground-contact"),
+    );
+    assert.deepEqual(failing, [], edges);
+  }
 });

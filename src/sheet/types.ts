@@ -101,6 +101,8 @@ export interface MatteQuality {
 export interface FrameMeasure {
   /** The lowest row with alpha >= the measuring threshold (the feet baseline), in frame px. */
   baseline: number;
+  /** Centre x of the ground footprint (pixels at or above the threshold in the bottom 10% of the figure's height), in frame px. */
+  footX: number;
   /** Alpha-weighted centre of mass, in frame px. */
   centerX: number;
   centerY: number;
@@ -111,7 +113,7 @@ export interface FrameMeasure {
 export interface RegisterOptions {
   /** The target's frame size. */
   frame: Size;
-  /** The pivot: the feet baseline goes to anchor.y and the centre of mass to anchor.x. */
+  /** The pivot: the feet baseline goes to anchor.y and the footprint centre to anchor.x. */
   anchor: Point;
   /** `crisp` resamples nearest-neighbour; `antialiased` filters (premultiplied). */
   edges: "antialiased" | "crisp";
@@ -136,7 +138,7 @@ export interface RegisteredFrame {
   image: Raster;
   /** Measured on `image`. */
   measure: FrameMeasure;
-  /** Largest of |baseline - anchor.y| and |centerX - (anchor.x + 0.5)| (a pixel's centre is x + 0.5), in px. */
+  /** Largest of |baseline - anchor.y| and |footX - (anchor.x + 0.5)| (a pixel's centre is x + 0.5), in px. */
   jitterPx: number;
   /** The scale and normalisation applied, and the placement, for provenance. */
   transforms: Transform[];

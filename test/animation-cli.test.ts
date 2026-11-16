@@ -324,7 +324,6 @@ test("write-families writes the onion skin and loop preview and reports animatio
         ...(f.name === "walk-right" ? ["timing"] : []),
         "beats",
         "ground-contact",
-        "anchor-drift",
         "footprint-drift",
         "silhouette",
         "loop-seam",
@@ -362,7 +361,7 @@ test("animation-qa: --spec declares the gait; a four-legged walk passes under it
     JSON.stringify({
       ...syntheticProfile(),
       frames: { ...walk.frame, durationMs: 100 },
-      animation: { thresholds: { anchorDriftPx: 2 } },
+      animation: { thresholds: { footprintDrift: 0.25 } },
     }),
   );
   await writeFile(

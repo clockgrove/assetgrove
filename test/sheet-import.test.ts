@@ -197,7 +197,7 @@ test("an imported sheet is sliced, cleaned to soft alpha, grouped by proposal, a
     assert.ok([...alphas].filter((a) => a > 0 && a < 255).length > 10, "soft alpha kept");
     assert.ok(colours.size > PALETTE.length * 4, `full colour kept (${colours.size})`);
 
-    // The loop doesn't jitter: every frame's feet and centre sit on the anchor.
+    // The loop doesn't jitter: every frame's feet and footprint centre sit on the anchor.
     const frames = Array.from({ length: family.frames.length }, (_, f) => {
       const r = { width: 32, height: 32, data: new Uint8Array(32 * 32 * 4) };
       for (let y = 0; y < 32; y++) {
@@ -258,7 +258,7 @@ test("a family over the jitter bound is refused, and nothing is written", async 
     sheetPath: "sheet.png",
     tool: "hand drawn",
     assetId: "fern",
-    profile: painterlyProfile(),
+    profile: pixelArtProfile(),
     importsDir,
   });
   const grouping: Grouping = {

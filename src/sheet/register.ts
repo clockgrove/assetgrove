@@ -1,9 +1,13 @@
 /**
  * Registration: every figure gets the same scale (after per-family normalisation) and is placed so
- * its feet baseline sits on anchor.y and its centre of mass on anchor.x, in the target's frame size.
+ * its feet baseline sits on anchor.y and the centre x of its ground footprint on anchor.x, in the
+ * target's frame size. The footprint is the pixels at or above the measure threshold in the bottom
+ * 10% of the figure's height. It is pinned rather than the centre of mass because a planted pose
+ * whose head drops or tail swings moves its centre of mass while its feet stay put; pinning the
+ * centre of mass would slide the feet.
  *
- * Coordinate convention: the centre of mass of a pixel in column x is x + 0.5, so a figure centred
- * on the anchor column has centerX = anchor.x + 0.5; the baseline is a row index.
+ * Coordinate convention: the centre of a pixel in column x is x + 0.5, so a figure whose footprint
+ * is centred on the anchor column has footX = anchor.x + 0.5; the baseline is a row index.
  */
 import { InputError } from "../errors.ts";
 import { flipHorizontal, resampleTo } from "../image/resample.ts";
@@ -16,6 +20,7 @@ export { flipHorizontal };
 
 export function measureFrame(image: Raster, threshold = 128): FrameMeasure | undefined {
   let baseline = -1;
+  let top = -1;
   let sum = 0;
   let sx = 0;
   let sy = 0;
@@ -26,19 +31,38 @@ export function measureFrame(image: Raster, threshold = 128): FrameMeasure | und
       sum += a;
       sx += a * (x + 0.5);
       sy += a * (y + 0.5);
-      if (a >= threshold) baseline = y;
+      if (a >= threshold) {
+        baseline = y;
+        if (top < 0) top = y;
+      }
     }
   }
   if (baseline < 0) return undefined;
-  return { baseline, centerX: sx / sum, centerY: sy / sum, area: sum / 255 };
+  const rows = Math.max(1, Math.round(0.1 * (baseline - top + 1)));
+  let footSum = 0;
+  let footN = 0;
+  for (let y = baseline - rows + 1; y <= baseline; y++) {
+    for (let x = 0; x < image.width; x++) {
+      if ((image.data[(y * image.width + x) * 4 + 3] as number) < threshold) continue;
+      footSum += x + 0.5;
+      footN++;
+    }
+  }
+  return {
+    baseline,
+    footX: footSum / footN,
+    centerX: sx / sum,
+    centerY: sy / sum,
+    area: sum / 255,
+  };
 }
 
 function deviation(m: FrameMeasure | undefined, anchor: Point): number {
   if (!m) return Number.POSITIVE_INFINITY;
-  return Math.max(Math.abs(m.baseline - anchor.y), Math.abs(m.centerX - (anchor.x + 0.5)));
+  return Math.max(Math.abs(m.baseline - anchor.y), Math.abs(m.footX - (anchor.x + 0.5)));
 }
 
-/** Largest deviation of baseline and centre of mass from the anchor, per frame and overall, in px. */
+/** Largest deviation of baseline and footprint centre from the anchor, per frame and overall, in px. */
 export function jitterOf(
   frames: Raster[],
   anchor: Point,
@@ -89,8 +113,8 @@ export function registerFrames(figures: Raster[], options: RegisterOptions): Reg
       const m = measures[i] as FrameMeasure;
       const n = norms[i] as number;
       if (!box) return;
-      const left = (m.centerX - box.x) * n;
-      const right = (box.x + box.width - m.centerX) * n;
+      const left = (m.footX - box.x) * n;
+      const right = (box.x + box.width - m.footX) * n;
       const up = (m.baseline + 1 - box.y) * n;
       best = Math.min(
         best,
@@ -108,14 +132,37 @@ export function registerFrames(figures: Raster[], options: RegisterOptions): Reg
     const m = measures[i] as FrameMeasure;
     const n = norms[i] as number;
     const t = scale * n;
-    let x = anchor.x + 0.5 - m.centerX * t;
+    let x = anchor.x + 0.5 - m.footX * t;
     let y = anchor.y + 1 - (m.baseline + 1) * t;
     if (edges === "crisp") {
       x = Math.round(x);
       y = Math.round(y);
     }
-    const image = resampleTo(f, t, { x, y }, frame, edges);
-    const measure = measureFrame(image, threshold);
+    const place = (px: number) => {
+      const img = resampleTo(f, t, { x: px, y }, frame, edges);
+      return { img, m: measureFrame(img, threshold) };
+    };
+    let placed = place(x);
+    let best = { x, placed };
+    let cx = x;
+    // A thin footprint resamples unevenly (whole pixels, or soft edges below the cut), so its centre
+    // can land off the anchor: nudge the placement toward it and keep the closest.
+    for (let pass = 0; pass < 4 && placed.m; pass++) {
+      const gap = anchor.x + 0.5 - placed.m.footX;
+      const nx = edges === "crisp" ? cx + (Math.round(gap) || Math.sign(gap)) : cx + gap;
+      if (nx === cx) break;
+      cx = nx;
+      placed = place(cx);
+      if (
+        placed.m &&
+        (!best.placed.m || deviation(placed.m, anchor) < deviation(best.placed.m, anchor))
+      )
+        best = { x: cx, placed };
+    }
+    x = best.x;
+    placed = best.placed;
+    const image = placed.img;
+    const measure = placed.m;
     if (!measure) throw new InputError(`figure ${i + 1} vanished when scaled into the frame`);
     const transforms: Transform[] = [];
     if (options.families) transforms.push({ op: "normalize-scale", factor: n });

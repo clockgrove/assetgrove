@@ -1,6 +1,6 @@
 /**
  * Deterministic pixel animation QA of one strip: frame count, timing and beats against the
- * family's motion template, ground contact, anchor and footprint drift, silhouette change
+ * family's motion template, ground contact, footprint drift, silhouette change
  * between frames, the loop seam and a colour halo at the figure's edge. Every check adds a reason whether it passes or not, and each
  * failing reason names the frame(s) in 1-based numbers.
  */
@@ -27,7 +27,7 @@ export { ANIMATION_VISION_CHECKS } from "../qa/stability.ts";
 
 const alphaAt = (r: Raster, i: number): number => r.data[i * 4 + 3] as number;
 
-/** Baseline, alpha-weighted centre of mass, area and footprint of every frame. */
+/** Baseline, top row, alpha-weighted centre of mass, area and footprint of every frame. */
 export function measureStrip(
   frames: Raster[],
   anchor: Point,
@@ -36,6 +36,7 @@ export function measureStrip(
   void anchor;
   return frames.map((r, k) => {
     let baseline = -1;
+    let top = -1;
     let sum = 0;
     let sx = 0;
     let sy = 0;
@@ -48,6 +49,7 @@ export function measureStrip(
         sx += a * (x + 0.5);
         sy += a * (y + 0.5);
         if (a >= threshold) {
+          if (top < 0) top = y;
           baseline = y;
           area++;
         }
@@ -56,6 +58,7 @@ export function measureStrip(
     const measure: AnimationFrameMeasure = {
       frame: k + 1,
       baseline,
+      top,
       centerX: sum > 0 ? sx / sum : 0,
       centerY: sum > 0 ? sy / sum : 0,
       area,
@@ -220,6 +223,19 @@ export function checkAnimation(
     for (const b of beatFrames) if (b.contact && b.frame <= count) mustTouch.add(b.frame);
   }
 
+  const heights = measures
+    .filter((m) => m.baseline >= 0)
+    .map((m) => m.baseline - m.top + 1)
+    .sort((a, b) => a - b);
+  const mid = Math.floor(heights.length / 2);
+  const figureHeightPx =
+    heights.length === 0
+      ? 0
+      : heights.length % 2
+        ? (heights[mid] as number)
+        : ((heights[mid - 1] as number) + (heights[mid] as number)) / 2;
+  const groundLimit = thresholds.groundTolerance * figureHeightPx;
+
   // ground-contact
   const groundFails = [...mustTouch]
     .sort((a, b) => a - b)
@@ -228,12 +244,12 @@ export function checkAnimation(
       if (m.baseline < 0)
         return [{ f, text: `frame ${f}: empty, no pixel to rest on the ground line ${anchor.y}` }];
       const off = Math.abs(m.baseline - anchor.y);
-      if (off <= thresholds.groundTolerancePx) return [];
+      if (off <= groundLimit) return [];
       const dir = m.baseline < anchor.y ? "above" : "below";
       return [
         {
           f,
-          text: `frame ${f}: baseline at row ${m.baseline}, ${off} px ${dir} the ground line ${anchor.y} (limit ${thresholds.groundTolerancePx})`,
+          text: `frame ${f}: baseline at row ${m.baseline}, ${off} px ${dir} the ground line ${anchor.y} (limit ${fix(thresholds.groundTolerance * 100)}% of the ${fix(figureHeightPx)} px figure = ${fix(groundLimit)} px)`,
         },
       ];
     });
@@ -248,32 +264,12 @@ export function checkAnimation(
   }
   for (const g of groundFails) add("ground-contact", false, g.text, [g.f]);
 
-  // anchor-drift
-  const driftFails = measures.filter(
-    (m) => m.baseline < 0 || Math.abs(m.centerX - (anchor.x + 0.5)) > thresholds.anchorDriftPx,
-  );
-  if (driftFails.length === 0) {
-    add(
-      "anchor-drift",
-      true,
-      `every frame's centre of mass is within ${thresholds.anchorDriftPx} px of the anchor`,
-    );
-  }
-  for (const m of driftFails) {
-    add(
-      "anchor-drift",
-      false,
-      m.baseline < 0
-        ? `frame ${m.frame}: empty, no centre of mass`
-        : `frame ${m.frame}: centre of mass x ${fix(m.centerX)} is ${fix(Math.abs(m.centerX - (anchor.x + 0.5)))} px from the anchor ${anchor.x + 0.5} (limit ${thresholds.anchorDriftPx})`,
-      [m.frame],
-    );
-  }
-
   // footprint-drift
-  const limit = template?.footprintDriftPx ?? thresholds.footprintDriftPx;
+  const driftFraction = template?.footprintDrift ?? thresholds.footprintDrift;
+  const limit = driftFraction * figureHeightPx;
+  const driftBound = `limit ${fix(driftFraction * 100)}% of the ${fix(figureHeightPx)} px figure = ${fix(limit)} px`;
   const planted = measures.filter(
-    (m) => m.footprint && Math.abs(m.baseline - anchor.y) <= thresholds.groundTolerancePx,
+    (m) => m.footprint && Math.abs(m.baseline - anchor.y) <= groundLimit,
   );
   const band = template?.footprintBand;
   const bandCentres = new Map(
@@ -323,7 +319,7 @@ export function checkAnimation(
         if (d > limit) {
           fails.push({
             f: m.frame,
-            text: `frame ${m.frame}: footprint centre ${fix(centre(m))} is ${fix(d)} px from frame ${ref.frame}'s ${fix(centre(ref))}, the same phase one stride earlier (limit ${limit})`,
+            text: `frame ${m.frame}: footprint centre ${fix(centre(m))} is ${fix(d)} px from frame ${ref.frame}'s ${fix(centre(ref))}, the same phase one stride earlier (${driftBound})`,
           });
         }
       }
@@ -337,7 +333,7 @@ export function checkAnimation(
           if (d > limit) {
             fails.push({
               f: m.frame,
-              text: `frame ${m.frame}: footprint centre ${fix(centre(m))} is ${fix(d)} px from the loop's mean footprint centre ${fix(mean)} (limit ${limit})`,
+              text: `frame ${m.frame}: footprint centre ${fix(centre(m))} is ${fix(d)} px from the loop's mean footprint centre ${fix(mean)} (${driftBound})`,
             });
           }
         }
@@ -349,34 +345,43 @@ export function checkAnimation(
         true,
         noted(
           basis
-            ? `the ${template.name} template's contacts move; every planted frame's footprint is within ${limit} px of ${basis}`
+            ? `the ${template.name} template's contacts move; every planted frame's footprint is within ${fix(limit)} px of ${basis}`
             : `the ${template.name} template's contacts move; no two planted frames share a phase, footprint drift not applicable`,
         ),
       );
     }
     for (const x of fails) add("footprint-drift", false, noted(x.text), [x.f]);
   } else {
-    const first = planted[0];
-    const footFails = first
-      ? planted.filter((m) => Math.abs(centre(m) - centre(first)) > limit)
-      : [];
+    // Planted feet stay put, so each planted frame is held to the one before it; on a loop the
+    // last is also held to the first.
+    const pairs: Array<[AnimationFrameMeasure, AnimationFrameMeasure]> = [];
+    for (let i = 1; i < planted.length; i++) {
+      pairs.push([planted[i] as AnimationFrameMeasure, planted[i - 1] as AnimationFrameMeasure]);
+    }
+    if (loop && planted.length > 2) {
+      pairs.push([
+        planted[0] as AnimationFrameMeasure,
+        planted[planted.length - 1] as AnimationFrameMeasure,
+      ]);
+    }
+    const footFails = pairs.filter(([m, ref]) => Math.abs(centre(m) - centre(ref)) > limit);
     if (footFails.length === 0) {
       add(
         "footprint-drift",
         true,
         noted(
-          first
-            ? `footprints stay within ${limit} px of frame ${first.frame}'s`
-            : "no frame rests on the ground line; footprint drift not applicable",
+          planted.length >= 2
+            ? `each planted footprint is within ${fix(limit)} px of the previous planted frame's`
+            : "fewer than two frames rest on the ground line; footprint drift not applicable",
         ),
       );
     }
-    for (const m of footFails) {
+    for (const [m, ref] of footFails) {
       add(
         "footprint-drift",
         false,
         noted(
-          `frame ${m.frame}: footprint centre ${fix(centre(m))} is ${fix(Math.abs(centre(m) - centre(first as AnimationFrameMeasure)))} px from frame ${(first as AnimationFrameMeasure).frame}'s ${fix(centre(first as AnimationFrameMeasure))} (limit ${limit})`,
+          `frame ${m.frame}: footprint centre ${fix(centre(m))} is ${fix(Math.abs(centre(m) - centre(ref)))} px from frame ${ref.frame}'s ${fix(centre(ref))}, the previous planted frame (${driftBound})`,
         ),
         [m.frame],
       );
@@ -442,6 +447,7 @@ export function checkAnimation(
     ...(template && { template: template.name }),
     ...(gait !== undefined && { gait }),
     frameCount: count,
+    figureHeightPx,
     passed: reasons.every((r) => r.passed),
     reasons,
     measures,
