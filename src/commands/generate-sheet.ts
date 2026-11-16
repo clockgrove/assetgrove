@@ -7,8 +7,9 @@ import { providerSet, spendLedger } from "../providers/index.ts";
 import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { generateSheet, motionLines, planSheet, sheetBrief } from "../sheet/generate.ts";
-import { templateFor, templatesFor } from "../animation/templates.ts";
+import { templatesFor } from "../animation/templates.ts";
 import { InputError } from "../errors.ts";
+import { knownTemplate } from "../animation/template-choice.ts";
 import { SliceError } from "../sheet/slice.ts";
 import type { AssetSpec } from "../types.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
@@ -84,10 +85,15 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
       : []),
   ];
   const jobs = jobsOf(perCall, routes);
-  // The sheet prompt states the family's motion template, which the profile can declare.
+  // The sheet prompt states the family's motion template, which the profile can declare. A family
+  // nothing declares or names is decided at run time, so every template's lines are checked.
   const family = spec.value.animationFamily;
-  const template =
-    typeof family === "string" ? templateFor(family, templatesFor(profile.value)) : undefined;
+  const templates = templatesFor(profile.value);
+  const known =
+    typeof family === "string"
+      ? knownTemplate(family, templates, spec.value.template)
+      : { source: "undecided" as const };
+  const motionTemplates = known ? [known.template] : templates;
   const bibleFiles = styleBibleReads("bible", bible);
   const near = await nearMatchesFor(
     spec.value,
@@ -111,7 +117,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
         : {}),
     },
     promptText: [
-      ...motionLines(template, undefined),
+      ...motionTemplates.flatMap((t) => motionLines(t, undefined)),
       ...(args.note !== undefined ? [args.note] : []),
     ],
     jobs,

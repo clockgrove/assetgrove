@@ -17,7 +17,7 @@ export interface MotionBeat {
 
 /** One family's motion template, as data. */
 export interface MotionTemplate {
-  /** The family name it serves; also matches `<name>-<suffix>` families (walk → walk-right). */
+  /** Its name. A family of exactly this name uses it; any other family declares it or is decided (docs/animation.md). */
   name: string;
   description?: string;
   /** The cycle loops: the last frame must flow into the first. */
@@ -140,13 +140,20 @@ export interface StripInput {
   durationMs?: number;
   /** The subject's gait, from the asset spec; the profile's `animation.gait` when unset. */
   gait?: string;
+  /**
+   * The motion template the asset spec (or the grouping) declares for this family; `none`
+   * declares that no template applies. Unset: the template named like the family, else decided.
+   */
+  template?: string;
 }
 
 /** The animation QA report of one strip. Each reason's text names the frame(s). */
 export interface AnimationReport {
   family: string;
-  /** The matched template's name, or undefined when none matched. */
+  /** The template the strip was judged by, or undefined when none applies or none was decided. */
   template?: string;
+  /** How the template was known: declared, named like the family, judged by a decision, or undecided. */
+  templateSource: import("./template-choice.ts").TemplateSource;
   /** The gait the checks used, when one was declared. */
   gait?: string;
   frameCount: number;

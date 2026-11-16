@@ -173,6 +173,11 @@ export interface FamilyGroup {
   mirrorOf?: string;
   /** Why the frames belong together, in this order. */
   reason: string;
+  /**
+   * The motion template the author declares for this family (`none`: no template applies). Unset:
+   * the template named like the family, else `animation-qa` decides it (docs/animation.md).
+   */
+  template?: string;
 }
 
 /**

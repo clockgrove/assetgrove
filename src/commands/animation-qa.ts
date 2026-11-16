@@ -13,6 +13,8 @@ import { runCap } from "../budget.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
+import { MOTION_TEMPLATE_OPERATION } from "../routes.ts";
+import type { Route } from "../routes.ts";
 import type { RunContext } from "./types.ts";
 import {
   DRY_RUN_PROPERTY,
@@ -74,17 +76,30 @@ async function prepare(args: AnimationQaArgs, ctx: RunContext) {
   for (const t of targets) {
     if (subject !== undefined) t.subject = subject;
     if (spec.gait !== undefined) t.gait = spec.gait;
+    // The spec's template is its own family's: the one strip given, or the import's family of
+    // the spec's name.
+    if (
+      spec.template !== undefined &&
+      (spec.family === undefined ? targets.length === 1 : t.family === spec.family)
+    )
+      t.template = spec.template;
   }
-  const plan = await planAnimationQa(targets, routes, capUsd, vision);
+  // The motion-template decisions are not vision checks: --no-vision still makes them.
+  const plan = await planAnimationQa(targets, routes, capUsd, vision, true);
   const flickers = plan.perFamily.reduce((sum, f) => sum + f.flickerCalls, 0);
   const holes = plan.perFamily.reduce((sum, f) => sum + f.holeCalls, 0);
+  const decisions = plan.perFamily.reduce((sum, f) => sum + f.templateCalls, 0);
   const jobs: PlanJob[] = [];
+  if (decisions > 0)
+    jobs.push(
+      jobOf(MOTION_TEMPLATE_OPERATION, routes[MOTION_TEMPLATE_OPERATION] as Route, decisions),
+    );
   if (flickers > 0) jobs.push(jobOf("flicker", routes.flicker, flickers));
   if (holes > 0) jobs.push(jobOf("holes", routes.holes, holes));
   const work = await buildWorkPlan(animationQaCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "strip", "profile", "import"],
-    // The flicker and holes prompts name the family and the subject.
+    // The motion-template, flicker and holes prompts name the family and the subject.
     promptText: jobs.length > 0 ? [args.family, args.subject].filter((t) => t !== undefined) : [],
     jobs,
     capUsd,
@@ -101,15 +116,18 @@ export const animationQaCommand = defineCommand<AnimationQaArgs>({
   summary: "check strips against motion templates and for loop and continuity; write previews",
   details: `Checks each strip against its family's motion template (beats, timing, contact frames,
 silhouette variation) and runs loop and continuity QA on pixels (loop seam, ground line,
-anchor and footprint drift, a colour halo at the edge). Two checks need vision, within the
+footprint drift, a colour halo at the edge). Two checks need vision, within the
 cost cap in USD: identity flicker, one call per pair of consecutive frames, each label and
 confidence appended to flicker.jsonl; and holes, one call per frame with a see-through area
 inside the figure's outline, which the model judges a hole or a natural opening between
 parts. --no-vision skips both. Writes <family>.qa.json, the onion-skin
 sheet <family>.onion.png and the looping preview <family>.webp into --out.
 --import checks every family write-families wrote from that import.
---spec reads the asset spec's gait (and its subject, unless --subject is given); the gait
-picks the motion template's footprint rule for it, over the profile's animation.gait.
+--spec reads the asset spec's gait, template (and its subject, unless --subject is given); the
+gait picks the motion template's footprint rule for it, over the profile's animation.gait.
+A family no spec or grouping declares a template for, and that no template is named for, costs
+one motion-template decision per run (--no-vision too); with none chosen, ground contact,
+footprint drift and the loop seam are not applicable.
 --dry-run prints the planned calls, the cost forecast and the spend left under the daily and
 work-item limits, writes nothing and needs no key.
 Give --strip, --family and --profile for one strip, or --import for every family of an import.
@@ -145,7 +163,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
       },
       spec: {
         type: "string",
-        description: "the asset spec; supplies the gait and subject",
+        description: "the asset spec; supplies the gait, template and subject",
         placeholder: "<spec.json>",
       },
       anchor: { type: "string", description: "the anchor point of the frames", placeholder: "x,y" },
@@ -182,10 +200,13 @@ Exits 5 when any check fails; every failed check names its frame.`,
     const { capUsd, providers, routes, vision, targets, plan, work } = await prepare(args, ctx);
     if (args.dryRun) {
       const human = [
-        `dry run: ${targets.length} strip(s), ${plan.calls} planned vision call(s), nothing spent`,
+        `dry run: ${targets.length} strip(s), ${plan.calls} planned call(s), nothing spent`,
         ...plan.perFamily.map(
           (f) =>
-            `  ${f.family}: ${f.flickerCalls} flicker call(s)  ${plan.model}; ${f.holeCalls} holes call(s)  ${plan.holesModel}`,
+            `  ${f.family}: ${f.flickerCalls} flicker call(s)  ${plan.model}; ${f.holeCalls} holes call(s)  ${plan.holesModel}` +
+            (f.templateCalls > 0
+              ? `; ${f.templateCalls} motion-template call  ${plan.templateModel}`
+              : ""),
         ),
         `forecast ${usd(plan.estimateUsd)} against a $${capUsd.toFixed(2)} cap` +
           (plan.withinCap ? "" : " (over the cap)"),
@@ -203,14 +224,15 @@ Exits 5 when any check fails; every failed check names its frame.`,
       routes,
       capUsd,
       ledger: spendLedger(ctx, args.workItem),
-      ...(vision && { provider: { provider: providers, name: providers.billing.providerId } }),
+      provider: { provider: providers, name: providers.billing.providerId },
+      vision,
     });
     const lines: string[] = [];
     for (const r of results) {
       lines.push(...formatReport(r.report));
       lines.push(`  onion skin ${r.files.onion}`, `  preview ${r.files.preview}`);
     }
-    if (vision)
+    if (vision || spentUsd > 0)
       lines.push(`$${spentUsd.toFixed(4)} spent; decisions in ${join(outDir, "flicker.jsonl")}`);
     const fields = {
       outDir,

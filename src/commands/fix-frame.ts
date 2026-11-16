@@ -64,8 +64,13 @@ async function prepare(args: FixFrameArgs, ctx: RunContext) {
     ...(subject !== undefined && { subject }),
     ...(anchor !== undefined && { anchor }),
     ...(spec.gait !== undefined && { gait: spec.gait }),
+    // The spec's template is its own family's.
+    ...(spec.template !== undefined &&
+      (spec.family === undefined || spec.family === args.family) && {
+        template: spec.template,
+      }),
   });
-  const plan = planFrameFix(routes, capUsd);
+  const plan = planFrameFix(routes, capUsd, target);
   const jobs = jobsOf(plan.perCall, routes);
   const work = await buildWorkPlan(fixFrameCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
@@ -93,7 +98,9 @@ frame changes. Writes the fixed strip, its provenance (the strip's own, with the
 fixes entry added) and its QA report and previews into --out. --provenance (default
 <strip>.provenance.json when it exists) is the strip's own provenance or the record recipe or op
 wrote for it; any other file is refused (exit 2) before the call. Never writes into a target and
-never sets a review value. --spec reads the asset spec's gait (and subject) for that QA.
+never sets a review value. --spec reads the asset spec's gait, template (and subject) for that QA.
+A family whose spec declares no template and that no template is named for first costs one
+motion-template decision, which picks the registration pin and the QA's template.
 Give exactly one of --from and --key-pose.
 --dry-run prints the planned call, the forecast and the spend left under the daily and work-item
 limits, and needs no key.`,
@@ -140,7 +147,7 @@ limits, and needs no key.`,
       },
       spec: {
         type: "string",
-        description: "the asset spec; supplies the gait and subject",
+        description: "the asset spec; supplies the gait, template and subject",
         placeholder: "<spec.json>",
       },
       note: { type: "string", description: "a note for the edit call", placeholder: "<text>" },

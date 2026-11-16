@@ -21,6 +21,7 @@ import {
   LOOKDEV_MARKING_OPERATION,
   MODEL3D_FACING_OPERATION,
   PROMPT_POLICY_OPERATION,
+  MOTION_TEMPLATE_OPERATION,
   REFERENCE_VIEW_OPERATION,
 } from "../routes.ts";
 
@@ -88,6 +89,13 @@ export interface Script {
   marking?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers which motion template describes an animation family (the `motion-template` choice
+   * decision). A script without it answers `none`; its calls do not count toward `decide`'s index.
+   */
+  motionTemplate?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -141,6 +149,7 @@ export class ScriptedProvider implements GenerationProvider {
   private viewCount = 0;
   private facingCount = 0;
   private markingCount = 0;
+  private templateCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -213,6 +222,13 @@ export class ScriptedProvider implements GenerationProvider {
     if (request.operation === LOOKDEV_MARKING_OPERATION && this.script.marking) {
       const index = this.markingCount++;
       return { requestId: `scripted-marking-${index}`, ...this.script.marking(request) };
+    }
+    if (request.operation === MOTION_TEMPLATE_OPERATION) {
+      const index = this.templateCount++;
+      const answer = this.script.motionTemplate
+        ? this.script.motionTemplate(request)
+        : { answer: { type: "choice" as const, choice: "none" }, costUsd: 0 };
+      return { requestId: `scripted-motion-template-${index}`, ...answer };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

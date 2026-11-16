@@ -148,6 +148,11 @@ export function checkConfirmed(grouping: unknown, frameIds: number[]): Grouping 
   for (const f of g.families) {
     const hasFrames = Array.isArray(f.frames) && f.frames.length > 0;
     const hasMirror = f.mirrorOf !== undefined;
+    if (f.template !== undefined && typeof f.template !== "string") {
+      throw new InputError(
+        `family "${f.name}": template must be a motion template's name, or "none"`,
+      );
+    }
     if (hasFrames && hasMirror) {
       throw new InputError(`family "${f.name}" has both frames and mirrorOf; use one`);
     }

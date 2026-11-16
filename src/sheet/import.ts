@@ -55,14 +55,10 @@ import type {
 import { checkConfirmed, familyFrames, proposeGrouping } from "./group.ts";
 import { SliceError } from "./slice.ts";
 import { animationQa } from "../animation/qa.ts";
-import { DEFAULT_DURATION_MS, familyLoops, renderPreviews } from "../animation/run.ts";
+import { choiceLoops, DEFAULT_DURATION_MS, renderPreviews } from "../animation/run.ts";
+import { templateWithoutCall, UNDECIDED } from "../animation/template-choice.ts";
 import { splitStrip } from "../animation/strip.ts";
-import {
-  registrationPin,
-  templateFor,
-  templatesFor,
-  thresholdsFor,
-} from "../animation/templates.ts";
+import { registrationPin, templatesFor, thresholdsFor } from "../animation/templates.ts";
 import type { AnimationReport } from "../animation/types.ts";
 import type { Grouping, MatteQuality, RegisterPin, SliceOptions } from "./types.ts";
 import type { ConfirmationRecord, LoadedReference } from "../types.ts";
@@ -136,6 +132,11 @@ export interface ImportRecord {
   /** The asset spec's gait, for animation QA; the profile's `animation.gait` applies when unset. */
   gait?: string;
   /**
+   * The motion template the asset spec declares for its `animationFamily`, by family, for
+   * animation QA (a grouping family's own `template` wins).
+   */
+  templates?: Record<string, string>;
+  /**
    * The asset spec's family and its target fields (`fields`), when a spec asked for the sheet. The family of that name
    * written by `writeFamilies` carries the fields to the target's templates, as a `pick` does.
    */
@@ -168,7 +169,14 @@ export interface ImportRecord {
   calls: CallRecord[];
   /** The transformation steps (slice, matte) that made the frames from the sheet. */
   steps?: TransformStep[];
-  written?: Array<{ at: string; target: string; families: string[]; files: string[] }>;
+  written?: Array<{
+    at: string;
+    target: string;
+    families: string[];
+    files: string[];
+    /** The motion template the confirmed grouping declared for a family, by family. */
+    templates?: Record<string, string>;
+  }>;
   /**
    * The common scale fitted on the first write, reused by every later write of this import so all
    * of an asset's families stay one size whatever grouping each write uses.
@@ -199,6 +207,8 @@ export interface ImportOptions {
   subject?: string;
   /** The asset spec's gait, recorded for animation QA. */
   gait?: string;
+  /** The motion templates the asset spec declares, by family, recorded for animation QA. */
+  templates?: Record<string, string>;
   /** The asset spec's family and target fields, recorded for `writeFamilies`. */
   spec?: ImportRecord["spec"];
   profile: TargetProfile;
@@ -425,6 +435,7 @@ export async function importSheet(
     assetId: options.assetId,
     ...(options.subject !== undefined && { subject: options.subject }),
     ...(options.gait !== undefined && { gait: options.gait }),
+    ...(options.templates !== undefined && { templates: options.templates }),
     ...(options.spec !== undefined && { spec: options.spec }),
     sheet: {
       path: options.sheetPath,
@@ -711,9 +722,22 @@ export async function writeFamilies(
   }
   const ids = record.frames.map((f) => f.id);
   const grouping = checkConfirmed(options.grouping, ids);
-  // The profile's motion templates and thresholds are checked before anything is written.
-  templatesFor(record.profile);
+  // The profile's motion templates and thresholds, and each family's declared template, are
+  // checked before anything is written. Writing makes no call: a family no grouping or spec
+  // declares a template for, and no template is named for, is undecided (animation-qa decides it).
+  const templates = templatesFor(record.profile);
   thresholdsFor(record.profile);
+  const declaredTemplates = new Map<string, string>();
+  for (const f of grouping.families) {
+    const declared = f.template ?? record.templates?.[f.name];
+    if (declared !== undefined) declaredTemplates.set(f.name, declared);
+  }
+  const choices = new Map(
+    grouping.families.map((f) => [
+      f.name,
+      templateWithoutCall(f.name, templates, declaredTemplates.get(f.name)),
+    ]),
+  );
   const byId = new Map(record.frames.map((f) => [f.id, f]));
   const specFamily = specFamilyOf(record, grouping);
 
@@ -770,8 +794,7 @@ export async function writeFamilies(
     }
     figures.push(...items);
     families.push(...items.map(() => p.family.name));
-    const template = templateFor(p.family.name, templatesFor(record.profile));
-    const pin = registrationPin(template, record.profile, record.gait);
+    const pin = registrationPin(choices.get(p.family.name)?.template, record.profile, record.gait);
     pins.push(...items.map(() => pin));
   }
   const registration = runOperation(
@@ -970,10 +993,11 @@ export async function writeFamilies(
       },
       record.profile,
       style,
+      choices.get(s.family.name),
     );
     const rendered = renderPreviews(stripFrames, {
       anchor,
-      loop: familyLoops(s.family.name, record.profile),
+      loop: choiceLoops(choices.get(s.family.name) ?? UNDECIDED),
       durationMs,
       report: animation,
       digitalSourceType,
@@ -1007,6 +1031,13 @@ export async function writeFamilies(
       target: resolve(options.targetDir),
       families: written.map((w) => w.name),
       files: written.flatMap((w) => w.result.files),
+      ...(grouping.families.some((f) => f.template !== undefined) && {
+        templates: Object.fromEntries(
+          grouping.families.flatMap((f) =>
+            f.template !== undefined ? [[f.name, f.template] as const] : [],
+          ),
+        ),
+      }),
     },
   ];
   await writeImport(options.importDir, record);
