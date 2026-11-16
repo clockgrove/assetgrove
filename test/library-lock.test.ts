@@ -60,7 +60,7 @@ test("outside Git, a library root reached through a symlink takes one lock befor
   const top = mkdtempSync(join(tmpdir(), "library-lock-link-"));
   const real = join(top, "real");
   mkdirSync(real);
-  symlinkSync(real, join(top, "link"));
+  symlinkSync(real, join(top, "link"), "junction");
   const root = join(top, "link", "assets", "source");
   const state = join(top, "state");
   const before = acquireLibraryLock(root, state);

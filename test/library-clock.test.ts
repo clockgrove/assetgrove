@@ -289,8 +289,9 @@ for (const [otherSorts, other64] of [
     assert.deepEqual(one, other);
     assert.equal(writeReview(one), writeReview(other));
     // At equal stamps the hash decides: the other branch's version is current when it sorts last,
-    // and then the bytes on disk (this checkout's) are reported as modified until someone adopts or
-    // restores them; the record itself stays one determinate order either way.
+    // and then the bytes on disk (this checkout's, an older version in the merged record, so adopt
+    // and pick refuse them) are reported as modified until the other branch's bytes are put on
+    // disk; the record itself stays one determinate order either way.
     assert.equal(currentVersion(one)?.sha256, otherSorts === "last" ? other64 : real.sha256);
 
     for (const text of [forward, backward]) {
