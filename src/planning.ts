@@ -663,7 +663,9 @@ function briefPolicyJobs(p: Prepared, compiles: boolean): PlanJob[] {
   const passes = (checksBrief(p) ? 1 : 0) + (compiles ? 1 : 0);
   if (passes === 0) return [];
   const route = briefPolicyRoute(p);
-  return [jobOf(BRIEF_POLICY_OPERATION, route, passes * briefPolicyFields(p.protectedFields).length)];
+  return [
+    jobOf(BRIEF_POLICY_OPERATION, route, passes * briefPolicyFields(p.protectedFields).length),
+  ];
 }
 
 /** The brief-policy route; throws `RouteUnavailableError` when no configured provider serves it. */
@@ -683,7 +685,6 @@ function briefRefusal(verdicts: readonly BriefPolicyVerdict[]): InputError {
 
 export async function createPlan(options: CreatePlanOptions): Promise<CreatedPlan> {
   const p = await prepare(options);
-  const doc = p.doc;
   const frameCount = p.postprocess.frameCount;
   // The compiler runs when its route's provider can be called; otherwise the template applies.
   const compiles = compilerCallable(options, p.routes.compiler);
