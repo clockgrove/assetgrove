@@ -255,46 +255,55 @@ function union(base: string, ours: string, theirs: string): string {
   }
 }
 
-test("records diverged on two branches and joined by union read as one version order, and the library checks after rebuild", async () => {
-  const lib = await library(10);
-  const base = await readFile(lib.reviewPath, "utf8");
-  const baseRecord = parseReview(base, "base");
-  const picked = await writeToTarget(lib.write(60, { replaces: baseRecord.versions[0]!.sha256 }));
-  const real = (await readRecord(lib)).versions[1]!;
-  assert.equal(real.sha256, picked.library?.sha256);
-  // Two branches each pick (a version and its annotation) at the same instant: only the order
-  // rule separates them, and the union interleaves the two sections.
-  const ours = await readFile(lib.reviewPath, "utf8");
-  const other64 = "0".repeat(64);
-  const theirs = writeReview(
-    appendAnnotation(appendVersion(baseRecord, { ...real, sha256: other64 }), {
-      type: "Annotation",
-      motivation: "moderating",
-      created: real.at,
-      target: { source: "shelter.png", "ag:version": other64 },
-      "ag:action": "replace",
-    }),
-  );
+for (const [otherSorts, other64] of [
+  ["first", "0".repeat(64)],
+  ["last", "f".repeat(64)],
+] as const) {
+  test(`records diverged on two branches and joined by union read as one version order, and the library checks after rebuild (the other branch's version sorts ${otherSorts})`, async () => {
+    const lib = await library(10);
+    const base = await readFile(lib.reviewPath, "utf8");
+    const baseRecord = parseReview(base, "base");
+    const picked = await writeToTarget(lib.write(60, { replaces: baseRecord.versions[0]!.sha256 }));
+    const real = (await readRecord(lib)).versions[1]!;
+    assert.equal(real.sha256, picked.library?.sha256);
+    // Two branches each pick (a version and its annotation) at the same instant: only the order
+    // rule separates them, and the union interleaves the two sections.
+    const ours = await readFile(lib.reviewPath, "utf8");
+    const theirs = writeReview(
+      appendAnnotation(appendVersion(baseRecord, { ...real, sha256: other64 }), {
+        type: "Annotation",
+        motivation: "moderating",
+        created: real.at,
+        target: { source: "shelter.png", "ag:version": other64 },
+        "ag:action": "replace",
+      }),
+    );
 
-  const forward = union(base, ours, theirs);
-  const backward = union(base, theirs, ours);
-  assert.notEqual(forward, backward);
-  const one = parseReview(forward, "forward");
-  const other = parseReview(backward, "backward");
-  assert.equal(one.versions.length, 3);
-  assert.equal(one.annotations.length, baseRecord.annotations.length + 2);
-  assert.deepEqual(one, other);
-  assert.equal(writeReview(one), writeReview(other));
-  assert.equal(currentVersion(one)?.sha256, real.sha256);
+    const forward = union(base, ours, theirs);
+    const backward = union(base, theirs, ours);
+    assert.notEqual(forward, backward);
+    const one = parseReview(forward, "forward");
+    const other = parseReview(backward, "backward");
+    assert.equal(one.versions.length, 3);
+    assert.equal(one.annotations.length, baseRecord.annotations.length + 2);
+    assert.deepEqual(one, other);
+    assert.equal(writeReview(one), writeReview(other));
+    // At equal stamps the hash decides: the other branch's version is current when it sorts last,
+    // and then the bytes on disk (this checkout's) are reported as modified until someone adopts or
+    // restores them; the record itself stays one determinate order either way.
+    assert.equal(currentVersion(one)?.sha256, otherSorts === "last" ? other64 : real.sha256);
 
-  for (const text of [forward, backward]) {
-    await writeFile(lib.reviewPath, text);
-    await rebuildLibrary(await readLibrary(lib.profile, lib.targetDir));
-    const state = await readLibrary(lib.profile, lib.targetDir);
-    assert.deepEqual(state.problems, []);
-    assert.deepEqual(state.needsRebuild, []);
-  }
-});
+    for (const text of [forward, backward]) {
+      await writeFile(lib.reviewPath, text);
+      await rebuildLibrary(await readLibrary(lib.profile, lib.targetDir));
+      const state = await readLibrary(lib.profile, lib.targetDir);
+      assert.deepEqual(state.problems, []);
+      assert.deepEqual(state.needsRebuild, []);
+      const modified = (await libraryDrift(state, undefined)).modified;
+      assert.equal(modified.length, otherSorts === "last" ? 1 : 0);
+    }
+  });
+}
 
 test("two picks prepared against the same replaced version: the second commit is version_changed and writes no file", async () => {
   const lib = await library(10);
@@ -318,10 +327,22 @@ const actionsUrl = pathToFileURL(
   join(import.meta.dirname, "..", "src", "library", "actions.ts"),
 ).href;
 
-/** Runs `body` (using `m`, the module) in another process; its one printed line. */
-function child(url: string, body: string): string {
-  const script = `import(${JSON.stringify(url)}).then(async (m) => { try { ${body} } catch (e) { console.log(e.code ?? e.message); } });`;
-  return execFileSync(process.execPath, ["-e", script], { encoding: "utf8" }).trim();
+/** Calls the module's `fn` with `args` (the string "callback" as an empty async function) in another process. */
+const CHILD_SCRIPT = `const [url, fn, args] = JSON.parse(process.argv[1]);
+import(url).then(async (m) => {
+  try {
+    await m[fn](...args.map((a) => (a === "callback" ? async () => {} : a)));
+    console.log("acquired");
+  } catch (e) {
+    console.log(e.code ?? e.message);
+  }
+});`;
+
+/** Runs `fn(...args)` from the module at `url` in another process; its one printed line. */
+function child(url: string, fn: string, args: unknown[]): string {
+  return execFileSync(process.execPath, ["-e", CHILD_SCRIPT, JSON.stringify([url, fn, args])], {
+    encoding: "utf8",
+  }).trim();
 }
 
 test("outside Git a hand-off and a review take the same lock: whichever holds it, the other is run_in_progress", async () => {
@@ -340,23 +361,14 @@ test("outside Git a hand-off and a review take the same lock: whichever holds it
   // The hand-off held it first, so the review's lock is refused.
   assert.equal(reviewLockPath, "run_in_progress");
   assert.equal(
-    child(
-      actionsUrl,
-      `await m.withLibraryLock(${JSON.stringify(location)}, ${JSON.stringify(state)}, async () => {}); console.log("acquired");`,
-    ),
+    child(actionsUrl, "withLibraryLock", [location, state, "callback"]),
     "run_in_progress",
   );
   handoffLock.release();
 
   // The review holds it: a hand-off from another process and a real commit are both refused.
   await withLibraryLock(location, state, async () => {
-    assert.equal(
-      child(
-        lockUrl,
-        `m.acquireLibraryLock(${JSON.stringify(lib.root)}, ${JSON.stringify(state)}); console.log("acquired");`,
-      ),
-      "run_in_progress",
-    );
+    assert.equal(child(lockUrl, "acquireLibraryLock", [lib.root, state]), "run_in_progress");
     await assert.rejects(
       writeToTarget(lib.write(60)),
       (error: Error & { code?: string }) => error.code === "run_in_progress",

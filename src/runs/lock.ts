@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { uptime } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { findGitDir } from "../library/lfs.ts";
 
 export const LOCK_FILE = "lock";
@@ -283,12 +283,22 @@ export function gitCommonDir(start: string): string | undefined {
   return findGitDir(start);
 }
 
-/** The real path of `path`, or the path resolved when it does not exist yet. */
+/**
+ * The real path of `path`; while it does not exist yet, the real path of its nearest existing
+ * ancestor joined with the rest, so the answer does not change when the folder is created.
+ */
 function realOrResolved(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
+  const missing: string[] = [];
+  let at = resolve(path);
+  for (;;) {
+    try {
+      return join(realpathSync(at), ...missing.reverse());
+    } catch {
+      const parent = dirname(at);
+      if (parent === at) return resolve(path);
+      missing.push(basename(at));
+      at = parent;
+    }
   }
 }
 
