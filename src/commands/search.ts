@@ -18,7 +18,9 @@ import { createLibraryReader } from "../search/reader.ts";
 import type { LibraryReader } from "../search/reader.ts";
 import { writeFindSheet } from "../search/sheet.ts";
 import type { SearchSettings, Settings } from "../settings.ts";
-import { projectDir } from "../tree/project.ts";
+import { formatAddress, parseAddress } from "../tree/address.ts";
+import { openProject, projectDir } from "../tree/project.ts";
+import { readTree } from "../tree/read.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext } from "./types.ts";
 
@@ -129,7 +131,101 @@ interface FindArgs {
   source?: string[];
   game?: string;
   limit?: number;
+  outliers?: string;
   target?: string;
+}
+
+/**
+ * The asset addresses of a tree folder, every page of it, as the search index names them (an asset
+ * has no trailing slash).
+ */
+async function folderMembers(dir: string, stateDir: string, set: string): Promise<string[]> {
+  const project = await openProject(dir, stateDir);
+  const members: string[] = [];
+  let address: string | undefined = set;
+  while (address !== undefined) {
+    const read = await readTree(project, address);
+    const document = read.document as
+      { kind?: string; children?: { address: string; kind: string }[]; next?: string } | undefined;
+    if (!read.folder || document?.kind !== "folder") {
+      throw new InputError(`--outliers ${set} is not a folder address of the asset tree`);
+    }
+    for (const child of document.children ?? []) {
+      if (child.kind !== "asset") continue;
+      const at = parseAddress(child.address);
+      members.push(formatAddress(at.game, at.segments));
+    }
+    address = document.next;
+  }
+  return members;
+}
+
+/**
+ * One find, as the `find` command and the tree's search paths both run it (design sections 2 and
+ * 7.5): the same slot call over the same query, so both return the same hits. `sheet` is false for
+ * a resource read, which writes nothing.
+ */
+export async function runFind(
+  args: FindArgs,
+  ctx: RunContext,
+  options: { sheet: boolean },
+): Promise<{ fields: Record<string, unknown>; human: string }> {
+  for (const source of args.source ?? [])
+    if (!(SEARCH_SOURCES as readonly string[]).includes(source))
+      throw new InputError(`unknown --source "${source}"; use ${SEARCH_SOURCES.join(", ")}`);
+  const { slot, context, reader } = await searchCall("find", args.target, ctx);
+  if (args.game !== undefined && args.game !== "all" && args.game !== context.game)
+    throw new InputError(`--game takes all or this project's game "${context.game}"`);
+  if (args.outliers !== undefined) {
+    const members = await folderMembers(context.worktree, ctx.settings.stateDir, args.outliers);
+    const result = await calling(() => slot.outliers(members, context));
+    const human = [
+      ...result.outliers.map((o) => `${o.address} (z ${o.z.toFixed(2)})`),
+      `${result.outliers.length} outlier${result.outliers.length === 1 ? "" : "s"} among ${result.members} members of ${args.outliers}`,
+    ].join("\n");
+    return { fields: { set: args.outliers, ...result }, human };
+  }
+  let like: SearchQuery["like"];
+  if (args.like !== undefined) {
+    if (args.like.startsWith("asset://")) like = { address: args.like };
+    else {
+      try {
+        like = { image: new Uint8Array(await readFile(args.like)) };
+      } catch (error) {
+        throw new InputError(`--like ${args.like} cannot be read`, { cause: error });
+      }
+    }
+  }
+  const query: SearchQuery = {
+    ...(args.words !== undefined && args.words.trim() !== "" && { words: args.words }),
+    ...(like && { like }),
+    ...(args.where !== undefined && args.where.length > 0 && { where: args.where }),
+    ...(args.source !== undefined &&
+      args.source.length > 0 && { sources: args.source as SearchSource[] }),
+    ...(args.game === "all" && { allGames: true }),
+    limit: args.limit ?? 20,
+  };
+  const result = await calling(() => slot.find(query, context));
+  const fields: Record<string, unknown> = {
+    hits: result.hits,
+    fresh: result.fresh,
+    builtFrom: result.builtFrom,
+  };
+  let sheet: string | undefined;
+  if (options.sheet) {
+    const images = await Promise.all(result.hits.map((hit) => reader.loadImageByPath(hit.path)));
+    sheet = await writeFindSheet(
+      result.hits,
+      images,
+      join(ctx.settings.stateDir, "search", "sheets"),
+    );
+    fields["sheet"] = sheet;
+  }
+  const human = [
+    ...result.hits.map((h) => `${h.rank}. ${h.address} (${h.source}, ${h.score.toFixed(4)})`),
+    `${result.hits.length} hit${result.hits.length === 1 ? "" : "s"}${result.fresh ? "" : " (index not fresh)"}${sheet ? `; sheet ${sheet}` : ""}`,
+  ].join("\n");
+  return { fields, human };
 }
 
 export const findCommand = defineCommand<FindArgs>({
@@ -144,7 +240,10 @@ fields match (field=value, !=, <, >, tag=value; fields kind, subject, state, bib
 source, game, id, address, path, view, title). Returns hits [{address, rank, score, source, path,
 view, fields, sharedText}] (card text only under sharedText), fresh, builtFrom, and sheet: a PNG of
 the hits numbered by rank, which the tool also returns as image content. The index is brought up
-to date first unless another process is writing it (fresh false then). Spends nothing; writes only
+to date first unless another process is writing it (fresh false then). --outliers <folder> instead
+lists the members of an asset:// folder whose indexed image is off the rest (mean cosine distance
+to its five nearest neighbours, as a robust z above 3): {set, members, outliers: [{address,
+distance, z}]}. Spends nothing; writes only
 the index and the sheet under the state directory.`,
   input: {
     type: "object",
@@ -173,6 +272,12 @@ the index and the sheet under the state directory.`,
         placeholder: "all",
       },
       limit: { type: "integer", description: "the most hits", default: 20, minimum: 1 },
+      outliers: {
+        type: "string",
+        description:
+          "an asset:// folder address (a kind, subject, tag or the root): list its members whose look is off the set's (robust z above 3) instead of searching",
+        placeholder: "<set>",
+      },
       target: TARGET,
     },
     additionalProperties: false,
@@ -180,49 +285,7 @@ the index and the sheet under the state directory.`,
   positionals: [{ name: "words" }],
   effect: { readOnly: true, spends: "never", writes: "state" },
   async run(args, ctx) {
-    for (const source of args.source ?? [])
-      if (!(SEARCH_SOURCES as readonly string[]).includes(source))
-        throw new InputError(`unknown --source "${source}"; use ${SEARCH_SOURCES.join(", ")}`);
-    const { slot, context, reader } = await searchCall("find", args.target, ctx);
-    if (args.game !== undefined && args.game !== "all" && args.game !== context.game)
-      throw new InputError(`--game takes all or this project's game "${context.game}"`);
-    let like: SearchQuery["like"];
-    if (args.like !== undefined) {
-      if (args.like.startsWith("asset://")) like = { address: args.like };
-      else {
-        try {
-          like = { image: new Uint8Array(await readFile(args.like)) };
-        } catch (error) {
-          throw new InputError(`--like ${args.like} cannot be read`, { cause: error });
-        }
-      }
-    }
-    const query: SearchQuery = {
-      ...(args.words !== undefined && args.words.trim() !== "" && { words: args.words }),
-      ...(like && { like }),
-      ...(args.where !== undefined && args.where.length > 0 && { where: args.where }),
-      ...(args.source !== undefined &&
-        args.source.length > 0 && { sources: args.source as SearchSource[] }),
-      ...(args.game === "all" && { allGames: true }),
-      limit: args.limit ?? 20,
-    };
-    const result = await calling(() => slot.find(query, context));
-    const images = await Promise.all(result.hits.map((hit) => reader.loadImageByPath(hit.path)));
-    const sheet = await writeFindSheet(
-      result.hits,
-      images,
-      join(ctx.settings.stateDir, "search", "sheets"),
-    );
-    const fields = {
-      hits: result.hits,
-      fresh: result.fresh,
-      builtFrom: result.builtFrom,
-      sheet,
-    };
-    const human = [
-      ...result.hits.map((h) => `${h.rank}. ${h.address} (${h.source}, ${h.score.toFixed(4)})`),
-      `${result.hits.length} hit${result.hits.length === 1 ? "" : "s"}${result.fresh ? "" : " (index not fresh)"}; sheet ${sheet}`,
-    ].join("\n");
+    const { fields, human } = await runFind(args, ctx, { sheet: true });
     return { exitCode: 0, fields, human };
   },
 });

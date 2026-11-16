@@ -29,7 +29,7 @@ Only a person:
 
 ## Search
 
-`find`, `search index`, `search status` and `search setup` need the optional `@clockgrove/assetgrove-search` package, listed by a person under `extensions` in the developer settings; until then help and the tool list leave them out and a call exits 2 `extension_unavailable`. That package ships its own `assetgrove-search` skill describing them.
+`find`, `search index`, `search status` and `search setup` need the optional `@clockgrove/assetgrove-search` package, listed by a person under `extensions` in the developer settings; until then help and the tool list leave them out and a call exits 2 `extension_unavailable`. That package ships its own `assetgrove-search` skill, which covers them, the tree's search paths and set outliers: [assetgrove-search](https://github.com/clockgrove/assetgrove/tree/main/packages/assetgrove-search/skills/assetgrove-search/SKILL.md).
 
 ## Suggested flow
 

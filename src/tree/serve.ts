@@ -18,6 +18,11 @@ import { changed, fingerprint, listTree } from "./list.ts";
 import { openProject } from "./project.ts";
 import type { Project } from "./project.ts";
 import { canonicalAddress, readTree } from "./read.ts";
+import { parseSearchPath, searchTemplates } from "./search.ts";
+import type { PathQuery } from "./search.ts";
+
+/** Runs a find for a search path: the same call as the `find` command, without a sheet. */
+export type SearchRunner = (query: PathQuery) => Promise<Record<string, unknown>>;
 
 /** The most entries one `resources/list` page returns. */
 export const LIST_PAGE = 200;
@@ -52,9 +57,13 @@ export class TreeServer {
   /** The fingerprint steps, one at a time. */
   private queue: Promise<void> = Promise.resolve();
 
-  constructor(dir: string, stateDir: string) {
+  private readonly search: SearchRunner | undefined;
+
+  /** `search` is given only while a loaded extension fills the search slot. */
+  constructor(dir: string, stateDir: string, search?: SearchRunner) {
     this.dir = dir;
     this.stateDir = stateDir;
+    this.search = search;
   }
 
   /** The project, opened fresh for each request, so a change on disk shows at the next read. */
@@ -113,12 +122,22 @@ export class TreeServer {
           template("by-subject/{subject}/", "the assets of a subject", "application/json"),
           template("by-tag/{tag}/", "the assets with a tag", "application/json"),
           template("runs/{run}/{candidate}", "a run's candidate", "application/json"),
+          ...(this.search ? searchTemplates(base) : []),
         ],
       };
     });
     low.setRequestHandler("resources/read", async (request) => {
       const uri = request.params.uri;
       try {
+        const path = this.search && parseSearchPath(uri, (await this.project()).library.game);
+        if (path && this.search) {
+          const document = { address: path.address, ...(await this.search(path.query)) };
+          return {
+            contents: [
+              { uri: path.address, mimeType: "application/json", text: JSON.stringify(document) },
+            ],
+          };
+        }
         const result = await readTree(await this.project(), uri);
         return { contents: result.contents };
       } catch (error) {

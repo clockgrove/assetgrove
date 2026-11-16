@@ -12,6 +12,7 @@ import type {
   SearchFindResult,
   SearchHit,
   SearchLibrary,
+  SearchOutliersResult,
   SearchQuery,
   SearchSlot,
   SearchSource,
@@ -23,6 +24,7 @@ import { bestViewPerAsset, rrf, SearchIndex } from "./find.ts";
 import { refreshTree, type RefreshStats } from "./indexer.ts";
 import { LanceStore } from "./lance-store.ts";
 import { sha256Hex, type Library } from "./library.ts";
+import { findOutliers, type Member } from "./outliers.ts";
 import { acquireWriteLock } from "./lock.ts";
 import { MODEL_MANIFEST } from "./model-manifest.ts";
 import { assertSupportedPlatform } from "./platform.ts";
@@ -314,6 +316,26 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
   return { hits, fresh, builtFrom: built ?? null };
 }
 
+/** The off-style members of a set of asset addresses, by their indexed image vectors. */
+async function outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult> {
+  const embedder = await embedderFor(ctx);
+  const local = await localIndex(ctx, embedder);
+  await local.refresh();
+  const members: Member[] = [];
+  for (const address of new Set(addresses)) {
+    const found = await local.store.query({
+      filter: [
+        { field: "tree", op: "=", value: local.tree },
+        { field: "address", op: "=", value: address },
+      ],
+      limit: 50,
+    });
+    const vector = found.find((h) => h.row.imageVec)?.row.imageVec;
+    if (vector) members.push({ address, vector });
+  }
+  return { members: members.length, outliers: findOutliers(members) };
+}
+
 async function index(
   options: { rebuild?: boolean },
   ctx: SearchContext,
@@ -404,7 +426,7 @@ async function setup(ctx: SearchContext): Promise<Record<string, unknown>> {
   return { dir, model: MODEL_MANIFEST.id, installed: true };
 }
 
-export const searchSlot: SearchSlot = { find, index, status, setup };
+export const searchSlot: SearchSlot = { find, outliers, index, status, setup };
 
 /** Core's entry: refuses on darwin-x64 before LanceDB or Transformers.js is imported. */
 export default function searchExtension(_context: { api: 1 }): Extension {

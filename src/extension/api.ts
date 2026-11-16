@@ -137,9 +137,27 @@ export interface SearchFindResult {
   builtFrom: { head: string; at: string } | null;
 }
 
+/** One member of a set whose style differs from the rest (`find --outliers`). */
+export interface SearchOutlier {
+  address: string;
+  /** Mean cosine distance to the member's five nearest neighbours in the set. */
+  distance: number;
+  /** That distance as a robust z-score against the set. */
+  z: number;
+}
+
+export interface SearchOutliersResult {
+  /** How many of the set's members had an indexed image. */
+  members: number;
+  /** Members with z > 3, most distant first. */
+  outliers: SearchOutlier[];
+}
+
 /** The search slot's operations; each result is a JSON object core passes on as the command's fields. */
 export interface SearchSlot {
   find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;
+  /** The off-style members of a set of asset addresses, by their indexed image vectors. */
+  outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult>;
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;
   setup(ctx: SearchContext): Promise<Record<string, unknown>>;
