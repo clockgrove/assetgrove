@@ -117,11 +117,13 @@ export interface SearchFindResult {
   builtFrom: { head: string; at: string } | null;
 }
 
-/** Picked assets of exactly this kind and subject (design section 7.6). */
+/** The picked assets closest to a request, ranked, with no similarity cut (design section 7.6). */
 export interface NearMatchQuery {
   kind: string;
   subject: string;
-  /** The images the request sends; with any, a match must clear the image-similarity threshold. */
+  /** The request's brief as one text. */
+  brief?: string;
+  /** The images the request sends; picks are also ranked by image similarity to these. */
   references: Uint8Array[];
   limit: number;
 }

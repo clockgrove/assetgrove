@@ -3,10 +3,10 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { loadBible } from "../bible.ts";
 import { readJson } from "../inputs.ts";
-import { nearMatchesFor } from "../search/near-match.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import type { AssetSpec } from "../types.ts";
 import { applyJobs, applyPlan, planDigest } from "../planning.ts";
-import type { SavedPlan } from "../planning.ts";
+import type { GenerationBrief, SavedPlan } from "../planning.ts";
 import { bindingAllows, readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
 import type { ConfirmationRecord } from "../types.ts";
@@ -33,17 +33,18 @@ interface ApplyArgs {
   note?: string;
 }
 
-/** The near matches of the spec and reference images a saved plan names. */
+/** The near matches of the spec a saved plan names, with its key pose and identity turnaround. */
 async function savedPlanNearMatches(planPath: string, ctx: RunContext) {
   try {
     const saved = JSON.parse(await readFile(planPath, "utf8")) as SavedPlan;
     const specPath = saved.inputs["spec"]?.path;
     if (specPath === undefined) return {};
     const spec = await readJson<AssetSpec>(specPath);
-    const references = Object.entries(saved.inputs)
-      .filter(([name]) => name.startsWith("reference/"))
-      .map(([, input]) => input.path);
-    return await nearMatchesFor(spec.value, references, ctx);
+    const references = await subjectReferencePaths(spec, saved.inputs["bible"]?.path);
+    const briefPath = saved.inputs["brief"]?.path;
+    const brief =
+      briefPath === undefined ? undefined : (await readJson<GenerationBrief>(briefPath)).value;
+    return await nearMatchesFor(spec.value, references, ctx, brief);
   } catch {
     return {};
   }

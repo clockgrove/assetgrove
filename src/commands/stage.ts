@@ -1,4 +1,4 @@
-import { nearMatchesFor } from "../search/near-match.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { basename, dirname } from "node:path";
 import { InputError } from "../errors.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
@@ -63,7 +63,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   });
   const jobs = jobsOf(plan.perCandidate, routes, candidates);
   const bibleFiles = styleBibleReads("bible", bible);
-  const near = await nearMatchesFor(spec.value, Object.values(bibleFiles), ctx);
+  const near = await nearMatchesFor(
+    spec.value,
+    await subjectReferencePaths(spec, undefined, bible),
+    ctx,
+  );
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
     near,
     promptAllow: ctx.settings.promptPolicy.allow,

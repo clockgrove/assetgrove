@@ -23,14 +23,12 @@ describe("bars in docs/decisions.md", () => {
     assert.deepEqual(Object.fromEntries([...bars].map(([id, b]) => [id, [b.op, b.value]])), DESIGN);
   });
 
-  it("states the precision, the one re-run rule and the threshold rule", async () => {
+  it("states the precision, and the one re-run rule", async () => {
     const text = await (
       await import("node:fs/promises")
     ).readFile(new URL("../../../docs/decisions.md", import.meta.url), "utf8");
     assert.match(text, /±0\.05/);
     assert.match(text, /re-run once/);
-    assert.match(text, /Image-similarity threshold rule/);
-    assert.match(text, /at least 0\.9/);
   });
 
   it("words look-pixel16 as recall@10 and names the library each measure runs on", async () => {

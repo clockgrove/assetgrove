@@ -25,7 +25,7 @@ The library reader core supplies lists picks (each card's fields and text), the 
 
 ## Near matches
 
-Where the plan step of `plan`, `stage`, `apply` and `generate-sheet` looks for picked assets of the spec's kind and subject before paid generation, it uses this package's index when `search.nearMatch` is on; a failed search never stops the plan. This package's commands do not change it.
+Where the plan step of `plan`, `stage`, `apply` and `generate-sheet` looks for picked assets before paid generation, it uses this package's index when `search.nearMatch` is on; a failed search never stops the plan. It lists up to three picked assets ranked closest to the request (its kind, subject and brief as words, fused with image similarity to its references). Only the kind filters, and no similarity number cuts them: any number would be calibrated on one library's art, and the person looking at the spend confirmation is the one who can judge whether one serves. With a paid embedder nothing about the request is embedded (stored vectors and full text only). This package's commands do not change it.
 
 ## The shared index
 

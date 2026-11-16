@@ -191,16 +191,15 @@ test("reads with a hosted embedder use stored vectors only; find with words is a
     for (const refs of [[], [reference]]) {
       const outcome = await nearMatchesFor(spec, refs, near);
       assert.equal(outcome.searchError, undefined, JSON.stringify(refs));
-      // The shipped threshold is unmeasured (null), so a reference lists none; without, by subject.
-      if (refs.length === 0) assert.ok((outcome.nearMatches ?? []).length > 0);
+      assert.ok((outcome.nearMatches ?? []).length > 0, JSON.stringify(refs));
     }
-    // With a threshold, the reference's stored vector finds the lantern itself.
+    // The reference's stored vector ranks the lantern itself first.
     const { context } = await searchCall("find", undefined, near);
     const image = new Uint8Array(readFileSync(reference));
     const matched = await nearMatchesWith(
-      0.99,
-      { kind: "still", subject: "lantern", references: [image], limit: 3 },
+      { kind: "still", subject: "lantern", references: [image], limit: 1 },
       context,
+      { paid: true },
     );
     assert.deepEqual(
       matched.hits.map((h) => h.address),

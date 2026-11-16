@@ -8,6 +8,8 @@ import { SearchError } from "./errors.ts";
  */
 export class RouteEmbedder implements Embedder {
   readonly id = "route";
+  /** Every call is a provider call that costs money. */
+  readonly paid = true;
   readonly revision: string;
   readonly route: string;
   readonly model: string;

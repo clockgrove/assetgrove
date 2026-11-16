@@ -144,7 +144,9 @@ export class Caller {
       throw new ProviderError(`the ${operation} call failed: ${message}`, { cause: error });
     }
     const costUsd = result.costUsd ?? route.estimatedCostUsd;
-    this.budget.settle(reservation, costUsd);
+    // The provider's own request ID ties the ledger entry to the provider's usage (reconcile).
+    const providerId = result.requestIdSource === "local" ? undefined : result.requestId;
+    this.budget.settle(reservation, costUsd, providerId);
     const usedSeed = result.seed ?? seed;
     const record: CallRecord = {
       operation,

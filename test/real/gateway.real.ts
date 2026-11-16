@@ -8,7 +8,8 @@ import { test } from "node:test";
 import { createRaster, encodePng, setPixel } from "../../src/image/raster.ts";
 import { defaultRoutes } from "../../src/routes.ts";
 import type { LoadedReference } from "../../src/types.ts";
-import { realBudget, skipWithout } from "./budget.ts";
+import { realBudget, RUN_STARTED_AT, skipWithout } from "./budget.ts";
+import { assertAgreed, reconcileEarlier, reconcileLines, skipReasonOf } from "./reconcile.ts";
 
 const skip = skipWithout("AI_GATEWAY_API_KEY");
 
@@ -25,6 +26,28 @@ function redSquare(): LoadedReference {
     sha256: createHash("sha256").update(bytes).digest("hex"),
   };
 }
+
+// First, before this run's own calls: the earlier runs' gateway entries in the cached ledger,
+// compared with the cost the gateway reports for each by now (spends nothing).
+test(
+  "real gateway: earlier runs' ledger entries agree with the gateway's usage",
+  { skip },
+  async (t) => {
+    const rb = realBudget();
+    const gw = rb.provider("vercel-ai-gateway");
+    const result = await reconcileEarlier(rb, gw.provider.billing, {
+      provider: gw.id,
+      before: RUN_STARTED_AT,
+    });
+    for (const line of reconcileLines(result)) console.log(line);
+    const reason = skipReasonOf(result);
+    if (reason !== undefined) {
+      t.skip(reason);
+      return;
+    }
+    assertAgreed(result);
+  },
+);
 
 test("real gateway: one image generation", { skip }, async () => {
   const rb = realBudget();

@@ -64,43 +64,6 @@ export function parseInventory(csv: string): Row[] {
   return rows;
 }
 
-const COLOURS = new Set([
-  "black",
-  "blue",
-  "green",
-  "red",
-  "orange",
-  "yellow",
-  "white",
-  "brown",
-  "blonde",
-  "grey",
-  "silver",
-  "gold",
-  "bronze",
-  "purple",
-  "pink",
-]);
-
-/** A file name with its colour variant removed: one trailing colour part, "race", and a camelCase colour. */
-export function assetKey(file: string): string {
-  const parts = file
-    .replace(/\.[^./]+$/, "")
-    .split("_")
-    .filter((p) => p.toLowerCase() !== "race");
-  if (parts.length > 1 && COLOURS.has(parts[parts.length - 1]!.toLowerCase())) parts.pop();
-  return parts
-    .map((p) =>
-      p
-        .replace(/([a-z])([A-Z])/g, "$1 $2")
-        .split(" ")
-        .filter((t) => !COLOURS.has(t.toLowerCase()) || t === p)
-        .join(""),
-    )
-    .join("_")
-    .toLowerCase();
-}
-
 export function buildManifest(rows: Row[], previous?: Manifest): Manifest {
   const old = new Map((previous?.images ?? []).map((i) => [i.id, i]));
   const images: ManifestImage[] = rows.map((r) => ({
@@ -112,17 +75,6 @@ export function buildManifest(rows: Row[], previous?: Manifest): Manifest {
     height: r.height,
     ...(old.get(r.id)?.card ? { card: old.get(r.id)!.card! } : {}),
   }));
-  // Same asset: one asset in the same pack that differs only by folder (a restyle) or by colour
-  // (a recolour: playerLife3_green/_red, character_black_blue/_green, barrier_red/_red_race).
-  const groups = new Map<string, string[]>();
-  for (const r of rows) {
-    const key = `${r.pack}\0${assetKey(basename(r.path))}`;
-    groups.set(key, [...(groups.get(key) ?? []), r.id]);
-  }
-  const pairs: [string, string][] = [];
-  for (const ids of groups.values())
-    for (let i = 0; i < ids.length; i++)
-      for (let j = i + 1; j < ids.length; j++) pairs.push([ids[i]!, ids[j]!]);
   const sorted = [...rows].sort((a, b) => (a.id < b.id ? -1 : 1));
   return {
     format: MANIFEST_FORMAT,
@@ -155,7 +107,6 @@ export function buildManifest(rows: Row[], previous?: Manifest): Manifest {
       if (was?.judgements) q.judgements = was.judgements;
       return q;
     }),
-    pairs,
   };
 }
 
@@ -170,5 +121,5 @@ if (import.meta.main) {
   await writeFile(join(dir, "manifest.json"), `${JSON.stringify(m, null, 2)}\n`);
   for (const q of m.writtenQueries)
     console.log(q.id, q.text, q.judgements ? relevantOf(q).length : "not judged");
-  console.log("pairs", m.pairs.length, "pixel16", m.labels.filter((l) => l.pixel === 16).length);
+  console.log("pixel16", m.labels.filter((l) => l.pixel === 16).length);
 }

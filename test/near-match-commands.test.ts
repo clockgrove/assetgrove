@@ -13,10 +13,17 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { loadBible, serializeBible } from "../src/bible.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
+import { encodePng } from "../src/image/raster.ts";
 import { fixtureLibrary } from "./fixtures/library.ts";
 import { bareGitTarget } from "./fixtures/git.ts";
-import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  drawSubject,
+  shelterSpec,
+  syntheticProfile,
+  syntheticWorld,
+} from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const cliPath = join(root, "src", "cli.ts");
@@ -134,12 +141,14 @@ test("the plan step of plan, stage, apply and generate-sheet lists the near matc
   const files = ["--spec", spec, "--bible", bible, "--profile", profile];
   const runs = ["--runs", world.runsDir];
 
+  writeFileSync(log, "");
   const stage = await dryRun(["stage", ...files, ...runs]);
   listsThePick("stage", stage);
   const sheet = await dryRun(["generate-sheet", ...files, ...runs]);
   listsThePick("generate-sheet", sheet);
 
-  // plan and apply: a still spec with a key-less bible from init, and the saved plan apply reads.
+  // plan and apply: a still spec with a key pose, a bible from init that locks its subject's
+  // identity and carries style anchors, and the saved plan apply reads.
   const dir = join(world.dir, "plan");
   mkdirSync(dir);
   bareGitTarget(join(dir, "bible"));
@@ -151,19 +160,41 @@ test("the plan step of plan, stage, apply and generate-sheet lists the near matc
   const planBible = (JSON.parse(init.stdout).files as { path: string; role: string }[]).find(
     (f) => f.role === "bible",
   )!.path;
+  const pngBytes = encodePng(drawSubject(96));
+  const bibleDoc = await loadBible(planBible);
+  for (const name of ["icon-turn.png", "anchor.png", "avoid.png"])
+    writeFileSync(join(bibleDoc.dir, name), pngBytes);
+  writeFileSync(join(dir, "icon-pose.png"), pngBytes);
+  bibleDoc.data.referenceLicense = "NOASSERTION";
+  bibleDoc.data.identities["icon"] = {
+    version: "1",
+    approved: true,
+    turnaround: "icon-turn.png",
+    signatureFeatures: ["round face"],
+    proportions: "round",
+    palette: ["#292433"],
+  };
+  bibleDoc.data.anchors.positive = [{ path: "anchor.png", role: "style" }];
+  bibleDoc.data.anchors.negative = [{ path: "avoid.png", role: "avoid" }];
+  writeFileSync(planBible, serializeBible(bibleDoc.data, bibleDoc.prose));
   const planSpec = join(dir, "still-spec.json");
   const planProfile = join(dir, "plan-profile.json");
   const out = join(dir, "plan.json");
   writeFileSync(
     planSpec,
-    JSON.stringify({ kind: "still", assetId: "icon", subject: "icon", animationFamily: "still" }),
+    JSON.stringify({
+      kind: "still",
+      assetId: "icon",
+      subject: "icon",
+      animationFamily: "still",
+      keyPose: "icon-pose.png",
+    }),
   );
   writeFileSync(planProfile, JSON.stringify(syntheticProfile()));
   const planFlags = [
     ...["--spec", planSpec, "--bible", planBible, "--profile", planProfile],
     ...["--out", out, "--runs", join(dir, "runs")],
   ];
-  writeFileSync(log, "");
   const plan = await dryRun(["plan", ...planFlags]);
   listsThePick("plan", plan);
   // Saving the plan needs a compiler answer: a script of its own that answers like a passing model.
@@ -187,11 +218,12 @@ export default {
   const apply = await dryRun(["apply", out, "--out", join(dir, "apply-runs")]);
   listsThePick("apply", apply);
 
-  // Plan and apply agree on whether the request has references: the same count reaches the slot.
+  // The request's own references reach the slot. stage and generate-sheet: the JSON bible's two
+  // references tagged "fern" and the key pose, not the den prop or the perspective sample. plan
+  // (dry run, then saved) and apply: the identity turnaround and the key pose, not the anchors.
   const counts = readFileSync(log, "utf8")
     .trim()
     .split("\n")
     .map((l) => (JSON.parse(l) as { references: number }).references);
-  assert.equal(counts[0], counts[counts.length - 1]);
-  assert.equal(counts[0], counts[1]);
+  assert.deepEqual(counts, [3, 3, 2, 2, 2]);
 });
