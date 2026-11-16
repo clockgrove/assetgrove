@@ -140,7 +140,7 @@ nothing. Problems the records cannot fix (a missing card, media not in LFS) are 
   effect: { readOnly: false, spends: "never", writes: "target" },
   async run(args, ctx) {
     const { targetDir, profile } = await open(args);
-    const lock = acquireLibraryLock(targetDir, ctx.settings.stateDir);
+    const lock = acquireLibraryLock(libraryConfig(profile, targetDir).root, ctx.settings.stateDir);
     try {
       const state = await readLibrary(profile, targetDir);
       const rebuilt = await rebuildLibrary(state);

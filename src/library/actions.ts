@@ -9,7 +9,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { InputError } from "../errors.ts";
 import { readRun } from "../loop.ts";
-import { acquireLibraryLock } from "../runs/lock.ts";
+import { acquireLibraryLock, waitForLock } from "../runs/lock.ts";
 import { parseCard, refreshFromReview, writeCard } from "./card.ts";
 import type { Card } from "./card.ts";
 import { parseIndex } from "./folder.ts";
@@ -264,14 +264,25 @@ export async function readCandidateReview(location: CandidateLocation): Promise<
   return record;
 }
 
-/** Appends an annotation to a candidate's record and writes it; the annotation as stamped. */
+/**
+ * Appends an annotation to a candidate's record and writes it, holding the record's own lock
+ * (`<candidate>.review.json.lock`) from the read to the write, so two annotators at once both land:
+ * the second waits for the first. `make` builds the annotation from the record as read under it.
+ */
 export async function annotateCandidate(
   location: CandidateLocation,
-  annotation: AnnotationInput,
+  make: (record: ReviewRecord) => AnnotationInput,
 ): Promise<{ record: ReviewRecord; annotation: Annotation }> {
-  const record = appendAnnotation(await readCandidateReview(location), annotation);
-  await writeAtomic(location.reviewPath, writeReview(record));
-  return { record, annotation: newest(record, annotation) };
+  const lock = await waitForLock(`${location.reviewPath}.lock`);
+  try {
+    const before = await readCandidateReview(location);
+    const annotation = make(before);
+    const record = appendAnnotation(before, annotation);
+    await writeAtomic(location.reviewPath, writeReview(record));
+    return { record, annotation: newest(record, annotation) };
+  } finally {
+    lock.release();
+  }
 }
 
 /** The annotation of `record` that `input` became once stamped with its id. */

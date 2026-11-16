@@ -426,6 +426,18 @@ export function appendAnnotation(record: ReviewRecord, annotation: AnnotationInp
   return build(record, record.versions, [...record.annotations, stamped], record.id);
 }
 
+/**
+ * The stamp for the next version or annotation written into `record`: `now`, or 1 ms after the
+ * latest stamp already in the record when that is later. Stamps order the record, so what a writer
+ * appends sorts after everything already there even when another machine's clock was ahead.
+ */
+export function nextStamp(record: ReviewRecord, now: Date = new Date()): string {
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const version of record.versions) latest = Math.max(latest, time(version.at));
+  for (const annotation of record.annotations) latest = Math.max(latest, time(annotation.created));
+  return new Date(Math.max(now.getTime(), latest + 1)).toISOString();
+}
+
 /** The 1-based position of a version in the stack, or undefined when it is not there. */
 export function versionNumber(record: ReviewRecord, sha256: string): number | undefined {
   const index = record.versions.findIndex((v) => v.sha256 === sha256);

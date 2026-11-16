@@ -70,8 +70,8 @@ export interface WorkingFile {
 }
 
 /**
- * The working file of an asset; exit 2 when it is a Git LFS pointer or the current version, and 2
- * `version_exists` when it holds an older version's bytes.
+ * The working file of an asset; exit 2 when it is a Git LFS pointer, and 2 `version_exists` when
+ * it holds the current version's bytes or an older version's.
  */
 export async function workingFile(asset: LoadedAsset): Promise<WorkingFile> {
   if (!existsSync(asset.mediaPath)) {
@@ -86,7 +86,8 @@ export async function workingFile(asset: LoadedAsset): Promise<WorkingFile> {
   const sha256 = sha256Hex(bytes);
   const lock = (asset.card.data["lock"] as { sha256?: string } | undefined)?.sha256;
   if (sha256 === lock || sha256 === currentVersion(asset.record)?.sha256) {
-    throw new InputError(
+    throw new AssetIdError(
+      "version_exists",
       `nothing to adopt: ${asset.resource} is unchanged from the card's lock.sha256 (the current version of ${asset.assetId})`,
     );
   }

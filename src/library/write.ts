@@ -43,6 +43,7 @@ import {
   appendVersion,
   checkReviewPaths,
   emptyReview,
+  nextStamp,
   parseReview,
   versionNumber,
   versionStatus,
@@ -232,6 +233,53 @@ export interface LibraryPlan {
   provenanceSource?: string;
   /** The cards in the library before this write. */
   cards: FoundCard[];
+  /** What the write was checked against, checked again under the lock (`recheckLibraryWrite`). */
+  expects: VersionExpectations;
+}
+
+/** What a hand-off expects of the asset's versions when it writes. */
+interface VersionExpectations {
+  sha256?: string;
+  contentSha256?: string;
+  replaces?: string | null;
+  answers?: { version: string; answers: string[] };
+}
+
+/**
+ * The version checks of a hand-off: bytes of an older version exit 2 `version_exists`; a current
+ * version other than the one the pick confirmed replacing, or than the one a request_change was
+ * made on, exits 2 `version_changed`.
+ */
+function checkVersions(
+  versions: ReviewRecord["versions"],
+  assetId: string,
+  expects: VersionExpectations,
+): void {
+  const current = versions.at(-1)?.sha256;
+  const { sha256 } = expects;
+  if (sha256 !== undefined) olderVersionCheck(versions, sha256, assetId, expects.contentSha256);
+  if (
+    expects.replaces !== undefined &&
+    sha256 !== current &&
+    (current ?? null) !== expects.replaces
+  ) {
+    throw new AssetIdError(
+      "version_changed",
+      `asset "${assetId}" is now at ${current === undefined ? "no version" : `version ${versions.length} (sha256 ${current})`}, not the ${expects.replaces === null ? "empty asset" : `version ${expects.replaces}`} this pick confirmed replacing; pick again`,
+    );
+  }
+  if (expects.answers !== undefined && sha256 !== current && current !== expects.answers.version) {
+    throw changeVersionChanged(assetId, versions.length, current, expects.answers.version);
+  }
+}
+
+/**
+ * Checks the plan's versions again against the review record as it is now; the caller holds the
+ * library write lock, so a pick prepared before another committed cannot replace the same version.
+ */
+export async function recheckLibraryWrite(plan: LibraryPlan): Promise<void> {
+  const review = await readOwnReview(plan.reviewPath, plan.config.root, plan.dir, undefined);
+  checkVersions(review?.versions ?? [], plan.assetId, plan.expects);
 }
 
 /**
@@ -297,19 +345,14 @@ export async function prepareLibraryWrite(input: {
   const reviewPath = join(dir, `${assetId}.review.json`);
   await readOwnCard(cardPath, config.root, dir);
   const review = await readOwnReview(reviewPath, config.root, dir, undefined);
-  const versions = review?.versions ?? [];
-  const current = versions.at(-1)?.sha256;
   const sha256 = input.mediaBytes && sha256Hex(input.mediaBytes);
-  if (sha256 !== undefined) olderVersionCheck(versions, sha256, assetId, input.contentSha256);
-  if (input.replaces !== undefined && sha256 !== current && (current ?? null) !== input.replaces) {
-    throw new AssetIdError(
-      "version_changed",
-      `asset "${assetId}" is now at ${current === undefined ? "no version" : `version ${versions.length} (sha256 ${current})`}, not the ${input.replaces === null ? "empty asset" : `version ${input.replaces}`} this pick confirmed replacing; pick again`,
-    );
-  }
-  if (input.answers !== undefined && sha256 !== current && current !== input.answers.version) {
-    throw changeVersionChanged(assetId, versions.length, current, input.answers.version);
-  }
+  const expects: VersionExpectations = {
+    ...(sha256 !== undefined && { sha256 }),
+    ...(input.contentSha256 !== undefined && { contentSha256: input.contentSha256 }),
+    ...(input.replaces !== undefined && { replaces: input.replaces }),
+    ...(input.answers !== undefined && { answers: input.answers }),
+  };
+  checkVersions(review?.versions ?? [], assetId, expects);
   const source = [input.provenancePath, input.manifestPath].find(
     (path) => path !== undefined && within(config.root, resolve(path)),
   );
@@ -322,6 +365,7 @@ export async function prepareLibraryWrite(input: {
     reviewPath,
     ...(source !== undefined && { provenanceSource: resolve(source) }),
     cards,
+    expects,
   };
 }
 
@@ -624,7 +668,6 @@ export async function commitLibraryWrite(
 ): Promise<LibraryWriteResult> {
   const { config, assetId, dir } = plan;
   const files: string[] = [];
-  const at = input.now.toISOString();
   const sha256 = sha256Hex(input.mediaBytes);
   const resource = basename(plan.mediaPath);
   const address = `asset://${config.game}/${assetId}/review`;
@@ -636,6 +679,8 @@ export async function commitLibraryWrite(
     record = await carryAnnotations(record, input.candidateReview, plan, resource, sha256, copies);
   }
   olderVersionCheck(record.versions, sha256, assetId, input.contentSha256);
+  // Read under the lock: what this write appends sorts after everything the record holds.
+  const at = nextStamp(record, input.now);
   const appended = !record.versions.some((v) => v.sha256 === sha256);
   if (appended) {
     const first = record.versions.length === 0;

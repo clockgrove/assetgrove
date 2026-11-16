@@ -14,13 +14,18 @@ import {
   locateAsset,
   locateCandidate,
   newest,
-  readCandidateReview,
   selectVersion,
   withLibraryLock,
   writeAsset,
 } from "../library/actions.ts";
 import type { LoadedAsset } from "../library/actions.ts";
-import { appendAnnotation, recordHead, versionNumber, versionStatus } from "../library/review.ts";
+import {
+  appendAnnotation,
+  nextStamp,
+  recordHead,
+  versionNumber,
+  versionStatus,
+} from "../library/review.ts";
 import type { Annotation, AnnotationInput, ReviewRecord, Version } from "../library/review.ts";
 import { PlanChangedError } from "../planning.ts";
 import type { SharedText } from "../request.ts";
@@ -188,19 +193,18 @@ state, the folder indexes and log.md. No confirmation. The text is returned only
   positionals: [{ name: "address" }],
   effect: { readOnly: false, spends: "never", writes: "target" },
   async run(args, ctx) {
-    const created = new Date().toISOString();
     if (args.candidate !== undefined) {
       if (args.version !== undefined)
         throw new InputError("--version names a version, not a candidate");
       const location = await locateCandidate(args.address, args.candidate);
-      const record = await readCandidateReview(location);
-      const input = reviewAnnotation(
-        args,
-        record,
-        { source: `../${location.file}`, "ag:version": location.sha256 },
-        created,
+      const { annotation } = await annotateCandidate(location, (record) =>
+        reviewAnnotation(
+          args,
+          record,
+          { source: `../${location.file}`, "ag:version": location.sha256 },
+          nextStamp(record),
+        ),
       );
-      const { annotation } = await annotateCandidate(location, input);
       return {
         exitCode: 0,
         fields: {
@@ -218,7 +222,12 @@ state, the folder indexes and log.md. No confirmation. The text is returned only
     return withLibraryLock(location, ctx.settings.stateDir, async () => {
       const asset = await loadAsset(location);
       const version = selectVersion(asset.record, args.version);
-      const input = reviewAnnotation(args, asset.record, versionTarget(asset, version), created);
+      const input = reviewAnnotation(
+        args,
+        asset.record,
+        versionTarget(asset, version),
+        nextStamp(asset.record),
+      );
       const record = appendAnnotation(asset.record, input);
       const annotation = newest(record, input);
       const written = await writeAsset(asset, record);
@@ -380,7 +389,7 @@ manifest's review field stays at pending.`,
       const input: AnnotationInput = {
         type: "Annotation",
         motivation: "assessing",
-        created: new Date().toISOString(),
+        created: nextStamp(asset.record),
         target: versionTarget(asset, version),
         "ag:action": "approve",
         "ag:confirmation": { method: confirmation.method, digest: confirmation.digest },
