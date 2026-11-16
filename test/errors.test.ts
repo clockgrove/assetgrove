@@ -19,6 +19,7 @@ const DESIGN: Record<number, string[]> = {
     "extension_refused",
     "extension_conflict",
     "route_unavailable",
+    "embedder_changed",
     "plan_changed",
     "run_in_progress",
     "command_refused",
