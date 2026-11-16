@@ -15,6 +15,8 @@ import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
+import { promptPolicyPrompt } from "../src/policy/model.ts";
+import { checkPromptText, collectPromptParts } from "../src/policy/text.ts";
 import { planDigest } from "../src/planning.ts";
 import type { SavedPlan } from "../src/planning.ts";
 import type { PlanJob } from "../src/runs/plan.ts";
@@ -325,4 +327,44 @@ test("when the check also objects to the person's text, apply exits 9 with no ge
   assert.equal(run.code, 9, run.stdout + run.stderr);
   assert.equal(doc(run)["error"].code, "prompt_refused");
   assert.deepEqual(await provider.events(), ["prompt-policy", "prompt-policy"]);
+});
+
+test("each input file's prompt text is labelled by what it is, and the model is told what each label means", async () => {
+  const world = await syntheticWorld();
+  temporary.push(world.dir);
+  const file = async (name: string, text: string) => {
+    const path = join(world.dir, name);
+    await writeFile(path, text);
+    return path;
+  };
+  const data = structuredClone(BIBLE_PRESETS["flat-cartoon-kids"]!);
+  const parts = await collectPromptParts({
+    spec: await file("spec.json", JSON.stringify({ fields: { description: "a round lantern" } })),
+    brief: await file("brief.json", JSON.stringify({ context: "a warm glow" })),
+    bible: await file(
+      "BIBLE.md",
+      serializeBible(data, "## Do's and Don'ts\nDon't imitate the look of any named game.\n"),
+    ),
+    template: await file("template.md", "---\nversion: 1\n---\nDraw {{spec}} originally.\n"),
+  });
+  const labels = new Set(parts.map((p) => p.label));
+  assert.deepEqual([...labels].sort(), ["brief", "rules", "spec", "template", "tone"]);
+  assert.ok(parts.some((p) => p.label === "rules" && p.text.includes("Don't imitate")));
+  const record = checkPromptText(parts);
+  assert.deepEqual(
+    record.hits?.map((h) => [h.term, h.part]),
+    [["imitate", "rules"]],
+  );
+  const prompt = promptPolicyPrompt(parts, record.hits);
+  assert.match(
+    prompt,
+    /\[rules\] art bible Do's and Don'ts: rules the art must follow, not requests:/,
+  );
+  assert.match(prompt, /\[spec\] asset spec/);
+  assert.match(prompt, /\[tone\] art bible tone fields/);
+  assert.match(prompt, /\[template\] prompt template body/);
+  assert.match(
+    promptPolicyPrompt([{ label: "model-negative", text: "no copies" }]),
+    /\[model-negative\] compiled negative prompt: model-written by the prompt compiler/,
+  );
 });
