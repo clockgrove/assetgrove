@@ -23,6 +23,8 @@ import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { briefPolicyAsked } from "../src/policy/brief.ts";
 import type { BriefPolicyField, BriefPolicyTarget } from "../src/policy/brief.ts";
 import { createRaster, encodePng, decodeImage, opaqueBox, setPixel } from "../src/image/raster.ts";
+import { animationQa } from "../src/animation/qa.ts";
+import { splitStrip } from "../src/animation/strip.ts";
 
 /** A qualifying style-score entry for the QA model, so its verdict filters. */
 function stableStyle(model: string = defaultRoutes.vision.model) {
@@ -68,10 +70,12 @@ function scripted(
     failCompiler?: boolean;
     /** The brief-policy probability for a field and target; 0 when absent. */
     briefPolicy?: (field: BriefPolicyField, target: BriefPolicyTarget) => number;
+    /** The image every generation or edit returns; default a 4x4 with one opaque pixel. */
+    image?: ReturnType<typeof createRaster>;
   } = {},
 ) {
-  const image = createRaster(4, 4);
-  setPixel(image, 1, 1, [120, 90, 80, 255]);
+  const image = options.image ?? createRaster(4, 4);
+  if (!options.image) setPixel(image, 1, 1, [120, 90, 80, 255]);
   return new ScriptedProvider({
     briefPolicy: (request) => {
       const asked = briefPolicyAsked(request.prompt)!;
@@ -497,6 +501,48 @@ test("sprite-strip compiles and applies each exact frame prompt with approved ke
   );
 });
 
+test("a strip from apply rests its feet on the anchor's row, so a small frame passes ground contact", async () => {
+  const f = await fixture();
+  const key = createRaster(4, 4);
+  setPixel(key, 1, 1, [123, 97, 80, 255]);
+  await writeFile(join(f.root, "key.png"), encodePng(key));
+  // A 32 px frame (docs/target-profile.md's small frame): its 2% ground tolerance is under 1 px.
+  const art = createRaster(40, 40);
+  for (let y = 6; y < 34; y++)
+    for (let x = 12; x < 26; x++) setPixel(art, x, y, [123, 97, 80, 255]);
+  const stripSpec = {
+    kind: "sprite-strip",
+    assetId: "den",
+    animationFamily: "idle",
+    keyPose: "key.png",
+    frames: { count: 2, width: 32, height: 32, durationMs: 120 },
+  };
+  const provider = scripted({ image: art });
+  const { plan } = await create(f, { spec: stripSpec }, { provider });
+  const { run, runDir } = await applyPlan(plan, { provider, outDir: join(f.root, "runs") });
+  const strip = decodeImage(new Uint8Array(await readFile(join(runDir, run.candidates[0]!.file))));
+  const frames = splitStrip(strip, { width: 32, height: 32 });
+  for (const frame of frames) {
+    const box = opaqueBox(frame)!;
+    assert.equal(box.y + box.height - 1, 31, "the feet are on the anchor's row");
+  }
+  const report = animationQa(
+    { frames, frame: { width: 32, height: 32 }, anchor: { x: 16, y: 31 }, family: "idle" },
+    {},
+    {
+      alpha: { mode: "binary", threshold: 128 },
+      color: { rule: "full", palette: [] },
+      edges: "crisp",
+    },
+  );
+  const contact = report.reasons.filter((c) => c.check === "ground-contact");
+  assert.ok(contact.length > 0);
+  assert.ok(
+    contact.every((c) => c.passed),
+    contact.map((c) => c.reason).join("; "),
+  );
+});
+
 test("UI DESIGN colors are subordinate context and explicit reference roles reach the compiler and prompt", async () => {
   const f = await fixture();
   await writeFile(
@@ -635,9 +681,10 @@ test("apply fits the visible subject and honors the spec anchor", async () => {
   });
   const candidate = run.candidates[0]!;
   const image = decodeImage(new Uint8Array(await readFile(join(runDir, candidate.file))));
-  assert.deepEqual(opaqueBox(image), { x: 1, y: 0, width: 6, height: 6 });
+  // The bottom row is the anchor's row 6.
+  assert.deepEqual(opaqueBox(image), { x: 1, y: 1, width: 6, height: 6 });
   assert.deepEqual(candidate.fields["anchor"], { x: 4, y: 6 });
-  assert.deepEqual(candidate.fields["bounds"], { x: 1, y: 0, width: 6, height: 6 });
+  assert.deepEqual(candidate.fields["bounds"], { x: 1, y: 1, width: 6, height: 6 });
   await assert.rejects(create(f, { spec: { ...spec, anchor: { x: -1, y: 0 } } }), /anchor/);
 });
 
@@ -765,7 +812,8 @@ test("planning reconciles profile palette constraints and mattes opaque backgrou
   assert.equal(postprocess.colorRule, "palette");
   assert.deepEqual(postprocess.palette, palette);
   const image = decodeImage(new Uint8Array(await readFile(join(runDir, run.candidates[0]!.file))));
-  assert.deepEqual(opaqueBox(image), { x: 1, y: 1, width: 6, height: 6 });
+  // The bottom row is the default anchor's row 7.
+  assert.deepEqual(opaqueBox(image), { x: 1, y: 2, width: 6, height: 6 });
   assert.equal(image.data[3], 0);
   const rgb = palette[0]!
     .slice(1)

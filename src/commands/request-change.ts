@@ -64,6 +64,12 @@ import {
 } from "../runs/plan.ts";
 import type { PlanJob } from "../runs/plan.ts";
 import { ledgerFor } from "../spend.ts";
+import {
+  registrationPin,
+  templateFor,
+  templatesFor,
+  thresholdsFor,
+} from "../animation/templates.ts";
 import type { LoadedReference, Provenance } from "../types.ts";
 import { dryRunOutcome, formatWork, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -638,13 +644,21 @@ version is appended with answers naming the requests. The run that made the asse
             const anchor = defaultAnchor(frame);
             let strip = before;
             let provenance: Provenance | undefined = sourceCandidate?.provenance;
+            const family = source.spec.animationFamily ?? "strip";
+            const pin = registrationPin(
+              templateFor(family, templatesFor(source.profile)),
+              source.profile,
+              source.spec.gait,
+            );
             for (const f of frames) {
               const count = splitStrip(strip, frame).length;
               const fixed = await fixFrame({
                 strip,
                 frame,
                 anchor,
-                family: source.spec.animationFamily ?? "strip",
+                family,
+                pin,
+                groundTolerance: thresholdsFor(source.profile).groundTolerance,
                 subject: source.spec.subject ?? source.spec.assetId ?? asset.assetId,
                 index: f,
                 from: { neighbour: f > 1 ? f - 1 : Math.min(2, count) },

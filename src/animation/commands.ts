@@ -37,7 +37,7 @@ import type { FrameFix } from "./fix.ts";
 import { planFlicker } from "./flicker.ts";
 import { planHoles } from "./holes.ts";
 import { measureThreshold, splitStrip } from "./strip.ts";
-import { thresholdsFor } from "./templates.ts";
+import { registrationPin, templateFor, templatesFor, thresholdsFor } from "./templates.ts";
 import { defaultAnchor, familyLoops, profileFrame, qaStrip } from "./run.ts";
 import type { StripQaResult } from "./run.ts";
 
@@ -390,6 +390,12 @@ export async function runFixFrame(options: {
     frame: target.frame,
     anchor: target.anchor,
     family: target.family,
+    pin: registrationPin(
+      templateFor(target.family, templatesFor(target.profile)),
+      target.profile,
+      target.gait,
+    ),
+    groundTolerance: thresholdsFor(target.profile).groundTolerance,
     subject: target.subject,
     index: options.index,
     from: keyPose ? { keyPose } : (options.from as { neighbour: number }),

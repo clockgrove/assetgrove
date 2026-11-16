@@ -59,7 +59,7 @@ const profile: TargetProfile = {
         contact: "beats",
         silhouette: { min: 0.01, max: 0.5 },
         footprint: "moving",
-        footprintDriftPx: 8,
+        footprintDrift: 0.12,
       },
     ],
   },
