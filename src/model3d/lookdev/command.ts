@@ -866,6 +866,21 @@ function changedShare(a: Raster, b: Raster): number {
  * Whether `amountUsd` beyond the forecast fits the cap and the cross-run limits while leaving
  * `keepUsd` for the forecast calls still to come.
  */
+/**
+ * The room a marking past the forecast must leave for the rest of the forecast: each later view's
+ * `lookdev-markings` box call, its forecast `lookdev-marking` decisions per season, and identity.
+ */
+export function markingsRoomKeptUsd(rest: {
+  viewsLeft: number;
+  seasons: number;
+  markingUsd: number;
+  markingsUsd: number;
+  identityUsd: number;
+}): number {
+  const perView = rest.markingsUsd + MAX_MARKINGS_JUDGED * rest.seasons * rest.markingUsd;
+  return rest.viewsLeft * perView + rest.identityUsd;
+}
+
 export function canAfford(
   budget: Budget,
   amountUsd: number,
@@ -1609,10 +1624,13 @@ export async function lookDev(
       // decisions; one it cannot afford is unjudged and fails the check, never passes unseen.
       if (n >= MAX_MARKINGS_JUDGED) {
         const each = options.routes[LOOKDEV_MARKING_OPERATION]?.estimatedCostUsd ?? 0;
-        // Room is kept for the rest of the forecast: the later views' decisions and identity.
-        const later =
-          (TURNTABLE_VIEWS.length - 1 - v) * MAX_MARKINGS_JUDGED * renders.length * each +
-          identityUsd;
+        const later = markingsRoomKeptUsd({
+          viewsLeft: TURNTABLE_VIEWS.length - 1 - v,
+          seasons: renders.length,
+          markingUsd: each,
+          markingsUsd: options.routes[LOOKDEV_MARKINGS_OPERATION]?.estimatedCostUsd ?? 0,
+          identityUsd,
+        });
         if (!canAfford(budget, each * renders.length, later, `the ${m.name} marking decisions`)) {
           unjudged.push(`${m.name} in ${view.name}`);
           continue;

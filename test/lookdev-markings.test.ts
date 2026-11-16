@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProviderError } from "../src/errors.ts";
 import { Budget } from "../src/budget.ts";
-import { canAfford } from "../src/model3d/lookdev/command.ts";
+import { canAfford, markingsRoomKeptUsd } from "../src/model3d/lookdev/command.ts";
 import { Caller } from "../src/calls.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
@@ -187,6 +187,35 @@ test("canAfford: past the forecast, a marking is judged only while the rest of t
   budget.settle(budget.reserve(0.99), 0.99);
   assert.equal(canAfford(budget, 0.002, 0.004, "the marking decisions"), true);
   assert.equal(canAfford(budget, 0.002, 0.009, "the marking decisions"), false);
+});
+
+test("past the forecast, the room kept covers the later views' box calls, their decisions and identity", () => {
+  // Two views left, 2 seasons: each view keeps its $0.02 box call and 8 × 2 decisions at $0.001.
+  const kept = markingsRoomKeptUsd({
+    viewsLeft: 2,
+    seasons: 2,
+    markingUsd: 0.001,
+    markingsUsd: 0.02,
+    identityUsd: 0.001,
+  });
+  assert.ok(Math.abs(kept - (2 * (0.02 + 16 * 0.001) + 0.001)) < 1e-12);
+  // A cap with room for the later decisions and identity but not for the next view's box call:
+  // the extra marking is unjudged, so the next view's lookdev-markings reserve cannot be refused.
+  const budget = new Budget(1);
+  budget.settle(budget.reserve(0.95), 0.95);
+  const withoutBoxCalls = 2 * 16 * 0.001 + 0.001;
+  assert.equal(canAfford(budget, 0.002, withoutBoxCalls, "the marking decisions"), true);
+  assert.equal(canAfford(budget, 0.002, kept, "the marking decisions"), false);
+  assert.equal(
+    markingsRoomKeptUsd({
+      viewsLeft: 0,
+      seasons: 2,
+      markingUsd: 0.001,
+      markingsUsd: 0.02,
+      identityUsd: 0.001,
+    }),
+    0.001,
+  );
 });
 
 test("the measured ΔE is evidence only: a large ΔE kept passes, a tiny ΔE drifted fails", () => {
