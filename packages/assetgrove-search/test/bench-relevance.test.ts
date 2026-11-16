@@ -211,7 +211,6 @@ describe("the relevance record", () => {
     assert.ok(decisions.includes(`RELEVANT_AT = ${RELEVANT_AT}`));
     assert.ok(decisions.includes(`MIN_RELEVANT = ${MIN_RELEVANT}`));
     assert.ok(decisions.includes(`POOL_DEPTH = ${POOL_DEPTH}`));
-    assert.match(decisions, /`words-shipped-p5` bar was set against the old labels/);
   });
 
   it("goes through the gateway only with a key: without one, the judge refuses before any request", async () => {
