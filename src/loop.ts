@@ -2,7 +2,7 @@ import { ReferenceViewCache } from "./model3d/views.ts";
 import type { PromptPolicyRecord } from "./policy/text.ts";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join, posix, resolve } from "node:path";
+import { join, posix, resolve } from "node:path";
 import {
   DIGITAL_SOURCE_TYPES,
   embedDigitalSourceType,
@@ -23,7 +23,7 @@ import { extensionOf, unavailableId } from "./extensions/errors.ts";
 import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
-import { checkLayout, checkWrites, safeSegment } from "./paths.ts";
+import { checkLayout, checkWrites, safeFileName, safeSegment } from "./paths.ts";
 import type { IdentityAgreement } from "./identity.ts";
 import { applyStability, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
@@ -162,6 +162,11 @@ export interface StagedCandidate {
   provenance: Provenance;
   /** Files written for the person beside the candidate (turntable renders), relative to the run. */
   artifacts?: string[];
+  /**
+   * Artifacts whose name the generator returned could not be written as given (path rules,
+   * design section 14): the file written and the name returned.
+   */
+  artifactNames?: Array<{ file: string; original: string }>;
   /** Files that go into the target beside the media (textures, groom maps), each a template field. */
   sidecars?: Array<{
     /** Path relative to the run directory. */
@@ -214,6 +219,11 @@ export interface RunRecord {
     costUsd?: number;
     /** Files written for the person (turntable renders), relative to the run. */
     artifacts?: string[];
+    /**
+     * Artifacts whose name the generator returned could not be written as given (path rules,
+     * design section 14): the file written and the name returned.
+     */
+    artifactNames?: Array<{ file: string; original: string }>;
   }>;
   /**
    * The identity lock check of a planned run: which lock version scored the candidates, the mode
@@ -244,6 +254,34 @@ export interface RunRecord {
 }
 
 export const RUN_FILE = "run.json";
+
+/**
+ * Run-relative record paths for a candidate's artifacts in `dir`: the last segment of each name,
+ * made safe and unique ignoring case (`a.png`, `A.png` -> `a.png`, `A-2.png`). `artifactNames`
+ * lists only the files written under a name other than the one returned.
+ */
+function artifactPaths(
+  dir: string,
+  named: ReadonlyArray<{ name: string }>,
+): { artifacts: string[]; artifactNames: Array<{ file: string; original: string }> } {
+  const used = new Set<string>();
+  const artifacts: string[] = [];
+  const artifactNames: Array<{ file: string; original: string }> = [];
+  for (const { name } of named) {
+    const given = name.split(/[\\/]/).pop() ?? "";
+    const safe = safeFileName(given);
+    let unique = safe;
+    const dot = safe.lastIndexOf(".");
+    const stem = dot > 0 ? safe.slice(0, dot) : safe;
+    const extension = dot > 0 ? safe.slice(dot) : "";
+    for (let n = 2; used.has(unique.toLowerCase()); n++) unique = `${stem}-${n}${extension}`;
+    used.add(unique.toLowerCase());
+    const file = posix.join(dir, unique);
+    artifacts.push(file);
+    if (unique !== given) artifactNames.push({ file, original: name });
+  }
+  return { artifacts, artifactNames };
+}
 
 function provenanceOf(
   generator: Generator,
@@ -357,8 +395,9 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       });
       const id = `c${index + 1}`;
       // Record paths use "/"; the candidate's writes are checked before the first one.
-      const artifacts = (generated.artifacts ?? []).map((artifact) =>
-        posix.join(`${id}-${artifactDir}`, basename(artifact.name)),
+      const { artifacts, artifactNames } = artifactPaths(
+        `${id}-${artifactDir}`,
+        generated.artifacts ?? [],
       );
       checkWrites([`${id}.${generated.output.extension}`, ...artifacts]);
       for (const [i, artifact] of (generated.artifacts ?? []).entries()) {
@@ -383,6 +422,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
             reasons: qa.reasons,
             costUsd: call.records.reduce((sum, r) => sum + r.costUsd, 0),
             artifacts,
+            ...(artifactNames.length > 0 && { artifactNames }),
           });
         }
         log(`candidate ${index + 1}/${requested}: filtered by QA`);
@@ -428,6 +468,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         fields: generated.output.fields,
         provenance,
         ...(artifacts.length > 0 && { artifacts }),
+        ...(artifactNames.length > 0 && { artifactNames }),
       });
       log(`candidate ${index + 1}/${requested}: passed QA`);
     } catch (error) {
