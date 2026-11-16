@@ -427,15 +427,17 @@ test("a record re-bound after its calls were emptied or edited is refused by the
   await refused(await rig(w, mine.model, unbound), mine.model, unbound);
 });
 
-test("fix-frame accepts a strip and the provenance 0.1.0 wrote beside it, untouched", async () => {
+test("fix-frame refuses the provenance 0.1.0 wrote beside a strip, naming the one command that brings it up to date", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-010-")));
   const { strip } = syntheticStrip({ count: 8, style: "painterly", motion: "walk" });
-  // What 0.1.0's fix-frame wrote: the strip marked with its source type only, and a record with
-  // its calls and no binding.
+  // What 0.1.0's hand-off of an imported strip wrote: the strip marked with the sheet tool and the
+  // call's model, and a record with its calls and no binding.
   const stripPath = join(root, "walk-right.png");
   await writeFile(
     stripPath,
-    embedDigitalSourceType(encodePng(strip), "image/png", DIGITAL_SOURCE_TYPES.composite),
+    embedDigitalSourceType(encodePng(strip), "image/png", DIGITAL_SOURCE_TYPES.composite, {
+      models: ["hand", "x/y"],
+    }),
   );
   await writeFile(
     join(root, "profile.json"),
@@ -446,33 +448,147 @@ test("fix-frame accepts a strip and the provenance 0.1.0 wrote beside it, untouc
     }),
   );
   const provenance = join(root, "walk-right.png.provenance.json");
-  await writeFile(
-    provenance,
-    JSON.stringify({
-      generator: "sheet-import",
-      route: "import:hand",
-      models: ["x/y"],
-      prompt: "imported",
-      parameters: {},
-      requestIds: [],
-      referenceHashes: [],
-      bibleVersion: "1",
-      license: "MIT",
-      providerTerms: [],
-      startedAt: "2026-11-08T00:00:00.000Z",
-      finishedAt: "2026-11-08T00:00:00.000Z",
-      costUsd: 0.04,
-      calls: [{ operation: "edit", model: "x/y" }],
-    }),
-  );
+  await writeFile(provenance, JSON.stringify(importedStripRecord()));
   const out = join(root, "fixed");
   const r = await cli([
     ...["fix-frame", "--strip", stripPath, "--family", "walk-right"],
     ...["--profile", join(root, "profile.json"), "--frame", "3", "--from", "2", "--out", out],
     ...["--provider-script", FIX_SCRIPT, "--json"],
   ]);
-  assert.equal(r.code, 0, r.stdout + r.stderr);
-  const fixed = await readJson(join(out, "walk-right.png.provenance.json"));
-  assert.equal(fixed.binding.mediaSha256, await fileSha(join(out, "walk-right.png")));
-  assert.equal(fixed.calls.length, 2, "the 0.1.0 call and the fix's call");
+  await refused(r, stripPath, provenance);
+  assert.match(doc(r)["error"].message, /assetgrove write-families --import/);
+  await assert.rejects(readFile(join(out, "walk-right.png")), "nothing written");
+});
+
+/** The record 0.1.0's hand-off wrote for a strip imported from a sheet a model made in part. */
+function importedStripRecord(calls: unknown[] = [{ operation: "edit", model: "x/y" }]): Doc {
+  return {
+    generator: "sheet-import",
+    route: "import:hand",
+    models: ["hand", "x/y"],
+    prompt: "imported",
+    parameters: {},
+    requestIds: [],
+    referenceHashes: [],
+    bibleVersion: "1",
+    license: "MIT",
+    providerTerms: [],
+    startedAt: "2026-11-08T00:00:00.000Z",
+    finishedAt: "2026-11-08T00:00:00.000Z",
+    costUsd: 0.04,
+    sheet: { tool: "hand" },
+    calls,
+  };
+}
+
+/** checkProvenance over `bytes` at `path` with `record` written as JSON. */
+function check(
+  path: string,
+  bytes: Uint8Array,
+  record: Doc,
+  provenancePath = `${path}.provenance.json`,
+) {
+  const text = JSON.stringify(record, null, 2);
+  return checkProvenance({
+    media: { path, bytes, mediaType: "image/png" },
+    provenance: { path: provenancePath, bytes: text, value: record as never },
+  });
+}
+
+test("an unbound record is refused on media whose mark has no calls sha256, edited or from other media", async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-unbound-")));
+  const bytes = embedDigitalSourceType(
+    encodePng(drawSubject(32, 0)),
+    "image/png",
+    DIGITAL_SOURCE_TYPES.generated,
+    { models: ["x/y"] },
+  );
+  const path = join(dir, "a.png");
+  await writeFile(path, bytes);
+  const edited = {
+    ...importedStripRecord([
+      { operation: "edit", model: "x/y", outputGrant: { commercial: true } },
+    ]),
+    generator: "character",
+    models: ["x/y"],
+  };
+  delete edited["sheet"];
+  for (const record of [edited, { ...edited, prompt: "another media's record" }]) {
+    await assert.rejects(check(path, bytes, record), (error: ProvenanceError) => {
+      assert.equal(error.code, "provenance_mismatch");
+      assert.ok(error.message.includes(path), error.message);
+      assert.match(error.message, /not bound to the media/);
+      assert.match(error.message, /assetgrove pick --run/);
+      return true;
+    });
+  }
+});
+
+test("a 0.1.0 imported strip's record, whose mark names the sheet tool, is accepted beside its library record or bound", async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-tool-")));
+  const bytes = embedDigitalSourceType(
+    encodePng(drawSubject(32, 0)),
+    "image/png",
+    DIGITAL_SOURCE_TYPES.composite,
+    { models: ["hand", "x/y"] },
+  );
+  const path = join(dir, "walk.png");
+  await writeFile(path, bytes);
+  const record = importedStripRecord();
+  // Unbound, with nothing beside it: refused with the command that hands it off again.
+  await assert.rejects(check(path, bytes, record), /assetgrove write-families --import/);
+
+  // Bound to the bytes: the sheet tool the mark names is the record's sheet tool, not a call.
+  const bound = bindProvenance(record as never, bytes) as unknown as Doc;
+  assert.equal((await check(path, bytes, bound)).madeOutsideAssetgrove, undefined);
+  const toolOnly = bindProvenance(
+    importedStripRecord([]) as never,
+    embedDigitalSourceType(
+      encodePng(drawSubject(32, 0)),
+      "image/png",
+      DIGITAL_SOURCE_TYPES.composite,
+      {
+        models: ["hand"],
+      },
+    ),
+  ) as unknown as Doc;
+  const toolBytes = embedDigitalSourceType(
+    encodePng(drawSubject(32, 0)),
+    "image/png",
+    DIGITAL_SOURCE_TYPES.composite,
+    { models: ["hand"] },
+  );
+  await check(path, toolBytes, toolOnly);
+
+  // A library review record that lists these bytes with this exact file answers first: a hand-off's
+  // own review record, listing the strip and this record as 0.1.0's never did.
+  const w = await world();
+  await handedOff(w);
+  const reviewPath = join(asset(w), "kit.review.json");
+  const review = parseReview(await readFile(reviewPath, "utf8"), reviewPath);
+  const text = JSON.stringify(record, null, 2);
+  review.versions[0]!.sha256 = sha256(bytes);
+  review.versions[0]!.provenanceSha256 = sha256(new TextEncoder().encode(text));
+  await writeFile(join(dir, "kit.review.json"), writeReview(review));
+  const listed = await check(path, bytes, record);
+  assert.equal(listed.madeOutsideAssetgrove, undefined);
+});
+
+test("a staged candidate copied out of its run folder is refused, naming pick", async () => {
+  const w = await world();
+  const staged = await cli([
+    ...["stage", ...w.base, "--runs", w.runs, "--candidates", "1"],
+    ...["--provider-script", SCRIPT, "--json"],
+  ]);
+  assert.equal(staged.code, 0, staged.stdout + staged.stderr);
+  const runDir = doc(staged)["runDir"] as string;
+  const run = await readJson(join(runDir, "run.json"));
+  const candidate = run["candidates"][0];
+  const model = join(w.dir, "moved.glb");
+  await writeFile(model, await readFile(join(runDir, candidate.file)));
+  const provenance = join(w.dir, "moved.provenance.json");
+  await writeFile(provenance, JSON.stringify(candidate.provenance));
+  const r = await rig(w, model, provenance);
+  await refused(r, model, provenance);
+  assert.match(doc(r)["error"].message, /assetgrove pick --run/);
 });

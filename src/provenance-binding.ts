@@ -1,14 +1,15 @@
 /**
  * Whether a provenance file is the record of the media it is named with (docs/decisions.md,
  * "Provenance is bound to its media"). The file cannot vouch for itself, so the evidence outside it
- * is read first: the sha256 of the record's calls in the media's own mark (or, in a 0.1.0 mark, the
- * model names), the library review record beside the media and the run record beside it. Each
- * that speaks must agree. The record's own `binding` (the sha256 of the exact bytes it describes
- * and of its canonical content) must also hold when present.
+ * is read first: the sha256 of the record's calls in the media's own mark, the library review record
+ * beside the media and the run record beside it. Each that speaks must agree, and one that names
+ * this exact record accepts it. The record's own `binding` (the sha256 of the exact bytes it
+ * describes and of its canonical content) must hold when present.
  *
- * A record that agrees with all of them is accepted, so 0.1.0 records (no binding, no calls sha256
- * in the mark) still are. A record with no calls, no binding and no model in the media's mark is
- * media made outside Assetgrove. Anything else is refused.
+ * A record that nothing outside the file names is accepted only when it is bound (and its calls
+ * name each model the media's mark names), or when it records no call and the mark names no model:
+ * media made outside Assetgrove. An unbound record with calls, such as one 0.1.0 wrote, is refused
+ * with the one command that hands its media off again.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -73,37 +74,22 @@ export function callsSha256(record: Pick<Provenance, "calls">): string {
 export async function checkProvenance(named: NamedProvenance): Promise<Provenance> {
   const { media, provenance } = named;
   const record = provenance.value;
-  const refuse = (why: string) =>
+  const refuse = (why: string, next?: string) =>
     new ProvenanceError(
       `refused: ${provenance.path} is not the provenance of ${media.path}: ${why}. ` +
-        "Give the media with the provenance file Assetgrove wrote beside it; for a staged " +
-        "candidate, its record in the run.json beside it (or the stage --json document's)",
+        (next ??
+          "Give the media with the provenance file Assetgrove wrote beside it; for a staged " +
+            "candidate, its record in the run.json beside it (or the stage --json document's)"),
     );
   const calls = Array.isArray(record.calls) ? record.calls : [];
   const callCount = `${calls.length} model call${calls.length === 1 ? "" : "s"}`;
 
-  // The media's own mark: the calls sha256 a hand-off or fix-frame wrote, else the model names.
+  // The media's own mark: the calls sha256 a hand-off or fix-frame wrote.
   const markedCalls = markRead(() => readMarkedCallsSha256(media.bytes, media.mediaType));
-  if (markedCalls !== undefined) {
-    if (markedCalls !== callsSha256(record)) {
-      throw refuse(
-        `its ${callCount} are not the calls the media's own mark records (its calls sha256 differs)`,
-      );
-    }
-  } else {
-    const marked = markRead(() => readMarkedModels(media.bytes, media.mediaType));
-    const named = new Set(calls.map((c) => (c as { model?: unknown })?.model));
-    const missing = (marked ?? "")
-      .split(";")
-      .map((m) => m.trim())
-      .filter((m) => m !== "" && !named.has(m));
-    if (missing.length > 0) {
-      throw refuse(
-        calls.length === 0
-          ? `it records no model call, but the media's own mark names the model${missing.length === 1 ? "" : "s"} ${missing.join(", ")}`
-          : `its calls do not name the model${missing.length === 1 ? "" : "s"} ${missing.join(", ")} that the media's own mark names`,
-      );
-    }
+  if (markedCalls !== undefined && markedCalls !== callsSha256(record)) {
+    throw refuse(
+      `its ${callCount} are not the calls the media's own mark records (its calls sha256 differs)`,
+    );
   }
 
   // The library review record beside the media, when it lists these bytes with a provenance.
@@ -137,11 +123,57 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
     }
   }
   const own = run === undefined || run === "same" ? record : run.record;
-  // No call, nothing outside the file says a model made the media, and no binding: made outside.
-  if (calls.length === 0 && binding === undefined && markedCalls === undefined) {
-    return { ...own, madeOutsideAssetgrove: true };
+
+  // Evidence outside the file that names this exact record: it answers first.
+  if (markedCalls !== undefined || library === "same" || run !== undefined) return own;
+
+  // Else the mark's model names (all a 0.1.0 mark carries) are each a call's model, or the tool
+  // of the sheet an imported strip came from (src/sheet/import.ts).
+  const marked = markRead(() => readMarkedModels(media.bytes, media.mediaType));
+  const allowed = new Set<unknown>(calls.map((c) => (c as { model?: unknown })?.model));
+  const tool = (record.sheet as { tool?: unknown } | undefined)?.tool;
+  if (typeof tool === "string") allowed.add(tool);
+  const names = (marked ?? "")
+    .split(";")
+    .map((m) => m.trim())
+    .filter((m) => m !== "");
+  const missing = names.filter((m) => !allowed.has(m));
+  const plural = (n: string[]) => (n.length === 1 ? "" : "s");
+
+  if (binding === undefined) {
+    // No call, no binding, and nothing outside the file says a model made the media.
+    if (calls.length === 0 && names.length === 0) return { ...own, madeOutsideAssetgrove: true };
+    // Unbound, and nothing outside the file vouches for it: a record 0.1.0 wrote, or a staged
+    // record moved out of its run. Its contents are not taken as written.
+    throw refuse(
+      calls.length === 0
+        ? `it records no model call and no binding, but the media's own mark names the model${plural(names)} ${names.join(", ")}`
+        : `it records ${callCount} but is not bound to the media, and nothing beside the media (its mark's calls sha256, a library review record or a run record) vouches for it`,
+      `Hand the media off again so its record is written and bound: ${upToDateCommand(record)}`,
+    );
+  }
+  if (missing.length > 0) {
+    throw refuse(
+      calls.length === 0
+        ? `it records no model call, but the media's own mark names the model${plural(missing)} ${missing.join(", ")}`
+        : `its calls do not name the model${plural(missing)} ${missing.join(", ")} that the media's own mark names`,
+    );
   }
   return own;
+}
+
+/**
+ * The one command that hands the media of an unbound record off again, so its record is written
+ * and bound (docs/decisions.md, "Provenance is bound to its media").
+ */
+export function upToDateCommand(record: Pick<Provenance, "generator">): string {
+  if (record.generator === "sheet-import") {
+    return "assetgrove write-families --import <import> --target <target>, from the import that made the strip";
+  }
+  if (record.generator === "frame-fix") {
+    return "assetgrove fix-frame on the strip it fixed, with that strip's own provenance";
+  }
+  return "assetgrove pick --run <run> --candidate <id> --target <target>, from the run that made it";
 }
 
 function markRead(read: () => string | undefined): string | undefined {
