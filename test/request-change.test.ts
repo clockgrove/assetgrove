@@ -26,6 +26,7 @@ import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "../src/types.ts";
 import { libraryProfile } from "./fixtures/library.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
 
 const RASTER = new URL("../src/image/raster.ts", import.meta.url).href;
@@ -58,7 +59,7 @@ function flat(w: number, h: number, rgb = [90, 120, 160]) {
 
 /** A project with a picked asset `lamp` (version 1 from run r1) and the run that made it. */
 async function project(spec: AssetSpec = { kind: "still", assetId: "lamp" }, media = flat(40, 40)) {
-  const dir = await mkdtemp(join(tmpdir(), "assetgrove-request-change-"));
+  const dir = gitTarget(await mkdtemp(join(tmpdir(), "assetgrove-request-change-")));
   const profile: TargetProfile = libraryProfile();
   await writeToTarget({
     profile,
@@ -474,7 +475,7 @@ const SCRIPT_3D = fileURLToPath(new URL("./fixtures/model3d-script.ts", import.m
 
 test("a view region on a 3D asset runs another round of the 3D kind with the note", async () => {
   approve(SCRIPT_3D);
-  const dir = await mkdtemp(join(tmpdir(), "assetgrove-request-change-3d-"));
+  const dir = gitTarget(await mkdtemp(join(tmpdir(), "assetgrove-request-change-3d-")));
   await mkdir(join(dir, "refs"));
   const roles = ["turnaround-front", "turnaround-side", "turnaround-back"];
   for (const [i, role] of roles.entries())
