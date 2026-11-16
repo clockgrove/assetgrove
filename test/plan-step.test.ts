@@ -18,6 +18,7 @@ import { gitTarget } from "./fixtures/git.ts";
 import { quadrupedTemplate, walkGait } from "./fixtures/quadruped.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
 import { syntheticStrip } from "./fixtures/strip.ts";
+import { GAME, fixtureLibrary } from "./fixtures/library.ts";
 import {
   PALETTE,
   drawSubject,
@@ -302,6 +303,8 @@ test("every paid command's --dry-run returns its plan with no provider call and 
   const strip = await stripFiles(await tempDir("assetgrove-plan-step-strip-"));
   const material = await materialFiles(await tempDir("assetgrove-plan-step-mat-"));
   const planned = await planFiles(await tempDir("assetgrove-plan-step-plan-"), 2);
+  const library = fixtureLibrary();
+  temporary.push(library.dir);
   approveProfile(JSON.parse(await readFile(material.profile, "utf8")), { profileDir: dir });
 
   // apply needs a saved plan: make one with a script of its own, before the recorder is watched.
@@ -351,8 +354,9 @@ test("every paid command's --dry-run returns its plan with no provider call and 
     ],
     ["identity-eval", ["--cases", id.cases, "--bible", id.bible]],
     ["identity-check", ["--bible", id.bible]],
+    ["audit", [`asset://${GAME}/by-tag/prop/`, "--target", library.dir, "--bible", id.bible]],
   ];
-  assert.equal(cases.length, 11);
+  assert.equal(cases.length, 12);
 
   for (const [name, args] of cases) {
     // Extra arguments (the runs directory) are appended; apply stages under --out, not --runs.

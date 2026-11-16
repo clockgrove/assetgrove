@@ -8,6 +8,7 @@ import { MemoryStore } from "../../packages/assetgrove-search/src/memory-store.t
 import type { Row, Store } from "../../packages/assetgrove-search/src/store.ts";
 import { passes, type Bar } from "./bars.ts";
 import type { ImageSource } from "./fetch.ts";
+import type { LookLibrary } from "./library.ts";
 import type { Label, Manifest } from "./manifest.ts";
 import { allPairs, mean, percentile, precisionAt5, rrf, similarityThreshold } from "./metrics.ts";
 
@@ -50,8 +51,13 @@ export interface BenchOptions {
   source: ImageSource;
   embedder: Embedder;
   bars: Map<string, Bar>;
+  /**
+   * The library the by-look measures search: the full library their bars were set on. The
+   * manifest's look queries must be in it. Defaults to the manifest's own images and labels.
+   */
+  lookLibrary?: LookLibrary;
   /** A fresh store per call; the bench rebuilds one to check rebuild equality. */
-  newStore?: () => Store;
+  newStore?: () => Store | Promise<Store>;
   padTo?: number;
   /** Count of timed queries per speed measure. */
   timedQueries?: number;
@@ -72,6 +78,8 @@ export function machine(): Machine {
 }
 
 const TOP = 20;
+/** The package indexer's write batch (`packages/assetgrove-search/src/indexer.ts`). */
+const INDEX_BATCH = 64;
 
 /** Words query in shipped mode: image vector, card-text vector and full text, fused by RRF. */
 async function shipped(
@@ -175,9 +183,19 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   };
 
   // Index the library: image vector from the pixels, text vector from the card text.
-  const store = newStore();
+  const store = await newStore();
   const rows: Row[] = [];
   const indexMs: number[] = [];
+  // Rows are written in batches, as the package's indexer writes them; each image's indexing time
+  // is its embedding plus its share of its batch's write.
+  let pending: { row: Row; ms: number }[] = [];
+  const flush = async () => {
+    const t0 = performance.now();
+    await store.upsert(pending.map((p) => p.row));
+    const share = (performance.now() - t0) / Math.max(1, pending.length);
+    for (const p of pending) indexMs.push(p.ms + share);
+    pending = [];
+  };
   for (const image of manifest.images) {
     const l = label.get(image.id) as Label;
     const text = image.card?.text ?? "";
@@ -199,16 +217,46 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
       imageVec,
       textVec,
     };
-    await store.upsert([row]);
-    indexMs.push(performance.now() - t0);
+    pending.push({ row, ms: performance.now() - t0 });
     rows.push(row);
+    if (pending.length === INDEX_BATCH) await flush();
   }
+  await flush();
+  // A writer optimizes after a batch: on LanceStore this builds the full-text index shipped mode uses.
+  await store.optimize();
 
-  // By look.
+  // By look, in the look library: the full library the by-look bars were set on (docs/decisions.md).
+  const look = o.lookLibrary ?? { images: manifest.images, labels: manifest.labels };
+  const lookLabel = new Map<string, Label>(look.labels.map((l) => [l.image, l]));
+  const known = new Map(rows.map((r) => [r.key, r]));
+  const lookStore = await newStore();
+  const lookRows: Row[] = [];
+  for (const image of look.images) {
+    const l = lookLabel.get(image.id);
+    if (!l) throw new Error(`look library image ${image.id} has no label`);
+    const imageVec =
+      known.get(image.id)?.imageVec ??
+      (await embedder.embedImages([await o.source.bytes(image)]))[0];
+    lookRows.push({
+      key: image.id,
+      tree: "bench-look",
+      id: image.id,
+      address: `asset://bench-look/${image.id}`,
+      source: "pick",
+      kind: l.category,
+      subject: l.pack,
+      path: image.file,
+      sha256: image.sha256,
+      imageVec,
+    });
+  }
+  for (let i = 0; i < lookRows.length; i += 500) await lookStore.upsert(lookRows.slice(i, i + 500));
+  await lookStore.optimize();
+  const lookVec = new Map(lookRows.map((r) => [r.key, r.imageVec as Float32Array]));
+  // The query image is left out of its own results.
   const neighbours = async (id: string, k: number): Promise<string[]> => {
-    const row = rows.find((r) => r.key === id) as Row;
-    const hits = await store.query({
-      vector: { column: "imageVec", value: row.imageVec as Float32Array },
+    const hits = await lookStore.query({
+      vector: { column: "imageVec", value: lookVec.get(id) as Float32Array },
       limit: k + 1,
     });
     return hits
@@ -217,26 +265,29 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
       .slice(0, k);
   };
   const shareCategory: number[] = [];
-  const sharePixel: number[] = [];
+  const pixelRecall: number[] = [];
   const recall: number[] = [];
   for (const id of manifest.lookQueries) {
-    const l = label.get(id) as Label;
+    const l = lookLabel.get(id);
+    if (!l) throw new Error(`look query ${id} is not in the look library`);
     const top5 = await neighbours(id, 5);
-    const ok = top5.filter((n) => label.get(n)?.category === l.category).length >= 3 ? 1 : 0;
+    const ok = top5.filter((n) => lookLabel.get(n)?.category === l.category).length >= 3 ? 1 : 0;
     shareCategory.push(ok);
-    if (l.pixel === 16) sharePixel.push(ok);
-    const relevant = manifest.labels.filter(
+    // Relevant: the other images of the same pack and category, as the spike measured it.
+    const relevant = look.labels.filter(
       (x) => x.image !== id && x.category === l.category && x.pack === l.pack,
     );
     if (relevant.length > 0) {
       const top10 = new Set(await neighbours(id, 10));
       const found = relevant.filter((r) => top10.has(r.image)).length;
-      recall.push(found / Math.min(10, relevant.length));
+      const r = found / Math.min(10, relevant.length);
+      recall.push(r);
+      if (l.pixel === 16) pixelRecall.push(r);
     }
   }
   entry("look-category", mean(shareCategory), shareCategory.length);
   entry("look-recall10", mean(recall), recall.length);
-  entry("look-pixel16", mean(sharePixel), sharePixel.length);
+  entry("look-pixel16", mean(pixelRecall), pixelRecall.length);
 
   // By words.
   const p5 = async (run: (text: string) => Promise<string[]>): Promise<number[]> => {
@@ -255,8 +306,9 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
   entry("words-shipped-p5", mean(shipP), shipP.length);
 
   // Filters return only matching rows; a rebuilt store answers identically.
-  const rebuilt = newStore();
+  const rebuilt = await newStore();
   await rebuilt.upsert(rows);
+  await rebuilt.optimize();
   const kinds = [...new Set(manifest.labels.map((l) => l.category))];
   const probe = rows[0]?.imageVec as Float32Array;
   let checks = 0;
@@ -304,6 +356,7 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
 
     // Speed: pad to padTo rows.
     await store.upsert(paddingRows(Math.max(0, padTo - rows.length), embedder.dimension, 0));
+    await store.optimize();
     const queries = manifest.writtenQueries.map((q) => q.text);
     const textMs: number[] = [];
     // "Fresh": a query preceded by the no-change freshness scan, as the real find does (design 7.4).
