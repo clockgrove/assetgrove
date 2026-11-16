@@ -40,6 +40,7 @@ export const EXIT = {
   version_exists: 2,
   version_changed: 2,
   card_field_owned: 2,
+  provenance_mismatch: 2,
   cap_refused: 3,
   provider_limit_undeclared: 3,
   provider_limit_mismatch: 3,

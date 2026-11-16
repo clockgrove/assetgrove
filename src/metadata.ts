@@ -108,6 +108,71 @@ const modelProperty = "AISystemUsed";
 export interface MarkOptions {
   /** Model names for IPTC's AISystemUsed. Never a prompt. */
   models?: readonly string[];
+  /**
+   * The sha256 of the provenance record's calls (src/provenance-binding.ts), written in
+   * Assetgrove's own XMP namespace. A mark written without it drops any it had: it described the
+   * record of other bytes.
+   */
+  callsSha256?: string;
+}
+
+/** Assetgrove's XMP namespace, for the one property it writes: the record's calls sha256. */
+const assetgroveNamespace = "https://assetgrove.dev/ns/xmp/1.0/";
+const callsProperty = "callsSha256";
+const gltfCallsKey = `assetgrove:${callsProperty}`;
+const assetgrovePrefixes = (xml: string): string[] =>
+  [
+    ...xml.matchAll(
+      new RegExp(`xmlns:([\\w.-]+)\\s*=\\s*["']${escapeRegExp(assetgroveNamespace)}["']`, "g"),
+    ),
+  ].map((m) => m[1]!);
+
+/** The packet with any calls sha256 removed and, when given, the one given added last. */
+function withCallsSha256(xml: string, callsSha256: string | undefined): string {
+  let out = xml.replace(
+    new RegExp(
+      `<([\\w.-]+):Description [\\w.-]+:about="" xmlns:([\\w.-]+)="${escapeRegExp(assetgroveNamespace)}">` +
+        `<\\2:${callsProperty}>[^<]*<\\/\\2:${callsProperty}><\\/\\1:Description>`,
+      "g",
+    ),
+    "",
+  );
+  for (const prefix of assetgrovePrefixes(out)) {
+    const escaped = escapeRegExp(prefix);
+    out = out
+      .replace(
+        new RegExp(
+          `<${escaped}:${callsProperty}\\b[^>]*(?:/>|>[\\s\\S]*?<\\/${escaped}:${callsProperty}\\s*>)`,
+          "g",
+        ),
+        "",
+      )
+      .replace(new RegExp(`\\s${escaped}:${callsProperty}\\s*=\\s*(["'])[\\s\\S]*?\\1`, "g"), "");
+  }
+  if (callsSha256 === undefined) return out;
+  const rdf = /<\/([\w.-]+):RDF\s*>/.exec(out);
+  if (!rdf) throw new Error("cannot add the calls sha256 to XMP without an RDF container");
+  const p = rdf[1]!;
+  return out.replace(
+    rdf[0],
+    () =>
+      `<${p}:Description ${p}:about="" xmlns:assetgrove="${assetgroveNamespace}">` +
+      `<assetgrove:${callsProperty}>${escapeXml(callsSha256)}</assetgrove:${callsProperty}>` +
+      `</${p}:Description>${rdf[0]}`,
+  );
+}
+
+function readXmpCallsSha256(xml: string): string | undefined {
+  for (const prefix of assetgrovePrefixes(xml)) {
+    const escaped = escapeRegExp(prefix);
+    const element = new RegExp(
+      `<${escaped}:${callsProperty}\\b[^>]*>([\\s\\S]*?)<\\/${escaped}:${callsProperty}\\s*>`,
+    ).exec(xml);
+    const attribute = new RegExp(`${escaped}:${callsProperty}\\s*=\\s*["']([^"']+)["']`).exec(xml);
+    const text = element?.[1]?.trim() ?? attribute?.[1];
+    if (text) return unescapeXml(text);
+  }
+  return undefined;
 }
 export function modelText(models: readonly string[] | undefined): string | undefined {
   const names = [...new Set((models ?? []).map((m) => m.trim()).filter(Boolean))];
@@ -133,7 +198,11 @@ function replaceProperty(xml: string, name: string, text: string): string | unde
   return undefined;
 }
 
-function xmp(value: DigitalSourceType, previous?: string, models?: readonly string[]): string {
+function xmp(value: DigitalSourceType, previous?: string, options: MarkOptions = {}): string {
+  return withCallsSha256(iptcXmp(value, previous, options.models), options.callsSha256);
+}
+
+function iptcXmp(value: DigitalSourceType, previous?: string, models?: readonly string[]): string {
   const modelsText = modelText(models);
   const properties: [string, string][] = [["DigitalSourceType", value]];
   if (modelsText !== undefined) properties.push([modelProperty, modelsText]);
@@ -274,14 +343,10 @@ function scanJpeg(b: Buffer): JpegScan {
 function readJpegXmp(bytes: Uint8Array): string | undefined {
   return scanJpeg(Buffer.from(bytes)).xmp?.xml;
 }
-function embedJpeg(
-  bytes: Uint8Array,
-  value: DigitalSourceType,
-  models?: readonly string[],
-): Buffer {
+function embedJpeg(bytes: Uint8Array, value: DigitalSourceType, options: MarkOptions): Buffer {
   const b = Buffer.from(bytes);
   const scan = scanJpeg(b);
-  const xml = Buffer.concat([jpegXmpId, Buffer.from(xmp(value, scan.xmp?.xml, models))]);
+  const xml = Buffer.concat([jpegXmpId, Buffer.from(xmp(value, scan.xmp?.xml, options))]);
   if (xml.length + 2 > 0xffff) throw new Error("XMP packet too large for one JPEG segment");
   const segment = Buffer.alloc(4 + xml.length);
   segment.set([0xff, 0xe1]);
@@ -373,6 +438,7 @@ export function embedGltfDigitalSourceType(
   document: Gltf,
   value: DigitalSourceType,
   models?: readonly string[],
+  callsSha256?: string,
 ): Gltf {
   const result = structuredClone(document);
   if (value === "undeclared") return result;
@@ -408,6 +474,13 @@ export function embedGltfDigitalSourceType(
   packet["Iptc4xmpExt:DigitalSourceType"] = value;
   const modelsText = modelText(models);
   if (modelsText !== undefined) packet["Iptc4xmpExt:AISystemUsed"] = modelsText;
+  const context = packet["@context"] as Record<string, unknown>;
+  delete packet[gltfCallsKey];
+  delete context["assetgrove"];
+  if (callsSha256 !== undefined) {
+    context["assetgrove"] = assetgroveNamespace;
+    packet[gltfCallsKey] = callsSha256;
+  }
   packets[index] = packet;
   extensions["KHR_xmp_json_ld"] = { ...old, packets };
   assetExtensions["KHR_xmp_json_ld"] = { ...reference, packet: index };
@@ -430,7 +503,7 @@ export function embedDigitalSourceType(
       type: "iTXt",
       data: Buffer.concat([
         Buffer.from("XML:com.adobe.xmp\0\0\0\0\0"),
-        Buffer.from(xmp(value, previous, models)),
+        Buffer.from(xmp(value, previous, options)),
       ]),
     };
     const filtered = chunks.filter((c) => pngXmp(c) === undefined);
@@ -440,7 +513,7 @@ export function embedDigitalSourceType(
     filtered.splice(imageData < 0 ? end : imageData, 0, metadata);
     return Buffer.concat([pngSignature, ...filtered.map(encodePngChunk)]);
   }
-  if (mediaType === "image/jpeg") return embedJpeg(bytes, value, models);
+  if (mediaType === "image/jpeg") return embedJpeg(bytes, value, options);
   if (mediaType === "image/webp") {
     const chunks = webpChunks(bytes);
     const previous = chunks.find((c) => c.type === "XMP ")?.data.toString("utf8");
@@ -449,7 +522,7 @@ export function embedDigitalSourceType(
       ...[
         webpHeader(chunks),
         ...chunks.filter((c) => !["XMP ", "VP8X"].includes(c.type)),
-        { type: "XMP ", data: Buffer.from(xmp(value, previous, models)) },
+        { type: "XMP ", data: Buffer.from(xmp(value, previous, options)) },
       ].map(encodeWebpChunk),
     ]);
     const header = Buffer.alloc(8);
@@ -461,19 +534,24 @@ export function embedDigitalSourceType(
     const glb = parseGlb(bytes);
     return writeGlb({
       ...glb,
-      json: embedGltfDigitalSourceType(glb.json, value, models) as GltfDocument,
+      json: embedGltfDigitalSourceType(
+        glb.json,
+        value,
+        models,
+        options.callsSha256,
+      ) as GltfDocument,
     });
   }
   if (mediaType === "model/gltf+json")
     return Buffer.from(
-      `${JSON.stringify(embedGltfDigitalSourceType(JSON.parse(Buffer.from(bytes).toString("utf8")) as Gltf, value, models))}\n`,
+      `${JSON.stringify(embedGltfDigitalSourceType(JSON.parse(Buffer.from(bytes).toString("utf8")) as Gltf, value, models, options.callsSha256))}\n`,
     );
   if (mediaType === "image/ktx2") {
     // The container's key-value data holds the XMP packet under `XMP`; ktx-parse is the only
     // maintained reader and writer (docs/decisions.md).
     const container = readKtx2(bytes);
     const previous = ktx2Xmp(container.keyValue[ktx2Key]);
-    const packet = xmp(value, previous, models);
+    const packet = xmp(value, previous, options);
     if (previous === packet) return bytes;
     container.keyValue[ktx2Key] = packet;
     container.keyValue["KTXwriter"] ??= "assetgrove";
@@ -547,8 +625,11 @@ export function readDigitalSourceType(
   return undefined;
 }
 
-/** The model names a mark carries in IPTC's AI-system property, or undefined. */
-export function readMarkedModels(bytes: Uint8Array, mediaType: string): string | undefined {
+/** The mark's XMP packet, or the glTF document's JSON-LD packet; undefined when there is none. */
+function markPacket(
+  bytes: Uint8Array,
+  mediaType: string,
+): { xml: string } | { json: Record<string, unknown> } | undefined {
   let xml: string | undefined;
   if (mediaType === "image/png")
     xml = pngChunks(bytes)
@@ -556,12 +637,30 @@ export function readMarkedModels(bytes: Uint8Array, mediaType: string): string |
       .find((x) => x !== undefined);
   else if (mediaType === "image/jpeg") xml = readJpegXmp(bytes);
   else if (mediaType === "model/gltf+json" || mediaType === "model/gltf-binary") {
-    const text = gltfPacket(gltfDocument(bytes, mediaType))?.["Iptc4xmpExt:AISystemUsed"];
-    return typeof text === "string" && text !== "" ? text : undefined;
+    const json = gltfPacket(gltfDocument(bytes, mediaType));
+    return json === undefined ? undefined : { json };
   } else if (mediaType === "image/ktx2") xml = ktx2Xmp(readKtx2(bytes).keyValue[ktx2Key]);
   else if (mediaType === "image/webp")
     xml = webpChunks(bytes)
       .find((c) => c.type === "XMP ")
       ?.data.toString("utf8");
-  return xml === undefined ? undefined : readXmpModels(xml);
+  return xml === undefined ? undefined : { xml };
+}
+
+/** The model names a mark carries in IPTC's AI-system property, or undefined. */
+export function readMarkedModels(bytes: Uint8Array, mediaType: string): string | undefined {
+  const packet = markPacket(bytes, mediaType);
+  if (packet === undefined) return undefined;
+  if ("xml" in packet) return readXmpModels(packet.xml);
+  const text = packet.json["Iptc4xmpExt:AISystemUsed"];
+  return typeof text === "string" && text !== "" ? text : undefined;
+}
+
+/** The sha256 of the record's calls a mark carries (MarkOptions.callsSha256), or undefined. */
+export function readMarkedCallsSha256(bytes: Uint8Array, mediaType: string): string | undefined {
+  const packet = markPacket(bytes, mediaType);
+  if (packet === undefined) return undefined;
+  if ("xml" in packet) return readXmpCallsSha256(packet.xml);
+  const text = packet.json[gltfCallsKey];
+  return typeof text === "string" && text !== "" ? text : undefined;
 }

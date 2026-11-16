@@ -17,6 +17,7 @@ import {
 import type { DigitalSourceType } from "../../metadata.ts";
 import { writeRun } from "../../loop.ts";
 import type { RunRecord, StagedCandidate } from "../../loop.ts";
+import { readNamedProvenance } from "../../provenance-binding.ts";
 import { sha256 } from "../../request.ts";
 import type { AssetSpec, Provenance, TargetProfile } from "../../types.ts";
 import { GLB_MEDIA_TYPE, parseGlb } from "../glb.ts";
@@ -202,13 +203,13 @@ async function externalImages(source: Glb, dir: string): Promise<Record<string, 
   return out;
 }
 
-/** Reads a provenance record from a file. */
-export async function readProvenance(path: string): Promise<Provenance> {
-  let value: unknown;
-  try {
-    value = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    throw new InputError(`the provenance file ${path} cannot be read as JSON`);
-  }
-  return value as Provenance;
+/**
+ * Reads the provenance file named with a `.glb` and checks it is that model's record
+ * (src/provenance-binding.ts): exit 2 `provenance_mismatch` naming both files when it is not.
+ */
+export async function readProvenance(
+  path: string,
+  model: { bytes: Uint8Array; path: string },
+): Promise<Provenance> {
+  return readNamedProvenance(path, { ...model, mediaType: GLB_MEDIA_TYPE });
 }

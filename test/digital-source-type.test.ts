@@ -19,6 +19,7 @@ import {
   embedDigitalSourceType,
   readDigitalSourceType,
 } from "../src/metadata.ts";
+import { callsSha256 } from "../src/provenance-binding.ts";
 import { sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { importSheet, writeFamilies } from "../src/sheet/import.ts";
@@ -174,10 +175,15 @@ test("generated Fern strip and model-edited human prop disclose origin through s
     assert.equal(candidate.sha256, sha256(staged));
     const picked = await pick({ runDir, candidateId: candidate.id, targetDir: world.targetDir });
     assert.equal(picked.validator?.accepted, true);
-    // The handed-off file is the staged bytes with signed C2PA credentials over exactly them.
+    // The handed-off file is the staged bytes with the record's calls sha256 added to the mark
+    // (assetgrove#286) and signed C2PA credentials over exactly those.
     const handed = await readFile(picked.mediaPath);
     const credentials = await readCredentials(handed, "image/png");
-    assert.equal(credentials?.inputSha256, sha256(staged));
+    const marked = embedDigitalSourceType(staged, "image/png", expected, {
+      models: candidate.provenance.models,
+      callsSha256: callsSha256(candidate.provenance),
+    });
+    assert.equal(credentials?.inputSha256, sha256(marked));
     assert.deepEqual(credentials?.failures, []);
     assert.equal(readDigitalSourceType(handed, "image/png"), expected);
     assert.deepEqual(decodeImage(handed).data, decodeImage(staged).data);

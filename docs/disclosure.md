@@ -4,7 +4,7 @@ Assetgrove marks every file it hands off, and `disclosure` summarises the librar
 
 ## The marks
 
-Each handed-off file carries the IPTC digital source type, and, where IPTC defines AI-system properties, the models in `AISystemUsed`. The prompt is never written into a file.
+Each handed-off file carries the IPTC digital source type, and, where IPTC defines AI-system properties, the models in `AISystemUsed`. It also carries `assetgrove:callsSha256`, the sha256 of the provenance record's calls, which ties the record to the file ([decisions](decisions.md#provenance-is-bound-to-its-media)); it names no prompt. The prompt is never written into a file.
 
 | Format          | Where the mark lives                               |
 | --------------- | -------------------------------------------------- |

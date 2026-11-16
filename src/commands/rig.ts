@@ -51,7 +51,7 @@ and nothing is spent (docs/characters-3d.md).`,
     const profile = await loadProfile(args.profile);
     const { run, runDir, passed } = await rerig({
       model,
-      provenance: await readProvenance(args.provenance),
+      provenance: await readProvenance(args.provenance, model),
       spec: spec.value,
       specDir: spec.dir,
       profile: profile.value,

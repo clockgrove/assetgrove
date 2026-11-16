@@ -146,6 +146,7 @@ test("provenance records the call, the fix and the frame transform", async () =>
     costUsd: 0.3,
     calls: [],
     digitalSourceType: DIGITAL_SOURCE_TYPES.human,
+    madeOutsideAssetgrove: true,
     frames: [0, 1, 2, 3].map((index) => ({
       index,
       frame: index + 1,
@@ -160,6 +161,8 @@ test("provenance records the call, the fix and the frame transform", async () =>
   assert.ok(record);
   const p = result.provenance;
   assert.equal(p.calls.length, 1);
+  // A strip made outside Assetgrove is no longer that once the fix adds a call.
+  assert.equal(p.madeOutsideAssetgrove, undefined);
   assert.equal(record.operation, "edit");
   assert.equal(record.model, defaultRoutes.edit.model);
   assert.match(record.route, /edit/);

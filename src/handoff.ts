@@ -27,6 +27,7 @@ import { InputError } from "./errors.ts";
 import { commandIdentity, defaultGate, requireApproval, resolveProgram } from "./approvals.ts";
 import type { ApprovalGate, CommandStep } from "./approvals.ts";
 import { requireLicensable } from "./license.ts";
+import { bindingOf, callsSha256 } from "./provenance-binding.ts";
 import { keyFreeEnv, redact } from "./redact.ts";
 import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
@@ -462,10 +463,14 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   ].filter((value) => value !== undefined);
   const digitalSourceType = known.length ? combineDigitalSourceTypes(known) : "undeclared";
   requireDeclared(digitalSourceType);
+  // The mark carries the sha256 of the record's calls: evidence outside the provenance file that
+  // it is the record of these bytes (src/provenance-binding.ts).
+  const marks = callsSha256(write.provenance);
   const output = {
     ...write.output,
     bytes: embedDigitalSourceType(write.output.bytes, write.output.mediaType, digitalSourceType, {
       models: write.provenance.models,
+      callsSha256: marks,
     }),
   };
   // A sidecar in a format that can carry the mark is marked like the media.
@@ -480,10 +485,22 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
           ...sidecar,
           bytes: embedDigitalSourceType(sidecar.bytes, type, digitalSourceType, {
             models: write.provenance.models,
+            callsSha256: marks,
           }),
         };
   });
-  const provenance = { ...licensed, digitalSourceType };
+  // A binding the record came with describes other bytes; this hand-off binds it again below.
+  // "Made outside Assetgrove" means no call, so it is read from the final calls: a step that added
+  // a call to outside media (look-dev, fix-frame) leaves it behind.
+  // modelMadeOutsideAssetgrove stays: a call a later step added says nothing of the source's grant.
+  const { binding: _stale, madeOutsideAssetgrove: _outside, ...unbound } = licensed;
+  void _stale;
+  void _outside;
+  const provenance: Provenance = {
+    ...unbound,
+    digitalSourceType,
+    ...(_outside === true && unbound.calls.length === 0 && { madeOutsideAssetgrove: true }),
+  };
   const last = provenance.steps?.at(-1);
   if (
     last?.op !== "embed-digital-source-type" ||
@@ -548,6 +565,9 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     sidecarRels.push(rel);
   }
   if (provenanceRel !== undefined) context["provenancePath"] = provenanceRel;
+  // Last, once the media's bytes are final (marked and signed): the record is bound to them, so
+  // the manifest, the provenance file and the template context carry the binding.
+  provenance.binding = bindingOf(provenance, output.bytes);
 
   const presetContext = { profile, context, manifestRel };
   const presetFiles: PresetFile[][] = presets.map(({ preset, options }) =>

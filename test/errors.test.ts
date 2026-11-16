@@ -30,6 +30,7 @@ const DESIGN: Record<number, string[]> = {
     "version_exists",
     "version_changed",
     "card_field_owned",
+    "provenance_mismatch",
   ],
   3: ["cap_refused", "provider_limit_undeclared", "provider_limit_mismatch", "spend_hold"],
   4: ["provider_error"],

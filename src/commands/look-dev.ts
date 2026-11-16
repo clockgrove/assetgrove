@@ -148,7 +148,7 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
     const model = await readModel(args.model);
     const { run, runDir, passed } = await lookDev({
       model,
-      provenance: await readProvenance(args.provenance),
+      provenance: await readProvenance(args.provenance, model),
       spec: spec.value,
       specDir: spec.dir,
       bible: bible.value,
