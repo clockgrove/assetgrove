@@ -5,6 +5,8 @@
  * answer lengths per region, with a frosted tint for a season named `winter`. Markings calls name
  * no marking, unless `SCRIPT_LOOKDEV_MARKINGS` is `figure` (one marking, "patch", boxed, on the 0..1000 scale, on the middle
  * of each image's figure against its lower part), `vanished` (that marking on the reference only) or a literal reply.
+ * `SCRIPT_LOOKDEV_MARKINGS_COUNT` names that many markings on the same boxes, and
+ * `SCRIPT_LOOKDEV_MARKING_MISSING` has the marking of that name judged missing.
  * Marking decisions answer `kept` with probability 0.9, `missing` when markings are `vanished`;
  * `SCRIPT_LOOKDEV_MARKING` names the verdict (`kept`, `drifted` or `missing`) instead.
  */
@@ -70,8 +72,15 @@ const script: Script = {
           ground: scale([x0 + w * 0.2, y0 + h * 0.6, x0 + w * 0.8, y0 + h * 0.9]),
         };
       });
+      // `SCRIPT_LOOKDEV_MARKINGS_COUNT`: that many markings, "patch", "patch 2", … on the same boxes.
+      const count = Number(process.env["SCRIPT_LOOKDEV_MARKINGS_COUNT"] ?? 1);
+      const named = Array.from({ length: count }, (_, i) => ({
+        name: i === 0 ? "patch" : `patch ${i + 1}`,
+        against: "lower body",
+        boxes,
+      }));
       return {
-        text: JSON.stringify({ markings: [{ name: "patch", against: "lower body", boxes }] }),
+        text: JSON.stringify({ markings: named }),
         costUsd: 0.001,
       };
     }
@@ -103,8 +112,11 @@ const script: Script = {
       costUsd: 0.001,
     };
   },
-  marking() {
+  marking(request) {
+    // `SCRIPT_LOOKDEV_MARKING_MISSING`: the one marking, by name, judged missing.
+    const lost = process.env["SCRIPT_LOOKDEV_MARKING_MISSING"];
     const choice =
+      (lost !== undefined && request.prompt.includes(`"${lost}"`) ? "missing" : undefined) ??
       process.env["SCRIPT_LOOKDEV_MARKING"] ??
       (process.env["SCRIPT_LOOKDEV_MARKINGS"] === "vanished" ? "missing" : "kept");
     return {

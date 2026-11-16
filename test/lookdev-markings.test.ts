@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProviderError } from "../src/errors.ts";
 import { Budget } from "../src/budget.ts";
+import { canAfford } from "../src/model3d/lookdev/command.ts";
 import { Caller } from "../src/calls.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
@@ -172,6 +173,20 @@ test("markingsReason names each marking per view and season with verdict, probab
   const empty = markingsReason([], { unmeasured: ["no views had a reference"] });
   assert.equal(empty.passed, true);
   assert.match(empty.reason, /no marking was judged.*no views had a reference/);
+});
+
+test("a marking the cap had no room to judge fails the check, never passes as unmeasured", () => {
+  const ok = measure({ probability: 0.93 });
+  const r = markingsReason([ok], { unmeasured: [], unjudged: ["mask 9 in front"] });
+  assert.equal(r.passed, false);
+  assert.match(r.reason, /not judged \(the cap had no room\): mask 9 in front/);
+});
+
+test("canAfford: past the forecast, a marking is judged only while the rest of the forecast still fits", () => {
+  const budget = new Budget(1);
+  budget.settle(budget.reserve(0.99), 0.99);
+  assert.equal(canAfford(budget, 0.002, 0.004, "the marking decisions"), true);
+  assert.equal(canAfford(budget, 0.002, 0.009, "the marking decisions"), false);
 });
 
 test("the measured ΔE is evidence only: a large ΔE kept passes, a tiny ΔE drifted fails", () => {

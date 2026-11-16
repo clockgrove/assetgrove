@@ -390,11 +390,17 @@ test("look-dev gives a rigged model its look, maps and eyes; pick hands it all o
     glb.json.images!.some((i) => i.bufferView !== undefined),
     "base colour is embedded",
   );
-  // The catch-light is the eye material's own emissive texture, never painted into the base colour.
+  // The catch-light is an emissive texture shared by the eye and textured materials, never painted
+  // into the base colour.
   type Emissive = { name?: string; emissiveTexture?: { index: number } };
   const materials = glb.json.materials as Emissive[];
-  assert.ok(materials.find((m) => m.name === "eyes")?.emissiveTexture);
-  assert.ok(materials.filter((m) => m.name !== "eyes").every((m) => !m.emissiveTexture));
+  const eyeTexture = materials.find((m) => m.name === "eyes")?.emissiveTexture;
+  assert.ok(eyeTexture);
+  const others = materials.filter((m) => m.name !== "eyes");
+  assert.ok(others.some((m) => m.emissiveTexture?.index === eyeTexture.index));
+  assert.ok(
+    others.every((m) => !m.emissiveTexture || m.emissiveTexture.index === eyeTexture.index),
+  );
   assert.match(
     checks["eyes-catch-light"]!.reason,
     /catch-light painted and seen by the close-up at the closest zoom in 2 of 2 eye\(s\)/,
@@ -581,6 +587,38 @@ test("an eye smaller than one triangle still gets its catch-light, and the exact
   assert.match(check.reason, /the catch-light is the textured material's emissive texture/);
 });
 
+test("a large eye beside one smaller than a triangle: both materials carry the catch-light", async () => {
+  const w = await world();
+  const input = await riggedModel(w);
+  const r = await cli(lookDevArgs(w, input), {
+    SCRIPT_LOOKDEV_EYES: JSON.stringify({
+      eyes: [
+        { x: 240, y: 250, r: 45 },
+        { x: 270, y: 250, r: 10 },
+      ],
+      nose: { x: 255, y: 240, r: 12 },
+    }),
+  });
+  const run = doc(r);
+  const all: Array<{ check: string; passed: boolean; reason: string }> = [
+    ...(run["candidates"] ?? []).flatMap((c: { reasons: [] }) => c.reasons),
+    ...(run["rejections"] ?? []).flatMap((c: { reasons: [] }) => c.reasons),
+  ];
+  const check = all.find((x) => x.check === "eyes-catch-light")!;
+  assert.equal(check.passed, true, check.reason);
+  assert.match(check.reason, /[1-9]\d* triangle\(s\) in the "eyes" material/);
+  assert.match(check.reason, /eye and textured materials' shared emissive texture/);
+  // The small eye's painted texels lie on textured-material triangles: that material carries the
+  // same emissive texture as the eye material, so the counted texels are lit on the model.
+  const c = run["candidates"]?.[0] ?? run["rejections"]?.[0];
+  const glb = parseGlb(new Uint8Array(await readFile(join(run["runDir"], c.file))));
+  type Emissive = { name?: string; emissiveTexture?: { index: number } };
+  const materials = glb.json.materials as Emissive[];
+  const eye = materials.find((m) => m.name === "eyes")?.emissiveTexture;
+  assert.ok(eye);
+  assert.ok(materials.some((m) => m.name !== "eyes" && m.emissiveTexture?.index === eye.index));
+});
+
 test("a character with no eyes: neither the groom check nor the catch-light check asks for them", async () => {
   const w = await world();
   const input = await riggedModel(w);
@@ -745,6 +783,23 @@ test("a marking the turnaround shows and the renders lost fails the advisory mar
   const check = reasons.find((x) => x.check === "lookdev-markings")!;
   assert.equal(check.passed, false);
   assert.match(check.reason, /drifting: patch \(front, default: missing\)/);
+});
+
+test("a ninth marking in a view is judged, and fails the check when the renders lost it", async () => {
+  const w = await world({ groom: { sizePx: 256 } });
+  const input = await riggedModel(w);
+  const r = await cli(lookDevArgs(w, input), {
+    SCRIPT_LOOKDEV_MARKINGS: "figure",
+    SCRIPT_LOOKDEV_MARKINGS_COUNT: "9",
+    SCRIPT_LOOKDEV_MARKING_MISSING: "patch 9",
+  });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const reasons: Array<{ check: string; passed: boolean; reason: string }> =
+    doc(r)["candidates"][0].reasons;
+  const check = reasons.find((x) => x.check === "lookdev-markings")!;
+  assert.equal(check.passed, false);
+  assert.match(check.reason, /drifting: patch 9 \(front, default: missing\)/);
+  assert.doesNotMatch(check.reason, /not judged/);
 });
 
 test("a profile's preview lighting is used as declared, and bad lighting is refused", async () => {

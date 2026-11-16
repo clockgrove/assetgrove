@@ -22,7 +22,10 @@ export interface MarkingReply {
   boxes: Array<MarkingBoxes | null>;
 }
 
-/** Markings judged per view; the rest of a view's markings are listed as not judged. */
+/**
+ * Markings a look-dev forecasts one decision for, per view and season. A view naming more is still
+ * judged whole while the cap has room; a marking the cap cannot afford is unjudged and fails.
+ */
 export const MAX_MARKINGS_JUDGED = 8;
 
 /** What a decision model answers about one marking: the options and what each means. */
@@ -323,7 +326,7 @@ export function markingsFiltering(model: string | undefined): FilteringState {
  */
 export function markingsReason(
   measures: MarkingMeasure[],
-  notes: { unmeasured: string[]; unreadable?: string[] },
+  notes: { unmeasured: string[]; unreadable?: string[]; unjudged?: string[] },
   filtering: FilteringState = markingsFiltering(undefined),
 ): {
   check: "lookdev-markings";
@@ -360,10 +363,12 @@ export function markingsReason(
   }
   const unreadable = notes.unreadable ?? [];
   if (unreadable.length > 0) parts.push(`unreadable: ${unreadable.join("; ")}`);
+  const unjudged = notes.unjudged ?? [];
+  if (unjudged.length > 0) parts.push(`not judged (the cap had no room): ${unjudged.join("; ")}`);
   if (notes.unmeasured.length > 0) parts.push(`not measured: ${notes.unmeasured.join("; ")}`);
   return {
     check: "lookdev-markings",
-    passed: !measures.some((m) => m.drifts) && unreadable.length === 0,
+    passed: !measures.some((m) => m.drifts) && unreadable.length === 0 && unjudged.length === 0,
     reason: parts.join(". "),
     source: "decision",
     ...(advisory && { shadow: true as const }),

@@ -7,7 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, posix, resolve } from "node:path";
-import { Budget } from "../../budget.ts";
+import { Budget, BudgetExceededError } from "../../budget.ts";
 import { Caller } from "../../calls.ts";
 import { InputError, ProviderError } from "../../errors.ts";
 import { checkWrites } from "../../paths.ts";
@@ -71,7 +71,6 @@ import {
   compactBin,
   nodePositions,
   replaceImage,
-  setEmissive,
   setEmissiveAt,
   splitEyes,
 } from "./edit.ts";
@@ -224,8 +223,8 @@ export function planLookdev(
   for (let i = 0; i < seasonsOf(settings).length; i++) add(LOOKDEV_GROOM_OPERATION);
   // At most one markings call per turntable view: only views with their own turnaround view call.
   for (let i = 0; i < TURNTABLE_VIEWS.length; i++) add(LOOKDEV_MARKINGS_OPERATION);
-  // An upper bound: one decision per marking, view and season, at most MAX_MARKINGS_JUDGED markings
-  // per view, and only the markings the box call names.
+  // One decision per marking, view and season, for up to MAX_MARKINGS_JUDGED markings per view. A
+  // view naming more is judged whole while the cap has room; a marking it cannot afford fails.
   const judged = TURNTABLE_VIEWS.length * seasonsOf(settings).length * MAX_MARKINGS_JUDGED;
   for (let i = 0; i < judged; i++) add(LOOKDEV_MARKING_OPERATION);
   // Identity never filters a 3D character, so no record check is forecast.
@@ -863,6 +862,25 @@ function changedShare(a: Raster, b: Raster): number {
   return changed / (a.width * a.height);
 }
 
+/**
+ * Whether `amountUsd` beyond the forecast fits the cap and the cross-run limits while leaving
+ * `keepUsd` for the forecast calls still to come.
+ */
+export function canAfford(
+  budget: Budget,
+  amountUsd: number,
+  keepUsd: number,
+  what: string,
+): boolean {
+  try {
+    budget.check(amountUsd + keepUsd, what);
+    return true;
+  } catch (e) {
+    if (e instanceof BudgetExceededError) return false;
+    throw e;
+  }
+}
+
 /** How much of one eye's painted catch-light the close-up camera sees. */
 export interface EyeCatchLight {
   /** Texels painted with the catch-light inside the eye. */
@@ -1330,7 +1348,7 @@ export async function lookDev(
 
   // 4. The eye material and its mask.
   const eyeTriangles = splitEyes(glb, textured.material, markers.eyes);
-  // The catch-light lives in the eye material alone, as its emissive texture, so the eyes read as
+  // The catch-light is an emissive texture, never the base colour, so the eyes read as
   // wet at the closest zoom whatever the eye geometry, while the base colour stays unlit albedo.
   // The target can keep it, or drop it and shade the eyes itself; the glossy eye material adds
   // the live highlight.
@@ -1340,11 +1358,23 @@ export async function lookDev(
   for (let i = 3; i < catchLightTexture.data.length; i += 4) catchLightTexture.data[i] = 255;
   const catchLightTexels = paintCatchLights(catchLightTexture, texels, markers.eyes, forward);
   const catchLightOn = eyeTriangles > 0 ? EYE_MATERIAL : "textured";
+  // With an eye split, the same texture is the emissive texture of both materials: an eye smaller
+  // than one triangle beside a larger one has its painted texels on textured-material triangles,
+  // and the texture is black there except inside the eyes.
   if (catchLightTexels.some((p) => p.length > 0)) {
+    const index = setEmissiveAt(
+      glb,
+      textured.material,
+      encodePng(catchLightTexture),
+      "eyes.catchLight",
+    );
     if (eyeTriangles > 0) {
-      setEmissive(glb, EYE_MATERIAL, encodePng(catchLightTexture), "eyes.catchLight");
-    } else {
-      setEmissiveAt(glb, textured.material, encodePng(catchLightTexture), "eyes.catchLight");
+      const eye = glb.json.materials?.find((m) => m.name === EYE_MATERIAL) as
+        Record<string, unknown> | undefined;
+      if (eye) {
+        eye["emissiveTexture"] = { index };
+        eye["emissiveFactor"] = [1, 1, 1];
+      }
     }
   }
   const eyeMaskTexture = markerMask(texels, markers.eyes);
@@ -1386,7 +1416,7 @@ export async function lookDev(
         material: EYE_MATERIAL,
         catchLight:
           catchLightOn === EYE_MATERIAL
-            ? "the eye material's emissiveTexture"
+            ? "the eye and textured materials' shared emissiveTexture"
             : "the textured material's emissiveTexture (no triangle lies wholly inside an eye)",
       },
     },
@@ -1521,7 +1551,7 @@ export async function lookDev(
       (light.perEye.length > 0
         ? ` (${light.perEye.map((p, e) => `eye ${e + 1}: ${p.painted} texel(s) painted, ${p.visible} passing the close-up's depth test`).join("; ")})`
         : "") +
-      `; the catch-light is the ${catchLightOn === EYE_MATERIAL ? "eye" : "textured"} material's emissive texture, the base colour has none`,
+      `; the catch-light is the ${catchLightOn === EYE_MATERIAL ? "eye and textured materials' shared" : "textured material's"} emissive texture, the base colour has none`,
     source: "deterministic",
   });
   reasons.push(
@@ -1533,6 +1563,10 @@ export async function lookDev(
   const markingMeasures: MarkingMeasure[] = [];
   const unmeasured: string[] = [];
   const unreadable: string[] = [];
+  const unjudged: string[] = [];
+  const identityUsd = plan.calls
+    .filter((c) => c.operation === "identity" || c.operation === IDENTITY_CAST_OPERATION)
+    .reduce((sum, c) => sum + c.estimatedCostUsd, 0);
   for (const [v, view] of TURNTABLE_VIEWS.entries()) {
     const wanted = referenceViewFor(view.name);
     const ref = references.find((r) => r.view === wanted);
@@ -1571,11 +1605,18 @@ export async function lookDev(
     if (markings.length === 0) unmeasured.push(`${view.name} (no marking was named)`);
     const refImage = decodeImage(ref.bytes);
     for (const [n, m] of markings.entries()) {
+      // Past the forecast's markings, a marking is judged only while the cap has room for its
+      // decisions; one it cannot afford is unjudged and fails the check, never passes unseen.
       if (n >= MAX_MARKINGS_JUDGED) {
-        unmeasured.push(
-          `${m.name} in ${view.name} (not judged: over ${MAX_MARKINGS_JUDGED} markings)`,
-        );
-        continue;
+        const each = options.routes[LOOKDEV_MARKING_OPERATION]?.estimatedCostUsd ?? 0;
+        // Room is kept for the rest of the forecast: the later views' decisions and identity.
+        const later =
+          (TURNTABLE_VIEWS.length - 1 - v) * MAX_MARKINGS_JUDGED * renders.length * each +
+          identityUsd;
+        if (!canAfford(budget, each * renders.length, later, `the ${m.name} marking decisions`)) {
+          unjudged.push(`${m.name} in ${view.name}`);
+          continue;
+        }
       }
       const refBoxes = m.boxes[0];
       const refMark = refBoxes && measureBox(refImage, refBoxes.mark, undefined);
@@ -1637,7 +1678,9 @@ export async function lookDev(
   }
   // lookdev-markings filters only where measured stable on the run's markings model.
   const markingsState = markingsFiltering(options.routes[LOOKDEV_MARKING_OPERATION]?.model);
-  reasons.push(markingsReason(markingMeasures, { unmeasured, unreadable }, markingsState));
+  reasons.push(
+    markingsReason(markingMeasures, { unmeasured, unreadable, unjudged }, markingsState),
+  );
 
   // 6. Identity lock on the looked-dev turntable (front and three-quarter), as for wave 0.
   let identity: IdentityScore | undefined;
