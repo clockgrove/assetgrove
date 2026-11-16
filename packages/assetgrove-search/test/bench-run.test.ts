@@ -21,9 +21,10 @@ import { precisionAt5 } from "../../../bench/search/metrics.ts";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Embedder } from "../src/embedder.ts";
+import { SearchIndex } from "../src/find.ts";
 import { LanceStore } from "../src/lance-store.ts";
 import { ScriptedEmbedder } from "../src/scripted.ts";
-import type { Store } from "../src/store.ts";
 import { cleanup, tempDir } from "./helpers/fixture.ts";
 
 const fixtureUrl = new URL("../../../bench/search/fixture/manifest.json", import.meta.url);
@@ -56,9 +57,10 @@ describe("bench on the 20-image fixture", () => {
     ]);
     assert.equal(report.entries.find((e) => e.bar === "words-shipped-p5")?.n, 3);
     const lines = formatReport(report).map((l) => JSON.parse(l));
-    assert.equal(lines.length, bars.size + 2);
+    assert.equal(lines.length, bars.size + 3);
     assert.deepEqual(lines[bars.size].dropped, report.dropped);
-    assert.ok("machine" in lines[bars.size + 1]);
+    assert.deepEqual(lines[bars.size + 1].indexing, report.indexing);
+    assert.ok("machine" in lines[bars.size + 2]);
   });
 
   it("refuses to score by words while a query holds rule-made, unpooled or unjudged labels", async () => {
@@ -349,15 +351,33 @@ describe("the by-look library", () => {
   });
 });
 
-describe("bench on LanceStore", () => {
-  it("runs every bar on the shipped store, its full text indexed", async () => {
-    const dir = await tempDir("bench-lance");
-    const stores: LanceStore[] = [];
-    const embedder = new ScriptedEmbedder();
-    const newStore = async (): Promise<Store> => {
-      const s = await LanceStore.open(join(dir, `s${stores.length}`), { embedder });
-      stores.push(s);
-      return s;
+describe("bench on the search that ships", () => {
+  it("indexes through the package's indexer in its batches, finds through its find, on LanceStore", async () => {
+    const scripted = new ScriptedEmbedder();
+    const imageBatches: number[] = [];
+    const embedder: Embedder = {
+      id: scripted.id,
+      revision: scripted.revision,
+      dimension: scripted.dimension,
+      embedImages: async (images) => {
+        imageBatches.push(images.length);
+        return scripted.embedImages(images);
+      },
+      embedTexts: (texts) => scripted.embedTexts(texts),
+    };
+    const fullText: number[] = [];
+    const refreshes: boolean[] = [];
+    const query = LanceStore.prototype.query;
+    const refresh = SearchIndex.prototype.refresh;
+    LanceStore.prototype.query = async function (this: LanceStore, q) {
+      const hits = await query.call(this, q);
+      if (q.text !== undefined) fullText.push(hits.length);
+      return hits;
+    };
+    SearchIndex.prototype.refresh = async function (this: SearchIndex) {
+      const r = await refresh.call(this);
+      refreshes.push(r.fresh);
+      return r;
     };
     try {
       const manifest = await readManifest(fixtureUrl);
@@ -367,7 +387,6 @@ describe("bench on LanceStore", () => {
         source: fixtureSource(),
         embedder,
         bars,
-        newStore,
         padTo: 200,
         timedQueries: 2,
         freshnessFiles: 10,
@@ -375,13 +394,29 @@ describe("bench on LanceStore", () => {
       });
       assert.deepEqual(report.entries.map((e) => e.bar).sort(), [...bars.keys()].sort());
       assert.equal(report.entries.find((e) => e.bar === "filters-rebuild")?.pass, true);
-      assert.ok(stores.length >= 3);
-      // The full-text list answers: the store built its text index.
-      const hits = await stores[0]!.query({ text: "knight", limit: 5 });
-      assert.ok(hits.length > 0);
+      // The shipped indexer embeds the 20 images in one batch, not one image a call.
+      assert.equal(imageBatches[0], 20);
+      // The full-text ranking is LanceDB's, its index built by the indexer's optimize.
+      assert.ok(fullText.some((n) => n > 0));
+      // Every find checks freshness first, as the shipped find does.
+      assert.ok(refreshes.length > manifest.lookQueries.length);
+      assert.ok(refreshes.every(Boolean));
+
+      // The indexing bar is the shipped indexer's time per image, and the report splits it.
+      const split = report.indexing;
+      assert.equal(split.images, 20);
+      assert.equal(split.embeddedImages, 20);
+      assert.ok(split.embeddedTexts > 0 && split.embeddedTexts <= 20);
+      assert.equal(report.entries.find((e) => e.bar === "indexing")?.measured, split.perImageMs);
+      assert.ok(Math.abs(split.perImageMs * 20 - split.totalMs) < 0.05);
+      const parts = split.embedImagesMs + split.embedTextsMs + split.writeMs + split.otherMs;
+      assert.ok(Math.abs(parts - split.totalMs) < 0.01);
+      for (const ms of [split.embedImagesMs, split.embedTextsMs, split.writeMs]) {
+        assert.ok(ms > 0 && ms <= split.totalMs);
+      }
     } finally {
-      for (const s of stores) s.close();
-      await cleanup(dir);
+      LanceStore.prototype.query = query;
+      SearchIndex.prototype.refresh = refresh;
     }
   });
 });

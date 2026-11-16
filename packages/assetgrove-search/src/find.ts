@@ -8,7 +8,7 @@ import { refreshTree, type RefreshStats } from "./indexer.ts";
 import { LanceStore, type LanceStoreOptions } from "./lance-store.ts";
 import { treeKey, type Library } from "./library.ts";
 import { acquireWriteLock, tryAcquireWriteLock, type WriteLock } from "./lock.ts";
-import type { BuiltFrom, FilterTerm, Hit, Row, Store } from "./store.ts";
+import type { BuiltFrom, FilterTerm, Hit, Row, Store, StoreQuery } from "./store.ts";
 import { parseWhere } from "./where.ts";
 
 /** Reciprocal Rank Fusion's constant (design section 7.5). */
@@ -80,6 +80,75 @@ export function rrf(lists: Hit[][], k = RRF_K): Hit[] {
     .sort(
       (a, b) => b.score - a.score || (a.row.key < b.row.key ? -1 : a.row.key > b.row.key ? 1 : 0),
     );
+}
+
+export interface QueryVectors {
+  words?: Float32Array;
+  like?: Float32Array;
+}
+
+/** One store searched, with the filter its rows must match (its tree, the query's where terms). */
+export interface Searched {
+  store: Store;
+  filter: FilterTerm[];
+}
+
+/** Each ranking's pool: four times the limit, at least 100. */
+export const poolFor = (limit: number): number => Math.max(4 * limit, 100);
+
+/**
+ * The store queries a query ranks by, in fusion order: for words the image vector, the card-text
+ * vector and the full text; for an image, its image vector. No filter set.
+ */
+export function rankingQueries(words: string, vectors: QueryVectors, limit: number): StoreQuery[] {
+  const queries: StoreQuery[] = [];
+  if (vectors.words) {
+    const value = vectors.words;
+    queries.push(
+      { vector: { column: "imageVec", value }, limit },
+      { vector: { column: "textVec", value }, limit },
+      { text: words, limit },
+    );
+  }
+  if (vectors.like) {
+    queries.push({ vector: { column: "imageVec", value: vectors.like }, limit });
+  }
+  return queries;
+}
+
+/**
+ * One ranking's answers from several stores, merged by the ranking's own score, best first; ties
+ * keep the earlier store first. A single list is returned unchanged.
+ */
+export function mergeByScore(lists: Hit[][]): Hit[] {
+  if (lists.length === 1) return lists[0] as Hit[];
+  return lists.flat().sort((a, b) => b.score - a.score);
+}
+
+/**
+ * The shipped ranking: each ranking asked of every store, merged across stores by its own score,
+ * then fused once. With no ranking, every store's filtered rows, local first.
+ */
+export async function rankAcross(
+  searched: Searched[],
+  q: { words?: string; limit: number },
+  vectors: QueryVectors,
+): Promise<Hit[]> {
+  const rankings = rankingQueries(q.words?.trim() ?? "", vectors, poolFor(q.limit));
+  if (rankings.length === 0) {
+    const rows = await Promise.all(
+      searched.map((s) => s.store.query({ filter: s.filter, limit: Number.MAX_SAFE_INTEGER })),
+    );
+    return rows.flat();
+  }
+  const merged = await Promise.all(
+    rankings.map(async (r) =>
+      mergeByScore(
+        await Promise.all(searched.map((s) => s.store.query({ ...r, filter: s.filter }))),
+      ),
+    ),
+  );
+  return merged.length === 1 ? bestViewPerAsset(merged[0] as Hit[]) : rrf(merged);
 }
 
 export interface SearchIndexOptions {
@@ -167,21 +236,13 @@ export class SearchIndex {
     const { fresh } = await this.refresh();
     if (!q.allTrees) filter.push({ field: "tree", op: "=", value: this.tree });
 
-    let ranked: Hit[];
     const words = q.words?.trim() ?? "";
-    if (words !== "") {
-      const pool = Math.max(4 * limit, 100);
-      const [vec] = await this.o.embedder.embedTexts([words]);
-      const value = vec as Float32Array;
-      const lists = await Promise.all([
-        this.store.query({ vector: { column: "imageVec", value }, filter, limit: pool }),
-        this.store.query({ vector: { column: "textVec", value }, filter, limit: pool }),
-        this.store.query({ text: words, filter, limit: pool }),
-      ]);
-      ranked = rrf(lists);
-    } else {
-      ranked = await this.store.query({ filter, limit: Number.MAX_SAFE_INTEGER });
-    }
+    const vec = words !== "" ? (await this.o.embedder.embedTexts([words]))[0] : undefined;
+    const ranked = await rankAcross(
+      [{ store: this.store, filter }],
+      { words, limit },
+      vec ? { words: vec } : {},
+    );
     const hits = bestViewPerAsset(ranked) // one row per asset already after fusion
       .slice(0, limit)
       .map(({ row, score }, i): FindHit => ({

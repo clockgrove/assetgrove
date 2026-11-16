@@ -22,7 +22,14 @@ import type {
 } from "./contract.ts";
 import type { Embedder } from "./embedder.ts";
 import { SearchError } from "./errors.ts";
-import { bestViewPerAsset, rrf, SearchIndex } from "./find.ts";
+import {
+  bestViewPerAsset,
+  mergeByScore,
+  rankAcross,
+  rrf,
+  SearchIndex,
+  type QueryVectors,
+} from "./find.ts";
 import {
   embedderKey,
   embedderRecord,
@@ -41,7 +48,7 @@ import { assertSupportedPlatform } from "./platform.ts";
 import { ScriptedEmbedder } from "./scripted.ts";
 import { loadSiglip2 } from "./siglip2.ts";
 import { modelIsInstalled, setupModel } from "./setup.ts";
-import type { BuiltFrom, EmbedderRecord, FilterTerm, Hit, Store } from "./store.ts";
+import type { BuiltFrom, EmbedderRecord, FilterTerm, Hit, Store, StoreQuery } from "./store.ts";
 import { parseWhere } from "./where.ts";
 
 const embedders = new Map<string, Promise<Embedder>>();
@@ -302,40 +309,58 @@ async function likeVector(
   });
 }
 
-/** One store's answer to a query: fused when several rankings apply, filter-only otherwise. */
-async function rank(
-  store: Store,
+/** The shipped find over an open local index and, when shared, the remote store: what `searchSlot.find` runs once settings name the embedder and stores. */
+export async function findWith(
   q: SearchQuery,
-  filter: FilterTerm[],
-  vectors: { words?: Float32Array; like?: Float32Array },
-): Promise<Hit[]> {
-  const pool = Math.max(4 * q.limit, 100);
-  const lists: Promise<Hit[]>[] = [];
-  const words = q.words?.trim() ?? "";
-  if (vectors.words) {
-    const value = vectors.words;
-    lists.push(
-      store.query({ vector: { column: "imageVec", value }, filter, limit: pool }),
-      store.query({ vector: { column: "textVec", value }, filter, limit: pool }),
-      store.query({ text: words, filter, limit: pool }),
-    );
-  }
-  if (vectors.like) {
-    lists.push(
-      store.query({ vector: { column: "imageVec", value: vectors.like }, filter, limit: pool }),
-    );
-  }
-  if (lists.length === 0) return store.query({ filter, limit: Number.MAX_SAFE_INTEGER });
-  const results = await Promise.all(lists);
-  return results.length === 1 ? bestViewPerAsset(results[0] as Hit[]) : rrf(results);
-}
-
-async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResult> {
+  o: {
+    embedder: Embedder;
+    local: SearchIndex;
+    /** The shared store and its tree key, when settings name one. */
+    remote?: { store: Store; tree: string };
+    /** A hosted embedder without its paid-run port: nothing is refreshed or embedded. */
+    spends?: boolean;
+    /** The work tree's commit, which a fresh shared store was built from. */
+    head?: () => Promise<string>;
+  },
+): Promise<SearchFindResult> {
+  const { embedder, local, remote } = o;
   const filter: FilterTerm[] = parseWhere(q.where ?? []);
   const sources = q.sources ?? [];
   if (sources.length === 1) {
     filter.push({ field: "source", op: "=", value: sources[0] as SearchSource });
   }
+  const refreshed = o.spends ? false : (await local.refresh()).fresh;
+
+  const words = q.words?.trim() ?? "";
+  const vectors: QueryVectors = {};
+  if (words !== "") vectors.words = (await embedder.embedTexts([words]))[0] as Float32Array;
+  if (q.like) {
+    vectors.like = await likeVector(
+      q.like,
+      embedder,
+      remote ? [local.store, remote.store] : [local.store],
+      o.spends,
+    );
+  }
+
+  const within = (tree: string): FilterTerm[] =>
+    q.allGames ? filter : [...filter, { field: "tree", op: "=", value: tree }];
+  const searched = [{ store: local.store, filter: within(local.tree) }];
+  if (remote) searched.push({ store: remote.store, filter: within(remote.tree) });
+  let ranked = await rankAcross(searched, q, vectors);
+  if (sources.length > 1) ranked = ranked.filter((h) => sources.includes(h.row.source));
+
+  const hits = bestViewPerAsset(ranked).slice(0, q.limit).map(toHit);
+  if (!remote) {
+    return { hits, fresh: refreshed, builtFrom: (await local.store.builtFrom(local.tree)) ?? null };
+  }
+  const built = await remote.store.builtFrom(remote.tree);
+  const fresh =
+    refreshed && built !== undefined && o.head !== undefined && built.head === (await o.head());
+  return { hits, fresh, builtFrom: built ?? null };
+}
+
+async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResult> {
   const embedder = await embedderFor(ctx);
   const local = await localIndex(ctx, embedder);
   const remote = ctx.settings.store ? await openRemote(ctx, embedder) : undefined;
@@ -343,44 +368,13 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
   if (remote) await assertSameEmbedder(remote, embedder, remoteWhere(ctx));
   // A hosted embedder spends, so without its paid-run port a read answers from stored vectors.
   const spends = ctx.settings.embedder === "route" && !ctx.embedder?.embed;
-  const refreshed = spends ? false : (await local.refresh()).fresh;
-
-  const words = q.words?.trim() ?? "";
-  const vectors: { words?: Float32Array; like?: Float32Array } = {};
-  if (words !== "") vectors.words = (await embedder.embedTexts([words]))[0] as Float32Array;
-  if (q.like) {
-    vectors.like = await likeVector(
-      q.like,
-      embedder,
-      remote ? [local.store, remote] : [local.store],
-      spends,
-    );
-  }
-
-  const within = (tree: string): FilterTerm[] =>
-    q.allGames ? filter : [...filter, { field: "tree", op: "=", value: tree }];
-  const answers = [await rank(local.store, q, within(local.tree), vectors)];
-  if (remote) answers.push(await rank(remote, q, within(await sharedTree(ctx)), vectors));
-  const ranking = vectors.words || vectors.like;
-  // One image ranking is comparable across stores by similarity; fused rankings fuse again.
-  const similarityOnly = !vectors.words && vectors.like;
-  let ranked =
-    answers.length === 1
-      ? (answers[0] as Hit[])
-      : similarityOnly
-        ? answers.flat().sort((a, b) => b.score - a.score)
-        : ranking
-          ? rrf(answers)
-          : answers.flat();
-  if (sources.length > 1) ranked = ranked.filter((h) => sources.includes(h.row.source));
-
-  const hits = bestViewPerAsset(ranked).slice(0, q.limit).map(toHit);
-  if (!remote) {
-    return { hits, fresh: refreshed, builtFrom: (await local.store.builtFrom(local.tree)) ?? null };
-  }
-  const built = await remote.builtFrom(await sharedTree(ctx));
-  const fresh = refreshed && built !== undefined && built.head === (await ctx.library.head());
-  return { hits, fresh, builtFrom: built ?? null };
+  return findWith(q, {
+    embedder,
+    local,
+    remote: remote && { store: remote, tree: await sharedTree(ctx) },
+    spends,
+    head: () => ctx.library.head(),
+  });
 }
 
 /** The off-style members of a set of asset addresses, by their indexed image vectors. */
@@ -589,31 +583,30 @@ export async function nearMatchesWith(
   }
 
   const pool = Math.max(20 * q.limit, 100);
-  const answers: Hit[][] = [];
-  for (const { store, tree } of searched) {
-    const within: FilterTerm[] = [...filter, { field: "tree", op: "=", value: tree }];
-    // The words fuse as `find` fuses them into one ranking; each reference adds one image ranking.
-    const wordLists: Promise<Hit[]>[] = [];
-    if (words !== "") wordLists.push(store.query({ text: words, filter: within, limit: pool }));
-    if (wordVec) {
-      wordLists.push(
-        store.query({
-          vector: { column: "imageVec", value: wordVec },
-          filter: within,
-          limit: pool,
-        }),
-        store.query({ vector: { column: "textVec", value: wordVec }, filter: within, limit: pool }),
-      );
-    }
-    const lists: Hit[][] = [rrf(await Promise.all(wordLists))];
-    for (const value of refVecs) {
-      lists.push(
-        await store.query({ vector: { column: "imageVec", value }, filter: within, limit: pool }),
-      );
-    }
-    answers.push(rrf(lists));
+  const within = (tree: string): FilterTerm[] => [
+    ...filter,
+    { field: "tree", op: "=", value: tree },
+  ];
+  const across = async (query: StoreQuery): Promise<Hit[]> =>
+    mergeByScore(
+      await Promise.all(
+        searched.map(({ store, tree }) => store.query({ ...query, filter: within(tree) })),
+      ),
+    );
+  // The words fuse as `find` fuses them into one ranking; each reference adds one image ranking.
+  const wordLists: Promise<Hit[]>[] = [];
+  if (words !== "") wordLists.push(across({ text: words, limit: pool }));
+  if (wordVec) {
+    wordLists.push(
+      across({ vector: { column: "imageVec", value: wordVec }, limit: pool }),
+      across({ vector: { column: "textVec", value: wordVec }, limit: pool }),
+    );
   }
-  const ranked = answers.length === 1 ? (answers[0] as Hit[]) : rrf(answers);
+  const lists: Hit[][] = [rrf(await Promise.all(wordLists))];
+  for (const value of refVecs) {
+    lists.push(await across({ vector: { column: "imageVec", value }, limit: pool }));
+  }
+  const ranked = rrf(lists);
   const hits = bestViewPerAsset(ranked).slice(0, q.limit).map(toHit);
   if (!remote) {
     return { hits, fresh: refreshed, builtFrom: (await local.store.builtFrom(local.tree)) ?? null };
