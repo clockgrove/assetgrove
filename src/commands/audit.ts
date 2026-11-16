@@ -250,13 +250,15 @@ export function summarize(
   const spread: AuditSummary["spread"] = {};
   const judgement: AuditSummary["judgement"] = {};
   const beyond = new Map<string, AuditCheck[]>();
+  // The bar's size rule is the set's: every audited member, whichever scores it has.
+  const setSize = members.filter((m) => m.skipped === undefined).length;
   for (const check of checks) {
     const scores = members
       .map((m) => ({ address: m.address, score: m[check]?.score }))
       .filter((s): s is { address: string; score: number } => s.score !== undefined);
     if (scores.length === 0) continue;
     spread[check] = spreadOf(scores.map((s) => s.score));
-    const judged = judgeScores(scores, bar);
+    const judged = judgeScores(scores, bar, setSize);
     judgement[check] = judged;
     for (const b of judged.beyond) beyond.set(b.address, [...(beyond.get(b.address) ?? []), check]);
   }

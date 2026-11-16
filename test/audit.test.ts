@@ -339,6 +339,28 @@ test("with no bar the audit judges nothing but still reports the spread", () => 
   assert.deepEqual(barred.beyond, [{ address: "a", checks: ["style"] }]);
 });
 
+test("the bar's size rule counts the set, not the members that have one score", () => {
+  // A set of 8 where 4 members have a locked subject: identity is judged though it has 4 scores.
+  const members: AuditedMember[] = ["a", "b", "c", "d", "e", "f", "g", "h"].map((address, i) => ({
+    address,
+    style: { score: 0.8, reason: "", advisory: true },
+    ...(i < 4 && { identity: { score: i === 0 ? 0.3 : 0.9, reason: "", advisory: true } }),
+  }));
+  const judged = summarize(members, ["style", "identity"], [], SET_CONSISTENCY_BAR);
+  assert.equal(judged.spread.identity!.n, 4);
+  assert.equal(judged.judgement.identity!.judged, true);
+  assert.deepEqual(judged.beyond, [{ address: "a", checks: ["identity"] }]);
+  // Skipped members are not audited, so they do not count toward the set's size.
+  const small = summarize(
+    members.map((m, i) => (i >= 4 ? { address: m.address, skipped: "no image" } : m)),
+    ["style", "identity"],
+    [],
+    SET_CONSISTENCY_BAR,
+  );
+  assert.equal(small.judgement.identity!.judged, false);
+  assert.deepEqual(small.beyond, []);
+});
+
 test("a model-backed score is advisory unless the stability file has a qualifying entry for its model", () => {
   const routes = { vision: defaultRoutes.vision, identity: defaultRoutes.identity };
   const entry = (checkId: string, model: string) => ({

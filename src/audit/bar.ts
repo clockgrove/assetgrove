@@ -92,7 +92,7 @@ export function spreadOf(values: readonly number[]): Spread {
 
 /** How the bar judged one score kind across the set. */
 export interface ScoreJudgement {
-  /** False when there is no bar or fewer than its `minSetSize` scores: nothing is judged. */
+  /** False when there is no bar or the set is under its `minSetSize`: nothing is judged. */
   judged: boolean;
   /** Whether the standard deviation is within the bar; absent when not judged. */
   consistent?: boolean;
@@ -102,10 +102,16 @@ export interface ScoreJudgement {
   reason?: string;
 }
 
-/** Judges one score kind's scores (address to score) against the bar. */
+/**
+ * Judges one score kind's scores (address to score) against the bar. The bar's size rule applies to
+ * the set, so `setSize` is the number of the set's audited members, which may exceed the number of
+ * scores (an identity score only where the subject has a lock, or a failed call). It defaults to
+ * the number of scores.
+ */
 export function judgeScores(
   scores: readonly { address: string; score: number }[],
   bar: SetConsistencyBar | undefined,
+  setSize: number = scores.length,
 ): ScoreJudgement {
   if (bar === undefined)
     return {
@@ -113,12 +119,13 @@ export function judgeScores(
       beyond: [],
       reason: "docs/decisions.md records no set-consistency bar",
     };
-  if (scores.length < bar.minSetSize)
+  if (setSize < bar.minSetSize)
     return {
       judged: false,
       beyond: [],
-      reason: `${scores.length} score(s), under the bar's set size of ${bar.minSetSize}`,
+      reason: `a set of ${setSize}, under the bar's set size of ${bar.minSetSize}`,
     };
+  if (scores.length === 0) return { judged: false, beyond: [], reason: "no member has this score" };
   const spread = spreadOf(scores.map((s) => s.score));
   const beyond = scores
     .map((s) => ({
