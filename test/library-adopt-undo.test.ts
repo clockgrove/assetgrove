@@ -7,13 +7,14 @@ import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import {
   chmod,
   copyFile,
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   rename,
   rm,
   symlink,
@@ -88,13 +89,16 @@ function brokenPreset(sabotage: () => Promise<void> = async () => {}): HandoffPr
   };
 }
 
-/** A preset that writes one file at `path`. */
-function writingPreset(path: string): HandoffPreset {
+/** A preset that writes one file at `path`; its read-back runs `check` and returns its problems. */
+function writingPreset(
+  path: string,
+  check: () => Promise<string[]> = async () => [],
+): HandoffPreset {
   return {
     name: "broken",
     optionsSchema: PRESETS.get("manifest")!.optionsSchema,
     write: () => [{ path, content: "written\n" }],
-    check: async () => [],
+    check,
   };
 }
 
@@ -205,20 +209,64 @@ test(
 );
 
 test("a library write that fails after the review record puts back the record, the card and every hand-off file", async () => {
-  const { targetDir, media, adopt, versions, commit } = await committedAsset();
-  // The asset folder's log is a folder: the library write fails at the log, its last step, after
+  const log = { path: "" };
+  // After every file is read and the hand-off files are written, another program puts a folder
+  // where the asset folder's log goes: the library write fails at the log, its last step, after
   // the review record (the commit point), the card and the indexes are written.
+  const { targetDir, media, adopt, versions } = await committedAsset(
+    writingPreset("assets/broken.txt", async () => {
+      await rm(log.path, { force: true });
+      await mkdir(log.path);
+      return [];
+    }),
+  );
+  log.path = join(targetDir, "assets/source/fern/log.md");
+  const edited = await edit(media);
+  await assert.rejects(adopt(), (error: NodeJS.ErrnoException) => error.code === "EISDIR");
+  assert.equal((await versions()).length, 1, "no version is recorded");
+  assert.deepEqual(await readFile(media), edited);
+  // The log the other program removed is its own change; every file the adopt wrote is put back.
+  assert.deepEqual(status(targetDir), [" D assets/source/fern/log.md", ` M ${MEDIA}`]);
+});
+
+test("a library file the adopt cannot read stops it before the first write", async () => {
+  const { targetDir, media, adopt, versions, commit } = await committedAsset();
+  // The asset folder's log is a folder, which the library write would read last.
   const log = join(targetDir, "assets/source/fern/log.md");
   await rm(log, { force: true });
   await mkdir(log);
   await writeFile(join(log, "keep.txt"), "kept\n");
   commit();
   const edited = await edit(media);
+  // A write renames a new file over the media, so an unwritten media keeps its inode.
+  const inode = statSync(media).ino;
   await assert.rejects(adopt(), (error: NodeJS.ErrnoException) => error.code === "EISDIR");
   assert.equal((await versions()).length, 1, "no version is recorded");
-  assert.deepEqual(await readFile(media), edited);
+  assert.deepEqual(await readFile(media), edited, "nothing was written");
+  assert.equal(statSync(media).ino, inode, "the media was never written");
   assert.deepEqual(status(targetDir), [` M ${MEDIA}`]);
 });
+
+test(
+  "a library log with no read permission stops the adopt before the first write and stays",
+  { skip: !permissionsHold },
+  async (t) => {
+    const { targetDir, media, adopt } = await committedAsset();
+    const log = join(targetDir, "assets/source/fern/log.md");
+    const before = await readFile(log);
+    const edited = await edit(media);
+    // A write renames a new file over the media, so an unwritten media keeps its inode.
+    const inode = statSync(media).ino;
+    await chmod(log, 0o000);
+    t.after(() => chmod(log, 0o644));
+    await assert.rejects(adopt(), (error: NodeJS.ErrnoException) => error.code === "EACCES");
+    await chmod(log, 0o644);
+    assert.deepEqual(await readFile(log), before, "the log is never removed or changed");
+    assert.deepEqual(await readFile(media), edited, "nothing was written");
+    assert.equal(statSync(media).ino, inode, "the media was never written");
+    assert.deepEqual(status(targetDir), [` M ${MEDIA}`]);
+  },
+);
 
 test("a file the adopt cannot read stops it before the first write and is never removed", async () => {
   // A folder where the preset's new file goes cannot be read as a file.
@@ -291,6 +339,26 @@ test("after a successful adopt through a symbolic link, the library records the 
   assert.ok(lstatSync(media).isSymbolicLink(), "the media is still a link");
   const current = (await versions()).at(-1)!;
   assert.equal(sha256(await readFile(media)), current.sha256);
+});
+
+test("a dangling symbolic link the adopt writes over is a link again after a failed adopt", async (t) => {
+  const { targetDir, media, adopt, versions, commit } = await committedAsset(
+    writingPreset("assets/dangling.txt", async () => ["the read-back finds a problem"]),
+  );
+  const link = join(targetDir, "assets/dangling.txt");
+  try {
+    await symlink("nowhere.txt", link);
+  } catch {
+    return t.skip("this system cannot make a symbolic link");
+  }
+  commit();
+  const edited = await edit(media);
+  await assert.rejects(adopt(), /the read-back finds a problem/);
+  assert.ok(lstatSync(link).isSymbolicLink(), "the link is a link again");
+  assert.equal(await readlink(link), "nowhere.txt");
+  assert.equal((await versions()).length, 1);
+  assert.deepEqual(await readFile(media), edited);
+  assert.deepEqual(status(targetDir), [` M ${MEDIA}`]);
 });
 
 test("a file that cannot be put back does not stop the others; the error is the adopt's, naming that file", async () => {

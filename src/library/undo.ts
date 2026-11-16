@@ -2,9 +2,20 @@
  * The undo journal of a write that must leave every file as it was when it fails (`library adopt`,
  * docs/library.md): each file is read before it is first written, then written through any
  * symbolic link to its real path, and `restore` puts back each file written: its earlier bytes and
- * permission bits, or its removal (with the folders made for it) when it was new.
+ * permission bits, its removal (with the folders made for it) when it was new, or the dangling
+ * symbolic link it was.
  */
-import { chmod, lstat, readFile, realpath, rm, rmdir, stat } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  rmdir,
+  stat,
+  symlink,
+} from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { writeAtomic } from "./write.ts";
 
@@ -15,6 +26,8 @@ interface Snapshot {
   real: string;
   /** The earlier bytes and permission bits, or undefined when the file was not there. */
   before?: { bytes: Uint8Array; mode: number };
+  /** The target of a dangling symbolic link at `path`, which a write replaces and `restore` remakes. */
+  link?: string;
   /** The folders a write of a new file makes, deepest first. */
   made: string[];
   /** Whether a write reached the file. */
@@ -89,8 +102,26 @@ export class WriteJournal {
     } catch (error) {
       if (!absent(error)) throw error;
     }
+    let link: string | undefined;
+    if (before === undefined && real === path) {
+      // A dangling link: the write renames a file over it, so its target is kept to remake it.
+      link = await lstat(path).then(
+        (stats) => (stats.isSymbolicLink() ? readlink(path) : undefined),
+        (error: unknown) => {
+          if (absent(error)) return undefined;
+          throw error;
+        },
+      );
+    }
     const made = before === undefined ? await missingFolders(dirname(real)) : [];
-    const snapshot: Snapshot = { path, real, ...(before && { before }), made, written: false };
+    const snapshot: Snapshot = {
+      path,
+      real,
+      ...(before && { before }),
+      ...(link !== undefined && { link }),
+      made,
+      written: false,
+    };
     this.snapshots.set(path, snapshot);
     return snapshot;
   }
@@ -113,7 +144,12 @@ export class WriteJournal {
     const failed: string[] = [];
     for (const snapshot of [...this.order].reverse()) {
       try {
-        if (snapshot.before === undefined) {
+        if (snapshot.link !== undefined) {
+          if (snapshot.written) {
+            await rm(snapshot.real, { force: true });
+            await symlink(snapshot.link, snapshot.real);
+          }
+        } else if (snapshot.before === undefined) {
           if (snapshot.written) await rm(snapshot.real, { force: true });
           for (const folder of snapshot.made) {
             // A folder something else now holds a file in stays.

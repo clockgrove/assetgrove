@@ -46,6 +46,7 @@ import { acquireLibraryLock } from "./runs/lock.ts";
 import {
   assetgroveVersion,
   commitLibraryWrite,
+  libraryWritePaths,
   prepareLibraryWrite,
   writeAtomic,
 } from "./library/write.ts";
@@ -696,6 +697,7 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
   // Every file is read before the first write: one that cannot be read stops the adopt here.
   const journal = new WriteJournal();
   for (const [path] of writes) await journal.snapshot(path);
+  for (const path of libraryWritePaths(prepared.library)) await journal.snapshot(path);
   let result: TargetWriteResult;
   try {
     for (const [path, content] of writes) await journal.write(path, content);

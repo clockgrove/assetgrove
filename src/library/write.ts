@@ -745,6 +745,27 @@ export async function commitLibraryWrite(
   };
 }
 
+/**
+ * The existing library files `commitLibraryWrite` may rewrite for `plan`: the review record, the
+ * card, each folder's `index.md` from the library root down to every card and to the asset, and
+ * the asset folder's and the root's `log.md` when logs are on. An adopt reads each before its
+ * first write, so one it cannot read stops it there.
+ */
+export function libraryWritePaths(plan: LibraryPlan): string[] {
+  const { config } = plan;
+  const folders = new Set<string>([config.root]);
+  for (const dir of [plan.dir, ...plan.cards.map((card) => card.dir)]) {
+    for (let folder = dir; within(config.root, folder); folder = dirname(folder)) {
+      folders.add(folder);
+      if (folder === config.root) break;
+    }
+  }
+  const paths = [plan.reviewPath, plan.cardPath];
+  for (const folder of [...folders].sort()) paths.push(join(folder, "index.md"));
+  if (config.log) paths.push(join(plan.dir, "log.md"), join(config.root, "log.md"));
+  return [...new Set(paths)];
+}
+
 /** Writes each `index.md` from the library root down to every card; the files it changed. */
 export async function writeIndexes(
   config: LibraryConfig,
