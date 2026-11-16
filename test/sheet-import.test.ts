@@ -9,7 +9,9 @@ import { Budget, BudgetExceededError } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import type { ImageRequest, VisionRequest } from "../src/gateway/provider.ts";
-import { decodePng, getPixel } from "../src/image/raster.ts";
+import { createRaster, decodePng, encodePng, getPixel } from "../src/image/raster.ts";
+import { ProviderError } from "../src/errors.ts";
+import type { IdentityRecord } from "../src/identity.ts";
 import { loadBibleInputs, sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { generateSheet, motionLines, sheetBrief } from "../src/sheet/generate.ts";
@@ -465,4 +467,59 @@ test("the sheet prompt states a held family's motion and the author's brief", ()
   assert.throws(() => sheetBrief({ style: "flat" }), /unsupported brief field style/);
   assert.throws(() => sheetBrief({ context: 3 }), /brief context must be a string/);
   assert.throws(() => sheetBrief(["x"]), /brief must be an object/);
+});
+
+test("sheet generation in enforce mode stops before the sheet is paid for when the record check cannot run", async () => {
+  const world = await syntheticWorld();
+  const { importsDir } = await dirs();
+  const sheet = syntheticSheet({
+    families: [{ name: "walk-right", count: 6, facing: 1, walk: true }],
+    columns: 3,
+  });
+  const bytes = encodePng(createRaster(16, 16));
+  const reference = {
+    role: "identity:approved-turnaround",
+    path: "refs/turnaround.png",
+    mediaType: "image/png" as const,
+    bytes,
+    sha256: sha256(bytes),
+  };
+  const record: IdentityRecord = {
+    subject: "fern",
+    version: "v1",
+    sha256: "0".repeat(64),
+    fingerprint: { signatureFeatures: ["grey coat"], proportions: "slim", palette: ["#6c6e7a"] },
+    references: [{ role: reference.role, path: reference.path, sha256: reference.sha256 }],
+  };
+  const provider = new ScriptedProvider({
+    image: () => ({ images: [{ mediaType: "image/png", bytes: sheet.png }], costUsd: 0.21 }),
+    // The record check's answer is unreadable, so the check could not run.
+    vision: () => ({ text: "not json", costUsd: 0.01 }),
+  });
+  await assert.rejects(
+    generateSheet({
+      spec: {
+        kind: "sprite-sheet",
+        assetId: "fern",
+        animationFamily: "walk",
+        frames: { count: 6 },
+      },
+      specDir: world.dir,
+      bible: world.bible,
+      bibleDir: world.bibleDir,
+      profile: painterlyProfile(),
+      routes: defaultRoutes,
+      provider,
+      providerName: "scripted",
+      importsDir,
+      identity: {
+        record,
+        references: [reference],
+        settings: { mode: "enforce", threshold: 0.6, question: "score" },
+      },
+    }),
+    (error: unknown) =>
+      error instanceof ProviderError && /identity record check could not run/.test(error.message),
+  );
+  assert.equal(provider.calls.filter((c) => c.kind === "image").length, 0, "no sheet was paid for");
 });
