@@ -309,7 +309,9 @@ function lineFailure(source: string, line: number, detail: string): InputError {
 
 /**
  * Reads a review record. Strict JSON parses as is; otherwise each line inside the versions and
- * items sections is read as one object, tolerating a missing, extra or doubled comma.
+ * items sections is read as one object, tolerating a missing, extra or doubled comma. A union
+ * merge of two branches that each appended a version and an annotation interleaves the sections
+ * and repeats the lines between them; the reader reads that as the union too.
  */
 export function parseReview(text: string, source: string): ReviewRecord {
   try {
@@ -319,6 +321,7 @@ export function parseReview(text: string, source: string): ReviewRecord {
   }
   const lines = text.split(/\r?\n/);
   const skeleton: string[] = [];
+  const seen = new Set<string>();
   const versions: unknown[] = [];
   const items: unknown[] = [];
   let section: unknown[] | undefined;
@@ -327,7 +330,8 @@ export function parseReview(text: string, source: string): ReviewRecord {
     if (section) {
       if (trimmed.startsWith("]")) {
         section = undefined;
-        skeleton.push(line);
+        if (!seen.has(trimmed)) skeleton.push(line);
+        seen.add(trimmed);
         return;
       }
       const body = trimmed.replace(/^,+/, "").replace(/,+$/, "").trim();
@@ -341,10 +345,17 @@ export function parseReview(text: string, source: string): ReviewRecord {
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
         throw lineFailure(source, index + 1, "expected an object");
       }
-      section.push(parsed);
+      const object = parsed as Record<string, unknown>;
+      // A union merge can leave a line in the other section: its own shape says which it is.
+      if (object["type"] === "Annotation") items.push(parsed);
+      else if (object["type"] === undefined && typeof object["sha256"] === "string") {
+        versions.push(parsed);
+      } else section.push(parsed);
       return;
     }
-    skeleton.push(line);
+    // A union merge can repeat a header or footer line; each is read once.
+    if (trimmed === "" || !seen.has(trimmed)) skeleton.push(line);
+    seen.add(trimmed);
     if (trimmed.endsWith('"ag:versions": [')) section = versions;
     else if (trimmed.endsWith('"items": [')) section = items;
   });
