@@ -73,7 +73,7 @@ Also available:
 
 1. **Generate** (`model3d` route). The bible references whose `subject` is the character, and that are not the perspective sample, are the approved turnaround. One function answers which view each of them shows, and `look-dev` uses the same one. It never reads the reference's `role` text:
    - A `view` declared on the reference (`front`, `left`, `right`, `back`, `three-quarter`, `sheet` or `detail`; see [target-profile.md](target-profile.md)) wins.
-   - Otherwise one `reference-view` call (decisions role, `perplexity/pplx-decider-v1.2`, $0.001 estimate) is shown the image and its role and chooses among those views. Its answer, the choice and its probability, is in that call's provenance record (`decision.question: "choice"`, `label`, `value`, `probabilities`).
+   - Otherwise one `reference-view` call (decisions role, `perplexity/pplx-decider-v1.2`, $0.001 estimate) is shown the image and its role and chooses among those views. Its answer is in that call's provenance record: `decision.question: "choice"` and the chosen view as `label`, always; `value` and `raw` (the chosen view's probability) and `probabilities` (one per view) only when the model reports one. No reported probability is recorded as absent, not as certainty.
    - The answer is cached by the image's sha256 in `<stateDir>/reference-views/<sha256>.json`, and in memory for a run, so a later request makes no call for it.
 
    The view calls are part of the request's forecast, once per request and not per candidate (`perRequest` in `stage`'s plan). The forecast counts every reference with no declared view, whether or not the cache holds it.
@@ -340,7 +340,7 @@ The provenance records:
 - models and routes;
 - prompts and parameters, including the views, the rig type, the library clips, missing families and the channels closed for loops;
 - reference hashes, request IDs (Tripo task IDs) and costs;
-- `parameters.references[]`, one entry per reference with its `view`, its `viewSource` (`declared`, `judged` or `cached`) and, when judged, its `probability`;
+- `parameters.references[]`, one entry per reference with its `view`, its `viewSource` (`declared`, `judged` or `cached`) and, when judged and the model reported one, its `probability`;
 - provider terms;
 - the `outputGrant` combined over every call.
 
