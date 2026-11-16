@@ -288,6 +288,10 @@ export function logEntriesFromReview(
       const sha = typeof target === "string" ? undefined : target["ag:version"];
       const index = record.versions.findIndex((v) => v.sha256 === sha);
       if (sha !== undefined && index >= 0) parts.push(`version ${index + 1}`);
+      // Which version answered a request lives only in versions[].answers (design section 3.1).
+      const answers = index >= 0 ? record.versions[index]!.answers : undefined;
+      if (action === "answer" && answers !== undefined && answers.length > 0)
+        parts.push(`answers ${answers.join(", ")}`);
     }
     const body = annotation.body === undefined ? [] : [annotation.body].flat();
     const textual = body.find((part) => part.type === "TextualBody");

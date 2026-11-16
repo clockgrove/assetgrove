@@ -264,7 +264,7 @@ What we tell users, plainly:
 - AI output may not be protected by copyright where you live;
 - what you may do with the output depends on the model's terms, which Assetgrove records but doesn't change.
 
-Two questions need a lawyer: a trademark check on the new name, before 1.0, and, before the first npm release, what the EU AI Act's Article 50 asks of Assetgrove itself, as distinct from its users.
+Two questions need a lawyer before 1.0: a trademark check on the new name, and what the EU AI Act's Article 50 asks of Assetgrove itself, as distinct from its users.
 
 ## Split out, rename or move
 

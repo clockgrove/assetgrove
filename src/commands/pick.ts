@@ -3,7 +3,7 @@ import { digestOf, requireConfirmation } from "../confirm/index.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import { InputError } from "../errors.ts";
 import { pick } from "../handoff.ts";
-import { currentVersion } from "../library/write.ts";
+import { changeVersionChanged, currentVersion } from "../library/write.ts";
 import { readRun } from "../loop.ts";
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -30,6 +30,20 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
       `"${args.candidate}" is not a QA-passing candidate of run ${run.runId} (passing: ${ids.join(", ") || "none"})`,
     );
   const current = await currentVersion(run.profile, run.spec, resolve(args.target));
+  const change = run.changeRequest;
+  // Re-running an interrupted pick completes it: when the current version is this run's own
+  // candidate (the one named, or any when none is), the pick already appended it.
+  const picked =
+    current.run === run.runId &&
+    (args.candidate === undefined || current.candidate === args.candidate);
+  if (change !== undefined && current.sha256 !== change.version && !picked) {
+    throw changeVersionChanged(
+      current.assetId,
+      current.version ?? 0,
+      current.sha256,
+      change.version,
+    );
+  }
   const body = {
     command: "pick",
     run: runDir,
@@ -66,6 +80,7 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
         replaces: { assetId: current.assetId, version: current.version, sha256: current.sha256 },
       }),
       ...(warning !== undefined && { outsideChange: true, warning }),
+      ...(change !== undefined && { answers: change.answers }),
       digest: id,
     },
     body,
@@ -88,7 +103,9 @@ library.log is false). A reserved asset id exits 2 asset_id_reserved and one car
 exits 2 asset_conflict, before any write. A pick into an asset that has a version names that
 version's sha256 in its form and digest and warns when the working file differs from the card's
 lock.sha256; if the current version is another by the time it writes, it exits 2 version_changed,
-and media identical to an older version exits 2 version_exists, both before any write. A target outside a Git work tree exits 2 git_required, and media that Git's check-attr filter does not map to lfs exits 2 lfs_required (run init), both before any write. Re-running an interrupted pick completes it. Then runs
+and media identical to an older version exits 2 version_exists, both before any write. A target outside a Git work tree exits 2 git_required, and media that Git's check-attr filter does not map to lfs exits 2 lfs_required (run init), both before any write. A candidate of a
+request_change run appends its version with answers naming the requests; one made on another version
+than the current one exits 2 version_changed. Re-running an interrupted pick completes it. Then runs
 the target profile's validator when it declares one. The validator runs only with an approval tied
 to its exact command (settings.commands.approved or <configDir>/approvals/<hash>.json); otherwise
 pick asks in an MCP client's form or on a TTY, or exits 8 confirmation_required before writing, and \`assetgrove confirm <hash>\`

@@ -15,7 +15,7 @@ import {
 import type { IdentityRecord, IdentityScore } from "../identity.ts";
 import { createRaster, decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
-import { loadReference, sha256, subjectOf } from "../request.ts";
+import { loadReference, sha256, subjectOf, withNote } from "../request.ts";
 import type { Route, Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, Reason, StyleBible, TargetProfile } from "../types.ts";
 import { GLB_MEDIA_TYPE, parseGlb, writeGlb } from "./glb.ts";
@@ -211,7 +211,7 @@ export const character3dGenerator: Generator = {
     const character = characterSpec(spec);
     const settings = model3dSettings(profile);
     const references = await subjectReferences(spec, bible, context.bibleDir);
-    const text = prompt(spec, bible, character);
+    const text = withNote(prompt(spec, bible, character), context.note);
     // A rig template that cannot be read is refused before the first call.
     const rig = declaresRig(profile)
       ? await loadRig(profile, context.profileDir ?? process.cwd())

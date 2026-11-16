@@ -171,6 +171,11 @@ export interface RunRecord {
   promptPolicy?: PromptPolicyRecord;
   /** The person's confirmation of the request's spend (design section 7), when it needed one. */
   confirmation?: import("./types.ts").ConfirmationRecord;
+  /**
+   * Set by request_change: the asset id, the sha256 of the version the candidates were made on,
+   * and the ids of the editing annotations they answer (design section 3.4).
+   */
+  changeRequest?: { asset: string; version: string; answers: string[] };
   createdAt: string;
   spec: AssetSpec;
   /** Absolute directory the spec's relative paths resolved against. */

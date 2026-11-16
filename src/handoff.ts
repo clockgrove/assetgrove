@@ -257,6 +257,8 @@ export interface TargetWrite {
    * a first pick. Another current version exits 2 `version_changed` before any write.
    */
   replaces?: string | null;
+  /** The candidate answers a change request: the version it was made on and the requests' ids. */
+  answers?: { version: string; answers: string[] };
   /** The clock the library's version and log line are stamped with. */
   now?: () => Date;
   /**
@@ -584,6 +586,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     mediaBytes: output.bytes,
     ...(contentSha256 !== undefined && { contentSha256 }),
     ...(write.replaces !== undefined && { replaces: write.replaces }),
+    ...(write.answers && { answers: write.answers }),
   });
   sameFile([...writes.map(([path]) => path), ...libraryFiles(library)]);
   return {
@@ -781,6 +784,7 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     run: String(write.run["runId"] ?? ""),
     candidate: String(write.run["candidateId"] ?? ""),
     ...(write.confirmation && { confirmation: write.confirmation }),
+    ...(write.answers && { answers: write.answers.answers }),
     ...(write.candidateReview && { candidateReview: write.candidateReview }),
     ...(write.adopt !== undefined && {
       action: "adopt" as const,
@@ -920,6 +924,9 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     ...(options.confirmation && { confirmation: options.confirmation }),
     ...(options.replaces !== undefined && { replaces: options.replaces }),
     ...(options.requireLfs && { requireLfs: true }),
+    ...(record.changeRequest && {
+      answers: { version: record.changeRequest.version, answers: record.changeRequest.answers },
+    }),
     candidateReview: {
       path: join(options.runDir, "reviews", `${candidate.id}.review.json`),
       root: resolve(options.runDir),
