@@ -323,7 +323,7 @@ test("a 0.1.0 record without a binding is accepted beside its library record, an
   const bytes = new Uint8Array(await readFile(h.model));
   const version = review.versions.find((v) => v.sha256 === sha256(bytes));
   assert.ok(version, "the hand-off's library record lists the media");
-  version.provenanceSha256 = sha256(unbound);
+  version.provenanceSha256 = sha256(new TextEncoder().encode(unbound));
   await writeFile(reviewPath, writeReview(review));
 
   const media = { path: h.model, bytes, mediaType: "model/gltf-binary" };
