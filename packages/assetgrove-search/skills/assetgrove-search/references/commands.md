@@ -50,10 +50,10 @@ MCP tool: `search_setup`, arguments `target`.
 
 While the package is listed, the server's resource templates add three paths under the game root. Each is a read of the library tree, so it never spends and writes no sheet; it runs the same search as `find` with the same input and returns `{address, hits, fresh, builtFrom}`, the hits as `find` returns them (card text only under `sharedText`). Without the package no search template is listed and reading one is an unknown address.
 
-| Template | Same as |
-| --- | --- |
-| `asset://<game>/find/{words}` | `find "<words>"` |
-| `asset://<game>/like/{asset}` | `find --like asset://<game>/<asset>` |
-| `asset://<game>/where/{filter}` | `find --where "<filter>"` |
+| Template                        | Same as                              |
+| ------------------------------- | ------------------------------------ |
+| `asset://<game>/find/{words}`   | `find "<words>"`                     |
+| `asset://<game>/like/{asset}`   | `find --like asset://<game>/<asset>` |
+| `asset://<game>/where/{filter}` | `find --where "<filter>"`            |
 
 Percent-encode each segment (`find/red%20lantern`, `where/kind%3Dsprite`). A path takes one value; use the `find` tool for several filters, sources or a limit. The names `find`, `like` and `where` are reserved asset ids.

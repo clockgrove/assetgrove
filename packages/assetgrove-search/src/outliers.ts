@@ -23,7 +23,9 @@ export interface Outlier {
 
 const median = (sorted: number[]): number => {
   const mid = sorted.length >> 1;
-  return sorted.length % 2 ? (sorted[mid] as number) : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
+  return sorted.length % 2
+    ? (sorted[mid] as number)
+    : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
 };
 
 /** Cosine distance of two vectors, normalised here so a store's scaling never matters. */
@@ -59,7 +61,11 @@ export function findOutliers(members: readonly Member[]): Outlier[] {
   const mad = median(sorted.map((v) => Math.abs(v - mid)).sort((a, b) => a - b));
   const scale = Math.max(1.4826 * mad, SCALE_FLOOR);
   return members
-    .map((m, i) => ({ address: m.address, distance: scores[i] as number, z: ((scores[i] as number) - mid) / scale }))
+    .map((m, i) => ({
+      address: m.address,
+      distance: scores[i] as number,
+      z: ((scores[i] as number) - mid) / scale,
+    }))
     .filter((o) => o.z > Z_LIMIT)
     .sort((a, b) => b.z - a.z);
 }

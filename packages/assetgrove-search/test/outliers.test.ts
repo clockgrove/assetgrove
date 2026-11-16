@@ -17,7 +17,10 @@ describe("set outliers", () => {
     words.forEach((w, i) => (set[`asset://g/tile-${i}`] = `flat green tile ${w}`));
     set["asset://g/planted"] = "photoreal chrome spaceship render";
     const found = findOutliers(await members(set));
-    assert.deepEqual(found.map((o) => o.address), ["asset://g/planted"]);
+    assert.deepEqual(
+      found.map((o) => o.address),
+      ["asset://g/planted"],
+    );
     assert.ok(found[0]!.z > 3);
   });
 

@@ -321,17 +321,27 @@ async function outliers(addresses: string[], ctx: SearchContext): Promise<Search
   const embedder = await embedderFor(ctx);
   const local = await localIndex(ctx, embedder);
   await local.refresh();
+  // Pick and reference rows live in the shared store when one is set (design 7.8): look in both.
+  const stores: { store: Store; tree: string }[] = [{ store: local.store, tree: local.tree }];
+  if (ctx.settings.store) {
+    stores.push({ store: await openRemote(ctx, embedder), tree: await sharedTree(ctx) });
+  }
   const members: Member[] = [];
   for (const address of new Set(addresses)) {
-    const found = await local.store.query({
-      filter: [
-        { field: "tree", op: "=", value: local.tree },
-        { field: "address", op: "=", value: address },
-      ],
-      limit: 50,
-    });
-    const vector = found.find((h) => h.row.imageVec)?.row.imageVec;
-    if (vector) members.push({ address, vector });
+    for (const { store, tree } of stores) {
+      const found = await store.query({
+        filter: [
+          { field: "tree", op: "=", value: tree },
+          { field: "address", op: "=", value: address },
+        ],
+        limit: 50,
+      });
+      const vector = found.find((h) => h.row.imageVec)?.row.imageVec;
+      if (vector) {
+        members.push({ address, vector });
+        break;
+      }
+    }
   }
   return { members: members.length, outliers: findOutliers(members) };
 }

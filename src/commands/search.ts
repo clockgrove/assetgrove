@@ -151,7 +151,7 @@ async function folderMembers(dir: string, stateDir: string, set: string): Promis
       throw new InputError(`--outliers ${set} is not a folder address of the asset tree`);
     }
     for (const child of document.children ?? []) {
-      if (child.kind !== "asset") continue;
+      if (child.kind !== "asset" && child.kind !== "candidate") continue;
       const at = parseAddress(child.address);
       members.push(formatAddress(at.game, at.segments));
     }
