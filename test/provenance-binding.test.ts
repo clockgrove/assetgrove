@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { developmentSigner, signCredentials } from "../src/credentials.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { parseReview, writeReview } from "../src/library/review.ts";
 import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../src/metadata.ts";
@@ -341,6 +342,50 @@ test("media another tool marked as model-made hands off with a record of no call
   assert.equal(again.code, 0, again.stdout + again.stderr);
   const rerun = await readJson(join(doc(again)["runDir"], "run.json"));
   assert.deepEqual(rerun.candidates[0].provenance.modelMadeOutsideAssetgrove, stated);
+
+  // The statement comes from the mark, not the file: deleted from the sidecar, it is derived again.
+  const unstated = await altered(w, join(asset(w), "provenance.json"), "unstated.json", (p) => {
+    delete p.modelMadeOutsideAssetgrove;
+    delete p.binding;
+  });
+  // Copied away from the library record beside it, so only the mark speaks for the bytes.
+  const copied = join(w.dir, "copied.glb");
+  await writeFile(copied, await readFile(join(asset(w), "kit.glb")));
+  const third = await rig(w, copied, unstated);
+  assert.equal(third.code, 0, third.stdout + third.stderr);
+  const rerun3 = await readJson(join(doc(third)["runDir"], "run.json"));
+  assert.deepEqual(rerun3.candidates[0].provenance.modelMadeOutsideAssetgrove, stated);
+  assert.equal(rerun3.candidates[0].provenance.madeOutsideAssetgrove, true);
+});
+
+test("a record of no calls is refused on an image whose content credentials name a model its mark no longer does", async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-c2pa-")));
+  const signer = await developmentSigner(join(dir, "signer"));
+  const type = DIGITAL_SOURCE_TYPES.generated;
+  // Signed, with no XMP packet: the mark was removed, the content credentials stay.
+  const bytes = await signCredentials(
+    encodePng(drawSubject(32, 0)),
+    "image/png",
+    { digitalSourceType: type, models: ["model-z"], title: "kit.png" },
+    signer,
+    "0.1.0",
+  );
+  const path = join(dir, "kit.png");
+  await writeFile(path, bytes);
+  const provenancePath = join(dir, "kit.png.provenance.json");
+  const value = { generator: "sprite", calls: [], models: [] } as never;
+  await assert.rejects(
+    checkProvenance({
+      media: { path, bytes, mediaType: "image/png" },
+      provenance: { path: provenancePath, bytes: JSON.stringify(value), value },
+    }),
+    (error: ProvenanceError) => {
+      assert.equal(error.code, "provenance_mismatch");
+      assert.ok(error.message.includes(path) && error.message.includes(provenancePath));
+      assert.match(error.message, /\(or its content credentials\) names the model model-z/);
+      return true;
+    },
+  );
 });
 
 test("an emptied record with its binding deleted is refused on media whose mark names a model", async () => {

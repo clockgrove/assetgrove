@@ -7,7 +7,8 @@
  * describes and of its canonical content) must hold when present.
  *
  * A record that nothing outside the file names is accepted only when it is bound (and its calls
- * name each model the media's mark names), or when it records no call and the mark names no model:
+ * name each model the media's mark or content credentials name), or when it records no call and
+ * neither names a model:
  * media made outside Assetgrove, which the record says, and, when the mark's digital source type
  * says a model made it, that no licence grant was checked for it. A record of no call is refused,
  * bound or not, on media whose mark records calls or names a model the record does not account
@@ -16,6 +17,7 @@
  */
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { canCarryCredentials, readCredentials } from "./credentials.ts";
 import { InputError } from "./errors.ts";
 import { canonicalJson, sha256Hex } from "./library/canonical.ts";
 import { parseReview } from "./library/review.ts";
@@ -74,11 +76,11 @@ export function callsSha256(record: Pick<Provenance, "calls">): string {
 
 /**
  * The record, checked as the record of the media against the evidence outside the file (the
- * media's mark, and the library review record and run record beside the media) and against its
- * own binding. Returns the record (for a staged candidate given by its `--json` view, the run
+ * media's mark and content credentials, and the library review record and run record beside the
+ * media) and against its own binding. Returns the record (for a staged candidate given by its `--json` view, the run
  * record's own copy), with `madeOutsideAssetgrove: true` when it records no call and nothing outside
  * the file records calls or names a model (and `modelMadeOutsideAssetgrove` when the media's mark
- * says a model made it). Throws a ProvenanceError naming both files otherwise.
+ * or credentials say a model made it, derived from the media, not the file). Throws a ProvenanceError naming both files otherwise.
  */
 export async function checkProvenance(named: NamedProvenance): Promise<Provenance> {
   const { media, provenance } = named;
@@ -133,23 +135,34 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   }
   const own = run === undefined || run === "same" ? record : run.record;
 
-  // Evidence outside the file that names this exact record: it answers first.
-  if (markedCalls !== undefined || library === "same" || run !== undefined) return own;
+  const credentials = await credentialsOf(media.bytes, media.mediaType);
 
-  // Else the mark's model names (all a 0.1.0 mark carries) are each a call's model, or the tool
-  // of the sheet an imported strip came from (src/sheet/import.ts).
+  // Evidence outside the file that names this exact record: it answers first. A record of no call
+  // it vouches for is media made outside Assetgrove handed off before, and the statement of that is
+  // derived again from the media's own mark, not taken from the file.
+  if (markedCalls !== undefined || library === "same" || run !== undefined) {
+    return calls.length === 0 ? madeOutside(own, media, credentials) : own;
+  }
+
+  // Else the model names the mark (all a 0.1.0 mark carries) and the content credentials' actions
+  // name are each a call's model, or the tool of the sheet an imported strip came from
+  // (src/sheet/import.ts).
   const marked = markRead(() => readMarkedModels(media.bytes, media.mediaType));
   const allowed = new Set<unknown>(calls.map((c) => (c as { model?: unknown })?.model));
   const tool = (record.sheet as { tool?: unknown } | undefined)?.tool;
   if (typeof tool === "string") allowed.add(tool);
-  const names = (marked ?? "")
-    .split(";")
-    .map((m) => m.trim())
-    .filter((m) => m !== "");
+  const names = [
+    ...new Set(
+      [marked ?? "", ...(credentials?.actions ?? []).map((a) => a.softwareAgent ?? "")]
+        .flatMap((text) => text.split(";"))
+        .map((m) => m.trim())
+        .filter((m) => m !== ""),
+    ),
+  ];
   const missing = names.filter((m) => !allowed.has(m));
   const plural = (n: string[]) => (n.length === 1 ? "" : "s");
 
-  // A record of no call on media whose mark names a model it does not account for, bound or not:
+  // A record of no call on media whose mark or credentials name a model it does not account for, bound or not:
   // a binding is two digests anyone can recompute, so an emptied record re-bound by hand is refused
   // the same way. Unbound, a sheet tool the mark names is no call either (0.1.0 marked imported
   // strips with it). Bound, a mark that names only the sheet tool of an imported strip says which
@@ -157,24 +170,13 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   const unnamed = binding === undefined ? names : missing;
   if (calls.length === 0 && unnamed.length > 0) {
     throw refuse(
-      `it records no model call, but the media's own mark names the model${plural(unnamed)} ${unnamed.join(", ")}`,
+      `it records no model call, but the media's own mark (or its content credentials) names the model${plural(unnamed)} ${unnamed.join(", ")}`,
       `If Assetgrove made the media, hand it off again so its record is written and bound: ${upToDateCommand(record)}`,
     );
   }
   // No call, and nothing outside the file names a model or records calls: media made outside
-  // Assetgrove. When its mark says a model made it (another tool's digital source type), the
-  // record says so and that no licence grant was checked (docs/decisions.md).
-  if (calls.length === 0 && names.length === 0) {
-    const source = markRead(() => readDigitalSourceType(media.bytes, media.mediaType));
-    return {
-      ...own,
-      madeOutsideAssetgrove: true,
-      ...(source !== undefined &&
-        MODEL_MADE.has(source) && {
-          modelMadeOutsideAssetgrove: { digitalSourceType: source, licenceGrantChecked: false },
-        }),
-    };
-  }
+  // Assetgrove.
+  if (calls.length === 0 && names.length === 0) return madeOutside(own, media, credentials);
   if (binding === undefined) {
     // Unbound, and nothing outside the file vouches for it: a record 0.1.0 wrote, or a staged
     // record moved out of its run. Its contents are not taken as written.
@@ -185,10 +187,49 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   }
   if (missing.length > 0) {
     throw refuse(
-      `its calls do not name the model${plural(missing)} ${missing.join(", ")} that the media's own mark names`,
+      `its calls do not name the model${plural(missing)} ${missing.join(", ")} that the media's own mark (or its content credentials) names`,
     );
   }
   return own;
+}
+
+/**
+ * The record of media made outside Assetgrove, saying so; when the media's mark or content
+ * credentials say a model made it (another tool's digital source type), also that no licence grant
+ * was checked for it (docs/decisions.md). Derived from the media each time, not from the file.
+ */
+function madeOutside(
+  record: Provenance,
+  media: NamedProvenance["media"],
+  credentials: Awaited<ReturnType<typeof credentialsOf>>,
+): Provenance {
+  const { modelMadeOutsideAssetgrove: _stated, ...rest } = record;
+  void _stated;
+  const sources = [
+    markRead(() => readDigitalSourceType(media.bytes, media.mediaType)),
+    ...(credentials?.actions ?? []).map((a) => a.digitalSourceType),
+  ];
+  const source = sources.find((s): s is string => s !== undefined && MODEL_MADE.has(s));
+  return {
+    ...rest,
+    madeOutsideAssetgrove: true,
+    ...(source !== undefined && {
+      modelMadeOutsideAssetgrove: {
+        digitalSourceType: source,
+        licenceGrantChecked: false,
+      },
+    }),
+  };
+}
+
+/** The media's content credentials, when its type carries them and they can be read. */
+async function credentialsOf(bytes: Uint8Array, mediaType: string) {
+  if (!canCarryCredentials(mediaType)) return undefined;
+  try {
+    return await readCredentials(bytes, mediaType);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The digital source types Assetgrove marks on media a model made, in whole or in part. */
