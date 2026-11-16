@@ -231,7 +231,10 @@ test("view calls are forecast once per request and judged once, then cached by s
     ) < 1e-9,
   );
   // Without the bible, nothing is forecast for the request.
-  const { bible: _bible, ...noBible } = stageOptions(w, provider({}));
+  const noBible: Omit<ReturnType<typeof stageOptions>, "bible"> & { bible?: StyleBible } = {
+    ...stageOptions(w, provider({})),
+  };
+  delete noBible.bible;
   assert.deepEqual(planStage(noBible).perRequest, []);
 
   // Two candidates judge each image once.

@@ -71,12 +71,16 @@ Also available:
 
 ## What a candidate is
 
-1. **Generate** (`model3d` route). The bible references whose `subject` is the character, and that are not the perspective sample, are the approved turnaround. Each reference's view is read from its role:
-   - `front`, `back` and `right` are those views;
-   - `side` or `left` is the left view;
-   - `three-quarter` is the three-quarter view.
+1. **Generate** (`model3d` route). The bible references whose `subject` is the character, and that are not the perspective sample, are the approved turnaround. One function answers which view each of them shows, and `look-dev` uses the same one. It never reads the reference's `role` text:
+   - A `view` declared on the reference (`front`, `left`, `right`, `back`, `three-quarter`, `sheet` or `detail`; see [target-profile.md](target-profile.md)) wins.
+   - Otherwise one `reference-view` call (decisions role, `perplexity/pplx-decider-v1.2`, $0.001 estimate) is shown the image and its role and chooses among those views. Its answer, the choice and its probability, is in that call's provenance record (`decision.question: "choice"`, `label`, `value`, `probabilities`).
+   - The answer is cached by the image's sha256 in `<stateDir>/reference-views/<sha256>.json`, and in memory for a run, so a later request makes no call for it.
 
-   With a front view and at least one of left, back or right, Tripo builds from all of them (`multiview_to_model`); otherwise it builds from the front, or the first, reference.
+   The view calls are part of the request's forecast, once per request and not per candidate (`perRequest` in `stage`'s plan). The forecast counts every reference with no declared view, whether or not the cache holds it.
+
+   A request whose references show no `front` view is refused (exit 2) after the view calls and before the first expensive call. A `sheet` does not count as a front view. The error names each reference and what it was judged, or declared, to show.
+
+   Generation sends the references front first, each with its view. `left` and `right` stay distinct. With a front view and at least one of left, back or right, Tripo builds from all of them (`multiview_to_model`); otherwise it builds from the front reference.
 
    The profile's triangle budget goes with the call (`maxTriangles`, Tripo's `face_limit`), because Tripo otherwise returns about 400K triangles.
 
@@ -322,7 +326,7 @@ A model that has been through look-dev carries its groom maps, tint and eye mask
 
 ## Spend
 
-`stage` reserves every call against the cap before the first one: generation, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $1.001 per candidate, so 4 candidates reserve $4.004 against the $5 cap. Each call settles at the cost Tripo reports (its credits × the provider entry's `usdPerCredit`) or, with no rate set, at its estimate. Every candidate's provenance carries its own `costUsd`.
+`stage` reserves every call against the cap before the first one: the reference-view calls (once per request), then generation, rigging, clips and identity, for every candidate. A run that does not fit is refused (exit 3). `--dry-run` prints the forecast without a key. The default routes reserve $1.001 per candidate, so 4 candidates reserve $4.004 against the $5 cap. Each call settles at the cost Tripo reports (its credits × the provider entry's `usdPerCredit`) or, with no rate set, at its estimate. Every candidate's provenance carries its own `costUsd`.
 
 ## Hand-off
 
@@ -336,6 +340,7 @@ The provenance records:
 - models and routes;
 - prompts and parameters, including the views, the rig type, the library clips, missing families and the channels closed for loops;
 - reference hashes, request IDs (Tripo task IDs) and costs;
+- `parameters.references[]`, one entry per reference with its `view`, its `viewSource` (`declared`, `judged` or `cached`) and, when judged, its `probability`;
 - provider terms;
 - the `outputGrant` combined over every call.
 
