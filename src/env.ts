@@ -5,6 +5,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { SettingsError } from "./errors.ts";
+import type { Settings } from "./settings.ts";
 
 export type Env = Record<string, string | undefined>;
 
@@ -59,13 +60,8 @@ export function windowsSearchPath(env: Env = process.env): {
   return { path: lookup("PATH"), pathext: lookup("PATHEXT") };
 }
 
-/**
- * Variables that redirect or unwrap the TLS carrying a key (a CA, the system CA store, TLS checks
- * off, a proxy), the provider SDKs' endpoint variables, or the AWS variables Lance's object store
- * reads, which can redirect search index data (design section 7.2); each is refused in either case
- * unless allowed.
- */
-export const REFUSED_VARIABLES = [
+/** Variables that redirect or unwrap the TLS carrying a key; refused whatever is configured. */
+export const TLS_PROXY_VARIABLES = [
   "NODE_EXTRA_CA_CERTS",
   "NODE_USE_SYSTEM_CA",
   "NODE_TLS_REJECT_UNAUTHORIZED",
@@ -73,8 +69,10 @@ export const REFUSED_VARIABLES = [
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "ALL_PROXY",
-  "ANTHROPIC_BASE_URL",
-  "OPENAI_BASE_URL",
+] as const;
+
+/** The AWS variables Lance's object store reads; refused when the search store is s3://. */
+export const AWS_STORE_VARIABLES = [
   "AWS_ENDPOINT_URL",
   "AWS_ENDPOINT_URL_S3",
   "AWS_REGION",
@@ -88,12 +86,60 @@ export const REFUSED_VARIABLES = [
   "AWS_ALLOW_HTTP",
 ] as const;
 
-/** The set variables `checkEnvironment` would refuse, by the name they are set under. */
-export function refusedVariables(allow: readonly string[] = [], env: Env = process.env): string[] {
+/** The Anthropic SDK's endpoint variable; refused when an anthropic adapter is configured. */
+export const ANTHROPIC_BASE_URL_VARIABLE = "ANTHROPIC_BASE_URL";
+
+/** The OpenAI SDK's endpoint variable; refused when an openai adapter is configured. */
+export const OPENAI_BASE_URL_VARIABLE = "OPENAI_BASE_URL";
+
+/**
+ * Every variable that can redirect or unwrap the TLS carrying a key, or redirect search index data
+ * (design section 7.2); each is refused in either case unless allowed, and the conditional ones
+ * only when the configuration uses what reads them.
+ */
+export const REFUSED_VARIABLES = [
+  ...TLS_PROXY_VARIABLES,
+  ANTHROPIC_BASE_URL_VARIABLE,
+  OPENAI_BASE_URL_VARIABLE,
+  ...AWS_STORE_VARIABLES,
+] as const;
+
+/** What the configuration uses, so the variables only those read are refused only then. */
+export interface EnvUses {
+  s3Store: boolean;
+  /** The adapter name of each configured provider. */
+  adapters: readonly string[];
+}
+
+/** The uses of `settings`: an s3:// search store, and each provider's adapter (`adapter`, else its id). */
+export function envUses(settings: Pick<Settings, "providers" | "search">): EnvUses {
+  return {
+    s3Store: settings.search?.store?.uri.startsWith("s3://") ?? false,
+    adapters: Object.entries(settings.providers).map(([id, entry]) => entry.adapter ?? id),
+  };
+}
+
+function inUse(name: string, uses: EnvUses | undefined): boolean {
+  if (uses === undefined) return true;
+  if ((AWS_STORE_VARIABLES as readonly string[]).includes(name)) return uses.s3Store;
+  if (name === ANTHROPIC_BASE_URL_VARIABLE) return uses.adapters.includes("anthropic");
+  if (name === OPENAI_BASE_URL_VARIABLE) return uses.adapters.includes("openai");
+  return true;
+}
+
+/**
+ * The set variables `checkEnvironment` would refuse, by the name they are set under. Without
+ * `uses`, every variable is refused.
+ */
+export function refusedVariables(
+  allow: readonly string[] = [],
+  env: Env = process.env,
+  uses?: EnvUses,
+): string[] {
   const allowed = new Set(allow.map((name) => name.toUpperCase()));
   const refused: string[] = [];
   for (const name of REFUSED_VARIABLES) {
-    if (allowed.has(name)) continue;
+    if (allowed.has(name) || !inUse(name, uses)) continue;
     // One report per variable: on Windows the environment is case-insensitive, so both spellings
     // read the same value.
     const set = [name, name.toLowerCase()].find((variant) => env[variant]);
@@ -106,8 +152,12 @@ export function refusedVariables(allow: readonly string[] = [], env: Env = proce
  * Throws `settings_invalid` when a refused variable is set and `environment.allow` does not list
  * it. Run at server start and before every command that sends a key.
  */
-export function checkEnvironment(allow: readonly string[] = [], env: Env = process.env): void {
-  const refused = refusedVariables(allow, env);
+export function checkEnvironment(
+  allow: readonly string[] = [],
+  env: Env = process.env,
+  uses?: EnvUses,
+): void {
+  const refused = refusedVariables(allow, env, uses);
   if (refused.length === 0) return;
   throw new SettingsError(
     `${refused.join(", ")} ${refused.length === 1 ? "is" : "are"} set; each can redirect a key or index data, or unwrap the TLS that carries a key. Unset ${refused.length === 1 ? "it" : "them"}, or list ${refused.length === 1 ? "it" : "them"} in the settings file's environment.allow.`,

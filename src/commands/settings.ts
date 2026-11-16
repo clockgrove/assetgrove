@@ -1,7 +1,7 @@
 import { ConfirmationError } from "../approvals.ts";
 import { savePending } from "../confirm/pending.ts";
 import { describeRequest } from "../confirm/prompt.ts";
-import { refusedVariables } from "../env.ts";
+import { envUses, refusedVariables } from "../env.ts";
 import { InputError } from "../errors.ts";
 import { checkLimit } from "../limits.ts";
 import { createProviders } from "../providers/adapter.ts";
@@ -106,7 +106,7 @@ Read-only: never writes the settings; settings change proposes a change for a pe
       return { exitCode: 0, fields: { settings }, human: JSON.stringify(settings, null, 2) };
     }
     // A refused environment could redirect the key a reading sends, so nothing is read.
-    const refused = refusedVariables(s.environment.allow, ctx.env);
+    const refused = refusedVariables(s.environment.allow, ctx.env, envUses(s));
     const checks = [];
     for (const configured of providers(ctx)) {
       const billing = configured.provider.billing;
