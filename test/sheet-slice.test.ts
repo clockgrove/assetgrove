@@ -371,8 +371,8 @@ test("an explicit grid of columns alone refuses a count the cells do not hold", 
   // 8 figures in 4 columns and 2 rows: 4 would drop a row, 12 would cut each figure into slivers.
   const sheet = tallCellSheet(4, 2, 64, 128);
   for (const [count, reason] of [
-    [4, /4 cells of 4 × 1 hold two or more separate figures/],
-    [12, /make cells 85 px tall, shorter than the typical figure/],
+    [4, /4 cells of 4 × 1 hold two or more whole figures/],
+    [12, /make cells 85 px tall, whose edges cut through 100% of the figures' area/],
   ] as const) {
     assert.throws(
       () => sliceSheet(sheet, { grid: { columns: 4 }, count }),
@@ -381,4 +381,86 @@ test("an explicit grid of columns alone refuses a count the cells do not hold", 
       `count ${count}`,
     );
   }
+});
+
+/** A sheet of `width` × `height` on a pale background with the given dark rectangles. */
+function rectSheet(
+  width: number,
+  height: number,
+  rects: Array<{ x: number; y: number; w: number; h: number }>,
+): Raster {
+  const sheet = createRaster(width, height);
+  for (let i = 0; i < sheet.data.length; i += 4) sheet.data.set([250, 250, 250, 255], i);
+  rects.forEach(({ x, y, w, h }, i) => {
+    for (let py = y; py < y + h; py++)
+      for (let px = x; px < x + w; px++)
+        sheet.data.set([40 + (i % 5) * 10, 40, 60, 255], (py * width + px) * 4);
+  });
+  return sheet;
+}
+
+test("an explicit grid of columns alone keeps a correct count when a cell also holds a piece of a neighbour, a prop or a touching figure", () => {
+  // 4 × 2 cells of 128 px. Row 1, column 2's figure hangs 40 px into the cell below without
+  // touching the figure there.
+  const hanging = rectSheet(
+    512,
+    256,
+    cells(4, 2).map(({ row, column }) =>
+      row === 0 && column === 1
+        ? { x: column * 128 + 4, y: 68, w: 40, h: 100 }
+        : { x: column * 128 + 44, y: row * 128 + (row === 0 ? 20 : 26), w: 40, h: 100 },
+    ),
+  );
+  // Each cell holds a figure and a detached prop of about 0.4 of its area below it.
+  const props = rectSheet(
+    512,
+    256,
+    cells(4, 2).flatMap(({ row, column }) => [
+      { x: column * 128 + 44, y: row * 128 + 8, w: 40, h: 72 },
+      { x: column * 128 + 44, y: row * 128 + 90, w: 40, h: 30 },
+    ]),
+  );
+  // Three of the four columns' figures touch the one below at a 6 px foot.
+  const touching = rectSheet(
+    512,
+    256,
+    cells(4, 2).flatMap(({ row, column }) => [
+      { x: column * 128 + 44, y: row * 128 + 20, w: 40, h: 96 },
+      ...(row === 0 && column < 3 ? [{ x: column * 128 + 60, y: 116, w: 6, h: 32 }] : []),
+    ]),
+  );
+  for (const [name, sheet] of [
+    ["hanging", hanging],
+    ["props", props],
+    ["touching", touching],
+  ] as const) {
+    for (const options of [{ grid: { columns: 4 }, count: 8 }, { grid: { columns: 4 } }]) {
+      const label = `${name} ${JSON.stringify(options)}`;
+      const result = sliceSheet(sheet, options);
+      assert.equal(result.figures.length, 8, label);
+      assert.deepEqual(result.grid, square(4, 2), label);
+    }
+  }
+});
+
+test("an explicit grid of columns alone with no count refuses a sheet no cut holds whole, rather than cutting square half-figures", () => {
+  // 4 × 2 cells of 128 × 256, one figure raised so the centres cluster into 3 rows: square cells
+  // would cut every figure in two.
+  const sheet = rectSheet(
+    512,
+    512,
+    cells(4, 2).map(({ row, column }) => ({
+      x: column * 128 + 44,
+      y: row * 256 + (row === 0 && column === 2 ? 4 : 120),
+      w: 40,
+      h: 120,
+    })),
+  );
+  assert.throws(
+    () => sliceSheet(sheet, { grid: { columns: 4 } }),
+    /does not say how tall a cell is on this sheet.*give the frame count \(--frames\)/,
+  );
+  const result = sliceSheet(sheet, { grid: { columns: 4 }, count: 8 });
+  assert.equal(result.figures.length, 8);
+  assert.deepEqual(result.grid?.cell, { width: 128, height: 256 });
 });
