@@ -158,6 +158,8 @@ export interface ScriptOptions {
   failIdentity?: number[];
   imageCostUsd?: number;
   visionCostUsd?: number;
+  /** Draws the image for a frame number an edit prompt asks for; drawSubject(96, frame) else. */
+  drawFrame?: (frame: number) => Raster;
 }
 
 /** The frame number an edit prompt asks for, so scripted frames differ. */
@@ -169,7 +171,14 @@ function frameOf(request: ImageRequest): number {
 export function scriptedProvider(options: ScriptOptions = {}): ScriptedProvider {
   return new ScriptedProvider({
     image: (request) => ({
-      images: [{ mediaType: "image/png", bytes: encodePng(drawSubject(96, frameOf(request))) }],
+      images: [
+        {
+          mediaType: "image/png",
+          bytes: encodePng(
+            options.drawFrame?.(frameOf(request)) ?? drawSubject(96, frameOf(request)),
+          ),
+        },
+      ],
       ...(options.imageCostUsd !== undefined && { costUsd: options.imageCostUsd }),
       ...(request.seed !== undefined && { seed: request.seed }),
     }),

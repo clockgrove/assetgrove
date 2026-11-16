@@ -8,13 +8,15 @@
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { animationQa } from "./animation/qa.ts";
 import { splitStrip } from "./animation/strip.ts";
 import { drawDigits, textWidth } from "./image/digits.ts";
 import { createRaster, decodeImage, encodePng } from "./image/raster.ts";
 import type { Raster } from "./image/raster.ts";
 import { resampleTo } from "./image/resample.ts";
 import { blit } from "./sheet/import.ts";
-import type { AssetSpec } from "./types.ts";
+import { resolveStyle } from "./style.ts";
+import type { AssetSpec, TargetProfile } from "./types.ts";
 
 export const CONTACT_SHEET_FILE = "contact.png";
 
@@ -152,6 +154,42 @@ export function flaggedFrames(reasons: ContactCandidate["reasons"]): number[] {
   );
 }
 
+/**
+ * The 0-based frames animation QA's deterministic checks flag on a staged strip, under the run's
+ * profile: the frames a person must see on the contact sheet. None when the checks cannot run
+ * (no profile, or a profile whose animation thresholds are invalid).
+ */
+export function stripQaFlags(
+  frames: Raster[],
+  spec: AssetSpec,
+  profile: TargetProfile | undefined,
+): number[] {
+  const first = frames[0];
+  if (!profile || !first) return [];
+  const frame = { width: first.width, height: first.height };
+  try {
+    const report = animationQa(
+      {
+        frames,
+        frame,
+        // The spec's anchor, else the bottom centre of the frame, as animation-qa takes it.
+        anchor: spec.anchor ?? { x: Math.floor(frame.width / 2), y: frame.height - 1 },
+        family: spec.animationFamily ?? "strip",
+        ...((spec.frames?.durationMs ?? profile.frames.durationMs) !== undefined && {
+          durationMs: (spec.frames?.durationMs ?? profile.frames.durationMs) as number,
+        }),
+        ...(spec.gait !== undefined && { gait: spec.gait }),
+      },
+      profile,
+      // QA measures alpha only, so the palette rule plays no part.
+      resolveStyle(profile.style && { ...profile.style, color: { rule: "full" } }),
+    );
+    return flaggedFrames(report.reasons);
+  } catch {
+    return [];
+  }
+}
+
 function tryDecode(bytes: Uint8Array): Raster | undefined {
   try {
     return decodeImage(bytes);
@@ -182,6 +220,7 @@ async function candidateImages(
   runDir: string,
   spec: AssetSpec,
   candidate: ContactCandidate,
+  profile: TargetProfile | undefined,
 ): Promise<Raster[]> {
   if (spec.kind === "character-3d") {
     // Turntable frames are the view renders; the clip frames are not part of the turntable.
@@ -202,9 +241,8 @@ async function candidateImages(
   const height = frames?.height ?? spec.frames?.height ?? image.height;
   if (width === undefined || height !== image.height || image.width % width !== 0) return [image];
   const all = splitStrip(image, { width, height });
-  return keyIndexes(all.length, MAX_KEY_FRAMES, flaggedFrames(candidate.reasons)).map(
-    (i) => all[i] as Raster,
-  );
+  const flagged = [...flaggedFrames(candidate.reasons), ...stripQaFlags(all, spec, profile)];
+  return keyIndexes(all.length, MAX_KEY_FRAMES, flagged).map((i) => all[i] as Raster);
 }
 
 /** Writes `<runDir>/contact.png` for rows and references; returns the file name and the layout. */
@@ -229,10 +267,12 @@ export async function writeContact(
   spec: AssetSpec,
   candidates: ContactCandidate[],
   references: Uint8Array[],
+  /** The run's profile: a staged strip's row then always shows the frames animation QA flags. */
+  profile?: TargetProfile,
 ): Promise<string | undefined> {
   const rows: ContactRow[] = [];
   for (const [index, candidate] of candidates.entries()) {
-    const images = await candidateImages(runDir, spec, candidate);
+    const images = await candidateImages(runDir, spec, candidate, profile);
     if (images.length > 0) rows.push({ number: candidateNumber(candidate.id, index + 1), images });
   }
   const refs = references.map(tryDecode).filter((r): r is Raster => r !== undefined);

@@ -297,3 +297,19 @@ test("an explicit grid of columns alone takes its cell height from the count or 
       assert.ok(figure.box.height >= 100, `${figure.box.height}`);
   }
 });
+
+test("an explicit grid of columns alone refuses a count the figures' rows disagree with", () => {
+  // 8 figures in 4 columns and 2 rows: 4 or 12 is a wrong count, never 4 cut cells or 12 slivers.
+  const sheet = tallCellSheet(4, 2, 64, 128);
+  for (const count of [4, 12]) {
+    assert.throws(
+      () => sliceSheet(sheet, { grid: { columns: 4 }, count }),
+      (error: unknown) =>
+        error instanceof SliceError &&
+        error.found === 8 &&
+        error.expected === count &&
+        /sit in 2 rows of 4 columns/.test(error.message),
+      `count ${count}`,
+    );
+  }
+});

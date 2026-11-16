@@ -1565,6 +1565,7 @@ export async function applyPlan(
       prepared.spec,
       run.candidates,
       refs.filter((r) => r.role !== "palette" && r.role !== "perspective").map((r) => r.bytes),
+      prepared.profile,
     );
     if (contact !== undefined) run.contactSheet = contact;
     await writeRun(runDir, run);

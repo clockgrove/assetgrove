@@ -707,15 +707,31 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
     const origin = options.grid.origin ?? { x: 0, y: 0 };
     const height = sheet.height - origin.y;
     // How tall a cell is: given; else the sheet's height over its rows, which are given, follow
-    // from the count (the sheet holds count figures in rows of `columns`), or are the rows the
-    // figures sit in. Square cells only when nothing else says, as on a sheet with no figure.
+    // from the count (the sheet holds count figures in rows of `columns`, refused when the
+    // figures sit in another number of rows), or are the rows the figures sit in. Square cells only when nothing else says, as on a sheet with no figure.
+    const figures = sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff);
+    const seenRows = figureRows(figures);
+    const countRows = options.count !== undefined ? Math.ceil(options.count / columns) : undefined;
+    // A count whose rows disagree with the rows the figures sit in is a wrong count: refuse it,
+    // never cut cells to fit it (that would drop or split figures to agree with any count).
+    if (
+      options.grid.rows === undefined &&
+      options.grid.cellHeight === undefined &&
+      options.count !== undefined &&
+      countRows !== undefined &&
+      seenRows !== undefined &&
+      countRows !== seenRows
+    ) {
+      throw new SliceError(figures.length, options.count, [
+        `the figures sit in ${seenRows} row${seenRows === 1 ? "" : "s"} of ${columns} column${columns === 1 ? "" : "s"}, ` +
+          `where ${options.count} figures need ${countRows}`,
+      ]);
+    }
     const rows =
       options.grid.rows ??
       (options.grid.cellHeight !== undefined
         ? Math.ceil(height / options.grid.cellHeight)
-        : options.count !== undefined
-          ? Math.ceil(options.count / columns)
-          : figureRows(sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff)));
+        : (countRows ?? seenRows));
     const cellHeight =
       options.grid.cellHeight ??
       (rows !== undefined ? Math.floor(height / rows) : Math.min(cellWidth, height));

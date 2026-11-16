@@ -225,6 +225,37 @@ test("a strip's key frames always include the frames QA flagged, the rest spread
   assert.deepEqual(Array.from(sheet.data), Array.from(expected.raster.data));
 });
 
+test("a staged strip's row shows the frames animation QA flags on it, through stage", async () => {
+  // 12 frames, frame 2 drawn off to one side: evenly, the row would show frames 1, 3, 5, 8, 10, 12
+  // and never frame 2. Animation QA flags 1, 2 and 3 (footprint drift, silhouette change).
+  const w = await world();
+  const spec: AssetSpec = { ...shelterSpec, frames: { count: 12 } };
+  const provider = scriptedProvider({
+    drawFrame: (frame) => drawSubject(96, frame === 2 ? 30 : 0),
+  });
+  const { run, runDir } = await stage(options(w, spec, { candidates: 1, provider }));
+  const candidate = run.candidates[0]!;
+  // No reason of the staged candidate names a frame: the flags come from animation QA alone.
+  assert.ok(candidate.reasons.every((r) => !("frames" in r)));
+  const strip = decodePng(new Uint8Array(await readFile(join(runDir, candidate.file))));
+  const { width, height } = candidate.fields["frames"] as { width: number; height: number };
+  const frames = splitStrip(strip, { width, height });
+  assert.equal(frames.length, 12);
+  const sheet = decodePng(new Uint8Array(await readFile(join(runDir, "contact.png"))));
+  const refs = (
+    await Promise.all(
+      w.bible.references
+        .filter((r) => r.subject === "fern")
+        .map((r) => readFile(join(w.bibleDir, r.path))),
+    )
+  ).map((b) => decodePng(new Uint8Array(b)));
+  const expected = renderContact(
+    [{ number: 1, images: [0, 1, 2, 3, 7, 11].map((i) => frames[i]!) }],
+    refs,
+  );
+  assert.deepEqual(Array.from(sheet.data), Array.from(expected.raster.data));
+});
+
 test("the sheet is pixel-identical when only bible text changes", async () => {
   const w = await world();
   const first = await stage(options(w, stillSpec, { runId: "same", runsDir: join(w.dir, "a") }));
