@@ -9,12 +9,12 @@ import "./fixtures/env.ts";
 import { stateDir } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { decodePng } from "../src/image/raster.ts";
+import { createRaster, decodePng, encodePng } from "../src/image/raster.ts";
 import { libraryDrift, readLibrary } from "../src/library/maintain.ts";
 import { appendAnnotation, parseReview, writeReview } from "../src/library/review.ts";
 import { changed, fingerprint, listTree } from "../src/tree/list.ts";
@@ -23,7 +23,7 @@ import { TreeServer } from "../src/tree/serve.ts";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { PAGE_SIZE, readTree } from "../src/tree/read.ts";
 import type { Content, ReadResult } from "../src/tree/read.ts";
-import { READ_LIMIT, THUMB_PX } from "../src/tree/thumbs.ts";
+import { READ_LIMIT, THUMB_PX, keyFrames, thumbnail } from "../src/tree/thumbs.ts";
 import { GAME, RUN_ID, fixtureLibrary } from "./fixtures/library.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -211,9 +211,9 @@ test("an image reads as a thumbnail of at most 512 px, image/full as the file or
     assert.ok(Math.max(thumb.width, thumb.height) <= THUMB_PX, id);
     assert.ok(encoded(r) <= READ_LIMIT, id);
   }
-  // A strip reads as its key-frame row: four 32 px frames side by side with gaps.
+  // A strip whose provenance records no frame reads as the whole image.
   const walk = png(images(await read(A("walk/image")))[0]!);
-  assert.ok(walk.width > 4 * 32 && walk.height === 32);
+  assert.deepEqual([walk.width, walk.height], [128, 32]);
   const full = await read(A("lantern/image/full"));
   assert.equal(
     images(full)[0]!.blob,
@@ -428,4 +428,111 @@ test("ls and cat on the CLI return the documents the resolver returns", async ()
 
   const notFolder = await cli(["ls", A("lantern/card"), "--target", lib.dir, "--json"]);
   assert.equal(notFolder.code, 2);
+});
+
+const solid = (width: number, height: number) => {
+  const r = createRaster(width, height);
+  for (let i = 0; i < r.data.length; i += 4) r.data.set([200, 40, 40, 255], i);
+  return r;
+};
+
+test("a strip is cut into the frames its provenance records, not into squares", () => {
+  const frames = keyFrames(solid(512, 64), { width: 128, height: 64, count: 4 });
+  assert.ok(frames.length >= 2 && frames.every((f) => f.width === 128 && f.height === 64));
+  const six = keyFrames(solid(192, 48), { width: 32, height: 48, count: 6 });
+  assert.ok(six.length >= 2 && six.every((f) => f.width === 32 && f.height === 48));
+  // A frame that does not fit the image leaves the whole image.
+  assert.deepEqual(keyFrames(solid(512, 64), { width: 128, height: 32, count: 4 }), []);
+  assert.deepEqual(keyFrames(solid(512, 64), { width: 128, height: 64, count: 5 }), []);
+
+  const bytes = encodePng(solid(512, 64));
+  const whole = png({
+    blob: Buffer.from(thumbnail([bytes], "image", READ_LIMIT)!).toString("base64"),
+  });
+  const framed = thumbnail([bytes], { strip: { width: 128, height: 64, count: 4 } }, READ_LIMIT)!;
+  const cut = decodePng(framed);
+  assert.deepEqual([whole.width, whole.height], [512, 64]);
+  assert.ok(Math.abs(cut.width / cut.height - (4 * 128 + 3 * 4) / 64) < 0.2);
+  // The cache key holds the frame: another frame size is another thumbnail.
+  const other = thumbnail([bytes], { strip: { width: 256, height: 64, count: 2 } }, READ_LIMIT)!;
+  assert.notDeepEqual(other, framed);
+});
+
+test("a run's state is running only while its lock is held; killed and failed runs say so", async () => {
+  const l = fixtureLibrary();
+  try {
+    const runs = (id: string, files: Record<string, unknown>) => {
+      const dir = join(l.runsDir, id);
+      mkdirSync(dir, { recursive: true });
+      for (const [name, value] of Object.entries(files)) {
+        writeFileSync(join(dir, name), JSON.stringify(value));
+      }
+    };
+    const state = (status: string) => ({
+      runId: "x",
+      command: "generate",
+      digest: "d",
+      status,
+      pid: 2 ** 22 + 1,
+      startedAt: "2026-11-16T10:00:00Z",
+    });
+    runs("r-0000000000000001", { "request.json": {}, "state.json": state("running") });
+    runs("r-0000000000000002", { "request.json": {} });
+    runs("r-0000000000000003", { "run.json": { ok: false }, "state.json": state("failed") });
+    runs("r-0000000000000004", { "run.json": { ok: true }, "state.json": state("finished") });
+    runs("r-0000000000000005", { "run.json": { ok: false } });
+    runs("r-0000000000000006", { "run.json": { runId: "r" } });
+    const at = async (n: number) =>
+      json(await readTree(await openProject(l.dir, stateDir), A(`runs/r-000000000000000${n}/`))).run
+        .state;
+    assert.deepEqual(await Promise.all([1, 2, 3, 4, 5, 6].map(at)), [
+      "interrupted",
+      "interrupted",
+      "failed",
+      "finished",
+      "failed",
+      "finished",
+    ]);
+  } finally {
+    await rm(l.dir, { recursive: true, force: true });
+  }
+});
+
+test("a run candidate's strip thumbnail uses the frame its provenance records", async () => {
+  const l = fixtureLibrary();
+  try {
+    const dir = join(l.runsDir, "r-00000000000000aa");
+    mkdirSync(dir, { recursive: true });
+    const candidate = (id: string, parameters: object) => {
+      writeFileSync(join(dir, `${id}.png`), encodePng(solid(512, 64)));
+      return {
+        id,
+        file: `${id}.png`,
+        mediaType: "image/png",
+        reasons: [],
+        provenance: { parameters },
+      };
+    };
+    writeFileSync(
+      join(dir, "run.json"),
+      JSON.stringify({
+        spec: { kind: "sprite-strip", assetId: "x" },
+        candidates: [
+          candidate("c1", { frame: { width: 128, height: 64 }, frameCount: 4 }),
+          candidate("c2", {}),
+          candidate("c3", { postprocess: { frame: { width: 128, height: 64 }, frameCount: 4 } }),
+        ],
+      }),
+    );
+    const open = await openProject(l.dir, stateDir);
+    const framed = png(images(await readTree(open, A("runs/r-00000000000000aa/c1")))[0]!);
+    const whole = png(images(await readTree(open, A("runs/r-00000000000000aa/c2")))[0]!);
+    const generated = png(images(await readTree(open, A("runs/r-00000000000000aa/c3")))[0]!);
+    assert.deepEqual([whole.width, whole.height], [512, 64]);
+    assert.ok(framed.width / framed.height > 8.1);
+    // A generated strip records its frame under the postprocess parameters.
+    assert.deepEqual([generated.width, generated.height], [framed.width, framed.height]);
+  } finally {
+    await rm(l.dir, { recursive: true, force: true });
+  }
 });

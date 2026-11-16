@@ -64,21 +64,39 @@ function row(images: Raster[]): Raster {
   return out;
 }
 
-/** Whether an image is a strip: wider than tall by a whole number (two or more) of square frames. */
-export function isStrip(image: Raster): boolean {
-  return image.width > image.height && image.width % image.height === 0;
+/** A strip's frame size and how many frames it holds, as its provenance records them. */
+export interface StripFrame {
+  width: number;
+  height: number;
+  count: number;
 }
 
-/** A strip's key frames (square frames), spread evenly, first and last included. */
-export function keyFrames(strip: Raster): Raster[] {
-  const frames = splitStrip(strip, { width: strip.height, height: strip.height });
+function fits(strip: Raster, frame: StripFrame): boolean {
+  return (
+    Number.isInteger(frame.width) &&
+    Number.isInteger(frame.count) &&
+    frame.width > 0 &&
+    frame.count > 0 &&
+    strip.height === frame.height &&
+    strip.width % frame.width === 0 &&
+    strip.width >= frame.width * frame.count
+  );
+}
+
+/** A strip's key frames, spread evenly, first and last included; none when `frame` does not fit. */
+export function keyFrames(strip: Raster, frame: StripFrame): Raster[] {
+  if (!fits(strip, frame)) return [];
+  const frames = splitStrip(strip, { width: frame.width, height: frame.height }).slice(
+    0,
+    frame.count,
+  );
   return keyIndexes(frames.length).map((i) => frames[i]!);
 }
 
-export type ThumbShape = "image" | "strip" | "row";
+export type ThumbShape = "image" | "row" | { strip: StripFrame };
 
 /**
- * A PNG thumbnail of `sources` (one image, a strip or a row of frames) whose base64 fits `budget`
+ * A PNG thumbnail of `sources` (one image, a strip of known frames or a row of frames) whose base64 fits `budget`
  * bytes, or undefined when none fits or a source does not decode.
  */
 export function thumbnail(
@@ -88,7 +106,9 @@ export function thumbnail(
   cacheDir?: string,
 ): Uint8Array | undefined {
   if (sources.length === 0 || budget <= 0) return undefined;
-  const key = sha256Hex(`${shape}:${budget}:${sources.map((s) => sha256Hex(s)).join(",")}`);
+  const key = sha256Hex(
+    `${typeof shape === "string" ? shape : `strip-${shape.strip.width}x${shape.strip.height}x${shape.strip.count}`}:${budget}:${sources.map((s) => sha256Hex(s)).join(",")}`,
+  );
   const cached = cacheDir === undefined ? undefined : join(cacheDir, `${key}.png`);
   if (cached !== undefined) {
     try {
@@ -100,12 +120,8 @@ export function thumbnail(
   let image: Raster;
   try {
     const decoded = sources.map((s) => decodeImage(s));
-    image =
-      shape === "row"
-        ? row(decoded)
-        : shape === "strip" && isStrip(decoded[0]!)
-          ? row(keyFrames(decoded[0]!))
-          : decoded[0]!;
+    const frames = typeof shape === "object" ? keyFrames(decoded[0]!, shape.strip) : [];
+    image = shape === "row" ? row(decoded) : frames.length > 0 ? row(frames) : decoded[0]!;
   } catch {
     return undefined;
   }
