@@ -364,18 +364,28 @@ test("a hosted find without words brings the index up to date first: it forecast
 
   const dry = await run("find", { where: ["source=folder"], dryRun: true });
   assert.equal(dry.exitCode, 0, JSON.stringify(dry.error));
-  const embed = (dry.fields["plan"] as { embed: { images: number; queries: number } }).embed;
+  const embed = (
+    dry.fields["plan"] as { embed: { images: number; texts: number; queries: number } }
+  ).embed;
   assert.equal(embed.images, 1, "the new folder image is forecast");
   assert.equal(embed.queries, 0);
 
-  const before = { image: calls.image, ledger: embedEntries().length };
+  const reserves = () =>
+    embedEntries()
+      .map((line) => JSON.parse(line) as { op: string; callKey: string })
+      .filter((e) => e.op === "reserve");
+  const before = { image: calls.image, text: calls.text, reserves: reserves().length };
   const asked: ConfirmRequest[] = [];
   const found = await run("find", { where: ["source=folder"] }, asked);
   assert.equal(found.exitCode, 0, JSON.stringify(found.error));
   assert.equal(asked.length, 1, "one spend confirmation");
   assert.equal(found.fields["fresh"], true);
   assert.equal(calls.image, before.image + 1);
-  assert.ok(embedEntries().length > before.ledger, "each call reserved");
+  assert.equal(calls.text, before.text + embed.texts);
+  // Exactly one reservation per call the confirmation covered.
+  const added = reserves().slice(before.reserves);
+  assert.equal(added.length, embed.images + embed.texts, "each call reserved once");
+  assert.equal(new Set(added.map((e) => e.callKey)).size, added.length);
   assert.ok(
     (found.fields["hits"] as { path: string }[]).some((h) => h.path.endsWith("moon.png")),
     "the new image is found",

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import extension, { searchSlot, storageOptions } from "../src/extension.ts";
 import { SearchError } from "../src/errors.ts";
@@ -61,6 +62,42 @@ describe("a shared remote store (a local folder URI)", () => {
       new Set(local.hits.map((h) => h.source)),
       new Set(["pick", "reference", "candidate", "folder"]),
     );
+  });
+
+  it("a rebuild records its embedder, local and shared, under each store's write lock", async () => {
+    const ctx = p.context(settings(true));
+    const locks = {
+      [join(p.stateDir, "search")]: join(p.stateDir, "search", "write.lock"),
+      [remoteDir]: join(
+        p.stateDir,
+        "search",
+        "remote",
+        createHash("sha256").update(uri).digest("hex"),
+        "write.lock",
+      ),
+    };
+    const seen: { dir: string; held: boolean }[] = [];
+    const original = LanceStore.prototype.recordEmbedder;
+    LanceStore.prototype.recordEmbedder = async function (this: LanceStore, record) {
+      const lock = locks[this.dir];
+      const text = lock ? await readFile(lock, "utf8").catch(() => "") : "";
+      seen.push({ dir: this.dir, held: text.trim() === String(process.pid) });
+      return original.call(this, record);
+    };
+    try {
+      await searchSlot.index({ rebuild: true }, ctx);
+    } finally {
+      LanceStore.prototype.recordEmbedder = original;
+    }
+    assert.deepEqual(
+      seen.map((s) => s.dir).sort(),
+      Object.keys(locks).sort(),
+      "both stores record their embedder",
+    );
+    for (const s of seen) assert.equal(s.held, true, `${s.dir}: recorded while the lock is held`);
+    for (const lock of Object.values(locks)) {
+      await assert.rejects(readFile(lock), { code: "ENOENT" }, "released after");
+    }
   });
 
   it("fuses both stores in one query", async () => {
