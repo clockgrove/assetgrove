@@ -59,6 +59,6 @@ This plan delivers [the 1.0 PRD](PRD.md) in four phases, taken from its [Scope o
 - Outside developers recruited with a time box, and their feedback and run reports collected.
 - Community: issue templates and one place for feedback.
 
-**Gate:** the [1.0 exit](PRD.md#success-measures-and-the-10-exit): outside developers reach a committed asset set on their own and the measures hold. 1.0 is tagged on npm.
+**Gate:** the [1.0 exit](PRD.md#success-measures-and-the-10-exit): outside developers reach a committed asset set on their own and the measures hold. The data-dependent bars are read once against real records, as [decisions.md](decisions.md) says, and corrected where the records show one is wrong. 1.0 is tagged on npm.
 
 Work outside these phases is listed in [After 1.0](PRD.md#after-10).
