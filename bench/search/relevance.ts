@@ -189,7 +189,8 @@ export function structuredJudge(
   model: string,
   options: { baseURL?: string; apiKey?: string; keyEnv?: string } = {},
 ): RelevanceJudge {
-  const apiKey = options.apiKey ?? process.env[options.keyEnv ?? "AI_GATEWAY_API_KEY"];
+  // The caller reads the key (core's `keyValue`); nothing here reads the environment.
+  const apiKey = options.apiKey;
   if (apiKey === undefined || apiKey === "")
     throw new Error(`the relevance judge needs a key in ${options.keyEnv ?? "AI_GATEWAY_API_KEY"}`);
   const gateway = createGateway({
