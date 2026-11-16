@@ -212,7 +212,15 @@ export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: Unr
       } catch {
         continue;
       }
-      if (!/^---\r?\n/.test(text) || !text.includes("Game Asset")) continue;
+      const id = entry.name.slice(0, -".md".length);
+      if (!/^---\r?\n/.test(text) || !text.includes("Game Asset")) {
+        // Not a card, unless a review record beside it says it is one: then it is a card that does
+        // not parse (a whole-file conflict puts a marker on line 1), and its rows are kept.
+        if (existsSync(join(dir, `${id}.review.json`))) {
+          unreadable.push({ file: path, code: "card_invalid" });
+        }
+        continue;
+      }
       try {
         const card = parseCard(text, path);
         const data = card.data as {
@@ -224,7 +232,7 @@ export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: Unr
         };
         found.push({
           dir,
-          id: entry.name.slice(0, -".md".length),
+          id,
           title: data.title,
           ...(typeof data.description === "string" && { description: data.description }),
           ...((data.bible ?? data.lock?.bible) !== undefined && {

@@ -509,6 +509,13 @@ test("a neighbour's card or review record with conflict markers keeps the folder
         ),
     },
     {
+      // A whole-file conflict: the marker is on line 1, so the file has no front matter at all.
+      file: "torch.md",
+      code: "card_invalid",
+      edit: (t: string) =>
+        `<<<<<<< ours\n${t}=======\n${t.replace(/^title: .*$/m, "title: Torch from b")}>>>>>>> theirs\n`,
+    },
+    {
       file: "torch.review.json",
       code: "review_invalid",
       edit: (t: string) => {
