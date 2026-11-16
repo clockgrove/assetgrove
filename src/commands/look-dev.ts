@@ -1,6 +1,6 @@
 import { basename, dirname } from "node:path";
 import { readJson, readModel, loadProfile, loadStyleBible } from "../inputs.ts";
-import { lookDev, planLookdev } from "../model3d/lookdev/command.ts";
+import { lookDev, lookdevViewCalls, planLookdev } from "../model3d/lookdev/command.ts";
 import { runCap } from "../budget.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { rigReads } from "../model3d/rig/template.ts";
@@ -42,7 +42,13 @@ async function prepare(args: LookDevArgs, ctx: RunContext) {
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
   const capUsd = runCap(args.cap, ctx.settings, planLookdev(profile.value, routes).capUsd);
-  const plan = planLookdev(profile.value, routes, capUsd);
+  // The view calls of the references that declare no view are part of the forecast.
+  const plan = planLookdev(
+    profile.value,
+    routes,
+    capUsd,
+    lookdevViewCalls(spec.value, bible.value, routes),
+  );
   const jobs = jobsOf(plan.calls, routes);
   // The groom prompts name each season the profile declares and carry its traits.
   const { seasons, traits } = lookdevSettings(profile.value);
@@ -155,6 +161,7 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
       runsDir: dirname(dir),
       runId: basename(dir),
       capUsd,
+      stateDir: ctx.settings.stateDir,
       log: ctx.log,
       ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
     });

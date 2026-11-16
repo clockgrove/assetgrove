@@ -108,7 +108,7 @@ export interface GenerationProvider {
   billingFor?(kind: CallKind): Billing;
   generateImage(request: ImageRequest): Promise<ImageResult>;
   analyzeImages(request: VisionRequest): Promise<VisionResult>;
-  /** A typed decision (Score or Boolean); providers without decision models leave it out. */
+  /** A typed decision (Score, Boolean or Choice); providers without decision models leave it out. */
   decide?(request: DecisionRequest): Promise<DecisionResult>;
   /**
    * One embedding: an image or a text, in the one vector space the model puts both in. Providers
@@ -138,7 +138,10 @@ export interface EmbedResult extends ProviderResult {
 
 /** Reference views for image-to-3D, by the view each image shows. */
 export interface ModelView extends ImageInput {
-  /** `front`, `left`, `back`, `right`, or another role when the view is unknown. */
+  /**
+   * `front`, `left`, `back` or `right` (the character's own side), else `three-quarter`, `sheet`
+   * or `detail` (src/model3d/views.ts).
+   */
   view: string;
 }
 
@@ -180,11 +183,13 @@ export interface ModelResult extends ProviderResult {
 
 /**
  * A typed decision question. `score` asks for a position on ordered levels (indexed from zero);
- * `boolean` asks for the probability that the statement is true.
+ * `boolean` asks for the probability that the statement is true; `choice` asks which one of the
+ * named options holds (each name with what it means).
  */
 export type DecisionQuestion =
   | { type: "score"; instructions: string; levels: string[] }
-  | { type: "boolean"; instructions: string; whenTrue?: string; whenFalse?: string };
+  | { type: "boolean"; instructions: string; whenTrue?: string; whenFalse?: string }
+  | { type: "choice"; instructions: string; options: Record<string, string> };
 
 export interface DecisionRequest {
   model: string;
@@ -209,6 +214,13 @@ export type DecisionAnswer =
       type: "boolean";
       /** The model's probability that the statement is true. */
       probability: number;
+    }
+  | {
+      type: "choice";
+      /** The option chosen: one of the question's option names. */
+      choice: string;
+      /** Probability per option name, when the model reports one. */
+      probabilities?: Record<string, number>;
     };
 
 export interface DecisionResult extends ProviderResult {

@@ -691,6 +691,8 @@ async function scoreOnce(options: Parameters<typeof scoreIdentity>[0]): Promise<
         identityQuestion(settings.question as "score" | "boolean", record.subject),
       );
       const d = call.decision!;
+      // A Score or Boolean question: its answer always carries a value (only a Choice may not).
+      if (d.question === "choice") throw new Error("the identity decision answered a choice");
       ({ value, label, confidence, latencyMs } = d);
       ({ model, requestId, costUsd } = call);
     }

@@ -26,7 +26,7 @@ import {
   readDigitalSourceType,
 } from "../../metadata.ts";
 import type { DigitalSourceType } from "../../metadata.ts";
-import { loadReference, sha256, styleNotes, subjectOf } from "../../request.ts";
+import { sha256, styleNotes, subjectOf } from "../../request.ts";
 import {
   IDENTITY_CAST_OPERATION,
   LOOKDEV_GROOM_OPERATION,
@@ -76,6 +76,16 @@ import {
 } from "./groom.ts";
 import type { GroomMaps, GroomRegion, GroomSkeleton, SeasonGroom, SurfaceMarker } from "./groom.ts";
 import { depthMap, dilate, fillUnseen, projectViews, seamError } from "./project.ts";
+import type { PlannedCall } from "../../generators/generator.ts";
+import {
+  ReferenceViewCache,
+  loadReferenceViews,
+  planReferenceViews,
+  requireFront,
+  subjectBibleReferences,
+  viewRecord,
+} from "../views.ts";
+import type { ReferenceView, ViewedReference } from "../views.ts";
 import { bakeTexels } from "./texels.ts";
 import type { TexelMap } from "./texels.ts";
 import {
@@ -160,6 +170,8 @@ export interface LookdevOptions {
   log?: (message: string) => void;
   /** The plan step's prompt-policy record, kept in the run record and the model's provenance. */
   promptPolicy?: PromptPolicyRecord;
+  /** The settings' state directory; judged reference views are cached under it. */
+  stateDir?: string;
 }
 
 export interface LookdevPlan {
@@ -175,7 +187,12 @@ function seasonsOf(settings: LookdevSettings): string[] {
 }
 
 /** The calls one look-dev makes and their estimate, computed without spending anything. */
-export function planLookdev(profile: TargetProfile, routes: Routes, capUsd?: number): LookdevPlan {
+export function planLookdev(
+  profile: TargetProfile,
+  routes: Routes,
+  capUsd?: number,
+  viewCalls: PlannedCall[] = [],
+): LookdevPlan {
   model3dSettings(profile);
   const settings = lookdevSettings(profile);
   const cap = capUsd ?? settings.capUsd;
@@ -185,6 +202,8 @@ export function planLookdev(profile: TargetProfile, routes: Routes, capUsd?: num
     if (!route) throw new InputError(`no model route for operation "${operation}"`);
     calls.push({ operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd });
   };
+  // Which view each undeclared reference shows: judged before the first restyle.
+  calls.push(...viewCalls);
   for (let i = 0; i < LOOKDEV_VIEWS.length + LOOKDEV_DETAIL_VIEWS.length; i++) {
     add(LOOKDEV_OPERATION);
   }
@@ -207,29 +226,57 @@ export function planLookdev(profile: TargetProfile, routes: Routes, capUsd?: num
   };
 }
 
-/** Bible references of the subject for the spec's look, each with the view its role names. */
-async function subjectReferences(spec: AssetSpec, bible: StyleBible, bibleDir: string) {
-  const subject = subjectOf(spec);
-  const refs = bible.references.filter(
-    (r) =>
-      r.subject === subject &&
-      r.role !== "perspective" &&
-      (r.look === undefined || spec.look === undefined || r.look === spec.look),
-  );
-  if (refs.length === 0) {
-    throw new InputError(`the style bible has no approved references for subject "${subject}"`);
-  }
-  const loaded = await Promise.all(refs.map((r) => loadReference(r.path, r.role, bibleDir)));
-  return loaded.map((r) => ({ ...r, view: viewOf(r.role) }));
+/** The view calls a look-dev forecasts: one per reference of the spec's look with no declared view. */
+export function lookdevViewCalls(
+  spec: AssetSpec,
+  bible: StyleBible,
+  routes: Routes,
+): PlannedCall[] {
+  return planReferenceViews(subjectBibleReferences(spec, bible, { byLook: true }), routes);
 }
 
-function viewOf(role: string): string | undefined {
-  const r = role.toLowerCase();
-  if (r.includes("three-quarter") || r.includes("3/4")) return "three-quarter";
-  if (r.includes("front")) return "front";
-  if (r.includes("back")) return "back";
-  if (r.includes("side") || r.includes("left") || r.includes("right")) return "side";
-  return undefined;
+/**
+ * Bible references of the subject for the spec's look, each with the view it shows (declared, or
+ * judged by a model and cached). A look-dev whose references show no front view is refused here,
+ * before the first restyle.
+ */
+async function subjectReferences(
+  spec: AssetSpec,
+  bible: StyleBible,
+  bibleDir: string,
+  caller: Caller,
+  cache: ReferenceViewCache,
+): Promise<ViewedReference[]> {
+  const refs = subjectBibleReferences(spec, bible, { byLook: true });
+  if (refs.length === 0) {
+    throw new InputError(
+      `the style bible has no approved references for subject "${subjectOf(spec)}"`,
+    );
+  }
+  const viewed = await loadReferenceViews(caller, refs, bibleDir, cache);
+  requireFront(viewed);
+  return viewed;
+}
+
+/**
+ * The reference view each restyled, turntable or detail view is matched with: the side view (yaw
+ * 90°, the character's left) with the left reference, the other side with the right one.
+ */
+export function referenceViewFor(view: string): ReferenceView {
+  switch (view) {
+    case "side":
+      return "left";
+    case "other-side":
+      return "right";
+    case "back":
+    case "top":
+      return "back";
+    case "three-quarter":
+    case "other-three-quarter":
+      return "three-quarter";
+    default:
+      return "front";
+  }
 }
 
 const AXIS_VECTORS: Record<string, Vec3> = {
@@ -484,13 +531,34 @@ function restylePrompt(
   ].join("\n");
 }
 
-function locatePrompt(): string {
+function locatePrompt(subject: string, description: string | undefined): string {
   return [
-    "The image is a close-up front render of a 3D character's head, 1:1 pixels.",
-    'Reply with JSON only: {"eyes": [{"x": number, "y": number, "r": number}], "nose": {"x": number, "y": number, "r": number} | null}.',
-    "x and y are the pixel centre of each eyeball and of the nose leather (the bare tip of the nose), from the top-left corner; r is its radius in pixels.",
+    "The first image is a close-up front render of a 3D character's head, 1:1 pixels; the others are the character's approved references.",
+    description ? `Subject: ${subject}, ${description}.` : `Subject: ${subject}.`,
+    'Reply with JSON only: {"has": {"eyes": boolean, "nose": boolean, "pawPads": boolean}, "eyes": [{"x": number, "y": number, "r": number}], "nose": {"x": number, "y": number, "r": number} | null}.',
+    "has says whether the character, as the references show it, has each part: eyes; a bare nose (nose leather, not a beak or a muzzle covered in fur or scales); bare paw pads on its feet (not hooves, claws without pads, boots, fins or no feet).",
+    "x and y are the pixel centre of each eyeball and of the nose leather (the bare tip of the nose) in the first image, from the top-left corner; r is its radius in pixels.",
     "List every visible eye. Use null for the nose if the character has none.",
   ].join("\n");
+}
+
+/** The parts the groom check asks a bare mask for, as the locate reply names them. */
+export const BARE_PARTS = { eyes: "eyes", nose: "nose", pawPads: "paw pads" } as const;
+export type BarePart = keyof typeof BARE_PARTS;
+
+/**
+ * Whether the character has each bare part, from the locate reply's `has`: `false` only where the
+ * reply says so; a reply without it keeps every part.
+ */
+export function parseHas(text: string): Record<BarePart, boolean> {
+  let has: unknown;
+  try {
+    has = parseJsonReply(text, "locate")["has"];
+  } catch {
+    has = undefined;
+  }
+  const h = (has ?? {}) as Record<string, unknown>;
+  return { eyes: h["eyes"] !== false, nose: h["nose"] !== false, pawPads: h["pawPads"] !== false };
 }
 
 function groomPrompt(
@@ -875,9 +943,13 @@ export async function lookDev(
   if (!provenance || typeof provenance !== "object" || !Array.isArray(provenance.calls)) {
     throw new InputError("the provenance file is not an Assetgrove provenance record");
   }
-  const plan = planLookdev(profile, options.routes, options.capUsd);
+  const plan = planLookdev(
+    profile,
+    options.routes,
+    options.capUsd,
+    lookdevViewCalls(spec, bible, options.routes),
+  );
   const log = options.log ?? (() => {});
-  const references = await subjectReferences(spec, bible, options.bibleDir);
   const rig = declaresRig(profile) ? await loadRig(profile, options.profileDir) : undefined;
 
   const sourceSha256 = sha256(options.model.bytes);
@@ -925,6 +997,15 @@ export async function lookDev(
   const id = "c1";
   const dir = `${id}-${CHARACTER_3D_KIND}`;
   await mkdir(join(runDir, dir), { recursive: true });
+
+  // Which view each reference shows; no front view refuses the look-dev before the first restyle.
+  const references = await subjectReferences(
+    spec,
+    bible,
+    options.bibleDir,
+    caller,
+    new ReferenceViewCache(options.stateDir),
+  );
 
   const texels = bakeTexels(glb, textureSize, textured.image);
   const skeleton = groomSkeleton(glb, rig, forward);
@@ -993,7 +1074,7 @@ export async function lookDev(
   const restyleViews = [
     ...LOOKDEV_VIEWS.map((v) => ({
       name: v.name as string,
-      reference: v.name.replace(/^other-/, "").replace(/^top$/, "back"),
+      reference: referenceViewFor(v.name) as string,
       detail: false,
       camera: framedCamera({
         sizePx: VIEW_PX,
@@ -1080,9 +1161,20 @@ export async function lookDev(
     camera: locateCamera,
     lighting,
   });
-  const locateText = await caller.vision(LOOKDEV_LOCATE_OPERATION, locatePrompt(), [
-    { ...png(encodePng(locateRender)), role: "close-up front render" },
-  ]);
+  // The locate call also says which bare parts the character has, from its references.
+  const subjectName = subjectOf(spec);
+  const locateText = await caller.vision(
+    LOOKDEV_LOCATE_OPERATION,
+    locatePrompt(subjectName, bible.subjects?.[subjectName]?.description),
+    [
+      { ...png(encodePng(locateRender)), role: "close-up front render" },
+      ...[
+        ...references.filter((r) => r.view === "front"),
+        ...references.filter((r) => r.view !== "front"),
+      ].slice(0, 3),
+    ],
+  );
+  const has = parseHas(locateText);
   let markers: { eyes: SurfaceMarker[]; nose: SurfaceMarker[] };
   try {
     markers = parseMarkers(locateText, locateCamera, depthMap(glb, locateCamera));
@@ -1114,18 +1206,33 @@ export async function lookDev(
   const count = (m: Uint8Array) =>
     m.reduce((s, v, i) => s + (v && groomTexels.covered[i] ? 1 : 0), 0);
   for (let i = 0; i < bare.length; i++) bare[i] = eyeMask[i] || noseMask[i] || pads[i] ? 1 : 0;
-  // Each bare mask on its own: an empty one means that part has fur nobody checked.
+  // Each bare mask on its own: an empty one means that part has fur nobody checked. A part the
+  // character lacks (the locate call says so) needs no mask; nor do paw pads on a profile with no
+  // rig template, which leaves the feet unknown (decided from the profile, before any call).
   const bareCounts = { eyes: count(eyeMask), nose: count(noseMask), "paw pads": count(pads) };
+  const parts: Record<BarePart, "required" | "absent" | "not required"> = {
+    eyes: has.eyes ? "required" : "absent",
+    nose: has.nose ? "required" : "absent",
+    pawPads: !has.pawPads ? "absent" : rig ? "required" : "not required",
+  };
+  const partOf = (name: string) =>
+    (Object.keys(BARE_PARTS) as BarePart[]).find((p) => BARE_PARTS[p] === name)!;
   const emptyMasks = Object.entries(bareCounts)
-    .filter(([, n]) => n === 0)
+    .filter(([name, n]) => n === 0 && parts[partOf(name)] === "required")
     .map(([name]) => name);
+  const unrequired = (Object.keys(BARE_PARTS) as BarePart[])
+    .filter((p) => parts[p] !== "required")
+    .map((p) =>
+      parts[p] === "absent"
+        ? `; ${BARE_PARTS[p]}: absent (the locate call says the character has none), no mask required`
+        : `; ${BARE_PARTS[p]}: not required (the profile declares no rig template, so the feet are unknown)`,
+    )
+    .join("");
   const tooSmall = `no texel of the ${groomSize} px groom maps falls inside it`;
   const whyEmpty: Record<string, string> = {
     eyes: markers.eyes.length > 0 ? tooSmall : "the locate call found no eye",
     nose: markers.nose.length > 0 ? tooSmall : "the locate call found no nose",
-    "paw pads": rig
-      ? "no texel faces down under the rig template's feet"
-      : "the profile declares no rig template, so the feet are unknown",
+    "paw pads": "no texel faces down under the rig template's feet",
   };
 
   const reasons: Reason[] = [];
@@ -1158,7 +1265,8 @@ export async function lookDev(
           .map(
             (m) => `; the ${m} mask is empty (${whyEmpty[m]}), so zero length there is unchecked`,
           )
-          .join(""),
+          .join("") +
+        unrequired,
       source: "deterministic",
     });
     const key = look.seasons ? `${season}.` : "";
@@ -1344,10 +1452,15 @@ export async function lookDev(
     lighting,
   });
   const light = catchLight(eyesClose, closeUp(0), markers.eyes);
+  // A character the locate call says has no eyes (a robot with a visor) has no eye material to
+  // light: recorded as absent, not as a failure, like its groom mask.
   reasons.push({
     check: "eyes-catch-light",
-    passed: eyeTriangles > 0 && light.found,
+    passed: parts.eyes === "absent" || (eyeTriangles > 0 && light.found),
     reason:
+      (parts.eyes === "absent"
+        ? "eyes: absent (the locate call says the character has none), no eye material or catch-light required; "
+        : "") +
       `${markers.eyes.length} eye(s) located, ${eyeTriangles} triangle(s) in the "${EYE_MATERIAL}" material; ` +
       `catch-light in ${light.eyes} of ${markers.eyes.length} eye(s) of the close-up at the closest zoom ` +
       `(peak luminance ${light.peak}; the catch-light is the eye material's emissive texture, the base colour has none)`,
@@ -1362,11 +1475,11 @@ export async function lookDev(
   const markingMeasures: MarkingMeasure[] = [];
   const unmeasured: string[] = [];
   const unreadable: string[] = [];
-  const subjectName = subjectOf(spec);
   for (const [v, view] of TURNTABLE_VIEWS.entries()) {
-    const ref = references.find((r) => r.view === view.name);
+    const wanted = referenceViewFor(view.name);
+    const ref = references.find((r) => r.view === wanted);
     if (!ref) {
-      unmeasured.push(`${view.name} (the references have no ${view.name} view)`);
+      unmeasured.push(`${view.name} (the references have no ${wanted} view)`);
       continue;
     }
     // Each render cut to its figure, so the boxes land on the figure at full resolution.
@@ -1498,7 +1611,7 @@ export async function lookDev(
   compareNames.forEach((name, i) => {
     const before = i < 4 ? beforeViews[i]! : beforeClose;
     const afters = plan.seasons.map((s) => (i < 4 ? afterBySeason[s]![i]! : afterClose[s]!));
-    const ref = refFor(name, name === "close-up" ? "front" : name);
+    const ref = refFor(name, referenceViewFor(name));
     const height = before.height;
     artifacts.push({
       name: `compare-${name}.png`,
@@ -1515,7 +1628,7 @@ export async function lookDev(
     artifacts.push({ name: `unlit-after-${v.name}.png`, bytes: encodePng(unlitAfter[i]!) });
   });
 
-  const views = references.map((r) => r.view).filter((v): v is string => v !== undefined);
+  const views = references.map((r) => r.view);
   reasons.push({
     check: "lookdev-compare",
     passed: noColumn.length === 0,
@@ -1523,7 +1636,7 @@ export async function lookDev(
       substituted.length === 0 && noColumn.length === 0
         ? "every compare image leads with the matching view of the approved references"
         : [
-            `the approved references name the view(s) ${views.length > 0 ? [...new Set(views)].join(", ") : "none"}`,
+            `the approved references show the view(s) ${views.length > 0 ? [...new Set(views)].join(", ") : "none"}`,
             ...(substituted.length > 0
               ? [`compare-${substituted.join(", compare-")} show(s) the front reference instead`]
               : []),
@@ -1590,6 +1703,8 @@ export async function lookDev(
         radius: round(m.radius),
       })),
       padRadiusM: round(padRadius),
+      referenceViews: viewRecord(references),
+      parts,
       bareTexels: {
         eyes: bareCounts.eyes,
         nose: bareCounts.nose,

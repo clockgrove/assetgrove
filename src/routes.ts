@@ -22,6 +22,8 @@ export const EMBED_OPERATION = "embed";
 export const PROMPT_POLICY_OPERATION = "prompt-policy";
 /** The brief policy's model check: Boolean decisions on whether text departs from the style bible. */
 export const BRIEF_POLICY_OPERATION = "brief-policy";
+/** Which view a 3D request's reference image shows: one typed choice decision per image. */
+export const REFERENCE_VIEW_OPERATION = "reference-view";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -190,6 +192,19 @@ export const defaultRoutes: Routes = {
   // The brief policy's model check (#324): one Boolean decision per protected bible field on
   // whether a brief's or the compiler's text departs from the bible; same model and bound.
   [BRIEF_POLICY_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+  },
+  // Which view a 3D request's reference shows (#325): one typed choice decision per image, on the
+  // same typed decision model and upper bound as identity.
+  [REFERENCE_VIEW_OPERATION]: {
     model: "perplexity/pplx-decider-v1.2",
     estimatedCostUsd: 0.001,
     outputGrant: {
@@ -407,6 +422,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   identity: "decisions",
   [PROMPT_POLICY_OPERATION]: "decisions",
   [BRIEF_POLICY_OPERATION]: "decisions",
+  [REFERENCE_VIEW_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",
