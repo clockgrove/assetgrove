@@ -9,7 +9,7 @@ import {
 import type { ContentSigner, SignerRecord } from "./credentials.ts";
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { DigitalSourceType } from "./metadata.ts";
@@ -116,6 +116,15 @@ function realOf(path: string): string {
   if (existsSync(path)) return realpathSync.native(path);
   const parent = dirname(path);
   return parent === path ? path : join(realOf(parent), basename(path));
+}
+
+/**
+ * Whether two paths reach one file: compared as real paths, so a link, a short (8.3) name or a
+ * case-insensitive file system's other spelling of the same file is the same file.
+ */
+export function sameFilePath(a: string, b: string): boolean {
+  const [x, y] = [realOf(resolve(a)), realOf(resolve(b))];
+  return x === y || (process.platform !== "linux" && x.toLowerCase() === y.toLowerCase());
 }
 
 /** What every hand-off write is checked against. */
@@ -242,6 +251,17 @@ export interface TargetWrite {
   replaces?: string | null;
   /** The clock the library's version and log line are stamped with. */
   now?: () => Date;
+  /**
+   * A person's hand edit adopted as the next version (`library adopt`): the media's C2PA claim
+   * records the edit of `original` (the AI-made version, a `parentOf` ingredient), the version is
+   * appended with the annotation action `adopt`, and the validator runs before the library, so a
+   * rejection records no version.
+   */
+  adopt?: {
+    original: Uint8Array;
+    /** Run under the library write lock before the first write; it throws to stop the adopt. */
+    underLock?: () => Promise<void>;
+  };
 }
 
 /** What a hand-off wrote into the library (docs/library.md). */
@@ -333,6 +353,64 @@ export async function writeToTarget(write: TargetWrite): Promise<TargetWriteResu
   return commitTargetWrite(await prepareTargetWrite(write));
 }
 
+/** What the profile's layout and templates read as `spec`, `profile`, `bible`, `output`, `provenance` and `run`. */
+function layoutContext(
+  write: TargetWrite,
+  provenance: Provenance,
+  output: Pick<TargetWrite["output"], "bytes" | "mediaType" | "extension" | "fields">,
+): Record<string, unknown> {
+  const { profile, spec } = write;
+  return {
+    spec: { ...spec.fields, ...spec },
+    profile: {
+      ...profile.values,
+      name: profile.name,
+      // The licence this output is declared under, so a template never relabels it.
+      license: provenance.license,
+      ...(profile.style !== undefined && { style: profile.style }),
+    },
+    bible: { version: write.bibleVersion },
+    output: {
+      ...output.fields,
+      mediaType: output.mediaType,
+      extension: output.extension,
+      sha256: sha256(output.bytes),
+    },
+    provenance,
+    run: write.run,
+  };
+}
+
+/** The provenance file of its own a hand-off writes, relative to the target; undefined when the manifest embeds it. */
+function ownProvenanceRel(
+  profile: TargetProfile,
+  context: Record<string, unknown>,
+  mediaRel: string,
+): string | undefined {
+  return profile.layout.provenance !== undefined
+    ? renderString(profile.layout.provenance, context)
+    : embedsProvenance(profile.manifest)
+      ? undefined
+      : `${mediaRel}.provenance.json`;
+}
+
+/**
+ * Where a hand-off of `write` whose media is at `mediaRel` (relative to the target) keeps the
+ * provenance, relative to the target: its own file, else the manifest that embeds it. Rendered as
+ * `prepareTargetWrite` renders it; undefined when the layout cannot be rendered from `write`.
+ */
+export function provenanceLayout(write: TargetWrite, mediaRel: string): string | undefined {
+  try {
+    const context = layoutContext(write, write.provenance, write.output);
+    return (
+      ownProvenanceRel(write.profile, context, mediaRel) ??
+      renderString(write.profile.layout.manifest, context)
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 /** Everything `writeToTarget` checks and renders before its first write; writes nothing. */
 export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTargetWrite> {
   const { profile, spec } = write;
@@ -398,25 +476,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     validatorStep = await requireApproval(identity, gate);
     provenance.commands = [...(provenance.commands ?? []), validatorStep];
   }
-  const context: Record<string, unknown> = {
-    spec: { ...spec.fields, ...spec },
-    profile: {
-      ...profile.values,
-      name: profile.name,
-      // The licence this output is declared under, so a template never relabels it.
-      license: provenance.license,
-      ...(profile.style !== undefined && { style: profile.style }),
-    },
-    bible: { version: write.bibleVersion },
-    output: {
-      ...output.fields,
-      mediaType: output.mediaType,
-      extension: output.extension,
-      sha256: sha256(output.bytes),
-    },
-    provenance,
-    run: write.run,
-  };
+  const context = layoutContext(write, provenance, output);
   const signed: string[] = [];
   const sign = signer && credentialSigner(signer, guard, digitalSourceType, provenance.models);
   let contentSha256: string | undefined;
@@ -424,18 +484,13 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     contentSha256 = sha256(output.bytes);
     // The path is rendered first to find the file already there, then again with the signed bytes.
     const rel = renderString(profile.layout.media, context);
-    output.bytes = await sign(rel, output.bytes, output.mediaType);
+    output.bytes = await sign(rel, output.bytes, output.mediaType, write.adopt?.original);
     (context["output"] as Record<string, unknown>)["sha256"] = sha256(output.bytes);
   }
   const mediaRel = renderString(profile.layout.media, context);
   if (sign && canCarryCredentials(output.mediaType)) signed.push(mediaRel);
   const manifestRel = renderString(profile.layout.manifest, context);
-  const provenanceRel =
-    profile.layout.provenance !== undefined
-      ? renderString(profile.layout.provenance, context)
-      : embedsProvenance(profile.manifest)
-        ? undefined
-        : `${mediaRel}.provenance.json`;
+  const provenanceRel = ownProvenanceRel(profile, context, mediaRel);
   (context["output"] as Record<string, unknown>)["path"] = mediaRel;
   const sidecarRels: string[] = [];
   for (const sidecar of sidecars) {
@@ -544,14 +599,26 @@ function credentialSigner(
   guard: TargetGuard,
   digitalSourceType: DigitalSourceType,
   models: readonly string[],
-): (rel: string, bytes: Uint8Array, mediaType: string) => Promise<Uint8Array> {
-  return async (rel, bytes, mediaType) => {
+): (
+  rel: string,
+  bytes: Uint8Array,
+  mediaType: string,
+  original?: Uint8Array,
+) => Promise<Uint8Array> {
+  return async (rel, bytes, mediaType, original) => {
     const path = targetPath(guard, rel);
     const existing = await readFile(path).then(
       (data) => new Uint8Array(data),
       () => undefined,
     );
-    const claim = { digitalSourceType, models, title: posix.basename(rel.replaceAll("\\", "/")) };
+    const title = posix.basename(rel.replaceAll("\\", "/"));
+    // An adopted hand edit records the edit of its original, a `parentOf` ingredient.
+    const claim = {
+      digitalSourceType,
+      models,
+      title,
+      ...(original !== undefined && { original: { bytes: original, mediaType, title } }),
+    };
     return credentialed(bytes, mediaType, claim, signer, assetgroveVersion(), existing);
   };
 }
@@ -559,7 +626,8 @@ function credentialSigner(
 /**
  * Writes a prepared hand-off under the library write lock, each file through a temporary file
  * renamed over it: the media, its files and provenance, then each preset's check, then the library
- * (review record, card, indexes, log); then runs the approved validator.
+ * (review record, card, indexes, log); then runs the approved validator. An adopt runs its
+ * validator before the library, and a failed check or a rejection puts back every file it wrote.
  */
 export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
   const lock = acquireLibraryLock(prepared.targetDir, prepared.gate.settings.stateDir);
@@ -572,7 +640,27 @@ export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<
 
 async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
   const { targetDir, guard, presets, presetContext, presetFiles, writes } = prepared;
-  const { profile } = prepared.write;
+  await prepared.write.adopt?.underLock?.();
+  // An adopt that fails puts back every file it wrote, so no file describes an unrecorded version.
+  const before =
+    prepared.write.adopt === undefined
+      ? undefined
+      : await Promise.all(
+          writes.map(([path]) =>
+            readFile(path).then(
+              (bytes) => new Uint8Array(bytes),
+              () => undefined,
+            ),
+          ),
+        );
+  const restore = async () => {
+    if (before === undefined) return;
+    for (const [i, [path]] of writes.entries()) {
+      const bytes = before[i];
+      if (bytes === undefined) await rm(path, { force: true });
+      else await writeAtomic(path, bytes);
+    }
+  };
   for (const [path, content] of writes) await writeAtomic(path, content);
 
   const result: TargetWriteResult = {
@@ -620,7 +708,16 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
       if (type !== undefined) marked.push([file.path, type]);
     }
     for (const [path, type] of marked) {
-      problems.push(...(await fileProblems(path, await read(path), type, expected, preset.name)));
+      const adopted = write.adopt !== undefined && path === prepared.mediaRel;
+      problems.push(
+        ...(await fileProblems(
+          path,
+          await read(path),
+          type,
+          { ...expected, adopted },
+          preset.name,
+        )),
+      );
     }
   }
   // Sidecars are read back whatever the presets are.
@@ -633,7 +730,25 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     };
     problems.push(...(await fileProblems(rel, await read(rel), type, expected, "sidecar")));
   }
-  if (problems.length > 0) throw new HandoffCheckError(problems);
+  if (problems.length > 0) {
+    await restore();
+    throw new HandoffCheckError(problems);
+  }
+  // An adopt's validator runs before the library, so a rejection records no version.
+  if (write.adopt !== undefined) {
+    let validator: ValidatorResult | undefined;
+    try {
+      validator = await runValidator(prepared);
+    } catch (error) {
+      await restore();
+      throw error;
+    }
+    if (validator !== undefined) result.validator = validator;
+    if (validator?.accepted === false) {
+      await restore();
+      return result;
+    }
+  }
   // Every preset check passed: the version goes into the library.
   const library = await commitLibraryWrite(prepared.library, {
     mediaBytes: prepared.mediaBytes,
@@ -645,6 +760,10 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     candidate: String(write.run["candidateId"] ?? ""),
     ...(write.confirmation && { confirmation: write.confirmation }),
     ...(write.candidateReview && { candidateReview: write.candidateReview }),
+    ...(write.adopt !== undefined && {
+      action: "adopt" as const,
+      digitalSourceType: prepared.provenance.digitalSourceType,
+    }),
     now: (write.now ?? (() => new Date()))(),
     assetgrove: assetgroveVersion(),
   });
@@ -652,6 +771,17 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     ...library,
     files: library.files.map((path) => relativeRecordPath(targetDir, path)),
   };
+  if (write.adopt === undefined) {
+    const validator = await runValidator(prepared);
+    if (validator !== undefined) result.validator = validator;
+  }
+  return result;
+}
+
+/** Runs the profile's approved validator on the written target, when it declares one. */
+async function runValidator(prepared: PreparedTargetWrite): Promise<ValidatorResult | undefined> {
+  const { targetDir } = prepared;
+  const { profile } = prepared.write;
   if (profile.validator && prepared.validatorStep) {
     // The approval must hold for the command as the written target now has it.
     const identity = commandIdentity("validator", profile.validator.command, targetDir);
@@ -668,14 +798,14 @@ async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteR
     try {
       const { stdout, stderr } = await run(program, args, { cwd: targetDir, env: keyFreeEnv() });
       const output = redact(`${stdout}${stderr}`.trim());
-      result.validator = { accepted: true, command, output, approval };
+      return { accepted: true, command, output, approval };
     } catch (error) {
       const e = error as { stdout?: string; stderr?: string; message: string };
       const out = redact(`${e.stdout ?? ""}${e.stderr ?? ""}`.trim() || e.message);
-      result.validator = { accepted: false, command, output: out, approval };
+      return { accepted: false, command, output: out, approval };
     }
   }
-  return result;
+  return undefined;
 }
 
 /**
@@ -686,7 +816,7 @@ async function fileProblems(
   path: string,
   bytes: Uint8Array | undefined,
   type: string,
-  expected: { digitalSourceType: DigitalSourceType; models: readonly string[] },
+  expected: { digitalSourceType: DigitalSourceType; models: readonly string[]; adopted?: boolean },
   preset: string,
 ): Promise<HandoffProblem[]> {
   const problems: HandoffProblem[] = markProblems(path, bytes, type, expected).map((problem) => ({
@@ -696,7 +826,11 @@ async function fileProblems(
     code: problem.includes(" lacks ") ? "mark_missing" : "mark_invalid",
   }));
   if (bytes !== undefined && canCarryCredentials(type)) {
-    const found = await credentialProblem(path, bytes, type, expected);
+    const found = await credentialProblem(path, bytes, type, {
+      digitalSourceType: expected.digitalSourceType,
+      models: expected.models,
+      ...(expected.adopted === true && { adopted: true }),
+    });
     if (found) problems.push({ preset, file: path, ...found });
   }
   return problems;

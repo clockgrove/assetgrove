@@ -10,7 +10,7 @@ import {
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
@@ -135,6 +135,18 @@ test("the hash is equal for one repository at two paths, and changes with argv, 
   await writeFile(join(a, "tools", "check.mjs"), "process.exit(1);\n");
   assert.notEqual(commandIdentity("validator", argv, a).hash, first.hash);
   assert.equal(commandIdentity("validator", argv, b).hash, first.hash);
+
+  // A file named by an absolute path through a symlink to the repository is still hashed.
+  const link = join(dir, "link");
+  await symlink(a, link, "junction");
+  const viaLink = commandIdentity("validator", ["node", join(link, "tools", "check.mjs")], a);
+  assert.deepEqual(Object.keys(viaLink.files), ["tools/check.mjs"]);
+  const changed = viaLink.hash;
+  await writeFile(join(a, "tools", "check.mjs"), "process.exit(2);\n");
+  assert.notEqual(
+    commandIdentity("validator", ["node", join(link, "tools", "check.mjs")], a).hash,
+    changed,
+  );
 
   // Outside a repository the cwd is absolute, so the same command elsewhere is another command.
   const loose = await mkdtemp(join(tmpdir(), "assetgrove-loose-"));
