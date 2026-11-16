@@ -258,7 +258,8 @@ export const RUN_FILE = "run.json";
 /**
  * Run-relative record paths for a candidate's artifacts in `dir`: the last segment of each name,
  * made safe and unique ignoring case (`a.png`, `A.png` -> `a.png`, `A-2.png`). `artifactNames`
- * lists only the files written under a name other than the one returned.
+ * lists each file written under a name other than the name's last `/` segment, which is what was
+ * written before names were mapped; so `sub\file.png` is listed and `dir/file.png` is not.
  */
 function artifactPaths(
   dir: string,
@@ -278,7 +279,7 @@ function artifactPaths(
     used.add(unique.toLowerCase());
     const file = posix.join(dir, unique);
     artifacts.push(file);
-    if (unique !== given) artifactNames.push({ file, original: name });
+    if (unique !== name.split("/").pop()) artifactNames.push({ file, original: name });
   }
   return { artifacts, artifactNames };
 }

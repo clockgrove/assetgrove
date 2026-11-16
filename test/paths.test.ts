@@ -236,7 +236,15 @@ test("safeFileName maps names the path rules refuse to names checkWrites accepts
 test("a generator's artifact names the path rules refuse never lose the paid candidate", async () => {
   const world = await syntheticWorld();
   const base = imageGenerators.find((g) => g.kind === shelterSpec.kind) as Generator;
-  const names = ["view:front.png", "con", "Sheet.png", "sheet.png", "ok.png"];
+  const names = [
+    "view:front.png",
+    "con",
+    "Sheet.png",
+    "sheet.png",
+    "ok.png",
+    "sub\\back.png",
+    "dir/side.png",
+  ];
   const withNames: Generator = {
     ...base,
     async generate(input) {
@@ -275,11 +283,14 @@ test("a generator's artifact names the path rules refuse never lose the paid can
       `${dir}/Sheet.png`,
       `${dir}/sheet-2.png`,
       `${dir}/ok.png`,
+      `${dir}/back.png`,
+      `${dir}/side.png`,
     ]);
     assert.deepEqual(entry.artifactNames, [
       { file: `${dir}/view-front.png`, original: "view:front.png" },
       { file: `${dir}/_con`, original: "con" },
       { file: `${dir}/sheet-2.png`, original: "sheet.png" },
+      { file: `${dir}/back.png`, original: "sub\\back.png" },
     ]);
     checkWrites(entry.artifacts);
     for (const file of entry.artifacts) await readFile(join(runDir, file));
