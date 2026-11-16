@@ -35,13 +35,13 @@ import {
   readOwnCard,
   readOwnReview,
   readText,
-  scanCards,
+  scanLibrary,
   writeAtomic,
   writeIfChanged,
   writeIndexes,
   writeLogs,
 } from "./write.ts";
-import type { LibraryConfig } from "./write.ts";
+import type { LibraryConfig, UnreadableRecord } from "./write.ts";
 
 /** A picked asset as its card, review record and media lie in the library. */
 export interface AssetLocation {
@@ -177,6 +177,8 @@ export interface AssetWrite {
   state: VersionStatus;
   /** Every file written, absolute, in write order. */
   files: string[];
+  /** Cards and review records that do not parse; their rows in the index and log were kept as they were. */
+  unreadable?: UnreadableRecord[];
 }
 
 /**
@@ -195,18 +197,23 @@ export async function writeAsset(
     ...(options.qaAt !== undefined && { qaAt: options.qaAt }),
   });
   if (await writeIfChanged(asset.cardPath, writeCard(card))) files.push(asset.cardPath);
-  const cards = scanCards(asset.config.root);
-  files.push(...(await writeIndexes(asset.config, cards)));
+  const { cards, unreadable } = scanLibrary(asset.config.root);
+  files.push(...(await writeIndexes(asset.config, cards, unreadable)));
   if (asset.config.log) {
     files.push(
-      ...(await writeLogs(asset.config, cards, {
-        dir: asset.dir,
-        assetId: asset.assetId,
-        title: String(card.data["title"]),
-        record,
-        at: new Date().toISOString(),
-        before: cards,
-      })),
+      ...(await writeLogs(
+        asset.config,
+        cards,
+        {
+          dir: asset.dir,
+          assetId: asset.assetId,
+          title: String(card.data["title"]),
+          record,
+          at: new Date().toISOString(),
+          before: cards,
+        },
+        unreadable,
+      )),
     );
   }
   const current = record.versions.at(-1)!;
@@ -215,6 +222,7 @@ export async function writeAsset(
     sha256: current.sha256,
     state: versionStatus(record, current.sha256),
     files,
+    ...(unreadable.length > 0 && { unreadable }),
   };
 }
 

@@ -287,6 +287,11 @@ export interface LibraryResult {
   appended: boolean;
   /** Every library file this hand-off changed, relative to the target, in write order. */
   files: string[];
+  /**
+   * Cards and review records that do not parse, relative to the target; their assets' rows in
+   * `index.md` and `log.md` were kept as those files had them. Absent when there are none.
+   */
+  unreadable?: { file: string; code: "card_invalid" | "review_invalid" | "index_invalid" }[];
 }
 
 /** The C2PA content credentials a hand-off signed into its images (docs/disclosure.md, "Content credentials"). */
@@ -821,6 +826,12 @@ async function commitWritten(
   result.library = {
     ...library,
     files: library.files.map((path) => relativeRecordPath(targetDir, path)),
+    ...(library.unreadable && {
+      unreadable: library.unreadable.map((u) => ({
+        ...u,
+        file: relativeRecordPath(targetDir, u.file),
+      })),
+    }),
   };
   if (write.adopt === undefined) {
     const validator = await runValidator(prepared);

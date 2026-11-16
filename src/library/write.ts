@@ -33,7 +33,13 @@ import {
   writeCard,
 } from "./card.ts";
 import type { Card } from "./card.ts";
-import { renderIndex, renderLog, logEntriesFromReview } from "./folder.ts";
+import {
+  indexAssetsFor,
+  logEntriesFromReview,
+  logLinesFor,
+  renderIndex,
+  renderLog,
+} from "./folder.ts";
 import type { LogEntry } from "./folder.ts";
 import { parseLfsPointer } from "./lfs.ts";
 import { libraryPath } from "./paths.ts";
@@ -167,7 +173,24 @@ const SKIP_DIR = (name: string) =>
  * `node_modules` or `<id>.review` folders.
  */
 export function scanCards(root: string): FoundCard[] {
+  return scanLibrary(root).cards;
+}
+
+/**
+ * A library file that exists but does not parse, with `library check`'s code for it: a card or
+ * review record, whose rows the projections keep as they are, or an `index.md` left unwritten
+ * because the rows it holds for an unreadable card could not be read.
+ */
+export interface UnreadableRecord {
+  /** The file, absolute. */
+  file: string;
+  code: "card_invalid" | "review_invalid" | "index_invalid";
+}
+
+/** Every card under the library root, and the cards there that do not parse. */
+export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: UnreadableRecord[] } {
   const found: FoundCard[] = [];
+  const unreadable: UnreadableRecord[] = [];
   const walk = (dir: string): void => {
     let entries;
     try {
@@ -189,7 +212,15 @@ export function scanCards(root: string): FoundCard[] {
       } catch {
         continue;
       }
-      if (!/^---\r?\n/.test(text) || !text.includes("Game Asset")) continue;
+      const id = entry.name.slice(0, -".md".length);
+      if (!/^---\r?\n/.test(text) || !text.includes("Game Asset")) {
+        // Not a card, unless a review record beside it says it is one: then it is a card that does
+        // not parse (a whole-file conflict puts a marker on line 1), and its rows are kept.
+        if (existsSync(join(dir, `${id}.review.json`))) {
+          unreadable.push({ file: path, code: "card_invalid" });
+        }
+        continue;
+      }
       try {
         const card = parseCard(text, path);
         const data = card.data as {
@@ -201,7 +232,7 @@ export function scanCards(root: string): FoundCard[] {
         };
         found.push({
           dir,
-          id: entry.name.slice(0, -".md".length),
+          id,
           title: data.title,
           ...(typeof data.description === "string" && { description: data.description }),
           ...((data.bible ?? data.lock?.bible) !== undefined && {
@@ -211,12 +242,33 @@ export function scanCards(root: string): FoundCard[] {
           ...(typeof data.lock?.sha256 === "string" && { sha256: data.lock.sha256 }),
         });
       } catch {
-        // Not a card this build reads; `library check` reports it.
+        // Not a card this build reads; `library check` reports it, and its folder's projections keep
+        // its rows as they are.
+        unreadable.push({ file: path, code: "card_invalid" });
       }
     }
   };
   walk(root);
-  return found;
+  return { cards: found, unreadable };
+}
+
+/**
+ * The asset ids in `folder` whose rows a projection carries over as they are, because a file of
+ * theirs does not parse: the index's for an unreadable card, the log's for either file.
+ */
+function heldIds(
+  unreadable: UnreadableRecord[],
+  folder: string,
+  projection: "index" | "log",
+): Set<string> {
+  const ids = new Set<string>();
+  for (const { file, code } of unreadable) {
+    if (dirname(file) !== folder || code === "index_invalid") continue;
+    if (projection === "index" && code !== "card_invalid") continue;
+    const name = basename(file);
+    ids.add(name.slice(0, -(code === "card_invalid" ? ".md" : ".review.json").length));
+  }
+  return ids;
 }
 
 /** What a hand-off's library write needs, checked before anything is written. */
@@ -610,6 +662,11 @@ export interface LibraryWriteResult {
   appended: boolean;
   /** Every library file this write changed, absolute, in write order. */
   files: string[];
+  /**
+   * Cards and review records that do not parse; their folders' `index.md` and `log.md` were left as
+   * they were. Absent when there are none.
+   */
+  unreadable?: UnreadableRecord[];
 }
 
 /**
@@ -712,8 +769,8 @@ export async function commitLibraryWrite(
   const title = (card.data as { title: string }).title;
 
   // 5. Each index.md from the library root down.
-  const cards = scanCards(config.root);
-  files.push(...(await writeIndexes(config, cards, journal)));
+  const { cards, unreadable } = scanLibrary(config.root);
+  files.push(...(await writeIndexes(config, cards, unreadable, journal)));
 
   // 6. log.md, projected from the review records, unless logs are off.
   if (config.log) {
@@ -730,6 +787,7 @@ export async function commitLibraryWrite(
           bibleVersion: input.provenance.bibleVersion,
           before: plan.cards,
         },
+        unreadable,
         journal,
       )),
     );
@@ -742,6 +800,7 @@ export async function commitLibraryWrite(
     state: versionStatus(record, record.versions.at(-1)!.sha256),
     appended,
     files,
+    ...(unreadable.length > 0 && { unreadable }),
   };
 }
 
@@ -770,18 +829,29 @@ export function libraryWritePaths(plan: LibraryPlan): string[] {
 export async function writeIndexes(
   config: LibraryConfig,
   cards: FoundCard[],
+  unreadable: UnreadableRecord[] = [],
   journal?: WriteJournal,
 ): Promise<string[]> {
   const files: string[] = [];
   const folders = new Set<string>([config.root]);
-  for (const found of cards) {
-    for (let folder = found.dir; within(config.root, folder); folder = dirname(folder)) {
+  const held = unreadable.filter((u) => u.code === "card_invalid").map((u) => dirname(u.file));
+  for (const dir of [...cards.map((c) => c.dir), ...held]) {
+    for (let folder = dir; within(config.root, folder); folder = dirname(folder)) {
       folders.add(folder);
       if (folder === config.root) break;
     }
   }
   for (const folder of [...folders].sort()) {
     const isRoot = folder === config.root;
+    const path = join(folder, "index.md");
+    // A card that does not parse keeps the row the index has for it.
+    const kept = indexAssetsFor(await readText(path), heldIds(unreadable, folder, "index"));
+    if (kept === undefined) {
+      // The rows of an unreadable card are in an index that does not parse either: rewritten, the
+      // index would lose them, so it is left as it is and reported.
+      unreadable.push({ file: path, code: "index_invalid" });
+      continue;
+    }
     const text = renderIndex({
       name: isRoot ? config.game : basename(folder),
       ...(isRoot && { root: { game: config.game } }),
@@ -794,9 +864,9 @@ export async function writeIndexes(
           id: c.id,
           title: c.title,
           ...(c.description !== undefined && { description: c.description }),
-        })),
+        }))
+        .concat(kept),
     });
-    const path = join(folder, "index.md");
     if (await writeIfChanged(path, text, journal)) files.push(path);
   }
   return files;
@@ -818,12 +888,15 @@ export interface LogSubject {
 
 /**
  * Writes the asset folder's `log.md` from the review records of the cards in it, and the root log
- * when a `bible` line is added (it keeps its `bible` lines); the files it changed.
+ * when a `bible` line is added (it keeps its `bible` lines); the files it changed. A card or review
+ * record that does not parse keeps the lines the log has for its asset: each review record found
+ * unreadable here is added to `unreadable`.
  */
 export async function writeLogs(
   config: LibraryConfig,
   cards: FoundCard[],
   subject: LogSubject,
+  unreadable: UnreadableRecord[] = [],
   journal?: WriteJournal,
 ): Promise<string[]> {
   const files: string[] = [];
@@ -854,7 +927,8 @@ export async function writeLogs(
         try {
           review = await readOwnReview(reviewPath, config.root, folder, undefined);
         } catch {
-          review = undefined;
+          unreadable.push({ file: reviewPath, code: "review_invalid" });
+          continue;
         }
       }
       if (review) {
@@ -864,7 +938,8 @@ export async function writeLogs(
       }
     }
     const path = join(folder, "log.md");
-    if (await writeIfChanged(path, renderLog(entries), journal)) files.push(path);
+    const kept = logLinesFor(await readText(path), heldIds(unreadable, folder, "log"));
+    if (await writeIfChanged(path, renderLog(entries, kept), journal)) files.push(path);
   }
   return files;
 }

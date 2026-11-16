@@ -223,15 +223,74 @@ function emitLog(days: Map<string, Set<string>>): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** The text of a `log.md`: newest first, one line per entry, identical lines collapsed. */
-export function renderLog(entries: LogEntry[]): string {
+/** One rendered log line, under its day's heading. */
+export interface LogLine {
+  date: string;
+  line: string;
+}
+
+/**
+ * The text of a `log.md`: newest first, one line per entry, identical lines collapsed. `kept` lines
+ * (carried over as they are from the current log) are rendered with them.
+ */
+export function renderLog(entries: LogEntry[], kept: LogLine[] = []): string {
   const days = new Map<string, Set<string>>();
-  for (const entry of entries) {
-    const { date, line } = logLine(entry);
+  for (const { date, line } of [...entries.map(logLine), ...kept]) {
     if (!days.has(date)) days.set(date, new Set());
     days.get(date)!.add(line);
   }
   return emitLog(days);
+}
+
+/** The lines of a log that link to one of the asset ids' cards, as they are. */
+export function logLinesFor(text: string | undefined, ids: Set<string>): LogLine[] {
+  const kept: LogLine[] = [];
+  if (ids.size === 0 || text === undefined) return kept;
+  let date: string | undefined;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    const heading = /^## (\d{4}-\d{2}-\d{2})$/.exec(line);
+    if (heading) {
+      date = heading[1];
+      continue;
+    }
+    if (date === undefined || !line.startsWith("- ")) continue;
+    let targets: string[];
+    try {
+      targets = logLinks(line);
+    } catch {
+      continue;
+    }
+    if (targets.some((t) => t.endsWith(".md") && ids.has(t.slice(0, -".md".length)))) {
+      kept.push({ date, line });
+    }
+  }
+  return kept;
+}
+
+/**
+ * The asset rows of an index that name one of the asset ids, as entries `renderIndex` takes;
+ * `undefined` when there are ids to keep and the index does not parse, so their rows cannot be read
+ * and the index must be left as it is.
+ */
+export function indexAssetsFor(
+  text: string | undefined,
+  ids: Set<string>,
+): IndexAsset[] | undefined {
+  if (ids.size === 0 || text === undefined) return [];
+  let parsed: ParsedIndex;
+  try {
+    parsed = parseIndex(text, "index.md");
+  } catch {
+    return undefined;
+  }
+  return parsed.assets
+    .filter((a) => ids.has(a.id) && a.target === `${a.id}.md`)
+    .map((a) => ({
+      id: a.id,
+      title: a.title,
+      ...(a.description !== undefined && { description: a.description }),
+    }));
 }
 
 /** Re-emits a possibly union-merged log: duplicate headings merged, duplicate lines dropped, order restored. */
