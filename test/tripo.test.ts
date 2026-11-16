@@ -276,6 +276,37 @@ test("callCost is undefined while the task runs, and null without a rate", async
   );
 });
 
+test("callCost is null for a task ID Tripo rejects, and a transport failure still throws", async () => {
+  const f = fake({});
+  const tripo = provider(f, [], undefined, { usdPerCredit: 0.01 });
+  // The fake answers an unknown task with code 1, HTTP 404.
+  assert.equal(await tripo.callCost("task-gone"), null);
+  const down = provider(
+    {
+      fetch: (async () => {
+        throw new TypeError("fetch failed");
+      }) as typeof fetch,
+    },
+    [],
+    undefined,
+    { usdPerCredit: 0.01 },
+  );
+  await assert.rejects(down.callCost("task-1"), ProviderError);
+  const unauthorised = provider(
+    {
+      fetch: (async () =>
+        new Response(JSON.stringify({ code: 1002, message: "bad key" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        })) as typeof fetch,
+    },
+    [],
+    undefined,
+    { usdPerCredit: 0.01 },
+  );
+  await assert.rejects(unauthorised.callCost("task-1"), ProviderError);
+});
+
 test("the tripo adapter keeps callCost through its billing", () => {
   const configured = createProvider(
     "tripo",
