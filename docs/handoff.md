@@ -17,7 +17,7 @@ Both write from the strip's own geometry (`frames` width, height, count and `dur
 
 ## Checks
 
-Each preset reads the JSON and the PNG back. A problem exits 6 `handoff_check_failed` and the validator does not run. The checks are: the **shape** (`frames` is an object or an array as chosen), the **size** (`meta.size`, and the PNG's own width and height, equal frame width times count by frame height), every frame's **rectangle** (`x` is index times frame width, `y` is 0), the **frame count**, the **image path** (`meta.image` is a relative path with `/` that names the written PNG), and the **tag coverage** (`animations` lists every frame name in order; `meta.frameTags` cover frames 0 to count - 1 without naming a frame outside that range, and each frame has its `duration`).
+Each preset reads the JSON and the PNG back. A problem exits 6 `handoff_check_failed` and the validator does not run. The checks are: the **shape** (`frames` is an object or an array as chosen), the **size** (`meta.size`, and the PNG's own width and height, equal frame width times count by frame height), every frame's **rectangle** (`x` is index times frame width, `y` is 0), the **frame count**, the **image path** (`meta.image` is a relative path with `/` that names the written PNG), and the **tag coverage** (`animations` holds exactly the animation the preset wrote, listing every frame name in order, so a missing `animations`, a renamed animation or a dropped frame fails; `meta.frameTags` cover frames 0 to count - 1 without naming a frame outside that range, and each frame has its `duration`).
 
 ## Engines
 
