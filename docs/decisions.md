@@ -33,7 +33,7 @@ Every command follows one contract, so scripts and agents can drive Assetgrove w
 - Exit codes:
   - 0: success.
   - 1: unexpected internal error.
-  - 2: invalid input.
+  - 2: invalid input, including `provenance_mismatch`: a provenance file named with media is not that media's record ([Provenance is bound to its media](#provenance-is-bound-to-its-media)).
   - 3: cap refused, by the run's cap or a cross-run spend limit, including a dry-run forecast over either.
   - 4: provider error.
   - 5: QA found nothing.
@@ -172,6 +172,21 @@ Which provider and model serve an operation decides what is spent and what the o
 ## Provider output grants
 
 Provider terms differ on who owns an output, so each route declares its `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`), every call records it, and the provenance carries the most restrictive combination over its calls. No grant, no hand-off: a provenance with a call that records no grant is refused at `pick` and `write-families` with exit 7 (`license_refused`), naming the call's route and the settings field (`routes.<operation>.outputGrant` or `roles.<role>.outputGrant`) that declares it. Core defaults carry the grant their terms give, or none. The provenance's `license` is the target's licence only when the grant allows relabelling; otherwise it is the granted licence, when that licence is commercial and the target lists it in `acceptedLicenses`. Anything else is refused at hand-off (`pick`, `write-families`) with exit 7 (`license_refused`) before a file is written. Staging is unaffected, so free-credit trials that never reach a target still run.
+
+## Provenance is bound to its media
+
+`lod`, `rig` and `look-dev` (`--model` with `--provenance`) and `fix-frame` (a strip's own provenance, from `--provenance` or `<strip>.provenance.json`) read the record whose calls carry the licence grant hand-off checks. So the record must be the record of the media it is named with, and that is a check, not a reading of the record's contents (src/provenance-binding.ts).
+
+Every record Assetgrove writes beside media carries `binding`: `mediaSha256`, the sha256 of the exact bytes it describes, and `recordSha256`, the sha256 of the record's canonical JSON (keys sorted, no whitespace) without `binding`. Hand-off binds last, after the mark and the C2PA content credentials have rewritten the media, so the binding is of the final file; `fix-frame`, `vary` and `request-change` bind the records they write beside their files. A record named with media is accepted when:
+
+- its binding holds: `recordSha256` is the record's own and `mediaSha256` is the media's. Another media's record, or one whose calls (or anything else) were emptied or edited, is refused. A second hand-off of handed-off media checks the record the first one bound, and binds its own record to its own bytes;
+- it has no binding, and the library review record beside the media (`<assetId>.review.json`) lists a version with the media's sha256 and the file's `provenanceSha256`. This is how a record written by the Phase 1 release (0.1.0), which had no binding, is **still accepted**: no command is needed to bring it up to date, and the next hand-off writes a bound record;
+- it has no binding, and the run record (`run.json`) beside the media stages a candidate with the media's sha256 and exactly this provenance (a staged candidate's record copied out of its run);
+- it has no binding, records no call (`calls: []`), and the media's own mark names no model (IPTC `AISystemUsed`): media made outside Assetgrove, such as a model passed to `lod` or `rig`. The record is marked `madeOutsideAssetgrove: true`, which the hand-off's provenance file and a manifest that embeds `{{provenance}}` carry (templates can name `{{provenance.madeOutsideAssetgrove}}`).
+
+Anything else exits 2 `provenance_mismatch` before anything is staged or spent, naming the media and the provenance file. A record with no binding and no calls on media whose mark names a model is refused, so emptying both the calls and the binding does not pass as media made outside Assetgrove.
+
+The binding is a pair of sha256 digests, not a signature: it answers whether a file is the record written with these bytes, and anyone can recompute a sha256. The signed claim about an image stays its C2PA content credentials. Media in a format that carries no mark cannot contradict a record with no calls, so such a record is taken as made outside Assetgrove.
 
 ## Settings are validated with zod; command inputs stay JSON Schema
 
