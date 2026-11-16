@@ -155,7 +155,7 @@ asset://<game>/
   by-kind/<kind>/<asset>
   by-subject/<subject>/<asset>
   by-tag/<tag>/<asset>
-  stale/<asset>                      picked under an older style bible
+  stale/<asset>                      made under another bible version, judged to need redoing
   runs/<run>/<candidate>             candidates, including rejects
   <asset>/image  <asset>/card  <asset>/provenance
   find/{words}                       search by meaning

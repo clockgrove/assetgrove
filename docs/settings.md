@@ -163,7 +163,7 @@ Each operation maps to a role:
 | `image`                       | `still`, `sheet`                                                                                                                      | image               |
 | `edit`                        | `edit`, `lookdev`, `fix`                                                                                                              | edit                |
 | `vision`                      | `vision`, `flicker`, `holes`, `lookdev-locate`, `lookdev-groom`, `lookdev-markings`, `identity-cast`, `identity-check`, `material-qa` | vision              |
-| `decisions`                   | `identity`, `prompt-policy`, `brief-policy`, `reference-view`                                                                         | decide              |
+| `decisions`                   | `identity`, `prompt-policy`, `brief-policy`, `reference-view`, `bible-staleness`                                                      | decide              |
 | `planning`                    | `compiler`                                                                                                                            | vision              |
 | `model3d`, `rig3d`, `clips3d` | the operation of the same name                                                                                                        | model, rig, animate |
 | `embeddings`                  | `embed` (hosted search embeddings, `search.embedder: "route"`)                                                                        | embed               |

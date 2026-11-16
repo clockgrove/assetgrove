@@ -20,6 +20,7 @@ import {
   libraryAdoptCommand,
   libraryCheckCommand,
   libraryDriftCommand,
+  libraryJudgeStaleCommand,
   libraryRebuildCommand,
   libraryStatsCommand,
 } from "./library.ts";
@@ -84,6 +85,7 @@ export const commands: readonly CommandSpec[] = [
   libraryRebuildCommand,
   libraryStatsCommand,
   libraryDriftCommand,
+  libraryJudgeStaleCommand,
   libraryAdoptCommand,
   settingsCommand,
   settingsChangeCommand,

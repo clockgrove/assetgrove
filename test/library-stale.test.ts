@@ -1,0 +1,223 @@
+/**
+ * Staleness is judged, not read from a version sort (#366): "made under another bible version" is
+ * an exact count by equality, so a rollback or a renamed version counts; which of those should be
+ * redone is one `bible-staleness` decision per asset and version pair, made only by `library
+ * judge-stale` (a paid command: plan step, confirmation, spend ledger), given the bible's diff from
+ * its Git history, the asset's kind, subject and tags, and its thumbnail, and cached by the
+ * asset's sha256 and the pair. `library drift` and `asset://<game>/stale/` list the cached yes
+ * answers and never call a model.
+ */
+import "./fixtures/env.ts";
+import { approve, ledgerPath, stateDir, useAttended } from "./fixtures/env.ts";
+import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
+import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { bibleChange, madeUnderOtherVersion } from "../src/library/stale.ts";
+import { openProject } from "../src/tree/project.ts";
+import { readTree } from "../src/tree/read.ts";
+import { GAME, fixtureLibrary } from "./fixtures/library.ts";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const script = fileURLToPath(new URL("./fixtures/staleness-script.ts", import.meta.url));
+approve(script);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Doc = Record<string, any>;
+interface Result {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+function cli(args: string[]): Promise<Result> {
+  return new Promise((resolve) => {
+    const env = { ...process.env };
+    delete env["AI_GATEWAY_API_KEY"];
+    const child = execFile(
+      process.execPath,
+      ["src/cli.ts", ...args],
+      { cwd: root, env },
+      (error, stdout, stderr) =>
+        resolve({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
+    );
+    child.stdin?.end();
+  });
+}
+
+const doc = (r: Result): Doc => JSON.parse(r.stdout) as Doc;
+const git = (dir: string, ...args: string[]) =>
+  execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+    encoding: "utf8",
+  });
+
+const lib = fixtureLibrary();
+after(() => rm(lib.dir, { recursive: true, force: true }));
+const bible = join(lib.dir, ".assetgrove", "art-direction", "BIBLE.md");
+const writeBible = (version: string, glow: string) =>
+  writeFileSync(
+    bible,
+    `---\nversion: ${version}\n---\n# Bible\n\nLanterns glow ${glow}.\nPlants are drawn with soft edges.\n`,
+  );
+// The bible's history: version 2, then 3, committed; the fixture's cards were made under them.
+writeBible("2", "amber");
+git(lib.dir, "add", ".assetgrove/art-direction/BIBLE.md");
+git(lib.dir, "commit", "-q", "-m", "bible 2");
+writeBible("3", "amber");
+git(lib.dir, "commit", "-q", "-am", "bible 3");
+
+const target = ["--target", lib.dir];
+const runs = ["--runs", join(lib.dir, ".assetgrove", "runs")];
+const judgeCalls = () =>
+  existsSync(ledgerPath)
+    ? readFileSync(ledgerPath, "utf8")
+        .split("\n")
+        .filter((l) => l.includes("bible-staleness")).length
+    : 0;
+const staleNames = async () =>
+  (
+    JSON.parse(
+      (
+        (await readTree(await openProject(lib.dir, stateDir), `asset://${GAME}/stale/`))
+          .contents[0] as { text: string }
+      ).text,
+    ) as Doc
+  ).children.map((c: Doc) => c.name);
+
+test("versions are compared for equality: a rename and a rollback count, the current version does not", () => {
+  assert.equal(madeUnderOtherVersion("spring", "autumn"), true, "a rename");
+  assert.equal(madeUnderOtherVersion("3", "1"), true, "a rollback");
+  assert.equal(madeUnderOtherVersion("3", "3"), false);
+  assert.equal(madeUnderOtherVersion(undefined, "3"), false);
+});
+
+test("the bible's change between two versions comes from its Git history", () => {
+  writeBible("4", "blue");
+  try {
+    const change = bibleChange(bible, "3");
+    assert.match(change.commit ?? "", /^[0-9a-f]{40}/);
+    assert.match(change.diff, /^-Lanterns glow amber\.$/m);
+    assert.match(change.diff, /^\+Lanterns glow blue\.$/m);
+    const missing = bibleChange(bible, "never");
+    assert.equal(missing.commit, null);
+    assert.match(missing.diff, /holds no text of version "never"/);
+    assert.match(missing.diff, /Lanterns glow blue\./);
+  } finally {
+    writeBible("3", "amber");
+  }
+});
+
+test("a bump marks nothing stale by itself; judge-stale asks per asset and drift and stale/ list the yes answers", async () => {
+  // At the current version only fern (made under 2) was made under another version.
+  const current = doc(await cli(["library", "drift", ...target, "--json"]));
+  assert.deepEqual(
+    current["otherVersion"].map((o: Doc) => o.asset),
+    ["fern"],
+  );
+
+  // A bump: every card is made under another version now, an exact count, and none is stale yet.
+  writeBible("4", "blue");
+  const before = judgeCalls();
+  const drift = doc(await cli(["library", "drift", ...target, "--json"]));
+  const other = drift["otherVersion"] as Doc[];
+  assert.equal(other.length, 6, JSON.stringify(other));
+  assert.ok(other.every((o) => o.judgement === "unjudged"));
+  assert.deepEqual(drift["stale"], []);
+  assert.deepEqual(await staleNames(), []);
+  assert.equal(judgeCalls(), before, "a read makes no call");
+
+  // The forecast: one $0.001 call per asset not judged yet.
+  const dry = doc(
+    await cli([
+      "library",
+      "judge-stale",
+      ...target,
+      ...runs,
+      "--provider-script",
+      script,
+      "--dry-run",
+      "--json",
+    ]),
+  );
+  assert.deepEqual(
+    dry["jobs"].map((j: Doc) => [j.operation, j.count]),
+    [["bible-staleness", 6]],
+  );
+
+  // A person must confirm the spend: attended settings with no TTY exit 8 and make no call.
+  useAttended();
+  const refused = await cli([
+    "library",
+    "judge-stale",
+    ...target,
+    ...runs,
+    "--provider-script",
+    script,
+    "--json",
+  ]);
+  assert.equal(refused.code, 8, refused.stdout + refused.stderr);
+  assert.equal(judgeCalls(), before);
+});
+
+test("judge-stale judges each asset once, given the diff, its subject and thumbnail, and caches the answer", async () => {
+  writeBible("4", "blue");
+  const before = judgeCalls();
+  const judged = await cli([
+    "library",
+    "judge-stale",
+    ...target,
+    ...runs,
+    "--provider-script",
+    script,
+    "--json",
+  ]);
+  assert.equal(judged.code, 0, judged.stdout + judged.stderr);
+  const result = doc(judged);
+  assert.equal(result["otherVersion"], 6);
+  // Only the lantern's look changed: the script answers yes only for a lantern shown its
+  // thumbnail and the amber-to-blue diff.
+  assert.deepEqual(result["stale"], ["lantern"]);
+  assert.equal(judgeCalls() - before, 6, "each call reached the spend ledger");
+  assert.equal(
+    readdirSync(join(stateDir, "staleness")).filter((f) => f.endsWith(".json")).length >= 6,
+    true,
+  );
+
+  const drift = doc(await cli(["library", "drift", ...target, "--json"]));
+  assert.deepEqual(
+    drift["stale"].map((s: Doc) => s.asset),
+    ["lantern"],
+  );
+  assert.equal(drift["otherVersion"].filter((o: Doc) => o.judgement === "keep").length, 5);
+  assert.deepEqual(await staleNames(), ["lantern"]);
+
+  // Cached: a second run makes no call and forecasts none.
+  const again = doc(
+    await cli([
+      "library",
+      "judge-stale",
+      ...target,
+      ...runs,
+      "--provider-script",
+      script,
+      "--round",
+      "2",
+      "--json",
+    ]),
+  );
+  assert.deepEqual(again["stale"], ["lantern"]);
+  assert.ok(again["judged"].every((j: Doc) => j.cached === true));
+  assert.equal(judgeCalls() - before, 6, "no new call");
+
+  // A rollback to 3 makes the version-3 cards current again: only fern (2) is made under another.
+  writeBible("3", "amber");
+  const rolled = doc(await cli(["library", "drift", ...target, "--json"]));
+  assert.deepEqual(
+    rolled["otherVersion"].map((o: Doc) => [o.asset, o.judgement]),
+    [["fern", "unjudged"]],
+  );
+  assert.deepEqual(rolled["stale"], []);
+});

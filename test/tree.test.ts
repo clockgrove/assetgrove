@@ -16,6 +16,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { decodePng } from "../src/image/raster.ts";
 import { libraryDrift, readLibrary } from "../src/library/maintain.ts";
+import { StalenessCache } from "../src/library/stale.ts";
 import { appendAnnotation, parseReview, writeReview } from "../src/library/review.ts";
 import { changed, fingerprint, listTree } from "../src/tree/list.ts";
 import { openProject } from "../src/tree/project.ts";
@@ -29,6 +30,12 @@ import { GAME, RUN_ID, fixtureLibrary } from "./fixtures/library.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const lib = fixtureLibrary({ bulk: 205 });
 after(() => rm(lib.dir, { recursive: true, force: true }));
+const staleness = new StalenessCache(stateDir);
+/** Caches a staleness answer as `library judge-stale` would; a read never makes one. */
+const judged = (sha256: string, from: string, to: string, redo: boolean) =>
+  staleness.set({ sha256, from, to, redo, model: "test", at: "2026-11-16T00:00:00.000Z" });
+// fern was made under bible 2 and judged to need redoing under 3.
+judged(lib.versions["fern"]!.at(-1)!, "2", "3", true);
 
 const A = (path: string) => `asset://${GAME}/${path}`;
 const project = () => openProject(lib.dir, stateDir);
@@ -95,25 +102,52 @@ test("every folder address returns a JSON folder document, the root its index.md
   assert.equal(json(await read(A("lantern"))).address, A("lantern/"));
 });
 
-test("stale/ lists what library drift does: cards older than the style bible's version", async () => {
+test("stale/ lists what library drift does: the cached yes answers among assets made under another version", async () => {
   const bumped = fixtureLibrary();
   try {
     writeFileSync(
       join(bumped.dir, ".assetgrove", "art-direction", "BIBLE.md"),
       "---\nversion: 4\n---\n# Bible\n",
     );
+    // A bump marks nothing stale by itself: every asset is made under another version, unjudged.
     const opened = await openProject(bumped.dir, stateDir);
-    const drift = await libraryDrift(await readLibrary(opened.profile, bumped.dir), "4");
-    const stale = json(await readTree(opened, A("stale/"))).children.map(
-      (c: { name: string }) => c.name,
+    const names = async () =>
+      json(await readTree(opened, A("stale/"))).children.map((c: { name: string }) => c.name);
+    assert.deepEqual(await names(), []);
+    const rootDoc = json(await readTree(opened, A("")));
+    assert.equal(rootDoc.counts.stale, 0);
+    assert.equal(rootDoc.counts.otherVersion, rootDoc.counts.assets);
+    assert.equal(json(await readTree(opened, A("stale/"))).unjudged, rootDoc.counts.assets);
+
+    judged(bumped.versions["lantern"]!.at(-1)!, "3", "4", true);
+    judged(bumped.versions["rock"]!.at(-1)!, "3", "4", false);
+    const drift = await libraryDrift(
+      await readLibrary(opened.profile, bumped.dir),
+      "4",
+      new StalenessCache(stateDir),
     );
-    assert.ok(stale.length > 1);
-    // drift reads only cards that pass the library check; escape's resource leaves the root.
+    assert.deepEqual(await names(), ["lantern"]);
     assert.deepEqual(
-      stale.filter((id: string) => id !== "escape"),
-      drift.stale.map((s) => s.asset).sort(),
+      drift.stale.map((s) => s.asset),
+      ["lantern"],
     );
-    assert.equal(json(await readTree(opened, A(""))).counts.stale, stale.length);
+    // drift reads only cards that pass the library check; escape's resource leaves the root.
+    assert.equal(drift.otherVersion.length, rootDoc.counts.assets - 1);
+    assert.equal(drift.otherVersion.find((o) => o.asset === "rock")?.judgement, "keep");
+    const after = json(await readTree(opened, A("")));
+    assert.equal(after.counts.stale, 1);
+    const lantern = json(await readTree(opened, A("lantern/"))).asset;
+    assert.equal(lantern.stale, true);
+    assert.equal(lantern.otherVersion, true);
+
+    // A rollback to the version an asset was made under makes it current again, not stale.
+    writeFileSync(
+      join(bumped.dir, ".assetgrove", "art-direction", "BIBLE.md"),
+      "---\nversion: 2\n---\n# Bible\n",
+    );
+    const rolled = json(await readTree(opened, A("")));
+    assert.equal(rolled.counts.otherVersion, rolled.counts.assets - 1, "fern is current under 2");
+    assert.equal(json(await readTree(opened, A("fern/"))).asset.otherVersion, false);
   } finally {
     await rm(bumped.dir, { recursive: true, force: true });
   }

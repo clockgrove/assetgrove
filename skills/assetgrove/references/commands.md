@@ -366,9 +366,21 @@ MCP tool: `library_stats`, arguments `target`, `profile`.
 library drift [--target <dir>] [--profile <profile.json>] [--bible <bible>] [--json]
 ```
 
-Lists `stale` assets (the card's bible is older than the style bible's version; default bible `<target>/.assetgrove/art-direction/BIBLE.md`) and `modified` ones (the file's sha256, or a Git LFS pointer's oid, differs from the card's `lock.sha256`; a matching pointer is not modified). Computed from the cards; nothing is stored or logged. Read-only.
+Lists `otherVersion`: every asset whose card's bible differs from the style bible's version (compared for equality, not order, so a rollback or a renamed version counts; default bible `<target>/.assetgrove/art-direction/BIBLE.md`), each with `bible`, `sha256` and its cached `judgement` (`redo`, `keep`, or `unjudged` until `library judge-stale` answers); `stale`: those judged to need redoing; and `modified` ones (the file's sha256, or a Git LFS pointer's oid, differs from the card's `lock.sha256`; a matching pointer is not modified). Computed from the cards and the cached judgements; no model call, nothing stored or logged. Read-only.
 
 MCP tool: `library_drift`, arguments `target`, `profile`, `bible`.
+
+### `library judge-stale`
+
+```text
+library judge-stale [--target <dir>] [--profile <profile.json>] [--bible <bible>] [--asset <id>]... [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+```
+
+For each asset made under another bible version whose answer is not cached (or each named `--asset`), makes one `bible-staleness` decision ($0.001 estimate on the default route): given the bible's diff between the two versions (from the bible file's Git history), the asset's kind, subject and tags, and its thumbnail, should it be redone? Each answer is cached by the asset's sha256 and the version pair in `<stateDir>/staleness/`, where `library drift` and `asset://<game>/stale/` read it. Returns `bibleVersion`, `otherVersion` (the count), `judged` (`asset`, `bible`, `sha256`, `redo`, `probability`, `cached`), `stale` (the asset ids judged to need redoing) and `spentUsd`. Paid gateway calls; writes nothing beside its run directory and the cache. A style bible with no version exits 2.
+
+Plan step: `--dry-run` prints the request's WorkPlan with no provider call, no ledger entry and nothing written; the forecast counts one call per asset not yet judged for its version pair. A real run is confirmed, journaled and reused as for `identity-check`.
+
+MCP tool: `library_judge_stale`, arguments `target`, `profile`, `bible`, `asset`, `cap`, `workItem`, `runs`, `round`.
 
 ### `settings`
 

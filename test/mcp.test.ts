@@ -931,6 +931,17 @@ export default {
       return { target: join(work, "target"), profile };
     },
   })),
+  // The cards' own bible version: nothing is made under another one, so no call is made.
+  {
+    tool: "library_judge_stale",
+    prepare: async (): Promise<Args> => {
+      const profile = join(work, "library-profile.json");
+      await writeFile(profile, JSON.stringify(syntheticProfile()));
+      const bible = join(work, "judge-bible.json");
+      await writeFile(bible, JSON.stringify({ version: "synthetic-1" }));
+      return { target: join(work, "target"), profile, bible };
+    },
+  },
   // The picked asset's file, edited by hand, adopted with the handed-off version as the original.
   {
     tool: "library_adopt",

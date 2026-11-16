@@ -24,6 +24,11 @@ export const PROMPT_POLICY_OPERATION = "prompt-policy";
 export const BRIEF_POLICY_OPERATION = "brief-policy";
 /** Which view a 3D request's reference image shows: one typed choice decision per image. */
 export const REFERENCE_VIEW_OPERATION = "reference-view";
+/**
+ * Whether a library asset made under another style bible version should be redone: one Boolean
+ * decision per asset and version pair, made only by `library judge-stale` (src/library/stale.ts).
+ */
+export const STALENESS_OPERATION = "bible-staleness";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -214,6 +219,19 @@ export const defaultRoutes: Routes = {
       relabel: true,
     },
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+  },
+  // Whether an asset made under another bible version should be redone (#366): one Boolean
+  // decision per asset and version pair, shown its thumbnail; same model and bound as identity.
+  [STALENESS_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
   },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
@@ -423,6 +441,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [PROMPT_POLICY_OPERATION]: "decisions",
   [BRIEF_POLICY_OPERATION]: "decisions",
   [REFERENCE_VIEW_OPERATION]: "decisions",
+  [STALENESS_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

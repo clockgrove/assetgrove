@@ -21,19 +21,38 @@ import {
   workingFile,
 } from "../library/adopt.ts";
 import { libraryConfig, scanCards } from "../library/write.ts";
+import { Budget, runCap } from "../budget.ts";
+import { Caller } from "../calls.ts";
+import { sha256Hex } from "../library/canonical.ts";
+import { StalenessCache, bibleChange, judgeStaleness } from "../library/stale.ts";
+import type { BibleChange, StalenessAnswer } from "../library/stale.ts";
+import { providerSet, spendLedger } from "../providers/index.ts";
+import { STALENESS_OPERATION } from "../routes.ts";
+import type { Route } from "../routes.ts";
+import {
+  DRY_RUN_PROPERTY,
+  ROUND_PROPERTY,
+  RUNS_PROPERTY,
+  buildWorkPlan,
+  canonicalJson,
+  jobOf,
+  paidBy,
+} from "../runs/plan.ts";
+import { ledgerFor } from "../spend.ts";
 import {
   bibleVersionOf,
   libraryDrift,
+  staleSubjects,
   libraryStats,
   readLibrary,
   rebuildLibrary,
 } from "../library/maintain.ts";
 import type { LibraryState } from "../library/maintain.ts";
 import { acquireLibraryLock } from "../runs/lock.ts";
-import { refusal } from "./result.ts";
+import { dryRunOutcome, formatWork, refusal } from "./result.ts";
 import { annotationFields, headlessRefusal, personConfirms, requireSameRequest } from "./review.ts";
 import { defineCommand } from "./types.ts";
-import type { JsonSchemaObject, Outcome } from "./types.ts";
+import type { JsonSchemaObject, Outcome, RunContext } from "./types.ts";
 
 interface LibraryArgs {
   target?: string;
@@ -189,31 +208,207 @@ Read-only.`,
   },
 });
 
+/** The style bible's path and version for drift and judge-stale; a named bible must have one. */
+function currentBible(args: LibraryArgs, targetDir: string) {
+  const biblePath = resolve(args.bible ?? join(targetDir, BIBLE_PATH));
+  const bible = bibleVersionOf(biblePath);
+  if (args.bible !== undefined && bible === undefined) {
+    throw new InputError(`${args.bible}: a style bible with a version could not be read.`);
+  }
+  return { biblePath, bible };
+}
+
 export const libraryDriftCommand = defineCommand<LibraryArgs>({
   name: "library drift",
   tool: "library_drift",
-  summary: "list stale assets (older bible) and modified ones (file differs from the lock)",
-  details: `Computes from each card, storing nothing: stale when the card's bible is older than the style
-bible's version, modified when the file's sha256, or a Git LFS pointer's oid, differs from lock.sha256.
-Read-only.`,
+  summary:
+    "list assets made under another bible version, the stale ones judged so, and modified ones",
+  details: `Computes from each card, storing nothing and calling no model: otherVersion lists every asset
+whose card's bible differs from the style bible's version (compared for equality, not order), each
+with its cached judgement (redo, keep or unjudged); stale lists those library judge-stale judged to
+need redoing; modified lists those whose file's sha256, or a Git LFS pointer's oid, differs from
+lock.sha256. Read-only.`,
   input: input(true),
   effect: { readOnly: true, spends: "never", writes: "none" },
-  async run(args) {
+  async run(args, ctx) {
     const { targetDir, profile } = await open(args);
-    const biblePath = resolve(args.bible ?? join(targetDir, BIBLE_PATH));
-    const bible = bibleVersionOf(biblePath);
-    if (args.bible !== undefined && bible === undefined) {
-      throw new InputError(`${args.bible}: a style bible with a version could not be read.`);
-    }
-    const drift = await libraryDrift(await readLibrary(profile, targetDir), bible);
+    const { bible } = currentBible(args, targetDir);
+    const drift = await libraryDrift(
+      await readLibrary(profile, targetDir),
+      bible,
+      new StalenessCache(ctx.settings.stateDir),
+    );
+    const unjudged = drift.otherVersion.filter((o) => o.judgement === "unjudged").length;
     const human = [
       `style bible version: ${drift.bibleVersion ?? "unknown"}`,
+      `made under another bible version: ${drift.otherVersion.length}` +
+        (unjudged > 0 ? ` (${unjudged} not judged yet: run library judge-stale)` : ""),
       `stale: ${drift.stale.length}`,
       ...drift.stale.map((s) => `  ${s.asset}: ${s.reason}`),
       `modified: ${drift.modified.length}`,
       ...drift.modified.map((m) => `  ${m.asset}: ${m.reason}`),
     ].join("\n");
     return { exitCode: 0, fields: { ...drift }, human };
+  },
+});
+
+interface JudgeStaleArgs extends LibraryArgs {
+  asset?: string[];
+  cap?: number;
+  workItem?: string;
+  providerScript?: string;
+  dryRun?: boolean;
+  round?: number;
+  runs?: string;
+}
+
+/** The plan step of judge-stale: the assets not judged yet for their version pair, and its WorkPlan. */
+async function prepareJudge(args: JudgeStaleArgs, ctx: RunContext) {
+  const { targetDir, profile } = await open(args);
+  const { biblePath, bible } = currentBible(args, targetDir);
+  if (bible === undefined)
+    throw new InputError(`${biblePath}: no style bible with a version, so nothing can be judged.`);
+  const cache = new StalenessCache(ctx.settings.stateDir);
+  let subjects = staleSubjects(await readLibrary(profile, targetDir), bible);
+  const named = args.asset ?? [];
+  for (const id of named)
+    if (!subjects.some((s) => s.asset === id))
+      throw new InputError(
+        `"${id}" is not an asset made under another bible version than ${bible}`,
+      );
+  if (named.length > 0) subjects = subjects.filter((s) => named.includes(s.asset));
+  const pending = subjects.filter((s) => cache.get(s.sha256, s.from, bible) === undefined);
+  // One call per asset sha256 and version pair: two cards of the same media share an answer.
+  const keys = [...new Set(pending.map((s) => JSON.stringify([s.sha256, s.from])))];
+  const provider = await providerSet(args.providerScript, ctx);
+  const jobs = [
+    jobOf(STALENESS_OPERATION, provider.routes[STALENESS_OPERATION] as Route, keys.length),
+  ];
+  const work = await buildWorkPlan(libraryJudgeStaleCommand, args, {
+    inputs: [],
+    hashes: {
+      bible: sha256Hex(canonicalJson({ version: bible, path: biblePath })),
+      pending: sha256Hex(canonicalJson(pending.map((s) => [s.asset, s.sha256, s.from, s.media]))),
+    },
+    jobs,
+    capUsd: runCap(args.cap, ctx.settings),
+    paid: paidBy(provider, jobs),
+    providers: provider,
+    candidates: 0,
+  });
+  return { biblePath, bible, cache, subjects, pending, provider, work };
+}
+
+export const libraryJudgeStaleCommand = defineCommand<JudgeStaleArgs>({
+  name: "library judge-stale",
+  tool: "library_judge_stale",
+  summary: "judge which assets made under another bible version should be redone (paid)",
+  details: `For each asset whose card's bible differs from the style bible's version and whose answer is not
+cached, makes one bible-staleness decision: given the bible's diff between the two versions (from
+the bible file's Git history), the asset's kind, subject and tags, and its thumbnail, should it be
+redone? Each answer is cached by the asset's sha256 and the version pair in <stateDir>/staleness/,
+where library drift and asset://<game>/stale/ read it. A paid command: plan step, forecast,
+confirmation and caps. See docs/library.md.`,
+  input: {
+    type: "object",
+    properties: {
+      target: TARGET,
+      profile: PROFILE,
+      bible: {
+        type: "string",
+        description:
+          "the style bible whose version the cards are judged against (default <target>/.assetgrove/art-direction/BIBLE.md)",
+        placeholder: "<bible>",
+      },
+      asset: {
+        type: "array",
+        items: { type: "string" },
+        description: "an asset to judge; repeat for several (default: every one not judged yet)",
+        placeholder: "<id>",
+      },
+      cap: {
+        type: "number",
+        description:
+          "the run's cost cap in USD; at most, and by default, the settings' caps.runUsd",
+        placeholder: "<usd>",
+      },
+      workItem: {
+        type: "string",
+        description: "the work item the spend ledger counts against",
+        placeholder: "<label>",
+      },
+      providerScript: {
+        type: "string",
+        description: "answer every model call from this module instead of a provider",
+        placeholder: "<module>",
+      },
+      runs: RUNS_PROPERTY,
+      round: ROUND_PROPERTY,
+      dryRun: DRY_RUN_PROPERTY,
+    },
+    additionalProperties: false,
+  },
+  effect: { readOnly: false, spends: "always", writes: "runs" },
+  confirm: "spend",
+  plan: async (args, ctx) => (await prepareJudge(args, ctx)).work,
+  async run(args, ctx) {
+    const { biblePath, bible, cache, subjects, pending, provider, work } = await prepareJudge(
+      args,
+      ctx,
+    );
+    if (args.dryRun)
+      return dryRunOutcome(
+        work,
+        formatWork("library judge-stale", work),
+        spendLedger(ctx, args.workItem),
+      );
+    const routes = provider.routes;
+    const budget = new Budget(
+      work.capUsd,
+      ledgerFor(spendLedger(ctx, args.workItem), provider, {}),
+    );
+    const calls = work.jobs.reduce((n, j) => n + j.count, 0);
+    budget.check(
+      calls * (routes[STALENESS_OPERATION] as Route).estimatedCostUsd,
+      `${calls} staleness judgements`,
+    );
+    const caller = new Caller({ provider, budget, routes, log: ctx.log });
+    const changes = new Map<string, BibleChange>();
+    for (const subject of pending) {
+      if (cache.get(subject.sha256, subject.from, bible) !== undefined) continue;
+      let change = changes.get(subject.from);
+      if (change === undefined) {
+        change = bibleChange(biblePath, subject.from);
+        changes.set(subject.from, change);
+      }
+      await judgeStaleness(caller, subject, bible, change, cache);
+    }
+    const judged = subjects.map((s) => {
+      const answer = cache.get(s.sha256, s.from, bible) as StalenessAnswer;
+      return {
+        asset: s.asset,
+        bible: s.from,
+        sha256: s.sha256,
+        redo: answer.redo,
+        ...(answer.probability !== undefined && { probability: answer.probability }),
+        cached: !pending.includes(s),
+      };
+    });
+    const stale = judged.filter((j) => j.redo);
+    const fields = {
+      bibleVersion: bible,
+      otherVersion: subjects.length,
+      judged,
+      stale: stale.map((j) => j.asset),
+      spentUsd: budget.spentUsd,
+    };
+    const human = [
+      `style bible version: ${bible}`,
+      `made under another bible version: ${subjects.length} (${pending.length} judged now, ${subjects.length - pending.length} cached)`,
+      `stale: ${stale.length}`,
+      ...stale.map((j) => `  ${j.asset}: made under bible ${j.bible}`),
+    ].join("\n");
+    return { exitCode: 0, fields, human };
   },
 });
 
