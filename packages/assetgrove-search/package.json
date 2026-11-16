@@ -1,6 +1,6 @@
 {
   "name": "@clockgrove/assetgrove-search",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "description": "Optional search for Assetgrove libraries: store and embedder interfaces, pinned SigLIP2 embeddings.",
   "license": "MIT",
   "repository": {
@@ -9,13 +9,21 @@
     "directory": "packages/assetgrove-search"
   },
   "type": "module",
-  "main": "src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "assetgrove": {
     "api": 1,
-    "entry": "./src/extension.ts"
+    "entry": "./dist/extension.js"
   },
   "files": [
-    "src",
+    "dist",
     "skills"
   ],
   "publishConfig": {
@@ -26,9 +34,11 @@
     "node": ">=24"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "check": "prettier --check . && eslint . && tsc --noEmit",
     "format": "prettier --write .",
     "pin-model": "node scripts/pin-model.ts",
+    "prepack": "pnpm build",
     "test": "node --test \"test/**/*.test.ts\""
   },
   "peerDependencies": {

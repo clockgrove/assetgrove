@@ -4,11 +4,11 @@
  * fixture library returns the same JSON on core's CLI and as core's MCP tool, card text under
  * sharedText and the numbered sheet as image content. The scripted embedder keeps it offline.
  *
- * Core refuses an entry the project's Git tracks and Node strips types only outside
- * node_modules, so the project links a copy of the package made outside every repository.
+ * Core refuses an entry the project's Git tracks, so the project links a copy of the package made
+ * outside every repository, holding the package's compiled dist/ as a packed copy does.
  */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,7 +36,14 @@ after(async () => {
 const copy = join(home, "package");
 mkdirSync(copy);
 cpSync(join(pkgRoot, "package.json"), join(copy, "package.json"));
-cpSync(join(pkgRoot, "src"), join(copy, "src"), { recursive: true });
+execFileSync(
+  process.execPath,
+  [
+    join(pkgRoot, "node_modules", "typescript", "bin", "tsc"),
+    ...["-p", join(pkgRoot, "tsconfig.build.json"), "--outDir", join(copy, "dist")],
+  ],
+  { stdio: "inherit" },
+);
 symlinkSync(join(pkgRoot, "node_modules"), join(copy, "node_modules"), "junction");
 mkdirSync(join(lib.dir, "node_modules", "@clockgrove"), { recursive: true });
 symlinkSync(copy, join(lib.dir, "node_modules", "@clockgrove", "assetgrove-search"), "junction");
