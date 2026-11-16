@@ -263,7 +263,7 @@ test("look-dev forecasts its calls, refuses over the cap and needs a model3d pro
   assert.equal(count("lookdev-locate"), 1);
   assert.equal(count("lookdev-groom"), 2);
   assert.equal(count("lookdev-markings"), 4);
-  // An upper bound: 4 turntable views x 2 seasons x at most 8 markings judged per view.
+  // The forecast: 4 turntable views x 2 seasons x 8 markings per view (more are judged while the cap has room).
   assert.equal(count("lookdev-marking"), 64);
   assert.equal(count("identity"), 1);
   assert.deepEqual(plan.seasons, ["summer", "winter"]);
