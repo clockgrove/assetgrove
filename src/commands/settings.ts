@@ -159,6 +159,7 @@ interface SettingsChangeArgs {
   limitPeriod?: string;
   acceptUnlimited?: boolean;
   acknowledgeHolds?: string[];
+  acknowledgeBlobs?: string[];
 }
 
 /** The change a call proposes, from its flat arguments; exit 2 for a limit field with no provider. */
@@ -184,6 +185,7 @@ function proposedChange(args: SettingsChangeArgs): SettingsChange {
       },
     }),
     ...(args.acknowledgeHolds !== undefined && { acknowledgeHolds: args.acknowledgeHolds }),
+    ...(args.acknowledgeBlobs !== undefined && { acknowledgeBlobs: args.acknowledgeBlobs }),
   };
 }
 
@@ -200,19 +202,20 @@ function changeOutcome(result: ChangeResult, method: string, id: string): Outcom
 export const settingsChangeCommand = defineCommand<SettingsChangeArgs>({
   name: "settings change",
   tool: "settings_change",
-  summary: "propose caps, a provider limit or hold acknowledgements for a person to confirm",
+  summary: "propose caps, a provider limit, hold or file acknowledgements for a person to confirm",
   details: `Proposes a change to the developer settings that only a person's confirmation writes:
 the caps (--run-usd, --daily-usd, --work-item-usd), one provider's limit (--provider with
 --limit-kind, --limit-usd, --limit-period and --accept-unlimited) and spend holds to acknowledge
-(--acknowledge-holds). An MCP client with form elicitation shows the person a form with the
+(--acknowledge-holds) and Git blob ids of files whose key-named assignments are not live keys
+(--acknowledge-blobs, written to keyGuard.acknowledgedBlobs). An MCP client with form elicitation shows the person a form with the
 proposed values filled in; on accept the values the person submitted are written. Without one it
 exits 8 confirmation_required, the request saved to <stateDir>/pending/<id>.json, and
 \`assetgrove confirm <id>\` at a terminal writes it (method terminal). Writes only those fields and
 a confirmedBy entry per field path; every other byte of the file stays as it was. A limit for a
 core adapter id with no provider entry creates the entry with only limit. Kind unlimited is written
 only with acceptUnlimited true. Headless settings exit 8 confirmation_required and write nothing.
-Exits 2 for a provider that is neither in the settings nor a core adapter id, or a hold id
-<stateDir>/holds.jsonl does not list. Declining exits 8 confirmation_declined.`,
+Exits 2 for a provider that is neither in the settings nor a core adapter id, a hold id
+<stateDir>/holds.jsonl does not list, or a blob id that is not 40 or 64 hex digits. Declining exits 8 confirmation_declined.`,
   input: {
     type: "object",
     properties: {
@@ -257,6 +260,13 @@ Exits 2 for a provider that is neither in the settings nor a core adapter id, or
         items: { type: "string" },
         description: "the spend hold ids to acknowledge (spend.acknowledgedHolds)",
         placeholder: "<hold>",
+      },
+      acknowledgeBlobs: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "the Git blob ids of tracked files whose key-named assignments are not live keys (keyGuard.acknowledgedBlobs)",
+        placeholder: "<blob>",
       },
     },
     additionalProperties: false,

@@ -5,6 +5,7 @@
  * "The tracked-key scan is hand-written".
  */
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { gitDirSet, keyValue, type Env } from "./env.ts";
@@ -38,10 +39,12 @@ export interface TrackedKey {
   file: string;
   variable: string;
   rule: "value" | "assignment";
+  /** For an assignment hit, the Git blob id of the content that hit: what a person may acknowledge. */
+  blob?: string;
 }
 
 /** The configured key variable names: the adapters' defaults and each provider's `keyEnv`. */
-export function configuredKeyEnv(settings?: Pick<Settings, "providers">): string[] {
+export function configuredKeyEnv(settings?: Pick<Settings, "providers"> | undefined): string[] {
   const names = new Set<string>(DEFAULT_KEY_ENV);
   for (const provider of Object.values(settings?.providers ?? {})) {
     if (provider.keyEnv) names.add(provider.keyEnv);
@@ -49,9 +52,23 @@ export function configuredKeyEnv(settings?: Pick<Settings, "providers">): string
   return [...names];
 }
 
+const PLACEHOLDER_WORDS = [
+  "your",
+  "here",
+  "example",
+  "placeholder",
+  "changeme",
+  "replace",
+  "redacted",
+  "xxxx",
+];
+
 /**
- * Whether an assigned value is a key: not empty, not empty quotes, not a variable reference
- * (`$NAME`, `${...}`, `${{ ... }}`) and not a placeholder (only dots, or `<...>`).
+ * Whether an assigned value is shaped like a key: a literal of MIN_KEY_VALUE_LENGTH or more
+ * characters with no whitespace or brackets, that is not an expression (`os.environ`,
+ * `process.env`, `{{`, `${`, a leading `$`) and not an obvious placeholder (`your`, `here`,
+ * `example`, `placeholder`, `changeme`, `replace`, `redacted`, `xxxx`, one repeated character, or
+ * ending in `...`).
  */
 export function isAssignedValue(raw: string): boolean {
   let value = raw.trim();
@@ -60,9 +77,15 @@ export function isAssignedValue(raw: string): boolean {
   value = value.replace(/,$/, "").trim();
   const quoted = /^(["'])(.*)\1$/.exec(value);
   if (quoted) value = quoted[2]!.trim();
-  if (value === "") return false;
-  if (value.startsWith("$")) return false;
-  if (/^\.+$/.test(value) || /^<[^<>]*>$/.test(value)) return false;
+  if (value.length < MIN_KEY_VALUE_LENGTH) return false;
+  if (/\s/.test(value) || /[()[\]{}<>]/.test(value)) return false;
+  if (value.startsWith("$") || value.includes("os.environ") || value.includes("process.env"))
+    return false;
+  if (value.includes("{{") || value.includes("${")) return false;
+  if (value.endsWith("...") || value.endsWith("\u2026")) return false;
+  const lower = value.toLowerCase();
+  if (PLACEHOLDER_WORDS.some((word) => lower.includes(word))) return false;
+  if (/^(.)\1*$/su.test(value)) return false;
   return true;
 }
 
@@ -224,31 +247,47 @@ function workingContent(path: string): Buffer | undefined {
   }
 }
 
-/** The key a file's content holds, by exact value first, then by named assignment. */
+/** The Git blob id of `content`, in the hash algorithm of `oidLength` (64 is sha256, else sha1). */
+function blobId(content: Buffer, oidLength: number): string {
+  return createHash(oidLength === 64 ? "sha256" : "sha1")
+    .update(`blob ${content.length}\0`)
+    .update(content)
+    .digest("hex");
+}
+
+/**
+ * The key a file's content holds, by exact value first, then by named assignment unless the
+ * content's blob id is acknowledged. The exact-value rule is never acknowledged.
+ */
 function keyIn(
   content: Buffer,
   file: string,
   values: ReadonlyArray<readonly [string, string]>,
   names: readonly string[],
+  acknowledged: ReadonlySet<string>,
+  oid: (content: Buffer) => string,
 ): TrackedKey | undefined {
   if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER)) return undefined;
   const valueHit = values.find(([, value]) => content.includes(value));
   if (valueHit) return { file, variable: valueHit[0], rule: "value" };
   const assigned = assignedKeys(content.toString("utf8"), file, names);
-  if (assigned.length > 0) return { file, variable: assigned[0]!, rule: "assignment" };
-  return undefined;
+  if (assigned.length === 0) return undefined;
+  const blob = oid(content);
+  if (acknowledged.has(blob)) return undefined;
+  return { file, variable: assigned[0]!, rule: "assignment", blob };
 }
 
 /**
  * Every tracked file of the repository holding `dir` that holds a key: the exact value (16+
- * characters) of a configured key variable, or a non-empty value assigned to one by name. LFS
+ * characters) of a configured key variable, or a key-shaped literal assigned to one by name unless
+ * the file content's blob id is in `acknowledgedBlobs`. LFS
  * pointers and files over 4 MB are skipped. Each file's staged blob and its working-tree content are
  * read. With no `.git` at or above `dir` nothing is tracked; inside one, a git that cannot list
  * or read the tracked files is a `key_tracked` refusal, never a pass.
  */
 export function findTrackedKeys(
   dir: string,
-  options: { env?: Env; keyEnv?: readonly string[] } = {},
+  options: { env?: Env; keyEnv?: readonly string[]; acknowledgedBlobs?: readonly string[] } = {},
 ): TrackedKey[] {
   const names = [...new Set(options.keyEnv ?? DEFAULT_KEY_ENV)];
   const top = topLevel(dir);
@@ -256,6 +295,7 @@ export function findTrackedKeys(
   const values = names
     .map((name) => [name, keyValue(name, options.env)?.trim() ?? ""] as const)
     .filter(([, value]) => value.length >= MIN_KEY_VALUE_LENGTH);
+  const acknowledged = new Set((options.acknowledgedBlobs ?? []).map((id) => id.toLowerCase()));
   const entries = trackedFiles(top);
   const staged = stagedBlobs(top, entries);
   const found: TrackedKey[] = [];
@@ -266,7 +306,8 @@ export function findTrackedKeys(
     // `commit -a` would take) are read.
     const contents = [staged.get(oid), workingContent(join(top, file))];
     for (const content of contents) {
-      const hit = content && keyIn(content, file, values, names);
+      const hit =
+        content && keyIn(content, file, values, names, acknowledged, (c) => blobId(c, oid.length));
       if (hit) {
         found.push(hit);
         seen.add(file);
@@ -283,19 +324,34 @@ export function findTrackedKeys(
  */
 export function checkTrackedKeys(
   dir: string,
-  options: { env?: Env; settings?: Pick<Settings, "providers"> } = {},
+  options: {
+    env?: Env;
+    settings?: Pick<Settings, "providers"> & Partial<Pick<Settings, "keyGuard">>;
+  } = {},
 ): void {
   const keyEnv = configuredKeyEnv(options.settings);
   registerKeyEnv(keyEnv);
-  const found = findTrackedKeys(dir, { keyEnv, ...(options.env && { env: options.env }) });
+  const found = findTrackedKeys(dir, {
+    keyEnv,
+    acknowledgedBlobs: options.settings?.keyGuard?.acknowledgedBlobs ?? [],
+    ...(options.env && { env: options.env }),
+  });
   if (found.length === 0) return;
   const listed = found.map((f) =>
     f.rule === "value"
       ? `${f.file} holds the value of ${f.variable}`
-      : `${f.file} assigns a value to ${f.variable}`,
+      : `${f.file} assigns a value to ${f.variable} (blob ${f.blob})`,
   );
+  const acknowledge = found
+    .filter((f) => f.rule === "assignment")
+    .map((f) => f.blob)
+    .join(" ");
   throw new KeyTrackedError(
-    `a tracked file holds a key: ${listed.join("; ")}. Remove the key from the file and from Git history, rotate it, and keep keys in the environment only.`,
+    `a tracked file holds a key: ${listed.join("; ")}. Remove the key from the file and from Git history, rotate it, and keep keys in the environment only.${
+      acknowledge
+        ? ` If an assignment's value is not a live key, after checking that, list its blob id in the developer settings' keyGuard.acknowledgedBlobs (assetgrove settings change --acknowledge-blobs ${acknowledge}); a file's value that matches the key this process holds is never acknowledged.`
+        : ""
+    }`,
     found.map((f) => f.file),
   );
 }

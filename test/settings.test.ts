@@ -103,6 +103,7 @@ test("the full Phase 1 field set validates", () => {
     environment: { allow: ["HTTPS_PROXY"] },
     reconcile: { marginUsd: 0.05, marginPct: 5 },
     spend: { acknowledgedHolds: ["ab12"] },
+    keyGuard: { acknowledgedBlobs: ["cd34"] },
     commands: {
       approved: [
         { hash: "cd34", kind: "validator", argv: ["node", "v.js"], cwd: "tools", note: "n" },
@@ -117,6 +118,7 @@ test("the full Phase 1 field set validates", () => {
   assert.equal(settings.stateDir, stateDir);
   assert.equal(settings.providers["gateway"]?.limit?.usd, 20);
   assert.deepEqual(settings.environment.allow, ["HTTPS_PROXY"]);
+  assert.deepEqual(settings.keyGuard.acknowledgedBlobs, ["cd34"]);
   assert.equal(settings.commands.approved[0]?.kind, "validator");
 });
 

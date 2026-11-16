@@ -188,7 +188,7 @@ test("a tracked key value refuses init with the guard step and writes nothing", 
 });
 
 test("a tracked key-name assignment refuses init with an empty environment", async () => {
-  const dir = await repository({ ".env": `${OPENAI}=sk-something\n` });
+  const dir = await repository({ ".env": `${OPENAI}=sk-proj-Q7mZ2xL9vB4nK8wR1tY6\n` });
   const before = await snapshot(dir);
   const result = await cli(initArgs(dir));
   assert.equal(result.code, 2);
@@ -198,7 +198,7 @@ test("a tracked key-name assignment refuses init with an empty environment", asy
       (s: { id: string; status: string }) => s.id === "guard" && s.status === "refused",
     ),
   );
-  assert.ok(!result.stdout.includes("sk-something"));
+  assert.ok(!result.stdout.includes("sk-proj-Q7mZ2xL9vB4nK8wR1tY6"));
   assert.deepEqual(await snapshot(dir), before);
   assert.equal((await readdir(dir)).includes(".assetgrove"), false);
 });
