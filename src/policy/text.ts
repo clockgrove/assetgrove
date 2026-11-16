@@ -297,7 +297,6 @@ export const PROMPT_INPUTS: ReadonlySet<string> = new Set([
   "bible",
   "lockBible",
   "template",
-  "plan",
 ]);
 
 /** The part a file's text is, by the argument that names it. */
@@ -310,33 +309,12 @@ const FILE_LABELS: Readonly<Record<string, PromptPartLabel>> = {
 };
 
 /**
- * A saved plan's prompts as labelled parts: its image prompts (the compiler's prompt, deduplicated)
- * and its negative prompt are model-written; its QA prompt comes from the repository's template.
- * Its other strings (format, digests, operation names) feed no prompt.
- */
-function savedPlanParts(data: unknown): PromptPart[] | undefined {
-  const prompts = (data as { prompts?: unknown } | null)?.prompts;
-  if (prompts === null || typeof prompts !== "object") return undefined;
-  const { images, generation, negative, qa } = prompts as Record<string, unknown>;
-  const written = [
-    ...new Set([...(Array.isArray(images) ? images : []), generation].filter(isText)),
-  ];
-  return [
-    ...written.map((text) => ({ label: "model-prompt" as const, text })),
-    ...(isText(negative) ? [{ label: "model-negative" as const, text: negative }] : []),
-    ...(isText(qa) ? [{ label: "template" as const, text: qa }] : []),
-  ];
-}
-
-function isText(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-/**
  * The prompt text of one input file, labelled: a JSON file's strings minus paths; a template's
  * body without its `{{fields}}`; another Markdown file's front matter strings minus paths (`tone`)
- * and its Do's and Don'ts section (`rules`); a saved plan's prompts (`savedPlanParts`). A file that
- * cannot be read gives none (the command reports it when it loads it).
+ * and its Do's and Don'ts section (`rules`). A saved plan is not read here: apply labels its
+ * input files as the plan step does and its compiler-written text apart (`savedPlanPromptParts`
+ * in src/planning.ts). A file that cannot be read gives none (the command reports it when it
+ * loads it).
  */
 export async function promptPartsOf(name: string, path: string): Promise<PromptPart[]> {
   let source: string;
@@ -366,10 +344,6 @@ export async function promptPartsOf(name: string, path: string): Promise<PromptP
     data = JSON.parse(source) as unknown;
   } catch {
     return [];
-  }
-  if (name === "plan") {
-    const parts = savedPlanParts(data);
-    if (parts !== undefined) return parts;
   }
   return promptStrings(data).map((text) => ({ label, text }));
 }

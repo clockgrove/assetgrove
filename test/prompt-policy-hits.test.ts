@@ -261,32 +261,48 @@ test("a bible's Don't that forbids imitation is a rules hit, and plan forecasts 
   assert.deepEqual(await provider.events(), []);
 });
 
+/**
+ * Rewrites the saved plan as the compiler might have written it, with `negative` in its own
+ * negative prompt (before the bible's), and returns the plan as saved.
+ */
+async function compiledPlan(planFile: string, negative: string): Promise<SavedPlan> {
+  const saved = JSON.parse(await readFile(planFile, "utf8")) as SavedPlan;
+  // The template's plan repeats the bible's negative after its own; the compiler's comes first.
+  const old = saved.prompts.negative;
+  const own = `${negative}\n${old.slice((old.length + 1) / 2)}`;
+  const swap = (p: string) => `${p.slice(0, p.length - old.length)}${own}`;
+  const edited: Omit<SavedPlan, "digest"> & { digest?: string } = {
+    ...saved,
+    prompts: {
+      ...saved.prompts,
+      images: saved.prompts.images.map(swap),
+      generation: swap(saved.prompts.generation),
+      negative: own,
+    },
+  };
+  delete edited.digest;
+  await writeFile(planFile, JSON.stringify({ ...edited, digest: planDigest(edited) }));
+  return saved;
+}
+
 test("when the check objects only to compiler-written text, apply falls back to the template's prompt and records why", async () => {
   writeSettings({});
   const { world, planFile, planArgs } = await planWorld();
   const made = await cli([...planArgs, "--json"]);
   assert.equal(made.code, 0, made.stdout + made.stderr);
-  // The saved prompts as the compiler might have written them: a negative that names imitation.
-  const saved = JSON.parse(await readFile(planFile, "utf8")) as SavedPlan;
   const negative = "do not imitate existing characters";
-  const edited: Omit<SavedPlan, "digest"> & { digest?: string } = {
-    ...saved,
-    prompts: {
-      ...saved.prompts,
-      images: saved.prompts.images.map((p) => `${p}\n${negative}`),
-      generation: `${saved.prompts.generation}\n${negative}`,
-      negative: `${negative}\n${saved.prompts.negative}`,
-    },
-  };
-  delete edited.digest;
-  await writeFile(planFile, JSON.stringify({ ...edited, digest: planDigest(edited) }));
+  const saved = await compiledPlan(planFile, negative);
   const runs = join(world.dir, "apply-runs");
   // The model objects whenever compiler-written text is in front of it.
   const provider = await recorder(world.dir, `r.prompt.includes("[model-") ? 0.9 : 0.1`);
   const apply = ["apply", planFile, "--out", runs, "--provider-script", provider.script, "--json"];
   const dry = doc(await cli([...apply, "--dry-run"]));
   const hits = dry["promptPolicy"].hits as Doc[];
-  assert.ok(hits.some((h) => h.term === "imitate" && h.part === "model-negative"));
+  assert.deepEqual(
+    hits.filter((h) => h.term === "imitate").map((h) => h.part),
+    ["rules", "model-negative"],
+    "the bible's Don't is a rule; only the compiler's own negative is model-written",
+  );
   assert.equal((dry["jobs"] as PlanJob[]).find((j) => j.operation === "prompt-policy")?.count, 2);
 
   const run = await cli(apply);
@@ -298,13 +314,16 @@ test("when the check objects only to compiler-written text, apply falls back to 
   for (const image of images) {
     const prompt = JSON.parse(image.slice("image:".length)) as string;
     assert.ok(!prompt.includes(negative), "the template's prompt, not the compiler's");
-    assert.ok(prompt.startsWith(saved.prompts.images[0]!.split("\n")[0]!));
+    assert.equal(prompt, saved.prompts.images[0]);
   }
   const [first, second] = await provider.requests();
-  assert.match(first!, /\[model-negative\]/);
+  assert.match(first!, /\[model-negative\][^\n]*\n<<<\ndo not imitate existing characters\n>>>/);
+  assert.match(first!, /\[rules\][^\n]*\n<<<\n[^>]*Don't describe or imitate/);
+  assert.doesNotMatch(first!, /\[model-prompt\]/, "the compiler wrote no prompt of its own here");
   assert.doesNotMatch(second!, /\[model-/, "the second check sees the person's parts alone");
   const record = JSON.parse(await readFile(join(doc(run)["runDir"], "run.json"), "utf8")) as Doc;
   assert.equal(record["promptPolicy"].verdict, "allowed");
+  assert.match(record["promptPolicy"].model, /^scripted:prompt-policy:/);
   assert.match(record["promptPolicy"].fallback, /objected only to text the prompt compiler wrote/);
 });
 
@@ -313,6 +332,7 @@ test("when the check also objects to the person's text, apply exits 9 with no ge
   const { world, planFile, planArgs } = await planWorld();
   const made = await cli([...planArgs, "--json"]);
   assert.equal(made.code, 0, made.stdout + made.stderr);
+  await compiledPlan(planFile, "do not imitate existing characters");
   const provider = await recorder(world.dir, "0.9");
   const runs = join(world.dir, "apply-runs");
   const run = await cli([
@@ -327,6 +347,50 @@ test("when the check also objects to the person's text, apply exits 9 with no ge
   assert.equal(run.code, 9, run.stdout + run.stderr);
   assert.equal(doc(run)["error"].code, "prompt_refused");
   assert.deepEqual(await provider.events(), ["prompt-policy", "prompt-policy"]);
+});
+
+test("a plan the template wrote has no model-written text: a refusal at apply exits 9 after one call", async () => {
+  writeSettings({});
+  const { world, planFile, planArgs } = await planWorld();
+  const made = await cli([...planArgs, "--json"]);
+  assert.equal(made.code, 0, made.stdout + made.stderr);
+  // The model objects to the repository template's own wording.
+  const provider = await recorder(
+    world.dir,
+    `r.prompt.includes("Create original art") ? 0.9 : 0.1`,
+  );
+  const runs = join(world.dir, "apply-runs");
+  const apply = ["apply", planFile, "--out", runs, "--provider-script", provider.script, "--json"];
+  const dry = doc(await cli([...apply, "--dry-run"]));
+  assert.equal((dry["jobs"] as PlanJob[]).find((j) => j.operation === "prompt-policy")?.count, 1);
+  const run = await cli(apply);
+  assert.equal(run.code, 9, run.stdout + run.stderr);
+  assert.equal(doc(run)["error"].code, "prompt_refused");
+  assert.deepEqual(await provider.events(), ["prompt-policy"], "no fallback and no generation");
+  const [request] = await provider.requests();
+  assert.doesNotMatch(request!, /\[model-/, "the template's prompt is not model-written");
+  assert.match(request!, /\[template\][^\n]*\n<<<\n[^>]*Create original art/);
+});
+
+test("apply's run record carries the model check's answer on an ambiguous name in its note", async () => {
+  writeSettings({});
+  const { world, planFile, planArgs } = await planWorld();
+  const made = await cli([...planArgs, "--json"]);
+  assert.equal(made.code, 0, made.stdout + made.stderr);
+  const provider = await recorder(world.dir, ALLOW);
+  const runs = join(world.dir, "apply-runs");
+  const run = await cli([
+    ...["apply", planFile, "--out", runs, "--provider-script", provider.script],
+    ...["--note", `a lantern for ${AMBIGUOUS}, the baker`, "--json"],
+  ]);
+  assert.equal(run.code, 0, run.stdout + run.stderr);
+  const record = JSON.parse(await readFile(join(doc(run)["runDir"], "run.json"), "utf8")) as Doc;
+  const policy = record["promptPolicy"];
+  assert.ok(policy.hits.some((h: Doc) => h.ambiguous === true && h.part === "text"));
+  assert.match(policy.model, /^scripted:prompt-policy:/);
+  assert.equal(policy.probability, 0.1);
+  for (const candidate of record["candidates"] as Doc[])
+    assert.deepEqual(candidate["provenance"].promptPolicy, policy);
 });
 
 test("each input file's prompt text is labelled by what it is, and the model is told what each label means", async () => {

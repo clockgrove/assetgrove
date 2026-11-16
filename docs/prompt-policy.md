@@ -10,7 +10,7 @@ Every paid command's free plan step (`plan`, `apply`, `stage`, `generate-sheet`,
 - the brief;
 - the bible's fields that feed prompts (its tone fields, and its Do's and Don'ts, which the model check is told are rules the art must follow);
 - the prompt template's body;
-- at `apply`, the saved plan's prompts, which are the only saved text that counts (digests and formats feed no prompt) and are labelled model-written;
+- at `apply`, the saved plan's input files (spec, brief, bible, template), labelled as the plan step labels them, and the text the compiler wrote in its prompts, labelled model-written: the prompt and negative before the directives the plan appends, and only where they differ from the template's own (a plan the template wrote has no model-written text; a prompt that does not split that way counts whole as other text; digests and formats feed no prompt);
 - the free-text options a prompt carries: `fix-frame`'s `--family`, `--subject` and `--note`; `animation-qa`'s `--family` and `--subject` when it makes vision calls; `import`'s `--subject` and `--hints` when it proposes a grouping;
 - the target profile's text a prompt carries: the motion template `generate-sheet` states (its description and beat names) and the groom seasons and their traits `look-dev` describes.
 
@@ -28,7 +28,7 @@ A blocklist misses paraphrases and cannot tell a phrase used to copy from the sa
 - the call fails or answers out of type: exit 4 `provider_error`, and no other call runs;
 - no configured provider serves the decisions role: the plan step exits 2 `route_unavailable`, before anything is called.
 
-Compiler-written text is never the reason a person's request exits 9 after spend. At `plan`, a name in the compiler's output falls back for free to the template prompt (the compiler's `fallbackReason`, and `promptPolicy.fallback`); phrase hits in it are saved and decided by apply's check. A run whose prompt text has model-written parts (`apply`, whose saved plan prompts are model-written) forecasts two prompt-policy calls: when the first refuses, a second decides on the person-written parts alone. If it allows, the run uses the repository template's prompt and records why in `promptPolicy.fallback`; if it refuses, exit 9. `plan` forecasts its own one call plus its apply's two.
+Compiler-written text is never the reason a person's request exits 9 after spend. At `plan`, a name in the compiler's output falls back for free to the template prompt (the compiler's `fallbackReason`, and `promptPolicy.fallback`); phrase hits in it are saved and decided by apply's check. A run whose prompt text has model-written parts (`apply` of a plan the compiler wrote) forecasts two prompt-policy calls: when the first refuses, a second decides on the person-written parts alone. If it allows, the run uses the repository template's prompt and records why in `promptPolicy.fallback`; if it refuses, exit 9. An `apply` of a plan the template wrote has no model-written parts: one call, and its refusal exits 9. `plan` forecasts its own one call plus its apply's (two when the compiler can run, else one).
 
 So the check fails closed: a run never goes on without it. It is journaled like every call, so a resumed run does not pay for it twice. It is reserved under the run's cap, and what it spent counts against that same cap for the rest of the run. The run record and each candidate's provenance carry the record with the check's `model` (`<provider>:prompt-policy:<model>`), `probability` and `verdict`, the `hits` and any `fallback`.
 

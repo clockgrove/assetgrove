@@ -58,9 +58,13 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
   });
-  // The apply after this plan runs its own prompt-policy check first, on the compiled prompts
-  // (model-written, so up to two calls): forecast it too.
-  const jobs = [policyJobOf(providers.routes[PROMPT_POLICY_OPERATION]!, true), ...forecast.jobs];
+  // The apply after this plan runs its own prompt-policy check first: forecast it too, with its
+  // second call when the compiler can run and so write model-written text.
+  const compiles = forecast.jobs.some((j) => j.operation === "compiler");
+  const jobs = [
+    policyJobOf(providers.routes[PROMPT_POLICY_OPERATION]!, compiles),
+    ...forecast.jobs,
+  ];
   const reads = {
     ...(await bibleReads("bible", args.bible)),
     ...specReads("spec", spec),

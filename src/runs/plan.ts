@@ -257,6 +257,11 @@ export interface WorkPlanParts {
    * blocklist and the model check.
    */
   promptText?: readonly string[];
+  /**
+   * Labelled prompt text the request carries beside its input files' (apply: a saved plan's input
+   * files and its compiler-written text, src/planning.ts): checked with the rest.
+   */
+  promptParts?: readonly PromptPart[];
   /** The plan step's near matches (src/search/near-match.ts); kept out of the digest. */
   near?: NearMatchOutcome;
 }
@@ -360,6 +365,7 @@ export async function buildWorkPlan(
   for (const [name, path] of Object.entries(parts.reads ?? {})) promptFiles[name] ??= path;
   const promptParts: PromptPart[] = [
     ...(await collectPromptParts(promptFiles)),
+    ...(parts.promptParts ?? []),
     ...(parts.promptText ?? [])
       .filter((text) => text.trim().length > 0)
       .map((text) => ({ label: "text" as const, text })),

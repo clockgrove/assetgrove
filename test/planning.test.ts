@@ -900,15 +900,22 @@ test("apply with a template fallback generates from the template's prompt and re
       clamps: [],
     }),
   });
-  const { plan } = await create(f, {}, { provider });
+  const { plan, promptPolicy } = await create(f, {}, { provider });
   const template = await create(f);
   assert.notEqual(plan.prompts.generation, template.plan.prompts.generation);
+  const checked = {
+    ...promptPolicy,
+    model: "scripted:prompt-policy:decide",
+    probability: 0.1,
+    fallback: "the check objected only to the compiler's text",
+  };
   const { run } = await applyPlan(plan, {
     provider,
     outDir: join(f.root, "runs"),
-    templateFallback: "the check objected only to the compiler's text",
+    promptPolicy: checked,
   });
-  assert.equal(run.promptPolicy?.fallback, "the check objected only to the compiler's text");
+  assert.deepEqual(run.promptPolicy, checked, "the run's checked record, not the free one");
+  assert.deepEqual(run.candidates[0]?.provenance.promptPolicy, checked);
   const image = provider.calls.filter((c) => c.kind === "image").at(-1);
   assert.equal(image?.request.prompt, template.plan.prompts.images[0]);
   assert.equal(run.candidates[0]?.provenance.prompt, template.plan.prompts.generation);
