@@ -1,12 +1,20 @@
 /**
  * Builds bench/search/manifest.json (without card texts) from inventory.csv, the ~300-image subset
- * of the spike's 1,733 CC0 images. `node bench/search/build-manifest.ts`. Card texts come later
- * from write-card-texts.ts (orchestrator step o-6); this script keeps any already written.
+ * of the spike's 1,733 CC0 images, and the written queries of queries.ts. `node
+ * bench/search/build-manifest.ts`. Card texts come later from write-card-texts.ts, relevance from
+ * judge-relevance.ts; this script keeps any already written (a reworded query loses its judgements).
  */
 import { readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import { MANIFEST_FORMAT, type Manifest, type ManifestImage } from "./manifest.ts";
+import { basename, join } from "node:path";
+import {
+  MANIFEST_FORMAT,
+  relevantOf,
+  type Manifest,
+  type ManifestImage,
+  type WrittenQuery,
+} from "./manifest.ts";
 import { CARD_PROMPT } from "./card-text.ts";
+import { WRITTEN_QUERIES } from "./queries.ts";
 
 /** Each pack's zip, from Kenney's own OpenGameArt uploads (CC0 1.0). Extract with `unzip -d <pack>`. */
 export const PACK_ZIPS: Record<string, string> = {
@@ -34,11 +42,6 @@ interface Row {
   width: number;
   height: number;
   pixel: boolean;
-  /** The spike's `r.id`: pack and path, lower case, spaces as underscores, without extension. */
-  rid: string;
-  folder: string;
-  /** The spike's `f(r)`: the file name, lower case. */
-  f: string;
 }
 
 export function parseInventory(csv: string): Row[] {
@@ -56,53 +59,10 @@ export function parseInventory(csv: string): Row[] {
       width: Number(w),
       height: Number(h),
       pixel: px === "1",
-      rid: `${pack}/${path}`
-        .toLowerCase()
-        .replace(/\.[^./]+$/, "")
-        .replaceAll(" ", "_"),
-      folder: dirname(path!),
-      f: basename(path!).toLowerCase(),
     });
   }
   return rows;
 }
-
-/** The spike's label rules for its 30 written queries (the relevance judges only). */
-export const QUERY_RULES: [string, (r: Row) => boolean][] = [
-  ["race car seen from above", (r) => r.pack === "racing-pack" && r.folder.endsWith("Cars")],
-  ["motorcycle", (r) => /motorcycle/.test(r.f)],
-  ["spaceship", (r) => r.pack === "space-shooter-redux" && r.category === "vehicle"],
-  ["alien ufo", (r) => /ufo|enemy/.test(r.f)],
-  ["brown meteor", (r) => r.category === "meteor"],
-  ["laser beam", (r) => /laser/.test(r.f)],
-  ["fire flame effect", (r) => /fire/.test(r.f)],
-  ["power-up pickup", (r) => r.category === "pickup"],
-  ["gold coin", (r) => /coin/.test(r.f)],
-  ["key", (r) => /key/.test(r.f)],
-  ["heart health icon", (r) => /heart/.test(r.f)],
-  ["zombie", (r) => /zombie|zoimbie/.test(r.rid)],
-  ["robot", (r) => /robot/.test(r.rid)],
-  ["female adventurer character", (r) => /female_adventurer/.test(r.rid)],
-  [
-    "top-down soldier with a gun",
-    (r) => r.pack === "topdown-shooter" && r.category === "character",
-  ],
-  ["cute animal face", (r) => r.pack === "animal-pack-redux"],
-  ["elephant", (r) => /elephant/.test(r.f)],
-  ["penguin", (r) => /penguin/.test(r.f)],
-  ["slime monster enemy", (r) => r.pack === "platformer-art-deluxe" && r.category === "creature"],
-  ["grass ground tile", (r) => r.category === "tile" && /grass/.test(r.rid)],
-  ["road tile", (r) => r.category === "tile" && /road/.test(r.rid)],
-  ["pixel art dungeon tile", (r) => r.pack === "tiny-dungeon"],
-  ["pixel art town tile", (r) => r.pack === "tiny-town"],
-  ["brick wall", (r) => /brick|castle|stone/.test(r.f)],
-  ["water", (r) => /water/.test(r.f)],
-  ["arrow button icon", (r) => /arrow|left|right|up|down/.test(r.f) && r.category === "ui-icon"],
-  ["settings gear icon", (r) => /gear|wrench/.test(r.f)],
-  ["traffic cone", (r) => /cone/.test(r.f)],
-  ["barrel", (r) => /barrel/.test(r.f)],
-  ["wooden crate box", (r) => /box|crate/.test(r.f)],
-];
 
 const COLOURS = new Set([
   "black",
@@ -167,7 +127,7 @@ export function buildManifest(rows: Row[], previous?: Manifest): Manifest {
   return {
     format: MANIFEST_FORMAT,
     description:
-      "About 300 of the search spike's 1,733 CC0 Kenney images, stratified across every category and pack. Images are fetched from the pack zips (url#path_in_pack) and never committed. By-look relevance is same pack and same category.",
+      "About 300 of the search spike's 1,733 CC0 Kenney images, stratified across every category and pack. Images are fetched from the pack zips (url#path_in_pack) and never committed. By-look relevance is same pack and same category; by-words relevance is a decision model's judgement of each pooled candidate image against the query.",
     strata: {
       categories: [...new Set(rows.map((r) => r.category))].sort(),
       packs: Object.keys(PACK_ZIPS).sort(),
@@ -185,11 +145,16 @@ export function buildManifest(rows: Row[], previous?: Manifest): Manifest {
       ...(r.pixel ? { pixel: 16 } : {}),
     })),
     lookQueries: sorted.map((r) => r.id),
-    writtenQueries: QUERY_RULES.map(([text, rule], i) => ({
-      id: `q${String(i + 1).padStart(2, "0")}`,
-      text,
-      relevant: sorted.filter(rule).map((r) => r.id),
-    })),
+    writtenQueries: WRITTEN_QUERIES.map((text, i) => {
+      const id = `q${String(i + 1).padStart(2, "0")}`;
+      // A query whose words are unchanged keeps its pool and judgements; a reworded one starts over.
+      const was = previous?.writtenQueries.find((q) => q.id === id && q.text === text);
+      const q: WrittenQuery = { id, text };
+      if (was?.candidates) q.candidates = was.candidates;
+      if (was?.pooledBy) q.pooledBy = was.pooledBy;
+      if (was?.judgements) q.judgements = was.judgements;
+      return q;
+    }),
     pairs,
   };
 }
@@ -203,6 +168,7 @@ if (import.meta.main) {
   );
   const m = buildManifest(rows, prev);
   await writeFile(join(dir, "manifest.json"), `${JSON.stringify(m, null, 2)}\n`);
-  for (const q of m.writtenQueries) console.log(q.id, q.text, q.relevant.length);
+  for (const q of m.writtenQueries)
+    console.log(q.id, q.text, q.judgements ? relevantOf(q).length : "not judged");
   console.log("pairs", m.pairs.length, "pixel16", m.labels.filter((l) => l.pixel === 16).length);
 }

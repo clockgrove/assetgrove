@@ -1,6 +1,6 @@
 {
   "format": "assetgrove-search-bench/1",
-  "description": "About 300 of the search spike's 1,733 CC0 Kenney images, stratified across every category and pack. Images are fetched from the pack zips (url#path_in_pack) and never committed. By-look relevance is same pack and same category.",
+  "description": "About 300 of the search spike's 1,733 CC0 Kenney images, stratified across every category and pack. Images are fetched from the pack zips (url#path_in_pack) and never committed. By-look relevance is same pack and same category; by-words relevance is a decision model's judgement of each pooled candidate image against the query.",
   "strata": {
     "categories": [
       "character",
@@ -6823,322 +6823,267 @@
   "writtenQueries": [
     {
       "id": "q01",
-      "text": "race car seen from above",
-      "relevant": [
-        "kn-02f108c596",
-        "kn-02f407c651",
-        "kn-052606ecf1",
-        "kn-0565d836b7",
-        "kn-0b13765fcf",
-        "kn-1f62510266",
-        "kn-1f62564b0b"
-      ]
+      "text": "top-down car for a racing game"
     },
     {
       "id": "q02",
-      "text": "motorcycle",
-      "relevant": ["kn-0059340c48"]
+      "text": "spaceship seen from above"
     },
     {
       "id": "q03",
-      "text": "spaceship",
-      "relevant": [
-        "kn-0fcc07a17d",
-        "kn-1fc41ebcaa",
-        "kn-267b19f620",
-        "kn-2aaa39e6aa",
-        "kn-3294fa91a2",
-        "kn-3c4e897f1f",
-        "kn-43797f2162",
-        "kn-460c90365b"
-      ]
+      "text": "small spaceship icon for the lives counter"
     },
     {
       "id": "q04",
-      "text": "alien ufo",
-      "relevant": [
-        "kn-0fcc07a17d",
-        "kn-267b19f620",
-        "kn-2aaa39e6aa",
-        "kn-3c4e897f1f",
-        "kn-460c90365b"
-      ]
+      "text": "space rock asteroid"
     },
     {
       "id": "q05",
-      "text": "brown meteor",
-      "relevant": [
-        "kn-1a832fd208",
-        "kn-1ec7a519ec",
-        "kn-1ed498b78b",
-        "kn-2a554ef11b",
-        "kn-3295d6a952",
-        "kn-429a67b6b4",
-        "kn-453d0b1922",
-        "kn-4c3e98ecbc",
-        "kn-4f555ee0b6",
-        "kn-562c4e10e1",
-        "kn-5f991be663",
-        "kn-88d2c1b802"
-      ]
+      "text": "glowing laser shot"
     },
     {
       "id": "q06",
-      "text": "laser beam",
-      "relevant": [
-        "kn-0205adaa8e",
-        "kn-112f393799",
-        "kn-17385b7834",
-        "kn-17b041968c",
-        "kn-1aa42b52c7",
-        "kn-1b686b57c8",
-        "kn-25eb8449cd",
-        "kn-27fc0167be",
-        "kn-282cb1a6e5"
-      ]
+      "text": "flame or fire effect"
     },
     {
       "id": "q07",
-      "text": "fire flame effect",
-      "relevant": ["kn-1173fe829a", "kn-13e53881d9", "kn-1aa079894c"]
+      "text": "ice crystal shard"
     },
     {
       "id": "q08",
-      "text": "power-up pickup",
-      "relevant": [
-        "kn-005d0f19f6",
-        "kn-03ac4c75e0",
-        "kn-05999b8b04",
-        "kn-07a349203d",
-        "kn-0a1616b33b",
-        "kn-0ae0e9c027",
-        "kn-0b5ca40570",
-        "kn-0cd16d402c",
-        "kn-1e5ba2c4df",
-        "kn-271e6972cd",
-        "kn-2fd263f36f",
-        "kn-370b7002f2",
-        "kn-3f5a047504",
-        "kn-6965ff296f",
-        "kn-7ba89c60b6",
-        "kn-7eed8df88e"
-      ]
+      "text": "power-up button with a symbol on it"
     },
     {
       "id": "q09",
-      "text": "gold coin",
-      "relevant": ["kn-03a415231e", "kn-07a349203d"]
+      "text": "lightning bolt power-up"
     },
     {
       "id": "q10",
-      "text": "key",
-      "relevant": ["kn-0ebdb383b0", "kn-58250e7413"]
+      "text": "shiny gemstone collectible"
     },
     {
       "id": "q11",
-      "text": "heart health icon",
-      "relevant": []
+      "text": "coin the player collects"
     },
     {
       "id": "q12",
-      "text": "zombie",
-      "relevant": ["kn-0ca42cd9a1", "kn-123bec5b85", "kn-15c8e92f4a"]
+      "text": "key that unlocks a door"
     },
     {
       "id": "q13",
-      "text": "robot",
-      "relevant": ["kn-006158d93e", "kn-1a307cd640"]
+      "text": "padlock icon"
     },
     {
       "id": "q14",
-      "text": "female adventurer character",
-      "relevant": ["kn-0a589ace5b"]
+      "text": "star collectible"
     },
     {
       "id": "q15",
-      "text": "top-down soldier with a gun",
-      "relevant": [
-        "kn-00ed09b5c4",
-        "kn-0acace40e0",
-        "kn-0bfccdbcca",
-        "kn-0c40a319cc",
-        "kn-0eadd4c0a8",
-        "kn-10697e08c4",
-        "kn-111b90c6b4",
-        "kn-16263d6630",
-        "kn-1a307cd640"
-      ]
+      "text": "grass and dirt platform tile"
     },
     {
       "id": "q16",
-      "text": "cute animal face",
-      "relevant": [
-        "kn-04d831bbed",
-        "kn-05dc720a63",
-        "kn-0ec89e6657",
-        "kn-1396df3ae6",
-        "kn-15871e4009",
-        "kn-1875c2fef5",
-        "kn-1bb4a469de",
-        "kn-1c35e525b2",
-        "kn-1dbf1685b9",
-        "kn-2107affc97"
-      ]
+      "text": "snowy ice platform tile"
     },
     {
       "id": "q17",
-      "text": "elephant",
-      "relevant": []
+      "text": "sandy desert ground tile"
     },
     {
       "id": "q18",
-      "text": "penguin",
-      "relevant": ["kn-05dc720a63"]
+      "text": "stone brick wall texture"
     },
     {
       "id": "q19",
-      "text": "slime monster enemy",
-      "relevant": [
-        "kn-1f6f4f7bbb",
-        "kn-2d75e2a680",
-        "kn-34f86ac3f8",
-        "kn-4630ed433d",
-        "kn-536f96dde6",
-        "kn-5dd55c2206",
-        "kn-663497de0f",
-        "kn-8464b7f6bc",
-        "kn-9ae0efdf11"
-      ]
+      "text": "treasure chest in a dungeon"
     },
     {
       "id": "q20",
-      "text": "grass ground tile",
-      "relevant": [
-        "kn-011221efff",
-        "kn-0a15ec65ad",
-        "kn-1137d5125b",
-        "kn-1d3acc577c",
-        "kn-24eee50214",
-        "kn-28ec9840b0"
-      ]
+      "text": "pixel art weapon such as a sword or dagger"
     },
     {
       "id": "q21",
-      "text": "road tile",
-      "relevant": [
-        "kn-07aecb3082",
-        "kn-081131c980",
-        "kn-0dc41eb4cf",
-        "kn-120e99a574",
-        "kn-12656f5fd6",
-        "kn-1545e16885",
-        "kn-19d074bdf3",
-        "kn-1cb9d11bfe",
-        "kn-1cf9a3f28b",
-        "kn-214d99a9f5",
-        "kn-21c4989333",
-        "kn-278fcbf7ae",
-        "kn-29992a7cb9",
-        "kn-2b09df54bf",
-        "kn-2f2c64634c"
-      ]
+      "text": "small pixel art hero character"
     },
     {
       "id": "q22",
-      "text": "pixel art dungeon tile",
-      "relevant": [
-        "kn-0151695f28",
-        "kn-03b7f71be1",
-        "kn-0606653ad0",
-        "kn-0b8d843dae",
-        "kn-0b9fa75306",
-        "kn-0ce7aabd23",
-        "kn-0d4f0c82ff",
-        "kn-0fbb633622",
-        "kn-0fe7c54489",
-        "kn-138b74609b",
-        "kn-16d8f777b3",
-        "kn-19a75fbb7d",
-        "kn-1a9ae3a209",
-        "kn-1b0a4efa97",
-        "kn-1bee42a448",
-        "kn-1e82481db9",
-        "kn-20915fde75",
-        "kn-22b9237af3",
-        "kn-2372114976",
-        "kn-24298faf91",
-        "kn-28466ec899"
-      ]
+      "text": "old man with a beard"
     },
     {
       "id": "q23",
-      "text": "pixel art town tile",
-      "relevant": [
-        "kn-0230599ad3",
-        "kn-05ae1d16ef",
-        "kn-0681770aa2",
-        "kn-07b9cf1d4c",
-        "kn-0928b00489",
-        "kn-0a273e03a7",
-        "kn-0c007c5d64",
-        "kn-0d55333ffe",
-        "kn-0dd68a4e48",
-        "kn-0de41607a1",
-        "kn-1120f5a9a2",
-        "kn-1209e77e92",
-        "kn-13811299a0",
-        "kn-167c8eeccd",
-        "kn-1a3a354c78",
-        "kn-1ab17e4b24",
-        "kn-1c6b444451",
-        "kn-1cc4348d99",
-        "kn-1cfedee7d3",
-        "kn-1e43646295"
-      ]
+      "text": "ghost enemy"
     },
     {
       "id": "q24",
-      "text": "brick wall",
-      "relevant": [
-        "kn-03ac4c75e0",
-        "kn-03c17e9e50",
-        "kn-041f729735",
-        "kn-0ae0e9c027",
-        "kn-0b66fcdc42",
-        "kn-108592d8df",
-        "kn-12644727a6",
-        "kn-156aedb942"
-      ]
+      "text": "slime monster enemy"
     },
     {
       "id": "q25",
-      "text": "water",
-      "relevant": []
+      "text": "angry blob creature"
     },
     {
       "id": "q26",
-      "text": "arrow button icon",
-      "relevant": ["kn-14be49d153", "kn-2851b1a75b", "kn-2a09114bb4", "kn-2bf3ec08fa"]
+      "text": "pink one-eyed alien"
     },
     {
       "id": "q27",
-      "text": "settings gear icon",
-      "relevant": []
+      "text": "friendly green blob character"
     },
     {
       "id": "q28",
-      "text": "traffic cone",
-      "relevant": ["kn-61152f3c60"]
+      "text": "cartoon zombie"
     },
     {
       "id": "q29",
-      "text": "barrel",
-      "relevant": ["kn-31d507acd5", "kn-4d07213a05", "kn-62d47efbe7"]
+      "text": "cartoon girl wearing a headband"
     },
     {
       "id": "q30",
-      "text": "wooden crate box",
-      "relevant": ["kn-03a415231e"]
+      "text": "man with a mustache and flat-top hair"
+    },
+    {
+      "id": "q31",
+      "text": "robot character"
+    },
+    {
+      "id": "q32",
+      "text": "soldier seen from above holding a gun"
+    },
+    {
+      "id": "q33",
+      "text": "person seen from directly above"
+    },
+    {
+      "id": "q34",
+      "text": "cute animal face avatar"
+    },
+    {
+      "id": "q35",
+      "text": "farm animal head"
+    },
+    {
+      "id": "q36",
+      "text": "bird with a beak"
+    },
+    {
+      "id": "q37",
+      "text": "sea animal with tusks"
+    },
+    {
+      "id": "q38",
+      "text": "number digit for a score counter"
+    },
+    {
+      "id": "q39",
+      "text": "letter of the alphabet for on-screen text"
+    },
+    {
+      "id": "q40",
+      "text": "arrow for a direction button"
+    },
+    {
+      "id": "q41",
+      "text": "gamepad, joystick or keyboard key icon"
+    },
+    {
+      "id": "q42",
+      "text": "icon of a group of people for multiplayer"
+    },
+    {
+      "id": "q43",
+      "text": "empty frame for a menu panel"
+    },
+    {
+      "id": "q44",
+      "text": "orange start button"
+    },
+    {
+      "id": "q45",
+      "text": "wide banner for a title or menu"
+    },
+    {
+      "id": "q46",
+      "text": "round button or token"
+    },
+    {
+      "id": "q47",
+      "text": "hand tool such as a wrench or saw"
+    },
+    {
+      "id": "q48",
+      "text": "office item like a phone, laptop or folder"
+    },
+    {
+      "id": "q49",
+      "text": "money or cash"
+    },
+    {
+      "id": "q50",
+      "text": "drink bottle or cup"
+    },
+    {
+      "id": "q51",
+      "text": "battery charge icon"
+    },
+    {
+      "id": "q52",
+      "text": "curved piece of race track"
+    },
+    {
+      "id": "q53",
+      "text": "striped barrier along a racetrack"
+    },
+    {
+      "id": "q54",
+      "text": "awning over a shop or market stall"
+    },
+    {
+      "id": "q55",
+      "text": "water pool tile"
+    },
+    {
+      "id": "q56",
+      "text": "dark metal floor tile for a sci-fi base"
+    },
+    {
+      "id": "q57",
+      "text": "window or glass panel"
+    },
+    {
+      "id": "q58",
+      "text": "wooden plank, bench or bridge"
+    },
+    {
+      "id": "q59",
+      "text": "fence or railing"
+    },
+    {
+      "id": "q60",
+      "text": "food item such as fruit, cheese or mushrooms"
+    },
+    {
+      "id": "q61",
+      "text": "tree or bush"
+    },
+    {
+      "id": "q62",
+      "text": "wooden door or doorway"
+    },
+    {
+      "id": "q63",
+      "text": "backpack or bag"
+    },
+    {
+      "id": "q64",
+      "text": "piece of clothing or armour"
+    },
+    {
+      "id": "q65",
+      "text": "spring to bounce on"
+    },
+    {
+      "id": "q66",
+      "text": "wooden signpost"
     }
   ],
   "pairs": [
