@@ -1,7 +1,7 @@
 /**
  * The deterministic edge-halo check of a strip: a soft edge that carries a colour the figure does
- * not have there (a tint left by a removed background, or a fringe from unmixing it), and
- * transparent pixels that keep a colour. Nothing here assumes a style.
+ * not have there (a tint left by a removed background, or a fringe from unmixing it). Transparent
+ * pixels that keep a colour are counted apart and reported as a note. Nothing here assumes a style.
  */
 import type { Raster } from "../image/raster.ts";
 import type { AnimationReason, AnimationThresholds } from "./types.ts";
@@ -63,15 +63,23 @@ export function frameHalo(frame: Raster): FrameHalo {
   return { edgePixels, haloPixels, colouredTransparent };
 }
 
-/** The share of a frame's soft edge (and coloured transparent pixels) that is halo. */
+/**
+ * The share of a frame's soft edge that is halo: soft edge pixels whose colour is far from every
+ * opaque colour near them, over all soft edge pixels. Transparent pixels that keep a colour are a
+ * separate, exactly fixable matter (see `transparentColourNotes`) and are not counted here.
+ */
 export function haloShare(h: FrameHalo): number {
-  const total = h.edgePixels + h.colouredTransparent;
-  return total === 0 ? 0 : (h.haloPixels + h.colouredTransparent) / total;
+  return h.edgePixels === 0 ? 0 : h.haloPixels / h.edgePixels;
 }
 
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 
-/** The `edge-halo` reasons of a strip: one passing reason, or one failing reason per frame. */
+/**
+ * The `edge-halo` reasons of a strip: one passing reason, or one failing reason per frame whose
+ * soft edge share of halo is over the limit. Each frame whose fully transparent pixels keep a
+ * colour adds a passing `transparent-colour` note: that colour shows only where a renderer drops
+ * alpha, and the sheet path and fix-frame clear it (apply-style), so it never fails the strip.
+ */
 export function edgeHaloReasons(
   frames: Raster[],
   thresholds: Pick<AnimationThresholds, "edgeHaloShare">,
@@ -79,27 +87,56 @@ export function edgeHaloReasons(
   const limit = thresholds.edgeHaloShare;
   const halos = frames.map(frameHalo);
   const failing = halos.map((h, i) => ({ h, i, s: haloShare(h) })).filter((x) => x.s > limit);
-  if (failing.length === 0) {
-    const worst = Math.max(0, ...halos.map(haloShare));
-    return [
-      {
-        check: "edge-halo",
-        passed: true,
-        reason: `every frame's soft edge carries the figure's own colours: at most ${pct(worst)} of it is more than ${HALO_DISTANCE} from every opaque colour within ${HALO_RADIUS} px (limit ${pct(limit)})`,
-        source: "deterministic",
-      },
-    ];
+  const reasons: AnimationReason[] =
+    failing.length === 0
+      ? [
+          {
+            check: "edge-halo",
+            passed: true,
+            reason: `every frame's soft edge carries the figure's own colours: at most ${pct(Math.max(0, ...halos.map(haloShare)))} of it is more than ${HALO_DISTANCE} from every opaque colour within ${HALO_RADIUS} px (limit ${pct(limit)})`,
+            source: "deterministic",
+          },
+        ]
+      : failing.map(({ h, i, s }) => ({
+          check: "edge-halo",
+          passed: false,
+          reason: `frame ${i + 1}: ${h.haloPixels} of ${h.edgePixels} soft edge pixels carry a colour more than ${HALO_DISTANCE} from every opaque colour within ${HALO_RADIUS} px (${pct(s)}, limit ${pct(limit)})`,
+          source: "deterministic",
+          frames: [i + 1],
+        }));
+  return [...reasons, ...transparentColourNotes(halos)];
+}
+
+/**
+ * One passing note per frame whose fully transparent pixels keep a colour. The colour is invisible
+ * where alpha is honoured and is cleared when the strip is written (apply-style), so it is reported,
+ * never failed.
+ */
+export function transparentColourNotes(halos: FrameHalo[]): AnimationReason[] {
+  return halos.flatMap((h, i) =>
+    h.colouredTransparent === 0
+      ? []
+      : [
+          {
+            check: "transparent-colour",
+            passed: true,
+            reason: `frame ${i + 1}: ${h.colouredTransparent} fully transparent pixels keep a colour, shown only where alpha is dropped; write-families and fix-frame clear it, and the vision checks and previews use the cleared frame`,
+            source: "deterministic" as const,
+            frames: [i + 1],
+          },
+        ],
+  );
+}
+
+/** A copy of the frame with every fully transparent pixel's colour cleared to 0. */
+export function clearTransparentColour(frame: Raster): Raster {
+  const data = new Uint8Array(frame.data);
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) {
+      data[i] = 0;
+      data[i + 1] = 0;
+      data[i + 2] = 0;
+    }
   }
-  return failing.map(({ h, i, s }) => ({
-    check: "edge-halo",
-    passed: false,
-    reason:
-      `frame ${i + 1}: ${h.haloPixels} of ${h.edgePixels} soft edge pixels carry a colour more than ${HALO_DISTANCE} from every opaque colour within ${HALO_RADIUS} px` +
-      (h.colouredTransparent > 0
-        ? `, and ${h.colouredTransparent} transparent pixels keep a colour`
-        : "") +
-      ` (${pct(s)}, limit ${pct(limit)})`,
-    source: "deterministic",
-    frames: [i + 1],
-  }));
+  return { ...frame, data };
 }

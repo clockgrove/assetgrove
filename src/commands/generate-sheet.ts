@@ -8,6 +8,7 @@ import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts"
 import type { Route } from "../routes.ts";
 import { generateSheet, motionLines, planSheet, sheetBrief } from "../sheet/generate.ts";
 import { templateFor, templatesFor } from "../animation/templates.ts";
+import { InputError } from "../errors.ts";
 import { SliceError } from "../sheet/slice.ts";
 import type { AssetSpec } from "../types.ts";
 import { sharedTexts, withSharedText } from "../request.ts";
@@ -37,6 +38,7 @@ interface GenerateSheetArgs {
   imports?: string;
   lockBible?: string;
   identityMode?: string;
+  maxHalo?: number;
   workItem?: string;
   providerScript?: string;
   dryRun?: boolean;
@@ -48,6 +50,11 @@ interface GenerateSheetArgs {
 /** Generate-sheet's plan step: its inputs, providers, planned calls and WorkPlan, with no call. */
 async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   const capUsd = runCap(args.cap, ctx.settings);
+  // Checked before the sheet is paid for; the import checks it again.
+  if (args.maxHalo !== undefined && !(args.maxHalo >= 0 && args.maxHalo <= 1))
+    throw new InputError(
+      `the matte limit --max-halo must be a fraction from 0 to 1, not ${args.maxHalo}`,
+    );
   const spec = await readJson<AssetSpec>(args.spec);
   const bible = await loadStyleBible(args.bible);
   const profile = await loadProfile(args.profile);
@@ -165,6 +172,13 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.
         description: "override the profile's identity mode",
         placeholder: "<off|shadow|enforce>",
       },
+      maxHalo: {
+        type: "number",
+        minimum: 0,
+        description:
+          "the matte checks' limit, 0 to 1: the share of a frame's edge pixels that may keep the background colour (default 0.005)",
+        placeholder: "<fraction>",
+      },
       workItem: {
         type: "string",
         description: "the work item the spend ledger counts against",
@@ -221,6 +235,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.
         provider: providers,
         importsDir: resolve(args.imports ?? ".assetgrove/imports"),
         ...(ctx.run && { runDir: ctx.run.dir }),
+        ...(args.maxHalo !== undefined && { matte: { maxHaloFraction: args.maxHalo } }),
         capUsd,
         ledger,
         ...(args.note !== undefined && { note: args.note }),

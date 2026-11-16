@@ -276,6 +276,20 @@ interface GridSpec {
   origin: Point;
 }
 
+/** How many rows the figures sit in, clustered by their centres' heights as detectGrid does. */
+function figureRows(figures: Component[]): number | undefined {
+  if (figures.length === 0) return undefined;
+  const boxes = figures.map((f) => f.box);
+  return (
+    Math.max(
+      ...cluster(
+        boxes.map((b) => centre(b).y),
+        0.5 * median(boxes.map((b) => b.height)),
+      ),
+    ) + 1
+  );
+}
+
 function detectGrid(sheet: Raster, figures: Component[]): GridSpec | undefined {
   if (figures.length < 2) return undefined;
   const boxes = figures.map((f) => f.box);
@@ -688,12 +702,26 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
 
   let sliced: Sliced;
   if (options.grid) {
-    const cellWidth = options.grid.cellWidth ?? Math.floor(sheet.width / options.grid.columns);
-    const cellHeight = options.grid.cellHeight ?? cellWidth;
+    const { columns } = options.grid;
+    const cellWidth = options.grid.cellWidth ?? Math.floor(sheet.width / columns);
     const origin = options.grid.origin ?? { x: 0, y: 0 };
+    const height = sheet.height - origin.y;
+    // How tall a cell is: given; else the sheet's height over its rows, which are given, follow
+    // from the count (the sheet holds count figures in rows of `columns`), or are the rows the
+    // figures sit in. Square cells only when nothing else says, as on a sheet with no figure.
+    const rows =
+      options.grid.rows ??
+      (options.grid.cellHeight !== undefined
+        ? Math.ceil(height / options.grid.cellHeight)
+        : options.count !== undefined
+          ? Math.ceil(options.count / columns)
+          : figureRows(sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff)));
+    const cellHeight =
+      options.grid.cellHeight ??
+      (rows !== undefined ? Math.floor(height / rows) : Math.min(cellWidth, height));
     sliced = sliceGivenGrid(ctx, {
-      columns: options.grid.columns,
-      rows: options.grid.rows ?? Math.ceil((sheet.height - origin.y) / cellHeight),
+      columns,
+      rows: rows ?? Math.ceil(height / cellHeight),
       cell: { width: cellWidth, height: cellHeight },
       origin,
     });

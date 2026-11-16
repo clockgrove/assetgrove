@@ -264,3 +264,36 @@ test("touching figures that merged into one are named when too few are found", (
     },
   );
 });
+
+/** A sheet of `columns` × `rows` cells of cellW × cellH, each holding one tall figure. */
+function tallCellSheet(columns: number, rows: number, cellW: number, cellH: number): Raster {
+  const sheet = createRaster(columns * cellW, rows * cellH);
+  for (let i = 0; i < sheet.data.length; i += 4) sheet.data.set([250, 250, 250, 255], i);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < columns; c++)
+      for (let y = Math.round(cellH * 0.1); y < Math.round(cellH * 0.9); y++)
+        for (let x = Math.round(cellW * 0.3); x < Math.round(cellW * 0.7); x++)
+          sheet.data.set(
+            [60 + 20 * c, 40, 30 + 40 * r, 255],
+            ((r * cellH + y) * sheet.width + c * cellW + x) * 4,
+          );
+  return sheet;
+}
+
+test("an explicit grid of columns alone takes its cell height from the count or the figures' rows", () => {
+  // generate-sheet's own layout for 8 frames: 4 columns, 2 rows of cells twice as tall as wide.
+  const sheet = tallCellSheet(4, 2, 64, 128);
+  for (const options of [{ grid: { columns: 4 }, count: 8 }, { grid: { columns: 4 } }]) {
+    const result = sliceSheet(sheet, options);
+    assert.equal(result.figures.length, 8, JSON.stringify(options));
+    assert.deepEqual(result.grid, {
+      columns: 4,
+      rows: 2,
+      cell: { width: 64, height: 128 },
+      origin: { x: 0, y: 0 },
+    });
+    // Every figure is whole: about 80% of its 128 px cell tall, never cut in half.
+    for (const figure of result.figures)
+      assert.ok(figure.box.height >= 100, `${figure.box.height}`);
+  }
+});

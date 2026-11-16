@@ -1,6 +1,7 @@
 /**
  * The contact sheet of a run (design section 10): `<run>/contact.png`, one numbered row per staged
- * candidate. A still sits beside its references, a sprite strip shows a row of key frames and a 3D
+ * candidate. A still sits beside its references, a sprite strip shows a row of key frames (every
+ * frame QA flagged, then frames spread evenly) and a 3D
  * character its turntable frames. Numbers only: no text from any shared file or request input is
  * drawn, so the sheet changes only when an image does. It reuses the raster code of the sheet
  * import (src/sheet/import.ts).
@@ -122,10 +123,33 @@ export function renderContact(rows: ContactRow[], references: Raster[]): Contact
   return { raster: out, cells };
 }
 
-/** `count` indexes spread evenly over `length` items, first and last included. */
-export function keyIndexes(length: number, count = MAX_KEY_FRAMES): number[] {
-  if (length <= count) return Array.from({ length }, (_, i) => i);
-  return Array.from({ length: count }, (_, i) => Math.round((i * (length - 1)) / (count - 1)));
+/**
+ * The indexes of the key frames shown for `length` items: every `flagged` index (the frames a
+ * check flagged, which the person must see to judge the strip), then the rest of `count` spread
+ * evenly over the frames not flagged, first and last included. Sorted; more than `count` only when
+ * more frames are flagged.
+ */
+export function keyIndexes(
+  length: number,
+  count = MAX_KEY_FRAMES,
+  flagged: Iterable<number> = [],
+): number[] {
+  const shown = new Set([...flagged].filter((i) => Number.isInteger(i) && i >= 0 && i < length));
+  const rest = Array.from({ length }, (_, i) => i).filter((i) => !shown.has(i));
+  const slots = Math.max(0, count - shown.size);
+  if (rest.length <= slots) rest.forEach((i) => shown.add(i));
+  else if (slots === 1) shown.add(rest[0] as number);
+  else
+    for (let k = 0; k < slots; k++)
+      shown.add(rest[Math.round((k * (rest.length - 1)) / (slots - 1))] as number);
+  return [...shown].sort((a, b) => a - b);
+}
+
+/** The 0-based frames a strip's reasons flagged: every frame a failing reason names. */
+export function flaggedFrames(reasons: ContactCandidate["reasons"]): number[] {
+  return [...new Set((reasons ?? []).filter((r) => !r.passed).flatMap((r) => r.frames ?? []))].map(
+    (f) => f - 1,
+  );
 }
 
 function tryDecode(bytes: Uint8Array): Raster | undefined {
@@ -143,6 +167,8 @@ export interface ContactCandidate {
   mediaType: string;
   fields: Record<string, unknown>;
   artifacts?: string[];
+  /** The candidate's QA reasons; a failing one's 1-based `frames` are always shown for a strip. */
+  reasons?: Array<{ passed: boolean; frames?: number[] }>;
 }
 
 /** A candidate's number: the digits of its id (`c3` is 3). */
@@ -176,7 +202,9 @@ async function candidateImages(
   const height = frames?.height ?? spec.frames?.height ?? image.height;
   if (width === undefined || height !== image.height || image.width % width !== 0) return [image];
   const all = splitStrip(image, { width, height });
-  return keyIndexes(all.length).map((i) => all[i] as Raster);
+  return keyIndexes(all.length, MAX_KEY_FRAMES, flaggedFrames(candidate.reasons)).map(
+    (i) => all[i] as Raster,
+  );
 }
 
 /** Writes `<runDir>/contact.png` for rows and references; returns the file name and the layout. */

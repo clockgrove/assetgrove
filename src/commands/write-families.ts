@@ -141,6 +141,7 @@ or exit 8 confirmation_required and \`assetgrove confirm <hex>\`. Agents never c
         `  wrote ${f.result.mediaPath}`,
         `  wrote ${f.result.manifestPath}`,
       );
+      if (f.fieldsNote !== undefined) lines.push(`  note: ${f.fieldsNote}`);
       if (f.result.provenancePath) lines.push(`  wrote ${f.result.provenancePath}`);
       lines.push(
         ...formatReport({ ...f.animation, identityFlicker: "skipped", holes: "skipped" }).map(

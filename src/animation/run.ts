@@ -17,6 +17,7 @@ import type { Routes } from "../routes.ts";
 import type { ResolvedStyle } from "../style.ts";
 import type { Point, Size, TargetProfile } from "../types.ts";
 import { appendDecisionLog, checkFlicker } from "./flicker.ts";
+import { clearTransparentColour } from "./halo.ts";
 import { checkHoles } from "./holes.ts";
 import { loopPreview, onionSkinSheet, PREVIEW_MEDIA_TYPES } from "./preview.ts";
 import { animationQa } from "./qa.ts";
@@ -138,12 +139,13 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
     throw new InputError(`anchor ${anchor.x},${anchor.y} lies outside the frame`);
   }
   const durationMs = options.durationMs ?? profile.frames.durationMs ?? DEFAULT_DURATION_MS;
-  const frames = splitStrip(options.strip, frame);
+  const split = splitStrip(options.strip, frame);
   // Validate templates and thresholds before any spend.
   thresholdsFor(profile);
+  // Measured on the strip as given, so a colour kept under alpha 0 is reported (a note)...
   const base = animationQa(
     {
-      frames,
+      frames: split,
       frame,
       anchor,
       family,
@@ -154,6 +156,8 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
     style,
   );
   const loop = familyLoops(family, profile);
+  // ...and cleared before the vision checks and previews, as writing the strip would clear it.
+  const frames = split.map(clearTransparentColour);
 
   let decisions: FlickerDecision[] = [];
   let holeDecisions: HoleDecision[] = [];
