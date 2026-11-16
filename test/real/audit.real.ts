@@ -6,52 +6,25 @@
  * fit what is left. Skips without AI_GATEWAY_API_KEY.
  */
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BIBLE_PRESETS, serializeBible } from "../../src/bible.ts";
 import { auditCommand } from "../../src/commands/audit.ts";
 import { runCommand } from "../../src/commands/runner.ts";
-import { encodePng } from "../../src/image/raster.ts";
-import { GAME, fixtureLibrary } from "../fixtures/library.ts";
-import { drawSubject } from "../fixtures/synthetic.ts";
+import { auditSet } from "../fixtures/audit-set.ts";
 import { WORK_ITEM, realBudget, skipWithout } from "./budget.ts";
 
 const skip = skipWithout("AI_GATEWAY_API_KEY");
 
 test("real gateway: one audit of a three-asset set", { skip }, async () => {
   const rb = realBudget();
-  const lib = fixtureLibrary({ bulk: 3 });
+  const lib = auditSet();
   const runs = await mkdtemp(join(tmpdir(), "assetgrove-real-audit-"));
   try {
-    // Images large enough for every vision model; the third one drawn differently.
-    for (let i = 0; i < 3; i++)
-      writeFileSync(
-        join(lib.root, "bulk", `bulk-00${i}.png`),
-        encodePng(drawSubject(384, i === 2 ? 3 : 0)),
-      );
-    const art = join(lib.dir, ".assetgrove", "art-direction");
-    writeFileSync(join(art, "pebble.png"), encodePng(drawSubject(384)));
-    const bible = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
-    bible.referenceLicense = "NOASSERTION";
-    bible.world = "Synthetic";
-    bible.identities = {
-      pebble: {
-        version: "pebble-1",
-        approved: true,
-        turnaround: "pebble.png",
-        signatureFeatures: ["a round body"],
-        proportions: "as wide as tall",
-        palette: ["#808080"],
-      },
-    };
-    writeFileSync(join(art, "BIBLE.md"), serializeBible(bible, "# Synthetic\n"));
-
     const ctx = { settings: rb.settings, env: rb.env, log: (line: string) => console.log(line) };
     const args = {
-      set: `asset://${GAME}/by-tag/bulk/`,
+      set: lib.set,
       target: lib.dir,
       runs,
       workItem: WORK_ITEM,
