@@ -159,4 +159,8 @@ export async function snapshot(dir: string): Promise<string[]> {
 }
 
 export const cleanup = (...dirs: string[]) =>
-  Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
+  // Windows refuses to remove a table folder for a moment after its store was last read (EPERM or
+  // EBUSY); `rm` retries those itself when given a retry count.
+  Promise.all(
+    dirs.map((d) => rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })),
+  );
