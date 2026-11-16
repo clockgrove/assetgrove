@@ -7,6 +7,7 @@
  * of each image's figure against its lower part), `vanished` (that marking on the reference only) or a literal reply.
  */
 import type { Script } from "../../src/gateway/scripted.ts";
+import { referenceView } from "./scripted-views.ts";
 import { decodeImage, encodePng } from "../../src/image/raster.ts";
 
 const REGIONS = ["face", "cheek", "head", "neck", "body", "leg", "tail"];
@@ -36,6 +37,7 @@ function figureBox(bytes: Uint8Array): [number, number, number, number] {
 }
 
 const script: Script = {
+  referenceView,
   image(request) {
     const render = decodeImage(request.references[0]!.bytes);
     for (let i = 0; i < render.data.length; i += 4) {

@@ -58,11 +58,23 @@ const GROOM = {
 
 /** A target with a rig template, a groom declaration and a manifest that carries the look-dev fields. */
 async function world(
-  options: { groom?: Doc | null; model3d?: boolean; motions?: boolean; identity?: Doc } = {},
+  options: {
+    groom?: Doc | null;
+    model3d?: boolean;
+    motions?: boolean;
+    identity?: Doc;
+    /** The references, by role, with the view each declares (none: a model judges it). */
+    references?: Record<string, string | undefined>;
+  } = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-lookdev-"));
   await mkdir(join(dir, "refs"));
-  const roles = ["turnaround-front", "turnaround-side", "turnaround-back"];
+  const declared = options.references ?? {
+    "turnaround-front": "front",
+    "turnaround-side": "left",
+    "turnaround-back": "back",
+  };
+  const roles = Object.keys(declared);
   for (const [i, role] of roles.entries()) {
     await writeFile(join(dir, "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
   }
@@ -95,11 +107,9 @@ async function world(
         path: `refs/${role}.png`,
         role,
         subject: "kit",
-        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
-          role
-        ],
+        ...(declared[role] !== undefined && { view: declared[role] }),
       })),
-      perspective: "refs/turnaround-front.png",
+      perspective: `refs/${roles[0]}.png`,
       subjects: { kit: { description: "a small synthetic quadruped" } },
     }),
   );
@@ -163,7 +173,7 @@ async function world(
 }
 
 /** A rigged one-candidate run made by `rig` (the look-dev input), with its provenance in a file. */
-async function riggedModel(w: Awaited<ReturnType<typeof world>>) {
+async function riggedModel(w: Awaited<ReturnType<typeof world>>, env: Record<string, string> = {}) {
   const staged = await cli(
     [
       "stage",
@@ -176,7 +186,7 @@ async function riggedModel(w: Awaited<ReturnType<typeof world>>) {
       SCRIPT,
       "--json",
     ],
-    { SCRIPT_QUADRUPED_ATLAS: "1" },
+    { SCRIPT_QUADRUPED_ATLAS: "1", ...env },
   );
   assert.equal(staged.code, 0, staged.stdout + staged.stderr);
   const c = doc(staged)["candidates"][0];
@@ -215,6 +225,12 @@ async function unreadInputs(w: Awaited<ReturnType<typeof world>>) {
   await writeFile(model, "not a model: a dry run never reads it");
   await writeFile(provenance, "{}");
   return { model, provenance };
+}
+
+/** How many restyled views the runs under `runs` hold. */
+async function restyledViews(runs: string): Promise<number> {
+  const files = await readdir(runs, { recursive: true });
+  return files.filter((f) => /lookdev-view-.*-restyled\.png$/.test(String(f))).length;
 }
 
 const lookDevArgs = (
@@ -505,6 +521,113 @@ test("an empty bare mask fails the groom check and is named", async () => {
     assert.match(check.reason, /nose 0/);
     assert.match(check.reason, /the nose mask is empty \(the locate call found no nose\)/);
   }
+});
+
+test("a character with no nose: the locate call says so, and the groom check asks for none", async () => {
+  const w = await world();
+  const input = await riggedModel(w);
+  const r = await cli(lookDevArgs(w, input), {
+    SCRIPT_LOOKDEV_EYES: JSON.stringify({
+      has: { eyes: true, nose: false, pawPads: true },
+      eyes: [
+        { x: 240, y: 250, r: 45 },
+        { x: 270, y: 250, r: 45 },
+      ],
+      nose: null,
+    }),
+  });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const c = doc(r)["candidates"][0];
+  for (const season of ["summer", "winter"]) {
+    const check = checksOf(c)[`groom-${season}-masks`]!;
+    assert.equal(check.passed, true, check.reason);
+    assert.match(check.reason, /nose: absent \(the locate call says the character has none\)/);
+    assert.doesNotMatch(check.reason, /mask is empty/);
+  }
+  assert.deepEqual(c.provenance.parameters.lookdev.parts, {
+    eyes: "required",
+    nose: "absent",
+    pawPads: "required",
+  });
+});
+
+test("a profile with no rig template runs without the paw-pad requirement, decided from the profile", async () => {
+  const w = await world();
+  const input = await riggedModel(w);
+  // The same target without its rig template: the feet are unknown, so no paw pads are asked for.
+  const profile = JSON.parse(await readFile(w.files.profile, "utf8"));
+  delete profile.model3d.rig;
+  await writeFile(w.files.profile, JSON.stringify(profile));
+  const r = await cli(lookDevArgs(w, input));
+  const run = doc(r);
+  // Without the template's head region the scripted eye points miss the close-up's eyes, so the
+  // candidate may fail its eye check; the groom check is what this asks about.
+  const c = run["candidates"][0] ?? run["rejections"][0];
+  assert.ok(c, r.stdout + r.stderr);
+  for (const season of ["summer", "winter"]) {
+    const check = checksOf(c)[`groom-${season}-masks`]!;
+    assert.equal(check.passed, true, check.reason);
+    assert.match(check.reason, /paw pads 0 texel/);
+    assert.match(check.reason, /paw pads: not required \(the profile declares no rig template/);
+  }
+});
+
+test("look-dev judges views a role does not name, keeps left and right apart, and needs a front view", async () => {
+  const views = {
+    "character sheet": "front",
+    "left side": "left",
+    "right side": "right",
+  };
+  const w = await world({
+    references: { "character sheet": undefined, "left side": undefined, "right side": undefined },
+  });
+  const env = { SCRIPT_REFERENCE_VIEWS: JSON.stringify(views) };
+  // The forecast holds one view call per reference that declares no view.
+  const none = await unreadInputs(w);
+  const dry = await cli([...lookDevArgs(w, none), "--dry-run"]);
+  assert.equal(dry.code, 0, dry.stdout + dry.stderr);
+  const planned = doc(dry)["plan"].calls.map((x: { operation: string }) => x.operation);
+  assert.equal(planned.filter((op: string) => op === "reference-view").length, 3);
+  assert.equal(planned[0], "reference-view", "judged before the first restyle");
+
+  const input = await riggedModel(w, env);
+  const r = await cli(lookDevArgs(w, input), env);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const c = doc(r)["candidates"][0];
+  const lookdev = c.provenance.parameters.lookdev;
+  assert.deepEqual(
+    lookdev.referenceViews.map((x: Doc) => [x.role, x.view]),
+    [
+      ["character sheet", "front"],
+      ["left side", "left"],
+      ["right side", "right"],
+    ],
+  );
+  // The side view is restyled against the left reference, the other side against the right one.
+  const hashOf = async (role: string) =>
+    sha256(new Uint8Array(await readFile(join(w.dir, "refs", `${role}.png`))));
+  const restyles = c.provenance.calls.filter((x: Doc) => x.route.includes("lookdev"));
+  const restyle = (k: number) =>
+    restyles.filter((x: Doc) => !/locate|groom|markings/.test(x.route))[k];
+  assert.equal(restyle(1).referenceHashes[1], await hashOf("left side"));
+  assert.equal(restyle(2).referenceHashes[1], await hashOf("right side"));
+  assert.equal(checksOf(c)["lookdev-compare"]!.passed, true);
+
+  // Declared to show no front view, the references refuse the look-dev before its first restyle.
+  const bible = JSON.parse(await readFile(w.files.bible, "utf8"));
+  bible.references = bible.references.map((ref: Doc) => ({
+    ...ref,
+    view: ref.role === "character sheet" ? "sheet" : ref.role === "left side" ? "left" : "right",
+  }));
+  await writeFile(w.files.bible, JSON.stringify(bible));
+  const before = await restyledViews(w.runs);
+  const refused = await cli(lookDevArgs(w, input), env);
+  assert.equal(refused.code, 2, refused.stdout + refused.stderr);
+  const error = doc(refused)["error"];
+  assert.match(error.message, /no approved reference shows the character's front view/);
+  assert.match(error.message, /\("character sheet"\): sheet \(declared\)/);
+  assert.match(error.message, /\("right side"\): right \(declared\)/);
+  assert.equal(await restyledViews(w.runs), before, "no view was restyled");
 });
 
 test("a drifting marking is named and recorded, but the advisory check stages the candidate", async () => {
