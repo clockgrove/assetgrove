@@ -96,6 +96,23 @@ describe("search setup", () => {
     await rm(dir, { recursive: true });
   });
 
+  it("reports a download error that says 'does not match' as setup_failed", async () => {
+    const { manifest, dir } = await fixture(fromPrimary, fromMirror);
+    await assert.rejects(
+      setupModel({
+        modelsDir: dir,
+        manifest,
+        fetch: (() => Promise.reject(new Error("host does not match certificate"))) as typeof fetch,
+      }),
+      (e: unknown) => {
+        assert.ok(e instanceof SearchError);
+        assert.equal(e.code, "setup_failed");
+        return true;
+      },
+    );
+    await rm(dir, { recursive: true });
+  });
+
   it("leaves nothing when both hosts fail", async () => {
     const { manifest, dir } = await fixture(
       () => undefined,

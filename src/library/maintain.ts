@@ -12,11 +12,11 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { splitFrontMatter } from "../bible.ts";
-import { InputError } from "../errors.ts";
 import type { Provenance, TargetProfile } from "../types.ts";
 import { sha256Hex } from "./canonical.ts";
 import {
   MACHINE_FIELDS,
+  isCardText,
   machineFields,
   parseCard,
   rewriteMachineFields,
@@ -36,7 +36,7 @@ import {
 } from "./folder.ts";
 import type { LogEntry } from "./folder.ts";
 import { describesUnrecordedEdit } from "./adopt.ts";
-import { readMedia } from "./lfs.ts";
+import { MediaMissingError, readMedia } from "./lfs.ts";
 import { libraryPath } from "./paths.ts";
 import {
   checkReviewPaths,
@@ -281,7 +281,7 @@ async function gather(config: LibraryConfig, problems: LibraryProblem[]): Promis
         } catch {
           continue;
         }
-        if (/^---\r?\n/.test(text) && text.includes("Game Asset")) asset(name.slice(0, -3));
+        if (isCardText(text)) asset(name.slice(0, -3));
       }
     }
     for (const found of [...ids.values()].sort((a, b) => (a.id < b.id ? -1 : 1))) {
@@ -383,7 +383,7 @@ export async function readLibrary(
         await readMedia(media);
         if (lfsMapped(media) === false) problem(media, "media_not_lfs");
       } catch (error) {
-        if (error instanceof InputError && /does not exist/.test(error.message)) {
+        if (error instanceof MediaMissingError) {
           problem(media, "media_missing");
         } else problem(media, "media_invalid");
       }

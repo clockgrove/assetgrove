@@ -5,7 +5,7 @@
  * top-level entries, so writing it again is byte-identical and a rewrite touches only the entries
  * it replaces.
  */
-import { Document, isMap, isSeq, parseDocument, type Node } from "yaml";
+import { Document, isMap, isSeq, parse as parseYaml, parseDocument, type Node } from "yaml";
 import { z } from "zod";
 import { splitFrontMatter } from "../bible.ts";
 import { InputError } from "../errors.ts";
@@ -113,6 +113,20 @@ function splitEntries(
     entries,
     data: doc.toJS() as Record<string, unknown>,
   };
+}
+
+/** Whether `text` is an asset card: parseable front matter whose `type` is "Game Asset". */
+export function isCardText(text: string): boolean {
+  try {
+    const data: unknown = parseYaml(splitFrontMatter(text).front);
+    return (
+      typeof data === "object" &&
+      data !== null &&
+      (data as { type?: unknown }).type === "Game Asset"
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Reads a card; refuses (InputError) malformed front matter, a bad field or an unsupported format. */
