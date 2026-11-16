@@ -131,7 +131,9 @@ export function spendShown(
   const summary = `${body.command} would spend up to $${body.forecastUsd.toFixed(4)} (cap $${body.capUsd.toFixed(2)})`;
   return {
     summary:
-      (regions ? `${summary}; regions: ${regions.map((r, i) => `${i + 1}) ${r}`).join("; ")}` : summary) +
+      (regions
+        ? `${summary}; regions: ${regions.map((r, i) => `${i + 1}) ${r}`).join("; ")}`
+        : summary) +
       (nearMatches !== undefined && nearMatches.length > 0
         ? `; existing near matches of this kind and subject: ${nearMatches.map((m) => m.address).join(", ")}`
         : ""),
