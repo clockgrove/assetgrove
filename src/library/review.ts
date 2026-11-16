@@ -437,7 +437,8 @@ export function currentVersion(record: ReviewRecord): Version | undefined {
   return record.versions.at(-1);
 }
 
-function targetVersion(annotation: Annotation): string | undefined {
+/** The version an annotation targets, by sha256. */
+export function targetVersion(annotation: Annotation): string | undefined {
   const target = annotation.target;
   return typeof target === "string" ? undefined : target["ag:version"];
 }

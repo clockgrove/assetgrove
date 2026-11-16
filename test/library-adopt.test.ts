@@ -1,11 +1,14 @@
-/** `library adopt` (issue #251): a hand edit becomes the next version with credentials naming its original. */
+/**
+ * `library adopt` (issues #251 and #235): a hand edit becomes the next version, handed off as a pick
+ * is, with credentials naming its original.
+ */
 import { resetSettings, stateDir, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { credentialProblem, readCredentials } from "../src/credentials.ts";
 import { writeToTarget } from "../src/handoff.ts";
@@ -14,7 +17,8 @@ import { confirmCommand } from "../src/commands/confirm.ts";
 import { libraryAdoptCommand } from "../src/commands/library.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
-import { adoptHandEdit } from "../src/library/adopt.ts";
+import { loadAsset, locateAsset } from "../src/library/actions.ts";
+import { adoptHandEdit, originalFile, workingFile } from "../src/library/adopt.ts";
 import { parseReview } from "../src/library/review.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
@@ -49,6 +53,7 @@ async function handedOff(provenanceLayout?: string) {
   });
   delete profile.validator;
   if (provenanceLayout !== undefined) profile.layout.provenance = provenanceLayout;
+  const fields = { frames: { width: 16, height: 8, count: 4, durationMs: 120 } };
   await writeToTarget({
     profile,
     spec: shelterSpec,
@@ -57,23 +62,41 @@ async function handedOff(provenanceLayout?: string) {
       bytes: encodePng(createRaster(64, 8)),
       mediaType: "image/png",
       extension: "png",
-      fields: { frames: { width: 16, height: 8, count: 4, durationMs: 120 } },
+      fields,
     },
     provenance,
     run: { runId: "r1", candidateId: "c1", pickedAt: "2026-01-01T00:00:02.000Z" },
     targetDir,
   });
+  // The run that made the asset, in the project's runs directory, as adopt renders from it.
+  const runDir = join(targetDir, ".assetgrove/runs/r1");
+  await mkdir(runDir, { recursive: true });
+  await writeFile(
+    join(runDir, "run.json"),
+    JSON.stringify({
+      runId: "r1",
+      profile,
+      spec: shelterSpec,
+      bibleVersion: "v1",
+      candidates: [{ id: "c1", fields, provenance }],
+    }),
+  );
   const media = join(targetDir, "assets/source/fern/shelter.png");
+  const card = join(targetDir, "assets/source/fern/fern-shelter.md");
   const original = join(targetDir, "original.png");
   await copyFile(media, original);
-  const options = {
-    profile,
-    targetDir,
-    assetId: "fern-shelter",
-    originalPath: original,
-    settings: loadSettings(),
+  /** The adopt of the file as it is now, with `originalPath` as the original. */
+  const options = async (originalPath = original) => {
+    const asset = await loadAsset(locateAsset(card));
+    return {
+      asset,
+      targetDir,
+      edited: await workingFile(asset),
+      original: await originalFile(asset, originalPath),
+      gate: { settings: loadSettings() },
+    };
   };
-  return { targetDir, media, original, options };
+  return { targetDir, media, original, options, profile };
 }
 
 async function edit(media: string) {
@@ -86,9 +109,9 @@ async function edit(media: string) {
 test("an adopted hand edit records the edit with the AI-made original as an ingredient", async () => {
   const { targetDir, media, options } = await handedOff();
   await edit(media);
-  const result = await adoptHandEdit(options);
+  const result = await adoptHandEdit(await options());
   assert.equal(result.version, 2);
-  assert.ok(result.contentCredentials.warning);
+  assert.ok(result.contentCredentials?.warning);
 
   const bytes = new Uint8Array(await readFile(media));
   const read = await readCredentials(bytes, "image/png");
@@ -117,12 +140,12 @@ test("an adopted hand edit records the edit with the AI-made original as an ingr
 
 test("adopting refuses a wrong original and an unedited file with exit 2", async () => {
   const { media, options } = await handedOff();
-  await assert.rejects(adoptHandEdit(options), /nothing to adopt/);
+  await assert.rejects(options(), /nothing to adopt/);
   await edit(media);
-  const other = join(options.targetDir, "other.png");
+  const other = join(dirname(media), "other.png");
   await writeFile(other, encodePng(createRaster(8, 8)));
   await assert.rejects(
-    adoptHandEdit({ ...options, originalPath: other }),
+    options(other),
     (error: Error) => error.name === "InputError" && /lock\.sha256/.test(error.message),
   );
 });
@@ -130,10 +153,13 @@ test("adopting refuses a wrong original and an unedited file with exit 2", async
 test("an asset with a provenance file of its own gets it rewritten with the adopt step", async () => {
   const { media, options } = await handedOff(OWN_PROVENANCE);
   await edit(media);
-  await adoptHandEdit(options);
+  await adoptHandEdit(await options());
   const own = JSON.parse(await readFile(`${media}.provenance.json`, "utf8"));
   assert.equal(own.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
-  assert.equal(own.steps.at(-1).op, "adopt-hand-edit");
+  assert.deepEqual(
+    own.steps.slice(-2).map((s: { op: string }) => s.op),
+    ["human-edit", "embed-digital-source-type"],
+  );
   assert.ok(own.contentCredentials);
 });
 
@@ -143,17 +169,17 @@ test("a provenance file of another name keeps its card source and gets the adopt
   );
   const provenancePath = join(targetDir, "assets/source/fern/shelter.provenance.json");
   await edit(media);
-  const result = await adoptHandEdit(options);
+  const result = await adoptHandEdit(await options());
   assert.ok(
     result.files.includes("assets/source/fern/shelter.provenance.json"),
     result.files.join(),
   );
   const own = JSON.parse(await readFile(provenancePath, "utf8"));
   assert.equal(own.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
-  assert.equal(own.steps.at(-1).op, "adopt-hand-edit");
+  assert.equal(own.steps.at(-2).op, "human-edit");
   assert.equal(
     own.contentCredentials.certificateSha256,
-    result.contentCredentials.certificateSha256,
+    result.contentCredentials?.certificateSha256,
   );
   const card = await readFile(join(targetDir, "assets/source/fern/fern-shelter.md"), "utf8");
   assert.match(card, /id: provenance/);
@@ -173,9 +199,9 @@ test("a provenance file of another name keeps its card source and gets the adopt
 test("library adopt asks a person first: attended with no TTY it exits 8 and writes nothing; after confirm <id> the version records the confirmation", async (t) => {
   t.after(() => resetSettings());
   useAttended();
-  const { targetDir, media, original, options } = await handedOff();
+  const { targetDir, media, original, profile } = await handedOff();
   const profilePath = join(targetDir, "adopt-profile.json");
-  await writeFile(profilePath, JSON.stringify(options.profile));
+  await writeFile(profilePath, JSON.stringify(profile));
   await edit(media);
   const editedBytes = await readFile(media);
   const args = { target: targetDir, profile: profilePath, asset: "fern-shelter", original };
@@ -192,7 +218,7 @@ test("library adopt asks a person first: attended with no TTY it exits 8 and wri
   assert.equal(refused.error?.code, "confirmation_required");
   const id = (refused.error as unknown as { confirmation: { id: string; kind: string } })
     .confirmation;
-  assert.equal(id.kind, "write");
+  assert.equal(id.kind, "pick");
   assert.ok(existsSync(join(stateDir, "pending", `${id.id}.json`)));
   assert.deepEqual(await readFile(media), editedBytes, "the media is not signed or replaced");
   assert.equal((await versions()).length, 1);

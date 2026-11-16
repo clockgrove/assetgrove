@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
@@ -569,21 +569,6 @@ const rows: Row[] = [
   { tool: "approve", prepare: async () => ({ address: await pickedCard() }), exitCode: 8 },
   { tool: "card_edit", prepare: async () => ({ address: await pickedCard(), title: "A row" }) },
   {
-    tool: "library_adopt",
-    prepare: async () => {
-      // A person's hand edit: one opaque pixel recoloured.
-      const card = await pickedCard();
-      const resource = /^resource: (.+)$/m.exec(await readFile(card, "utf8"))![1]!;
-      const media = join(dirname(card), resource);
-      const image = decodeImage(new Uint8Array(await readFile(media)));
-      const i = image.data.findIndex((v, j) => j % 4 === 3 && v === 255) - 3;
-      setPixel(image, (i / 4) % image.width, Math.floor(i / 4 / image.width), [1, 2, 3, 255]);
-      await writeFile(media, encodePng(image));
-      return { address: card };
-    },
-    exitCode: 8,
-  },
-  {
     tool: "compare",
     prepare: async () => {
       const dir = join(work, "compare");
@@ -924,6 +909,8 @@ export default {
       await writeFile(media, encodePng(edited));
       return { target, profile, asset: "fern-shelter", original };
     },
+    // Headless settings never adopt (design section 3.3): exit 8 and nothing written.
+    exitCode: 8,
   },
   { tool: "settings", prepare: async () => ({ action: "path" }) },
   // Headless settings: the change exits 8 confirmation_required and writes nothing.

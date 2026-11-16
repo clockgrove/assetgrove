@@ -3,18 +3,19 @@
  * "Review actions"). These run the real CLI against a still picked into a temporary Git repository.
  */
 import "./fixtures/env.ts";
-import { approve, useAttended } from "./fixtures/env.ts";
+import { approve, approveProfile, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, readFile, readdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { confirmCommand } from "../src/commands/confirm.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import type { ConfirmPort } from "../src/confirm/prompt.ts";
+import { readCredentials } from "../src/credentials.ts";
 import { decodeImage, encodePng, setPixel } from "../src/image/raster.ts";
 import { parseCard } from "../src/library/card.ts";
 import { annotationId, parseReview } from "../src/library/review.ts";
@@ -87,6 +88,7 @@ interface Picked {
 async function pickedStill(
   manifestFields: Record<string, unknown> = {},
   manifestLayout = "manifests/{{spec.assetId}}.json",
+  validator?: string,
 ): Promise<Picked> {
   const world = await syntheticWorld();
   execFileSync("git", ["init", "-q", world.targetDir]);
@@ -104,6 +106,14 @@ async function pickedStill(
   };
   Object.assign(world.profile, profile);
   delete world.profile.validator;
+  if (validator !== undefined) {
+    // A validator script in the target, approved for its exact command.
+    await writeFile(join(world.targetDir, "check.mjs"), validator);
+    world.profile.validator = {
+      command: [process.execPath, join(world.targetDir, "check.mjs"), "{{manifest}}"],
+    };
+    approveProfile(world.profile, { targetDir: world.targetDir });
+  }
   const specPath = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
   const profilePath = join(world.dir, "profile.json");
@@ -113,7 +123,8 @@ async function pickedStill(
   const staged = await cli([
     "stage",
     ...["--spec", specPath, "--bible", bible, "--profile", profilePath],
-    ...["--runs", world.runsDir, "--candidates", "1"],
+    // The project's runs directory, where adopt finds the run that made the asset.
+    ...["--runs", join(world.targetDir, ".assetgrove/runs"), "--candidates", "1"],
     ...["--provider-script", passingScript, "--json"],
   ]);
   assert.equal(staged.code, 0, staged.stdout + staged.stderr);
@@ -359,7 +370,12 @@ test("a stored approve confirmation no longer applies after a reject is appended
 });
 
 /** The picked PNG with one opaque pixel recoloured, as a person's hand edit. */
+/** Where `handEdit` keeps the original. */
+const originalOf = (p: Picked) => join(p.world.dir, "original.png");
+
+/** Edits the picked file as a person would, keeping the original at `<dir>/original.png` (outside the target). */
 async function handEdit(path: string): Promise<Uint8Array> {
+  await copyFile(path, join(dirname(dirname(dirname(path))), "original.png"));
   const raster = decodeImage(new Uint8Array(await readFile(path)));
   for (let i = 0; i < raster.width * raster.height; i++) {
     if (raster.data[i * 4 + 3] === 255) {
@@ -382,12 +398,26 @@ test("library adopt on a modified PNG records a new version with a human-edit st
   const edited = await handEdit(p.mediaPath);
   // Headless settings never adopt, and nothing is written.
   const before = await snapshot(p.world.targetDir);
-  const headless = await cli(["library", "adopt", p.cardPath, "--json"]);
+  const headless = await cli([
+    "library",
+    "adopt",
+    p.cardPath,
+    "--original",
+    originalOf(p),
+    "--json",
+  ]);
   assert.equal(headless.code, 8, headless.stdout + headless.stderr);
   assert.deepEqual(await snapshot(p.world.targetDir), before);
 
   useAttended();
-  const out = await confirmed(["library", "adopt", p.cardPath, "--json"]);
+  const out = await confirmed([
+    "library",
+    "adopt",
+    p.cardPath,
+    "--original",
+    originalOf(p),
+    "--json",
+  ]);
   assert.equal(out.code, 0, out.stdout + out.stderr);
   const d = doc(out);
   assert.equal(d["version"], 2);
@@ -412,13 +442,23 @@ test("library adopt on a modified PNG records a new version with a human-edit st
     version.provenanceSha256,
     sha256(new Uint8Array(await readFile(`${p.mediaPath}.provenance.json`))),
   );
+  // Hand-off renders the manifest again from the adopted version; its review field stays pending.
+  const manifest = JSON.parse(await text(p.manifestPath));
+  assert.equal(manifest.contentHash, version.sha256);
+  assert.deepEqual(manifest.review, { status: "pending" });
+  // Its C2PA credentials record the edit of the original, a parentOf ingredient.
+  const credentials = await readCredentials(bytes, "image/png");
+  assert.deepEqual(
+    credentials?.actions.slice(0, 2).map((a) => a.action),
+    ["c2pa.opened", "c2pa.edited"],
+  );
   const data = (await card(p.cardPath)) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
   assert.equal(data["version"], 2);
   assert.equal(data["lock"].sha256, version.sha256);
   assertLine(await logLines(p.logPath), / adopt \[.*\]\(lantern\.md\): version 2$/);
 
   // Nothing left to adopt: the working file is the current version.
-  const again = await cli(["library", "adopt", p.cardPath, "--json"]);
+  const again = await cli(["library", "adopt", p.cardPath, "--original", originalOf(p), "--json"]);
   assert.equal(again.code, 2, again.stdout + again.stderr);
 });
 
@@ -432,7 +472,14 @@ test("library adopt updates provenance a manifest embeds in place and keeps the 
   const manifestBefore = JSON.parse(await text(p.manifestPath));
   await handEdit(p.mediaPath);
   useAttended();
-  const out = await confirmed(["library", "adopt", p.cardPath, "--json"]);
+  const out = await confirmed([
+    "library",
+    "adopt",
+    p.cardPath,
+    "--original",
+    originalOf(p),
+    "--json",
+  ]);
   assert.equal(out.code, 0, out.stdout + out.stderr);
   const manifest = JSON.parse(await text(p.manifestPath));
   assert.deepEqual(manifest.review, { status: "pending" });
@@ -442,21 +489,55 @@ test("library adopt updates provenance a manifest embeds in place and keeps the 
   assert.equal(ops.at(-2), "human-edit");
   const record = await review(p.reviewPath);
   assert.equal(record.versions.length, 2);
-  assert.equal(
-    record.versions[1]!.provenanceSha256,
-    sha256(new Uint8Array(await readFile(p.manifestPath))),
-  );
+  // A version's provenanceSha256 hashes a provenance file of its own, never a manifest (as at pick).
+  assert.equal(record.versions[1]!.provenanceSha256, undefined);
+  // The manifest is rendered again from the adopted version.
+  assert.equal(manifest.contentHash, record.versions[1]!.sha256);
 });
 
 test("library adopt refuses an edit that fails the free QA checks before asking anyone", async () => {
   const p = await pickedStill();
+  await copyFile(p.mediaPath, originalOf(p));
   const raster = decodeImage(new Uint8Array(await readFile(p.mediaPath)));
   for (let i = 3; i < raster.data.length; i += 4) raster.data[i] = 128;
   await writeFile(p.mediaPath, encodePng(raster));
   useAttended();
-  const out = await cli(["library", "adopt", p.cardPath, "--json"]);
+  const out = await cli(["library", "adopt", p.cardPath, "--original", originalOf(p), "--json"]);
   assert.equal(out.code, 5, out.stdout + out.stderr);
   assert.equal(doc(out)["error"].code, "qa_found_nothing");
+  assert.equal((await review(p.reviewPath)).versions.length, 1);
+});
+
+test("library adopt runs the profile's validator under pick's rules: unapproved it exits 8 before any write, and a rejection exits 6 and records no version", async () => {
+  const p = await pickedStill({}, undefined, "process.exit(0);\n");
+  await handEdit(p.mediaPath);
+  useAttended();
+  const args = ["library", "adopt", p.cardPath, "--original", originalOf(p), "--json"];
+  // A person confirms the adopt; the validator was changed since its approval.
+  const asked = await cli(args);
+  assert.equal(asked.code, 8, asked.stdout + asked.stderr);
+  await confirm(doc(asked)["error"].confirmation.id as string);
+  const checkPath = join(p.world.targetDir, "check.mjs");
+  await writeFile(checkPath, 'console.error("manifest refused"); process.exit(1);\n');
+  const before = await snapshot(p.world.targetDir);
+  const unapproved = await cli(args);
+  assert.equal(unapproved.code, 8, unapproved.stdout + unapproved.stderr);
+  assert.equal(doc(unapproved)["error"].code, "confirmation_required");
+  assert.match(doc(unapproved)["error"].message, /validator/);
+  assert.deepEqual(await snapshot(p.world.targetDir), before, "nothing is written");
+
+  // Approved, it runs and rejects: exit 6, and the card, lock, record, index and log stay.
+  approveProfile(
+    { validator: { command: [process.execPath, checkPath, "{{manifest}}"] } },
+    { targetDir: p.world.targetDir },
+  );
+  const library = [p.cardPath, p.reviewPath, p.logPath, join(p.dir, "index.md")];
+  const kept = await Promise.all(library.map((path) => text(path)));
+  const rejected = await cli(args);
+  assert.equal(rejected.code, 6, rejected.stdout + rejected.stderr);
+  assert.equal(doc(rejected)["error"].code, "validator_rejected");
+  assert.match(doc(rejected)["validator"].output, /manifest refused/);
+  assert.deepEqual(await Promise.all(library.map((path) => text(path))), kept);
   assert.equal((await review(p.reviewPath)).versions.length, 1);
 });
 

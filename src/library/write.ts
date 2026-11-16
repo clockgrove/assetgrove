@@ -556,6 +556,8 @@ export interface LibraryVersionInput {
   now: Date;
   /** The annotation's action for the new version; `pick` or `replace` when absent. */
   action?: "adopt";
+  /** The version's digital source type, recorded on an adopted version. */
+  digitalSourceType?: string;
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
 }
@@ -615,6 +617,7 @@ export async function commitLibraryWrite(
       candidate: input.candidate,
       at,
       ...(confirmation && { confirmation }),
+      ...(input.digitalSourceType !== undefined && { digitalSourceType: input.digitalSourceType }),
     });
     record = appendAnnotation(record, {
       type: "Annotation",
