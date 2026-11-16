@@ -1,7 +1,7 @@
 import { resetSettings, settingsPath, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, symlinkSync, realpathSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, symlinkSync, realpathSync, rmSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
@@ -433,15 +433,14 @@ test("init reports Git LFS steps, never commits and never runs git lfs install",
 test("with no git-lfs on PATH init gives a needs-person step", async () => {
   const dir = tempDir();
   // A git-lfs that always fails, first on PATH, stands for a missing install on every system
-  // (node given a file that does not exist exits 1); no other git-lfs stays on PATH.
+  // (node given a file that does not exist exits 1).
   const bin = tempDir();
   const fake = join(bin, process.platform === "win32" ? "git-lfs.exe" : "git-lfs");
   if (process.platform === "win32") copyFileSync(process.execPath, fake);
   else symlinkSync(process.execPath, fake);
-  const rest = (process.env["PATH"] ?? "")
-    .split(delimiter)
-    .filter((entry) => entry !== "" && !existsSync(join(entry, "git-lfs")));
-  const result = await cli(initArgs(dir), { PATH: [bin, ...rest].join(delimiter) });
+  const result = await cli(initArgs(dir), {
+    PATH: [bin, process.env["PATH"] ?? ""].join(delimiter),
+  });
   assert.equal(result.code, 0, result.stderr);
   const step = result.json.steps.find((s) => s.id === "git-lfs")!;
   assert.equal(step.status, "needs-person");
