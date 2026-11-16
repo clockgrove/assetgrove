@@ -14,6 +14,8 @@ const DESIGN: Record<number, string[]> = {
     "invalid_input",
     "settings_invalid",
     "key_tracked",
+    "git_required",
+    "lfs_required",
     "format_unsupported",
     "extension_unavailable",
     "extension_refused",

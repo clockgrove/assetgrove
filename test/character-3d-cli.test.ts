@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -135,7 +136,7 @@ async function world(
   await writeFile(files.profile, JSON.stringify(profile3d(profileOverrides)));
   const runs = join(dir, "runs");
   const target = join(dir, "target");
-  await mkdir(target);
+  gitTarget(target);
   approveProfile(profile3d(profileOverrides), { targetDir: target });
   const base = ["--spec", files.spec, "--bible", files.bible, "--profile", files.profile];
   return { dir, base, runs, target };
@@ -462,7 +463,7 @@ test("a grant the target cannot accept is refused with exit 7 before anything is
   ]);
   assert.equal(refused.code, 7, refused.stdout + refused.stderr);
   assert.equal(doc(refused)["error"].code, "license_refused");
-  assert.deepEqual(await readdir(w.target), []);
+  assert.deepEqual((await readdir(w.target)).sort(), [".git", ".gitattributes"]);
 
   // Accepted on purpose, it ships under CC BY with the credit line.
   await writeFile(

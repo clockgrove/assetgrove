@@ -88,7 +88,7 @@ library.log is false). A reserved asset id exits 2 asset_id_reserved and one car
 exits 2 asset_conflict, before any write. A pick into an asset that has a version names that
 version's sha256 in its form and digest and warns when the working file differs from the card's
 lock.sha256; if the current version is another by the time it writes, it exits 2 version_changed,
-and media identical to an older version exits 2 version_exists, both before any write. Re-running an interrupted pick completes it. Then runs
+and media identical to an older version exits 2 version_exists, both before any write. A target outside a Git work tree exits 2 git_required, and media that Git's check-attr filter does not map to lfs exits 2 lfs_required (run init), both before any write. Re-running an interrupted pick completes it. Then runs
 the target profile's validator when it declares one. The validator runs only with an approval tied
 to its exact command (settings.commands.approved or <configDir>/approvals/<hash>.json); otherwise
 pick asks in an MCP client's form or on a TTY, or exits 8 confirmation_required before writing, and \`assetgrove confirm <hash>\`
@@ -126,6 +126,7 @@ approves it. A human runs pick; agents never do.`,
       gate: { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
       ...(ctx.extensions && { registry: ctx.extensions }),
       confirmation,
+      requireLfs: true,
       replaces: typeof request.body["replaces"] === "string" ? request.body["replaces"] : null,
     });
     const lines = [`wrote ${result.mediaPath}`, `wrote ${result.manifestPath}`];

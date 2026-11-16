@@ -25,9 +25,11 @@ import {
   syntheticWorld as plainWorld,
 } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
+import { gitTarget } from "./fixtures/git.ts";
 
 async function syntheticWorld(): Promise<World> {
   const world = await plainWorld();
+  gitTarget(world.targetDir);
   approveProfile(world.profile, { targetDir: world.targetDir });
   return world;
 }
@@ -128,7 +130,7 @@ test("a CC BY output is refused by a target that does not accept CC BY, and noth
       /acceptedLicenses/.test(error.message) &&
       /Model by Meshy/.test(error.message),
   );
-  assert.deepEqual(await readdir(world.targetDir), []);
+  assert.deepEqual(await readdir(world.targetDir), [".git", ".gitattributes"]);
 });
 
 test("a target that accepts CC BY on purpose takes a CC BY output declared as CC BY, never as MIT", async () => {
@@ -165,7 +167,7 @@ test("a non-commercial output is refused even when the target lists its licence"
     (error: unknown) =>
       error instanceof LicenseError && /without commercial use/.test(error.message),
   );
-  assert.deepEqual(await readdir(world.targetDir), []);
+  assert.deepEqual(await readdir(world.targetDir), [".git", ".gitattributes"]);
 });
 
 test("hand-off re-derives the grant from the calls, so an edited licence cannot relabel", async () => {
@@ -245,7 +247,7 @@ test("pick of a refused output exits 7 with license_refused", async () => {
   assert.equal(d.ok, false);
   assert.equal(d.error.code, "license_refused");
   assert.match(r.stderr, /refused hand-off/);
-  assert.deepEqual(await readdir(world.targetDir), []);
+  assert.deepEqual(await readdir(world.targetDir), [".git", ".gitattributes"]);
 });
 
 /** A loopback OpenAI-compatible image server answering every image request with `png`. */
@@ -293,7 +295,7 @@ test("a grantless openai-compatible route is refused at pick; declaring roles.im
     assert.equal(d.error.code, "license_refused");
     assert.match(d.error.message, /local:still:local-image/);
     assert.match(d.error.message, /roles\.image\.outputGrant/);
-    assert.deepEqual(await readdir(world.targetDir), []);
+    assert.deepEqual(await readdir(world.targetDir), [".git", ".gitattributes"]);
 
     writeSettings({
       providers,
@@ -348,5 +350,5 @@ test("a gateway route whose model is overridden without its own grant is refused
       /gateway:edit:bfl\/flux-kontext-max/.test(error.message) &&
       /routes\.edit\.outputGrant/.test(error.message),
   );
-  assert.deepEqual(await readdir(world.targetDir), []);
+  assert.deepEqual(await readdir(world.targetDir), [".git", ".gitattributes"]);
 });

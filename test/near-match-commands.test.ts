@@ -15,6 +15,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { fixtureLibrary } from "./fixtures/library.ts";
+import { bareGitTarget } from "./fixtures/git.ts";
 import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -141,6 +142,7 @@ test("the plan step of plan, stage, apply and generate-sheet lists the near matc
   // plan and apply: a still spec with a key-less bible from init, and the saved plan apply reads.
   const dir = join(world.dir, "plan");
   mkdirSync(dir);
+  bareGitTarget(join(dir, "bible"));
   const init = await cli([
     ...["init", "--directory", join(dir, "bible"), "--world", "Synthetic Grove"],
     ...["--profile-preset", "sprite-32", "--style-preset", "flat-cartoon-kids", "--json"],

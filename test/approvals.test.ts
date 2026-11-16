@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import {
   approve,
   approveCommand,
@@ -65,6 +66,7 @@ function doc(result: Result): Record<string, any> {
 /** A synthetic world whose profile names `validator`, and one staged candidate to pick. */
 async function stagedWorld(validator: string[]) {
   const world = await syntheticWorld();
+  gitTarget(world.targetDir);
   world.profile.validator = { command: validator };
   const spec = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
@@ -86,7 +88,6 @@ async function stagedWorld(validator: string[]) {
   ]);
   assert.equal(staged.code, 0, staged.stderr);
   useAttended();
-  await mkdir(world.targetDir, { recursive: true });
   // A person confirmed this pick (design section 7); the validator is what these tests ask about.
   const request = await pickRequest({
     run: doc(staged)["runDir"],
@@ -189,7 +190,7 @@ test("pick with an unapproved validator exits 8 carrying the command; approved i
     root: expected.root,
   });
   // Nothing was written into the target, and the request waits for `assetgrove confirm`.
-  assert.deepEqual(await readdir(world.targetDir), []);
+  assert.deepEqual((await readdir(world.targetDir)).sort(), [".git", ".gitattributes"]);
   assert.ok(existsSync(join(stateDir, "pending", `${expected.hash}.json`)));
 
   approveCommand({ hash: expected.hash, kind: "validator", argv: validator });
@@ -373,7 +374,7 @@ test(
     assert.equal(r.code, 2, r.stderr);
     assert.equal(doc(r)["error"].code, "command_refused");
     assert.match(doc(r)["error"].message, /node/);
-    assert.deepEqual(await readdir(world.targetDir), []);
+    assert.deepEqual((await readdir(world.targetDir)).sort(), [".git", ".gitattributes"]);
   },
 );
 

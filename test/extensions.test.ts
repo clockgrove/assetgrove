@@ -1,4 +1,5 @@
 import "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { SCRIPTED_LIMIT, settingsPath, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
@@ -121,7 +122,7 @@ test("a listed package's kind, preset and adapter stage and pick offline", async
   assert.match(run["candidates"][0].provenance.calls[0].route, /^echo:still:echo-1$/);
 
   const target = join(dir, "target");
-  await mkdir(target);
+  gitTarget(target);
   const picked = await cli(
     ["pick", "--run", run["runDir"], "--candidate", "c1", "--target", target, "--json"],
     dir,

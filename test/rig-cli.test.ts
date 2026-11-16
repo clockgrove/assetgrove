@@ -12,6 +12,7 @@ import { encodePng } from "../src/image/raster.ts";
 import { parseGlb } from "../src/model3d/glb.ts";
 import { clips as clipsOf } from "../src/model3d/scene.ts";
 import { sha256 } from "../src/request.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
 import {
   quadrupedIdle,
@@ -142,8 +143,7 @@ async function world(options: { template?: string; reference?: boolean; motions?
     }),
   );
   const runs = join(dir, "runs");
-  const target = join(dir, "target");
-  await mkdir(target);
+  const target = gitTarget(join(dir, "target"));
   approveProfile(
     { validator: { command: [process.execPath, VALIDATOR, "{{manifest}}"] } },
     { targetDir: target },

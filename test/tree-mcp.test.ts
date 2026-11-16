@@ -19,6 +19,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { READ_LIMIT } from "../src/tree/thumbs.ts";
 import { GAME, RUN_ID, fixtureLibrary, libraryProfile } from "./fixtures/library.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import { syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -26,6 +27,7 @@ const script = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
 approve(script);
 
 const lib = fixtureLibrary({ bulk: 205 });
+gitTarget(lib.dir);
 const clients: Client[] = [];
 after(async () => {
   await Promise.all(clients.map((c) => c.close()));

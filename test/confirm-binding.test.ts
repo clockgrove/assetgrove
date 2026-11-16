@@ -6,6 +6,7 @@
  * stays pending for `assetgrove confirm <id>`; and a write's digest covers its frame files.
  */
 import "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
 import {
   approve,
   approveProfile,
@@ -15,7 +16,7 @@ import {
 } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -198,6 +199,7 @@ test("a declined confirmation is saved as pending, and confirm <id> completes it
 /** A bible, spec, profile and run options for plan and apply, with a paid scripted provider. */
 async function planFiles() {
   const dir = await tempDir("assetgrove-binding-plan-");
+  gitTarget(dir);
   const init = await inProcess([
     ...["init", "--directory", dir, "--world", "Synthetic Grove"],
     ...["--profile-preset", "sprite-32", "--style-preset", "flat-cartoon-kids"],
@@ -292,7 +294,7 @@ test("apply of a plan whose prompts were edited and digest recomputed asks again
 test("write-families: a frame changed after the write was confirmed asks again", async () => {
   const root = await tempDir("assetgrove-binding-write-");
   const target = join(root, "target");
-  await mkdir(target);
+  gitTarget(target);
   approveProfile(syntheticProfile(), { targetDir: target });
   await writeFile(join(root, "sheet.png"), syntheticSheet().png);
   await writeFile(join(root, "profile.json"), JSON.stringify(syntheticProfile()));
