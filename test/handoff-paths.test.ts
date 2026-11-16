@@ -54,7 +54,7 @@ function doc(result: Result): Record<string, any> {
 /** Every file and directory under `dir`, relative to it. */
 async function tree(dir: string): Promise<string[]> {
   return (await readdir(dir, { recursive: true }))
-    .map((entry) => entry.toString())
+    .map((entry) => entry.toString().replaceAll("\\", "/"))
     .filter((entry) => entry !== ".git" && !entry.startsWith(".git/"));
 }
 
