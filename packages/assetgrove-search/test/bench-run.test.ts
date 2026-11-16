@@ -19,7 +19,7 @@ import { readLookLibrary, type LookLibrary } from "../../../bench/search/library
 import { readManifest } from "../../../bench/search/manifest.ts";
 import { allPairs, precisionAt5, similarityThreshold } from "../../../bench/search/metrics.ts";
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { LanceStore } from "../src/lance-store.ts";
 import { ScriptedEmbedder } from "../src/scripted.ts";
@@ -212,21 +212,39 @@ describe("the by-look library", () => {
 
   it("is fetched once per image, each file checked against its sha256", async () => {
     const dir = await tempDir("fetch");
+    const realFetch = globalThis.fetch;
+    const served: string[] = [];
+    const body = new TextEncoder().encode("served image");
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      served.push(String(url));
+      return new Response(body);
+    }) as typeof fetch;
     try {
-      const body = new TextEncoder().encode("cached image");
       const sha256 = createHash("sha256").update(body).digest("hex");
       const img = {
         id: "kn-0000000000",
         file: "a.png",
-        url: "https://fixtures.invalid/a.zip#a.png",
+        url: "https://fixtures.invalid/a.png",
         sha256,
         width: 1,
         height: 1,
       };
-      await writeFile(join(dir, `${img.id}.bin`), body);
+      // A cached file whose bytes do not match is not trusted: the image is fetched again.
+      await writeFile(join(dir, `${img.id}.bin`), new TextEncoder().encode("stale bytes"));
       const source = await fetchImages({ images: [img, img] }, dir);
+      assert.deepEqual(served, [img.url]);
       assert.deepEqual(await source.bytes(img), body);
+
+      // A cached file that matches is read, not fetched.
+      await fetchImages({ images: [img] }, dir);
+      assert.equal(served.length, 1);
+
+      // A served file whose bytes do not match the listed sha256 is refused and not cached.
+      const bad = { ...img, id: "kn-0000000001", sha256: "0".repeat(64) };
+      await assert.rejects(fetchImages({ images: [bad] }, dir), /sha256 does not match/);
+      await assert.rejects(readFile(join(dir, `${bad.id}.bin`)), { code: "ENOENT" });
     } finally {
+      globalThis.fetch = realFetch;
       await cleanup(dir);
     }
   });
