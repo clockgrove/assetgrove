@@ -5,7 +5,9 @@ import { SearchError } from "./errors.ts";
 import { flattenRgba, type RgbImage } from "./flatten.ts";
 import { MODEL_MANIFEST, type ModelManifest } from "./model-manifest.ts";
 import { exists, modelFolder } from "./setup.ts";
+import { fitTokens } from "./tokens.ts";
 
+const MAX_TEXT_TOKENS = 64;
 const NEEDS_SETUP = "Run `assetgrove search setup` to download the model.";
 
 /** Throws a structured error naming search setup when any model file is missing. No network call. */
@@ -62,7 +64,22 @@ export async function loadSiglip2(
     revision: manifest.revision,
     dimension: manifest.dimension,
     async embedTexts(texts) {
-      const inputs = tokenizer(texts, { padding: "max_length", truncation: true, max_length: 64 });
+      const inputs = tokenizer(texts, {
+        padding: "max_length",
+        truncation: true,
+        max_length: MAX_TEXT_TOKENS,
+      });
+      // Truncation drops the end token; restore it on the rows that were cut.
+      const ids: BigInt64Array = inputs.input_ids.data;
+      texts.forEach((text, i) => {
+        const full: number[] = tokenizer.encode(text);
+        if (full.length <= MAX_TEXT_TOKENS) return;
+        const plain: number[] = tokenizer.encode(text, { add_special_tokens: false });
+        const fitted = fitTokens(full, plain, MAX_TEXT_TOKENS);
+        fitted.forEach((id, j) => {
+          ids[i * MAX_TEXT_TOKENS + j] = BigInt(id);
+        });
+      });
       const out = await textModel(inputs);
       return rows(out.pooler_output ?? out.text_embeds);
     },

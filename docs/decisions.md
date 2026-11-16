@@ -291,7 +291,7 @@ The owner confirmed these bars, and they are committed here before the measuring
 | ---------------- | ------------------------------------------------------- | --------- | ------------- |
 | look-category    | By look: at least 3 of the top 5 share the category     | >= 0.85   | dispatch      |
 | look-recall10    | By look: recall@10, same pack and category              | >= 0.65   | dispatch      |
-| look-pixel16     | By look: 16-px pixel art                                | >= 0.50   | dispatch      |
+| look-pixel16     | By look: recall@10 on 16-px pixel art                   | >= 0.50   | dispatch      |
 | words-image-p5   | By words, P@5: image vector only                        | >= 0.45   | dispatch      |
 | words-shipped-p5 | By words, P@5: shipped mode                             | >= 0.85   | dispatch      |
 | filters-rebuild  | Filters return only matching rows; rebuild is identical | = 100%    | test          |
@@ -300,6 +300,10 @@ The owner confirmed these bars, and they are committed here before the measuring
 | search-10k       | Search over 10,000 assets, fresh                        | < 1000 ms | reference box |
 | indexing         | Indexing, per image                                     | <= 150 ms | reference box |
 | freshness-2000   | Freshness, no changes, 2,000 files                      | <= 100 ms | reference box |
+
+**Which library each measure runs on.** The by-look measures (`look-category`, `look-recall10`, `look-pixel16`) search the full library, `bench/search/inventory-full.csv`: the 1,728 images of the spike's 1,733 left after five byte-identical duplicates are dropped. Their bars were set there. In the 300-image subset a pack-and-category group has 8 to 21 members, against 17 to 172 in the full library, so recall@10 there asks for nearly every member of the group and reads far lower for the same vectors. The queries are the 300 labelled images, each searched among all 1,728. An image's relevant set is the other images of its pack and category in the full library, k is 10 (5 for the category share), and the query image is left out of its own results. `look-pixel16` is recall@10 over the 16-px pixel-art queries, the measure its bar came from. Every 16-px image is a tile, so a category share would read 1.0 whatever the ranking. The by-words measures, the filters check and the image-similarity threshold run on the 300 labelled images with their card texts and labels. `node bench/search/run.ts --embedder siglip2` runs on the package's `LanceStore`, so shipped mode is ranked by LanceDB's BM25 full text and the speed bars time the shipped store; the scripted run keeps the in-memory store unless `--store lance` is given. The dispatched bench fetches the full library by its inventory, each file checked against its sha256, as it fetches the 300.
+
+**Card texts past the token limit.** The text model reads 64 tokens. A longer text is cut there with its end token kept (`packages/assetgrove-search/src/tokens.ts`), so a cut card text is embedded like a short one and like a query.
 
 **Precision.** The labelled library is about 300 images, so each quality measure is precise to roughly ±0.05. The bars keep the spike's values and are read with that margin: a miss within 0.05 is re-run once on the reference box before it counts. There is no other re-run.
 

@@ -14,9 +14,17 @@ import {
   writeCardTexts,
 } from "../../../bench/search/card-text.ts";
 import { buildFixtureManifest, fixtureSource } from "../../../bench/search/fixture.ts";
+import { fetchImages, type ImageSource } from "../../../bench/search/fetch.ts";
+import { readLookLibrary, type LookLibrary } from "../../../bench/search/library.ts";
 import { readManifest } from "../../../bench/search/manifest.ts";
 import { allPairs, precisionAt5, similarityThreshold } from "../../../bench/search/metrics.ts";
+import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { LanceStore } from "../src/lance-store.ts";
 import { ScriptedEmbedder } from "../src/scripted.ts";
+import type { Store } from "../src/store.ts";
+import { cleanup, tempDir } from "./helpers/fixture.ts";
 
 const fixtureUrl = new URL("../../../bench/search/fixture/manifest.json", import.meta.url);
 
@@ -177,5 +185,144 @@ describe("the image a vision model is shown", () => {
     assert.equal(forVision(bigBytes), bigBytes);
     const text = new TextEncoder().encode("a caption, not an image");
     assert.equal(forVision(text), text);
+  });
+});
+
+describe("the by-look library", () => {
+  it("is the full inventory: 1,728 images, the labelled 300 inside it unchanged", async () => {
+    const lib = await readLookLibrary();
+    const m = await readManifest(new URL("../../../bench/search/manifest.json", import.meta.url));
+    assert.equal(lib.images.length, 1728);
+    assert.equal(new Set(lib.images.map((i) => i.id)).size, 1728);
+    assert.equal(new Set(lib.images.map((i) => i.sha256)).size, 1728);
+    for (const i of lib.images) {
+      assert.match(i.url, /^https:\/\/[^#]+\.zip#.+/);
+      assert.match(i.sha256, /^[0-9a-f]{64}$/);
+    }
+    const image = new Map(lib.images.map((i) => [i.id, i]));
+    const label = new Map(lib.labels.map((l) => [l.image, l]));
+    for (const i of m.images) {
+      assert.equal(image.get(i.id)?.sha256, i.sha256);
+      assert.equal(image.get(i.id)?.url, i.url);
+    }
+    for (const l of m.labels) assert.deepEqual(label.get(l.image), l);
+    for (const q of m.lookQueries) assert.ok(image.has(q));
+    assert.ok(lib.labels.filter((l) => l.pixel === 16).length > 0);
+  });
+
+  it("is fetched once per image, each file checked against its sha256", async () => {
+    const dir = await tempDir("fetch");
+    try {
+      const body = new TextEncoder().encode("cached image");
+      const sha256 = createHash("sha256").update(body).digest("hex");
+      const img = {
+        id: "kn-0000000000",
+        file: "a.png",
+        url: "https://fixtures.invalid/a.zip#a.png",
+        sha256,
+        width: 1,
+        height: 1,
+      };
+      await writeFile(join(dir, `${img.id}.bin`), body);
+      const source = await fetchImages({ images: [img, img] }, dir);
+      assert.deepEqual(await source.bytes(img), body);
+    } finally {
+      await cleanup(dir);
+    }
+  });
+
+  const pixelDecoys = (): { look: LookLibrary; captions: Map<string, string> } => {
+    const manifest = buildFixtureManifest();
+    const captions = new Map<string, string>();
+    const look: LookLibrary = { images: [...manifest.images], labels: [...manifest.labels] };
+    // Ten exact look-alikes of each pixel image, in another pack: same category, not relevant.
+    for (const l of manifest.labels.filter((x) => x.pixel === 16)) {
+      for (let n = 0; n < 10; n++) {
+        const id = `zz-${l.image}-${n}`;
+        captions.set(id, l.image);
+        look.images.push({ id, file: `${id}.png`, url: "", sha256: id, width: 16, height: 16 });
+        look.labels.push({ image: id, category: l.category, pack: "pack-z", pixel: 16 });
+      }
+    }
+    return { look, captions };
+  };
+
+  it("searches the whole look library, and look-pixel16 is recall@10, not category share", async () => {
+    const manifest = await readManifest(fixtureUrl);
+    const bars = await readBars();
+    const base = fixtureSource();
+    const { look, captions } = pixelDecoys();
+    // A look-alike's bytes are its original's caption.
+    const source: ImageSource = {
+      bytes: async (image) => base.bytes({ ...image, id: captions.get(image.id) ?? image.id }),
+    };
+    const opts = { manifest, embedder: new ScriptedEmbedder(), bars, padTo: 0, timedQueries: 1 };
+    const alone = await runBench({ ...opts, source: base, freshnessFiles: 1 });
+    const inFull = await runBench({ ...opts, source, lookLibrary: look, freshnessFiles: 1 });
+    const get = (r: typeof alone, id: string) => r.entries.find((e) => e.bar === id)!;
+    assert.equal(get(alone, "look-pixel16").n, 4);
+    assert.equal(get(alone, "look-pixel16").measured, 1);
+    // Every top 10 of a pixel query is now its look-alikes from pack-z: still the same category,
+    // so a category share would stay 1, but none is relevant, so recall@10 is 0.
+    assert.equal(get(inFull, "look-pixel16").measured, 0);
+    assert.equal(get(inFull, "look-pixel16").n, 4);
+    assert.ok(get(inFull, "look-recall10").measured < get(alone, "look-recall10").measured);
+    // By words and the threshold still run on the labelled images alone.
+    assert.equal(get(inFull, "words-shipped-p5").measured, get(alone, "words-shipped-p5").measured);
+    assert.equal(inFull.threshold, alone.threshold);
+    assert.equal(inFull.images, manifest.images.length);
+  });
+
+  it("refuses a look query that is not in the look library", async () => {
+    const manifest = await readManifest(fixtureUrl);
+    await assert.rejects(
+      runBench({
+        manifest,
+        source: fixtureSource(),
+        embedder: new ScriptedEmbedder(),
+        bars: await readBars(),
+        lookLibrary: { images: [], labels: [] },
+        padTo: 0,
+        timedQueries: 1,
+        freshnessFiles: 1,
+      }),
+      /not in the look library/,
+    );
+  });
+});
+
+describe("bench on LanceStore", () => {
+  it("runs every bar on the shipped store, its full text indexed", async () => {
+    const dir = await tempDir("bench-lance");
+    const stores: LanceStore[] = [];
+    const embedder = new ScriptedEmbedder();
+    const newStore = async (): Promise<Store> => {
+      const s = await LanceStore.open(join(dir, `s${stores.length}`), { embedder });
+      stores.push(s);
+      return s;
+    };
+    try {
+      const manifest = await readManifest(fixtureUrl);
+      const bars = await readBars();
+      const report = await runBench({
+        manifest,
+        source: fixtureSource(),
+        embedder,
+        bars,
+        newStore,
+        padTo: 200,
+        timedQueries: 2,
+        freshnessFiles: 10,
+      });
+      assert.deepEqual(report.entries.map((e) => e.bar).sort(), [...bars.keys()].sort());
+      assert.equal(report.entries.find((e) => e.bar === "filters-rebuild")?.pass, true);
+      assert.ok(stores.length >= 3);
+      // The full-text list answers: the store built its text index.
+      const hits = await stores[0]!.query({ text: "knight", limit: 5 });
+      assert.ok(hits.length > 0);
+    } finally {
+      for (const s of stores) s.close();
+      await cleanup(dir);
+    }
   });
 });

@@ -33,6 +33,15 @@ describe("bars in docs/decisions.md", () => {
     assert.match(text, /at least 0\.9/);
   });
 
+  it("words look-pixel16 as recall@10 and names the library each measure runs on", async () => {
+    const text = await (
+      await import("node:fs/promises")
+    ).readFile(new URL("../../../docs/decisions.md", import.meta.url), "utf8");
+    assert.match(text, /\| look-pixel16 +\| By look: recall@10 on 16-px pixel art +\|/);
+    assert.match(text, /inventory-full\.csv/);
+    assert.match(text, /LanceStore/);
+  });
+
   it("parses a table row", () => {
     const [b] = parseBars("| x-y | Measure | <= 150 ms | reference box |");
     assert.deepEqual(b, { id: "x-y", op: "<=", value: 150, unit: "ms", where: "reference box" });
