@@ -58,9 +58,22 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
     current.sha256 === undefined
       ? ""
       : `, replacing version ${current.version} of ${current.assetId} (sha256 ${current.sha256})`;
-  const warning = current.outsideChange
+  const outsideChange = current.outsideChange
     ? `the working file of ${current.assetId} differs from its card's lock.sha256: replacing it discards an outside change`
     : undefined;
+  // Media another tool marked as model-made, brought in with a record of no calls: the person sees
+  // that no licence grant was checked for it before confirming (docs/decisions.md).
+  const unchecked = run.candidates
+    .filter((c) => args.candidate === undefined || c.id === args.candidate)
+    .filter((c) => c.provenance?.modelMadeOutsideAssetgrove !== undefined)
+    .map((c) => c.id);
+  const licence =
+    unchecked.length === 0
+      ? undefined
+      : `${args.candidate === undefined ? `candidate${unchecked.length === 1 ? "" : "s"} ${unchecked.join(", ")}: ` : ""}` +
+        "the media is marked as model-made by another tool, and Assetgrove checked no licence grant for it";
+  const warning =
+    [outsideChange, licence].filter((w) => w !== undefined).join(". Warning: ") || undefined;
   return {
     kind: "pick",
     id,
@@ -79,7 +92,9 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
       ...(current.sha256 !== undefined && {
         replaces: { assetId: current.assetId, version: current.version, sha256: current.sha256 },
       }),
-      ...(warning !== undefined && { outsideChange: true, warning }),
+      ...(outsideChange !== undefined && { outsideChange: true }),
+      ...(unchecked.length > 0 && { licenceGrantUnchecked: unchecked }),
+      ...(warning !== undefined && { warning }),
       ...(change !== undefined && { answers: change.answers }),
       digest: id,
     },
@@ -96,6 +111,8 @@ export const pickCommand = defineCommand<PickArgs>({
 must name --candidate (exit 2 without one); otherwise a record at <configDir>/confirmations/<hex>.json
 for the pick's digest, an MCP client's form, the TTY (which asks for the candidate when none is named), or exit 8
 confirmation_required and \`assetgrove confirm <hex>\`. The record goes into the pick's provenance.
+A candidate marked as model-made by another tool, with a record of no calls, is named in the
+confirmation: Assetgrove checked no licence grant for it.
 Then writes the chosen candidate and its manifest into the target with review pending, and the
 library under one lock (docs/library.md): the version into <assetId>.review.json with the candidate's
 annotations, the card <assetId>.md, index.md from the library root down and a log.md line (unless

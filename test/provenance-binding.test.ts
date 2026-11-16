@@ -21,6 +21,7 @@ import {
   checkProvenance,
   ProvenanceError,
 } from "../src/provenance-binding.ts";
+import { pickRequest } from "../src/commands/pick.ts";
 import { sha256 } from "../src/request.ts";
 import { gitTarget } from "./fixtures/git.ts";
 import { syntheticStrip } from "./fixtures/strip.ts";
@@ -286,6 +287,62 @@ test("media made outside Assetgrove goes through rig and pick, and the record sa
   assert.equal(manifest.provenance.binding.mediaSha256, sidecar.binding.mediaSha256);
 });
 
+test("media another tool marked as model-made hands off with a record of no calls, and the confirmation, sidecar and manifest say no licence grant was checked", async () => {
+  const w = await world({ embed: true });
+  const model = join(w.dir, "outside.glb");
+  const type = DIGITAL_SOURCE_TYPES.generated;
+  await writeFile(
+    model,
+    embedDigitalSourceType(syntheticQuadruped({ providerRig: true }), "model/gltf-binary", type),
+  );
+  const provenance = join(w.dir, "outside.provenance.json");
+  await writeFile(
+    provenance,
+    JSON.stringify({
+      generator: "character-3d",
+      route: "other-tool",
+      models: [],
+      prompt: "made by another tool",
+      parameters: { gait: "quadruped", heightM: 0.45 },
+      requestIds: [],
+      referenceHashes: [],
+      bibleVersion: "2026-11-10",
+      license: "MIT",
+      providerTerms: [],
+      startedAt: "2026-11-10T00:00:00.000Z",
+      finishedAt: "2026-11-10T00:00:01.000Z",
+      costUsd: 0,
+      calls: [],
+    }),
+  );
+  const r = await rig(w, model, provenance);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const runDir = doc(r)["runDir"] as string;
+  const request = await pickRequest({ run: runDir, candidate: "c1", target: w.target });
+  assert.match(
+    request.summary,
+    /marked as model-made by another tool, and Assetgrove checked no licence grant for it/,
+  );
+  assert.deepEqual((request.details as Doc)["licenceGrantUnchecked"], ["c1"]);
+  const picked = await cli([
+    ...["pick", "--run", runDir, "--candidate", "c1", "--target", w.target, "--json"],
+  ]);
+  assert.equal(picked.code, 0, picked.stdout + picked.stderr);
+  const stated = { digitalSourceType: type, licenceGrantChecked: false };
+  const sidecar = await readJson(join(asset(w), "provenance.json"));
+  assert.equal(sidecar.madeOutsideAssetgrove, true);
+  assert.deepEqual(sidecar.modelMadeOutsideAssetgrove, stated);
+  const manifest = await readJson(join(asset(w), "manifest.json"));
+  assert.equal(manifest.provenance.madeOutsideAssetgrove, true);
+  assert.deepEqual(manifest.provenance.modelMadeOutsideAssetgrove, stated);
+
+  // Handed off again: its own mark now records no calls, and the statement goes with it.
+  const again = await rig(w, join(asset(w), "kit.glb"), join(asset(w), "provenance.json"));
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  const rerun = await readJson(join(doc(again)["runDir"], "run.json"));
+  assert.deepEqual(rerun.candidates[0].provenance.modelMadeOutsideAssetgrove, stated);
+});
+
 test("an emptied record with its binding deleted is refused on media whose mark names a model", async () => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-unit-")));
   const type = DIGITAL_SOURCE_TYPES.generated;
@@ -449,7 +506,7 @@ test("a record re-bound after its calls were emptied or edited is refused by the
   await refused(await rig(w, mine.model, unbound), mine.model, unbound);
 });
 
-test("fix-frame refuses the provenance 0.1.0 wrote beside a strip, naming the one command that brings it up to date", async () => {
+test("fix-frame refuses the provenance 0.1.0 wrote beside a strip, naming the one command that brings it up to date, and takes it emptied as another tool's model-made strip", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-010-")));
   const { strip } = syntheticStrip({ count: 8, style: "painterly", motion: "walk" });
   // What 0.1.0's hand-off of an imported strip wrote: the strip marked with the digital source
@@ -480,20 +537,25 @@ test("fix-frame refuses the provenance 0.1.0 wrote beside a strip, naming the on
   assert.match(doc(r)["error"].message, /assetgrove write-families --import/);
   await assert.rejects(readFile(join(out, "walk-right.png")), "nothing written");
 
-  // Its calls emptied: the mark's digital source type still says a model made the strip.
+  // Its calls emptied: the mark's digital source type alone cannot tell it from another tool's
+  // model-made strip, so it goes through, its record stating no licence grant was checked for it
+  // (docs/decisions.md, "What no check can catch").
   await writeFile(provenance, JSON.stringify(importedStripRecord([])));
   const emptied = await cli([
     ...["fix-frame", "--strip", stripPath, "--family", "walk-right"],
     ...["--profile", join(root, "profile.json"), "--frame", "3", "--from", "2", "--out", out],
     ...["--provider-script", FIX_SCRIPT, "--json"],
   ]);
-  await refused(emptied, stripPath, provenance);
-  assert.match(doc(emptied)["error"].message, /digital source type is .*compositeWithTrained/);
-  assert.match(doc(emptied)["error"].message, /assetgrove write-families --import/);
-  await assert.rejects(readFile(join(out, "walk-right.png")), "nothing written");
+  assert.equal(emptied.code, 0, emptied.stdout + emptied.stderr);
+  const fixed = await readJson(join(out, "walk-right.png.provenance.json"));
+  assert.deepEqual(fixed.modelMadeOutsideAssetgrove, {
+    digitalSourceType: DIGITAL_SOURCE_TYPES.composite,
+    licenceGrantChecked: false,
+  });
+  assert.equal(fixed.madeOutsideAssetgrove, undefined, "the fix added a call");
 });
 
-test("an emptied unbound record is refused on media 0.1.0 or staging marked with the digital source type alone", async () => {
+test("a record of no calls on media another tool marked as model-made is accepted, stating no licence grant was checked", async () => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-dst-")));
   const value = { generator: "character-3d", calls: [] } as never;
   const media = [
@@ -509,42 +571,48 @@ test("an emptied unbound record is refused on media 0.1.0 or staging marked with
       const bytes = embedDigitalSourceType(m.raw, m.mediaType, type);
       await writeFile(m.path, bytes);
       const provenancePath = `${m.path}.provenance.json`;
-      await assert.rejects(
-        checkProvenance({
+      for (const record of [value, bindProvenance(value, bytes)]) {
+        const accepted = await checkProvenance({
           media: { path: m.path, bytes, mediaType: m.mediaType },
-          provenance: { path: provenancePath, bytes: JSON.stringify(value), value },
-        }),
-        (error: ProvenanceError) => {
-          assert.equal(error.code, "provenance_mismatch");
-          assert.ok(error.message.includes(m.path) && error.message.includes(provenancePath));
-          assert.match(error.message, /says a model made it/);
-          assert.match(error.message, /assetgrove pick --run/);
-          return true;
-        },
-      );
-      // Re-bound by hand to these bytes: the binding is a digest anyone recomputes, so the mark's
-      // digital source type still refuses it.
-      const rebound = bindProvenance(value, bytes);
-      await assert.rejects(
-        checkProvenance({
-          media: { path: m.path, bytes, mediaType: m.mediaType },
-          provenance: { path: provenancePath, bytes: JSON.stringify(rebound), value: rebound },
-        }),
-        (error: ProvenanceError) => {
-          assert.equal(error.code, "provenance_mismatch");
-          assert.match(error.message, /says a model made it/);
-          assert.match(error.message, /another tool marked as made by a model/);
-          return true;
-        },
-      );
+          provenance: { path: provenancePath, bytes: JSON.stringify(record), value: record },
+        });
+        assert.equal(accepted.madeOutsideAssetgrove, true);
+        assert.deepEqual(accepted.modelMadeOutsideAssetgrove, {
+          digitalSourceType: type,
+          licenceGrantChecked: false,
+        });
+      }
+      // The exact checks stay: a mark that records calls, or names a model, refuses it.
+      const called = embedDigitalSourceType(m.raw, m.mediaType, type, {
+        callsSha256: callsSha256({ calls: [{ model: "x" }] } as never),
+      });
+      const named = embedDigitalSourceType(m.raw, m.mediaType, type, { models: ["x"] });
+      for (const [marked, why] of [
+        [called, /calls sha256 differs/],
+        [named, /names the model x/],
+      ] as const) {
+        await assert.rejects(
+          checkProvenance({
+            media: { path: m.path, bytes: marked, mediaType: m.mediaType },
+            provenance: { path: provenancePath, bytes: JSON.stringify(value), value },
+          }),
+          (error: ProvenanceError) => {
+            assert.equal(error.code, "provenance_mismatch");
+            assert.ok(error.message.includes(m.path) && error.message.includes(provenancePath));
+            assert.match(error.message, why);
+            return true;
+          },
+        );
+      }
     }
-    // Marked as made by a person: media made outside Assetgrove.
+    // Marked as made by a person: media made outside Assetgrove, with no model to state.
     const human = embedDigitalSourceType(m.raw, m.mediaType, DIGITAL_SOURCE_TYPES.human);
     const accepted = await checkProvenance({
       media: { path: m.path, bytes: human, mediaType: m.mediaType },
       provenance: { path: `${m.path}.provenance.json`, bytes: JSON.stringify(value), value },
     });
     assert.equal(accepted.madeOutsideAssetgrove, true);
+    assert.equal(accepted.modelMadeOutsideAssetgrove, undefined);
   }
 });
 

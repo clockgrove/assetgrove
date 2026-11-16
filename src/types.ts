@@ -346,13 +346,24 @@ export interface Provenance {
   /** Which certificate signed the C2PA content credentials of the images hand-off wrote. */
   contentCredentials?: import("./credentials.ts").SignerRecord;
   /**
-   * Set when the media was made outside Assetgrove: its record came with no model call and no
-   * binding, and the media's mark neither names a model nor says a model made it
-   * (src/provenance-binding.ts).
+   * Set when the media was made outside Assetgrove: its record came with no model call, and the
+   * media's mark neither records calls nor names a model (src/provenance-binding.ts).
    */
   madeOutsideAssetgrove?: true;
+  /**
+   * Set beside `madeOutsideAssetgrove` when the media's mark (another tool's) says a model made it:
+   * that digital source type, and that Assetgrove checked no licence grant for it. It stays when a
+   * later step (look-dev, fix-frame) adds a call: the grant of that call says nothing of the source.
+   */
+  modelMadeOutsideAssetgrove?: ModelMadeOutsideAssetgrove;
   /** The record's tie to the bytes it describes, written last by each writer (src/provenance-binding.ts). */
   binding?: ProvenanceBinding;
+}
+
+/** Media another tool marked as made by a model: no licence grant was checked for it. */
+export interface ModelMadeOutsideAssetgrove {
+  digitalSourceType: string;
+  licenceGrantChecked: false;
 }
 
 /** The sha256 of the exact media bytes a record describes, and of the record without `binding`. */

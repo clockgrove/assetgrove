@@ -492,6 +492,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   // A binding the record came with describes other bytes; this hand-off binds it again below.
   // "Made outside Assetgrove" means no call, so it is read from the final calls: a step that added
   // a call to outside media (look-dev, fix-frame) leaves it behind.
+  // modelMadeOutsideAssetgrove stays: a call a later step added says nothing of the source's grant.
   const { binding: _stale, madeOutsideAssetgrove: _outside, ...unbound } = licensed;
   void _stale;
   void _outside;

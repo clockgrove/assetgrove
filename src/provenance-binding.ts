@@ -7,11 +7,12 @@
  * describes and of its canonical content) must hold when present.
  *
  * A record that nothing outside the file names is accepted only when it is bound (and its calls
- * name each model the media's mark names), or when it records no call and the mark neither names a
- * model nor says a model made the media (its digital source type): media made outside Assetgrove.
- * A record of no call is refused, bound or not, on media whose mark names a model or says a model
- * made it. An unbound record with calls, such as one 0.1.0 wrote, is refused with the one command
- * that hands its media off again.
+ * name each model the media's mark names), or when it records no call and the mark names no model:
+ * media made outside Assetgrove, which the record says, and, when the mark's digital source type
+ * says a model made it, that no licence grant was checked for it. A record of no call is refused,
+ * bound or not, on media whose mark records calls or names a model the record does not account
+ * for. An unbound record with calls, such as one 0.1.0 wrote, is refused with the one command that
+ * hands its media off again.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -75,8 +76,9 @@ export function callsSha256(record: Pick<Provenance, "calls">): string {
  * The record, checked as the record of the media against the evidence outside the file (the
  * media's mark, and the library review record and run record beside the media) and against its
  * own binding. Returns the record (for a staged candidate given by its `--json` view, the run
- * record's own copy), with `madeOutsideAssetgrove: true` when it records no call and nothing says
- * a model made the media. Throws a ProvenanceError naming both files otherwise.
+ * record's own copy), with `madeOutsideAssetgrove: true` when it records no call and nothing outside
+ * the file records calls or names a model (and `modelMadeOutsideAssetgrove` when the media's mark
+ * says a model made it). Throws a ProvenanceError naming both files otherwise.
  */
 export async function checkProvenance(named: NamedProvenance): Promise<Provenance> {
   const { media, provenance } = named;
@@ -147,28 +149,33 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   const missing = names.filter((m) => !allowed.has(m));
   const plural = (n: string[]) => (n.length === 1 ? "" : "s");
 
-  // The digital source type is all the mark of a 0.1.0 hand-off or a staged candidate carries.
-  const source = markRead(() => readDigitalSourceType(media.bytes, media.mediaType));
-  const modelMade = MODEL_MADE.has(source ?? "");
-  // A record of no call on media whose mark says a model made it, bound or not: a binding is two
-  // digests anyone can recompute, so an emptied record re-bound by hand is refused the same way.
-  // Unbound, a sheet tool the mark names is no call either (0.1.0 marked imported strips with it).
-  // Bound, a mark that names only the sheet tool of an imported strip says which model made it.
+  // A record of no call on media whose mark names a model it does not account for, bound or not:
+  // a binding is two digests anyone can recompute, so an emptied record re-bound by hand is refused
+  // the same way. Unbound, a sheet tool the mark names is no call either (0.1.0 marked imported
+  // strips with it). Bound, a mark that names only the sheet tool of an imported strip says which
+  // model made it.
   const unnamed = binding === undefined ? names : missing;
-  const explained = binding !== undefined && names.length > 0;
-  if (calls.length === 0 && (unnamed.length > 0 || (modelMade && !explained))) {
+  if (calls.length === 0 && unnamed.length > 0) {
     throw refuse(
-      unnamed.length > 0
-        ? `it records no model call, but the media's own mark names the model${plural(unnamed)} ${unnamed.join(", ")}`
-        : `it records no model call, but the media's own mark says a model made it (its digital source type is ${source})`,
-      `If Assetgrove made the media, hand it off again so its record is written and bound: ${upToDateCommand(record)}. ` +
-        "Media another tool marked as made by a model cannot be handed off with a record of no " +
-        "calls: no licence grant can be checked for it",
+      `it records no model call, but the media's own mark names the model${plural(unnamed)} ${unnamed.join(", ")}`,
+      `If Assetgrove made the media, hand it off again so its record is written and bound: ${upToDateCommand(record)}`,
     );
   }
+  // No call, and nothing outside the file names a model or records calls: media made outside
+  // Assetgrove. When its mark says a model made it (another tool's digital source type), the
+  // record says so and that no licence grant was checked (docs/decisions.md).
+  if (calls.length === 0 && names.length === 0) {
+    const source = markRead(() => readDigitalSourceType(media.bytes, media.mediaType));
+    return {
+      ...own,
+      madeOutsideAssetgrove: true,
+      ...(source !== undefined &&
+        MODEL_MADE.has(source) && {
+          modelMadeOutsideAssetgrove: { digitalSourceType: source, licenceGrantChecked: false },
+        }),
+    };
+  }
   if (binding === undefined) {
-    // No call, no binding, and nothing outside the file says a model made the media.
-    if (calls.length === 0) return { ...own, madeOutsideAssetgrove: true };
     // Unbound, and nothing outside the file vouches for it: a record 0.1.0 wrote, or a staged
     // record moved out of its run. Its contents are not taken as written.
     throw refuse(
