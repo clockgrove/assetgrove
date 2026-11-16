@@ -6,6 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { canCarryCredentials, readCredentials } from "./credentials.ts";
 import { markableMediaType } from "./handoff/mark-check.ts";
 import { readDigitalSourceType, readMarkedModels } from "./metadata.ts";
 import { parseCard } from "./library/card.ts";
@@ -22,6 +23,21 @@ export interface DisclosureTerms {
   asOf?: string;
   assets: number;
 }
+export interface DisclosureSigner {
+  subject: string;
+  certificateSha256: string;
+  development: boolean;
+  assets: number;
+}
+export interface DisclosureCredentials {
+  /** Assets whose provenance records a signing certificate. */
+  signed: number;
+  /** Of those, the assets signed with the local development certificate. */
+  development: number;
+  signers: DisclosureSigner[];
+  /** Present only when something was signed with the development certificate. */
+  note?: string;
+}
 export interface Disclosure {
   /** Cards read. */
   assets: number;
@@ -31,6 +47,7 @@ export interface Disclosure {
   models: DisclosureCount[];
   providers: DisclosureCount[];
   terms: DisclosureTerms[];
+  contentCredentials: DisclosureCredentials;
   /** Cards whose provenance could not be read; they count as `unknown`. */
   withoutProvenance: string[];
   steam: string;
@@ -65,13 +82,14 @@ function findProvenance(value: unknown, depth: number): Record<string, unknown> 
 }
 
 /** Summarises the library under `root` from its cards and provenance. */
-export function disclose(root: string): Disclosure {
+export async function disclose(root: string): Promise<Disclosure> {
   const byKind: Record<string, Record<string, number>> = {};
   const sources = new Map<string, number>();
   const models = new Map<string, number>();
   const providers = new Map<string, number>();
   const terms = new Map<string, number>();
   const withoutProvenance: string[] = [];
+  const signers = new Map<string, DisclosureSigner>();
   let approvedAi = 0;
   const cards = scanCards(root).sort((a, b) => compare(join(a.dir, a.id), join(b.dir, b.id)));
   const bump = (map: Map<string, number>, key: string): void => {
@@ -102,6 +120,8 @@ export function disclose(root: string): Disclosure {
     // Without a provenance file (a profile that embeds it in its manifest) the media's own mark
     // says the source type and the models.
     let marked: { source?: string; models: string[] } | undefined;
+    // Without a provenance file, the media's own C2PA manifest says which certificate signed.
+    let credentials: Record<string, unknown> | undefined;
     if (provenance === undefined) {
       withoutProvenance.push(path);
       const type = found.resource === undefined ? undefined : markableMediaType(found.resource);
@@ -114,6 +134,13 @@ export function disclose(root: string): Disclosure {
             }),
             models: (readMarkedModels(bytes, type) ?? "").split("; ").filter(Boolean),
           };
+          const read = canCarryCredentials(type) ? await readCredentials(bytes, type) : undefined;
+          if (read?.certificateSha256 !== undefined)
+            credentials = {
+              certificateSha256: read.certificateSha256,
+              subject: read.signer.subject ?? "",
+              development: read.development === true,
+            };
         } catch {
           marked = undefined;
         }
@@ -146,7 +173,36 @@ export function disclose(root: string): Disclosure {
       named.add(provenance["route"]);
     for (const provider of named) bump(providers, provider);
     for (const t of new Set(strings(provenance?.["providerTerms"]))) bump(terms, t);
+    const signer = (provenance?.["contentCredentials"] ?? credentials) as
+      Record<string, unknown> | null | undefined;
+    if (signer && typeof signer === "object" && typeof signer["certificateSha256"] === "string") {
+      const hash = signer["certificateSha256"];
+      const entry = signers.get(hash) ?? {
+        subject: typeof signer["subject"] === "string" ? signer["subject"] : "",
+        certificateSha256: hash,
+        development: signer["development"] === true,
+        assets: 0,
+      };
+      entry.assets += 1;
+      signers.set(hash, entry);
+    }
   }
+  const signerList = [...signers.values()].sort(
+    (a, b) => b.assets - a.assets || compare(a.certificateSha256, b.certificateSha256),
+  );
+  const signed = signerList.reduce((n, x) => n + x.assets, 0);
+  const development = signerList.filter((x) => x.development).reduce((n, x) => n + x.assets, 0);
+  const contentCredentials: DisclosureCredentials = {
+    signed,
+    development,
+    signers: signerList,
+    ...(development > 0 && {
+      note:
+        `${development} ${development === 1 ? "asset was" : "assets were"} signed with Assetgrove's local development certificate, ` +
+        "which no C2PA trust list holds. A certificate from a C2PA-recognised authority, set in developer settings " +
+        "`contentCredentials`, replaces it before release.",
+    }),
+  };
   const termList = [...terms]
     .map(([text, assets]): DisclosureTerms => {
       const asOf = /\(as of (\d{4}-\d{2}-\d{2})\)/.exec(text)?.[1];
@@ -179,6 +235,7 @@ export function disclose(root: string): Disclosure {
     models: list(models),
     providers: list(providers),
     terms: termList,
+    contentCredentials,
     withoutProvenance,
     steam,
     itch: { tags: itchTags, text: itchText },
@@ -210,6 +267,14 @@ export function disclosureMarkdown(d: Disclosure): string {
       ...(d.terms.length
         ? d.terms.map((t) => `- ${t.terms}${t.asOf ? ` [${t.asOf}]` : ""}: ${t.assets}`)
         : ["- none"]),
+      "",
+      "## Content credentials",
+      `Signed assets: ${d.contentCredentials.signed}`,
+      ...d.contentCredentials.signers.map(
+        (x) =>
+          `- ${x.subject} (${x.development ? "development, " : ""}sha256 ${x.certificateSha256}): ${x.assets}`,
+      ),
+      ...(d.contentCredentials.note ? [d.contentCredentials.note] : []),
       "",
       "## Steam AI content survey",
       d.steam,

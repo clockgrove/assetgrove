@@ -222,7 +222,7 @@ These are real, but not needed for the north star:
 - presets for Unreal, GameMaker, Tiled and LDtk;
 - style training through a vendor's route;
 - a viewer, built after outside developers have used 1.0 and said what they need, rendering from `asset://` addresses alone: see the [Assetgrove Viewer PRD](PRD-viewer.md);
-- C2PA signing and OS keychains.
+- OS keychains, and a C2PA signing certificate from a recognised authority (C2PA signing itself is in Phase 2, owner decision 2026-11-14).
 
 ## What we build on
 
@@ -238,7 +238,8 @@ Six dependencies are adopted, in this order. About 2,000 of the 31,000 source li
 | 6 | Transformers.js, optional | Free local similarity checks and background removal | Models of 100 to 500 MB |
 
 - **Stays hand-written, with the reason recorded:** the spend ledger, the IPTC marks, the atlas JSON and Godot file writers (no libraries exist), the four-legged rig and walk cycle, and Git LFS handling.
-- **Not adopted for 1.0:** C2PA signing (pre-1.0, 51 MB, no GLB support), libimagequant v4 (GPL-3.0) and LiteLLM (a Python proxy).
+- **Adopted for Phase 2:** C2PA content credentials on the Content Authenticity Initiative's WebAssembly SDK (owner decision 2026-11-14; [decisions.md](decisions.md#c2pa-content-credentials-on-the-cais-webassembly-sdk)).
+- **Not adopted for 1.0:** libimagequant v4 (GPL-3.0) and LiteLLM (a Python proxy).
 
 ## Trust, safety and legal
 

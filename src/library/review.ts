@@ -122,6 +122,7 @@ const annotationSchema = z.looseObject({
 const versionSchema = z.looseObject({
   sha256: hex64,
   provenanceSha256: hex64.optional(),
+  contentSha256: hex64.optional(),
   run: z.string().optional(),
   candidate: z.string().optional(),
   at: isoUtc,

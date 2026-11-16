@@ -33,6 +33,8 @@ const ALLOWED = [
   "ALL_PROXY",
   "ANTHROPIC_BASE_URL",
   "OPENAI_BASE_URL",
+  // Set to true unless set, so cbor-x never loads its native addon (src/pure-cbor.ts).
+  "CBOR_NATIVE_ACCELERATION_DISABLED",
 ];
 
 /** The functions in src/env.ts that index the environment by a name they are given. */

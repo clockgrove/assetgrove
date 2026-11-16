@@ -105,6 +105,12 @@ const settingsSchema = z.strictObject({
     })
     .optional(),
   promptPolicy: z.strictObject({ allow: z.array(name) }).optional(),
+  contentCredentials: z
+    .strictObject({
+      certificate: z.string().refine(isAbsolute, "must be an absolute path"),
+      privateKey: z.string().refine(isAbsolute, "must be an absolute path"),
+    })
+    .optional(),
   confirmedBy: z
     .record(name, z.strictObject({ method: name, at: name, client: z.string().optional() }))
     .optional(),
@@ -138,6 +144,8 @@ export interface Settings {
   spend: { acknowledgedHolds: string[] };
   commands: NonNullable<SettingsFile["commands"]>;
   promptPolicy: { allow: string[] };
+  /** The C2PA signing certificate chain and key files; absent, a development certificate signs. */
+  contentCredentials?: NonNullable<SettingsFile["contentCredentials"]>;
   confirmedBy: NonNullable<SettingsFile["confirmedBy"]>;
 }
 
@@ -248,6 +256,15 @@ export function loadSettings(options: LoadOptions = {}): Settings {
   } else {
     refuseDefaultStateDir(defaultStateDir, projectOf(defaultStateDir));
   }
+  // The signing key and certificate are the developer's: never a file a project holds.
+  for (const [field, credential] of Object.entries(file.contentCredentials ?? {})) {
+    const inside = projectOf(credential);
+    if (inside !== undefined) {
+      throw new SettingsError(
+        `${path}: contentCredentials.${field} ${credential} is inside the project ${inside}; the signing key and certificate must live outside every repository.`,
+      );
+    }
+  }
 
   const settings = complete(file, path, configDir, true, defaultStateDir);
   if (migrated.migratedFrom !== undefined) settings.migratedFrom = migrated.migratedFrom;
@@ -292,6 +309,7 @@ function complete(
     spend: { acknowledgedHolds: file.spend?.acknowledgedHolds ?? [] },
     commands: file.commands ?? { approved: [] },
     promptPolicy: { allow: file.promptPolicy?.allow ?? [] },
+    ...(file.contentCredentials && { contentCredentials: file.contentCredentials }),
     confirmedBy: file.confirmedBy ?? {},
   };
 }

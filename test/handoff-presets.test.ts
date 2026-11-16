@@ -13,11 +13,13 @@ import { failureOutcome } from "../src/commands/result.ts";
 import { pick, writeToTarget } from "../src/handoff.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { PRESETS } from "../src/handoff/presets/index.ts";
+import { canCarryCredentials, readCredentials } from "../src/credentials.ts";
+import { markableMediaType } from "../src/handoff/mark-check.ts";
 import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
-import { encodePng } from "../src/image/raster.ts";
+import { decodeImage, encodePng } from "../src/image/raster.ts";
 import { writeRun } from "../src/loop.ts";
 import type { RunRecord, StagedCandidate } from "../src/loop.ts";
-import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
+import { DIGITAL_SOURCE_TYPES, readDigitalSourceType, readMarkedModels } from "../src/metadata.ts";
 import { GLB_MEDIA_TYPE } from "../src/model3d/glb.ts";
 import { sha256 } from "../src/request.ts";
 import { Budget } from "../src/budget.ts";
@@ -195,14 +197,70 @@ const BASE: Record<string, Record<string, string>> = {
   },
 };
 
+/** The PNG with its C2PA manifest chunk (`caBX`) taken out and every other chunk as it was. */
+function withoutManifest(png: Uint8Array): Uint8Array {
+  const bytes = Buffer.from(png);
+  const kept: Buffer[] = [bytes.subarray(0, 8)];
+  for (let at = 8; at < bytes.length;) {
+    const size = 12 + bytes.readUInt32BE(at);
+    if (bytes.toString("latin1", at + 4, at + 8) !== "caBX")
+      kept.push(bytes.subarray(at, at + size));
+    at += size;
+  }
+  return new Uint8Array(Buffer.concat(kept));
+}
+
+/**
+ * Each written file's sha256, with the C2PA content credentials (#251) taken out, so the hashes
+ * stay those of the files before signing. A signed image counts as its bytes on disk without the
+ * manifest chunk, once that file is checked against the signed one: the same decoded pixels, the
+ * same IPTC mark, and the bytes the manifest says it was signed over. Only a JSON file that holds
+ * a `contentCredentials` record or a signed image's sha256 is re-serialised, with that record
+ * removed and that sha256 read as the unsigned one; every other file is hashed as written.
+ */
 async function filesUnder(dir: string): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    // The library's card, review record, indexes and log are covered by library-handoff.test.ts.
-    if (entry.name.endsWith(".md") || entry.name.endsWith(".review.json")) continue;
+  const signed = new Map<string, string>();
+  const entries = (await readdir(dir, { recursive: true, withFileTypes: true })).filter(
+    (entry) =>
+      entry.isFile() &&
+      // The library's card, review record, indexes and log are covered by library-handoff.test.ts.
+      !entry.name.endsWith(".md") &&
+      !entry.name.endsWith(".review.json"),
+  );
+  for (const entry of entries) {
     const full = join(entry.parentPath, entry.name);
-    out[relative(dir, full).replaceAll("\\", "/")] = sha256(await readFile(full));
+    const rel = relative(dir, full).replaceAll("\\", "/");
+    const bytes = new Uint8Array(await readFile(full));
+    out[rel] = sha256(bytes);
+    const type = markableMediaType(entry.name);
+    const read = type && canCarryCredentials(type) ? await readCredentials(bytes, type) : undefined;
+    if (read === undefined || type === undefined) continue;
+    assert.equal(type, "image/png", `${rel}: the fixtures sign PNGs only`);
+    const unsigned = withoutManifest(bytes);
+    assert.deepEqual(decodeImage(bytes), decodeImage(unsigned), `${rel}: pixels`);
+    assert.equal(readDigitalSourceType(bytes, type), readDigitalSourceType(unsigned, type), rel);
+    assert.equal(readMarkedModels(bytes, type), readMarkedModels(unsigned, type), rel);
+    assert.equal(read.inputSha256, sha256(unsigned), `${rel}: the bytes signed over`);
+    signed.set(sha256(bytes), sha256(unsigned));
+    out[rel] = sha256(unsigned);
+  }
+  for (const entry of entries.filter((e) => e.name.endsWith(".json"))) {
+    const full = join(entry.parentPath, entry.name);
+    const text = await readFile(full, "utf8");
+    const touched =
+      text.includes('"contentCredentials"') || [...signed.keys()].some((h) => text.includes(h));
+    if (!touched) continue;
+    let replaced = text;
+    for (const [from, to] of signed) replaced = replaced.replaceAll(from, to);
+    const json = JSON.stringify(
+      JSON.parse(replaced, (key, value: unknown) =>
+        key === "contentCredentials" ? undefined : value,
+      ),
+      null,
+      2,
+    );
+    out[relative(dir, full).replaceAll("\\", "/")] = sha256(Buffer.from(`${json}\n`));
   }
   return out;
 }

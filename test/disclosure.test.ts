@@ -8,10 +8,12 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { disclose } from "../src/disclosure.ts";
+import { disclose, disclosureMarkdown } from "../src/disclosure.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
+import { developmentSigner } from "../src/credentials.ts";
+import { loadSettings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
 import { shelterSpec, syntheticProfile } from "./fixtures/synthetic.ts";
 
@@ -97,7 +99,7 @@ function cli(args: string[]): Promise<string> {
 }
 
 test("disclose reports kinds, source types, models, providers and terms with dates", async () => {
-  const d = disclose(await library());
+  const d = await disclose(await library());
   assert.equal(d.assets, 3);
   assert.deepEqual(d.byKind["sprite-strip"], {
     trainedAlgorithmicMedia: 2,
@@ -159,4 +161,62 @@ test("--out writes the Markdown summary without prompt text", async () => {
   const text = await readFile(join(cwd, "summary.md"), "utf8");
   assert.match(text, /Steam AI content survey/);
   assert.ok(!text.includes(prompt));
+});
+
+test("content credentials count development and settings signers, and the note names the development one", async () => {
+  const target = await mkdtemp(join(tmpdir(), "assetgrove-disclosure-cc-"));
+  // A certificate of the developer's own, named by the developer settings.
+  const keys = await mkdtemp(join(tmpdir(), "assetgrove-disclosure-keys-"));
+  const own = await developmentSigner(keys);
+  const settings = {
+    ...loadSettings(),
+    contentCredentials: {
+      certificate: join(keys, "content-credentials", "chain.pem"),
+      privateKey: join(keys, "content-credentials", "signer.key"),
+    },
+  };
+  for (const [family, gate] of [
+    ["shelter", undefined],
+    ["walk", { settings }],
+  ] as const) {
+    const profile = syntheticProfile({ handoff: [{ preset: "atlas-json" }] });
+    delete profile.validator;
+    profile.layout.provenance =
+      "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.provenance.json";
+    await writeToTarget({
+      profile,
+      spec: { ...shelterSpec, animationFamily: family },
+      bibleVersion: "v1",
+      output: {
+        bytes: encodePng(createRaster(96, 8)),
+        mediaType: "image/png",
+        extension: "png",
+        fields: { frames: { width: 16, height: 8, count: 6, durationMs: 120 } },
+      },
+      provenance: provenance({}),
+      run: { runId: `r-${family}`, candidateId: "c1", pickedAt: "2026-01-01T00:00:02.000Z" },
+      targetDir: target,
+      ...(gate && { gate }),
+    });
+  }
+  const d = await disclose(target);
+  assert.equal(d.contentCredentials.signed, 2);
+  assert.equal(d.contentCredentials.development, 1);
+  assert.deepEqual(d.contentCredentials.signers.map((s) => [s.development, s.assets]).sort(), [
+    [false, 1],
+    [true, 1],
+  ]);
+  assert.ok(
+    d.contentCredentials.signers.some(
+      (s) => !s.development && s.certificateSha256 === own.record.certificateSha256,
+    ),
+  );
+  assert.match(
+    d.contentCredentials.note ?? "",
+    /1 asset was signed with Assetgrove's local development certificate/,
+  );
+  assert.match(d.contentCredentials.note ?? "", /no C2PA trust list/);
+  const md = disclosureMarkdown(d);
+  assert.match(md, /## Content credentials\nSigned assets: 2/);
+  assert.ok(md.includes(`(sha256 ${own.record.certificateSha256}): 1`));
 });

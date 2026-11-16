@@ -16,12 +16,13 @@ import { applySettingsChange, rebuiltSettingsRequest } from "../settings-write.t
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import { writeRequest } from "./write-families.ts";
+import { adoptRequest } from "../library/adopt.ts";
 
 /**
  * A pending spend, pick or write request as a person is shown it, rebuilt from what its id hashes
  * and never from the saved summary, details or choices: a spend's from its verified body; a
  * pick's and a write's by making the request again from its body (the run's candidates, the
- * import and the grouping) and requiring the same id. Undefined when the request does not hold.
+ * import and the grouping; an adopt's media and original) and requiring the same id. Undefined when the request does not hold.
  */
 async function shownRequest(request: ConfirmRequest): Promise<KindRequest | undefined> {
   if (!verifiedRequest(request)) return undefined;
@@ -57,6 +58,19 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
         target,
         ...(candidate !== undefined && { candidate }),
       });
+    } else if (body["action"] === "adopt") {
+      const target = text(body["target"]);
+      const asset = text(body["asset"]);
+      const media = text(body["media"]);
+      const original = text(body["original"]);
+      if (
+        target === undefined ||
+        asset === undefined ||
+        media === undefined ||
+        original === undefined
+      )
+        return undefined;
+      rebuilt = await adoptRequest({ target, asset, media, original });
     } else {
       const importDir = text(body["import"]);
       const targetDir = text(body["target"]);

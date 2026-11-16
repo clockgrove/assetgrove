@@ -35,7 +35,7 @@ Spends nothing; nothing is written without --out.`,
   effect: { readOnly: false, spends: "never", writes: "out" },
   async run(args) {
     const root = resolve(args.root ?? ".");
-    const summary = disclose(root);
+    const summary = await disclose(root);
     if (args.out !== undefined) {
       if (args.out === "") throw new InputError("--out needs a file");
       if (isAbsolute(args.out) || args.out.split(/[\\/]/).includes(".."))
@@ -50,6 +50,12 @@ Spends nothing; nothing is written without --out.`,
       `models: ${summary.models.map((m) => m.name).join(", ") || "none"}`,
       `providers: ${summary.providers.map((m) => m.name).join(", ") || "none"}`,
       ...summary.terms.map((t) => `terms: ${t.terms}`),
+      ...(summary.contentCredentials.signed > 0 || summary.contentCredentials.note
+        ? [
+            `content credentials: ${summary.contentCredentials.signed} signed` +
+              (summary.contentCredentials.note ? `. ${summary.contentCredentials.note}` : ""),
+          ]
+        : []),
       "",
       `Steam: ${summary.steam}`,
       `itch.io: ${summary.itch.text}`,
