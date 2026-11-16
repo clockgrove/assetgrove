@@ -1,21 +1,30 @@
 /**
  * Near matches before paid generation (issue #240, design section 7.6), with a stub search slot:
- * core lists up to three picks of exactly the spec's kind and subject beside the plan, with a
- * sheet; the digest ignores them; a missing slot or `nearMatch: false` leaves them absent; a
- * failing search records `searchError`.
+ * core lists up to three picks the slot ranks beside the plan, with a sheet, as candidates to look
+ * at; references count by their bytes; the digest ignores them; a missing slot or
+ * `nearMatch: false` leaves them absent; a failing search records `searchError`.
  */
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { SearchSlot } from "../src/extension/api.ts";
 import type { RunContext } from "../src/commands/types.ts";
+import type { StyleBible } from "../src/types.ts";
 import { buildWorkPlan, paidBy } from "../src/runs/plan.ts";
 import { spendRequest } from "../src/runs/execute.ts";
-import { nearMatchesFor } from "../src/search/near-match.ts";
+import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../src/search/near-match.ts";
 import { fixtureLibrary } from "./fixtures/library.ts";
 
 const lib = fixtureLibrary();
@@ -28,13 +37,16 @@ after(async () => {
   await rm(stateDir, { recursive: true, force: true });
 });
 
-const seen: { kind: string; subject: string; references: number }[] = [];
+const seen: { kind: string; subject: string; brief?: string; references: number }[] = [];
 const slot: SearchSlot = {
   async nearMatch(query, ctx) {
-    seen.push({ kind: query.kind, subject: query.subject, references: query.references.length });
-    const rows = (await ctx.library.list(["pick"])).filter(
-      (i) => i.kind === query.kind && i.subject === query.subject,
-    );
+    seen.push({
+      kind: query.kind,
+      subject: query.subject,
+      ...(query.brief !== undefined && { brief: query.brief }),
+      references: query.references.length,
+    });
+    const rows = (await ctx.library.list(["pick"])).filter((i) => i.kind === query.kind);
     return {
       hits: rows.slice(0, query.limit).map((i, n) => ({
         address: i.address,
@@ -44,7 +56,7 @@ const slot: SearchSlot = {
         path: i.path,
         view: "",
         fields: { kind: i.kind, subject: i.subject },
-        sharedText: {},
+        sharedText: { title: "Lantern" },
       })),
       fresh: true,
       builtFrom: null,
@@ -90,38 +102,144 @@ function context(
   } as unknown as RunContext;
 }
 
-test("lists the pick of the same kind and subject, with a sheet, and never another kind or subject", async () => {
+test("lists the picks of the kind, with a sheet", async () => {
   const same = await nearMatchesFor({ kind: "still", assetId: "lantern" }, [], context(slot));
   assert.deepEqual(
-    same.nearMatches?.map((m) => m.address),
-    ["asset://test-grove/lantern"],
+    same.nearMatches?.map((m) => [m.address, m.rank]),
+    [
+      ["asset://test-grove/big", 1],
+      ["asset://test-grove/lantern", 2],
+      ["asset://test-grove/fern", 3],
+    ],
   );
   assert.ok(same.nearMatchSheet && existsSync(same.nearMatchSheet));
   assert.equal(same.searchError, undefined);
-  const subject = await nearMatchesFor(
-    { kind: "still", assetId: "x", subject: "lantern" },
-    [],
-    context(slot),
-  );
-  assert.equal(subject.nearMatches?.length, 1);
   const otherKind = await nearMatchesFor(
     { kind: "sprite-strip", assetId: "lantern" },
     [],
     context(slot),
   );
-  assert.deepEqual(otherKind.nearMatches, []);
-  const otherSubject = await nearMatchesFor({ kind: "still", assetId: "oak" }, [], context(slot));
-  assert.deepEqual(otherSubject.nearMatches, []);
+  assert.deepEqual(
+    otherKind.nearMatches?.map((m) => [m.address, m.rank]),
+    [["asset://test-grove/walk", 1]],
+  );
 });
 
-test("hands the slot the reference images only", async () => {
-  seen.length = 0;
-  await nearMatchesFor(
-    { kind: "still", assetId: "lantern" },
-    [join(lib.dir, "assets", "lantern.png"), join(lib.dir, "notes.txt")],
-    context(slot),
+test("lists at most three when the slot returns more", async () => {
+  let returned = 0;
+  const base = slot.nearMatch;
+  assert.ok(base);
+  const many: SearchSlot = {
+    ...slot,
+    async nearMatch(query, ctx) {
+      const r = await base({ ...query, limit: 10 }, ctx);
+      const hits = [...r.hits, ...r.hits].map((h, n) => ({ ...h, rank: n + 1 }));
+      returned = hits.length;
+      return { ...r, hits };
+    },
+  };
+  const near = await nearMatchesFor({ kind: "still", assetId: "lantern" }, [], context(many));
+  assert.ok(returned > 3);
+  assert.deepEqual(
+    near.nearMatches?.map((m) => m.rank),
+    [1, 2, 3],
   );
-  assert.deepEqual(seen, [{ kind: "still", subject: "lantern", references: 1 }]);
+});
+
+test("a reference with an unusual extension is still used", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-near-refs-")));
+  try {
+    const odd = join(dir, "lantern.reference-image");
+    copyFileSync(join(lib.dir, "assets", "lantern.png"), odd);
+    const text = join(dir, "notes.png");
+    writeFileSync(text, "not an image");
+    seen.length = 0;
+    await nearMatchesFor({ kind: "still", assetId: "lantern" }, [odd, odd, text], context(slot));
+    assert.deepEqual(seen, [{ kind: "still", subject: "lantern", references: 1 }]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the request's references are its key pose, identity turnaround and subject-tagged bible references, not the anchors", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-near-bible-")));
+  try {
+    const dir = join(root, ".assetgrove/art-direction");
+    mkdirSync(dir, { recursive: true });
+    const png = join(lib.dir, "assets", "lantern.png");
+    for (const name of ["anchor.png", "avoid.png", "turn.png"]) copyFileSync(png, join(dir, name));
+    copyFileSync(png, join(root, "pose.png"));
+    const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+    data.referenceLicense = "NOASSERTION";
+    data.anchors.positive = [{ path: "anchor.png", role: "composition" }];
+    data.anchors.negative = [{ path: "avoid.png", role: "unwanted-outline" }];
+    data.identities["den"] = {
+      version: "1",
+      approved: true,
+      turnaround: "turn.png",
+      signatureFeatures: ["white muzzle"],
+      proportions: "round",
+      palette: ["#292433"],
+    };
+    const biblePath = join(dir, "BIBLE.md");
+    writeFileSync(biblePath, serializeBible(data, "## Do's and Don'ts\nDo. Don't.\n"));
+    const spec = (assetId: string) => ({
+      value: { kind: "still", assetId, keyPose: "pose.png" },
+      dir: root,
+    });
+    assert.deepEqual(await subjectReferencePaths(spec("den"), biblePath), [
+      join(dir, "turn.png"),
+      join(root, "pose.png"),
+    ]);
+    assert.deepEqual(await subjectReferencePaths(spec("lamp"), biblePath), [
+      join(root, "pose.png"),
+    ]);
+    assert.deepEqual(
+      await subjectReferencePaths({ value: { kind: "still", assetId: "den" }, dir: root }),
+      [],
+    );
+    // The JSON style bible's references tagged with the subject (and its look, when they name one).
+    const styleBible = {
+      value: {
+        references: [
+          { path: "den.png", role: "prop", subject: "den" },
+          { path: "den-night.png", role: "prop", subject: "den", look: "night" },
+          { path: "lamp.png", role: "prop", subject: "lamp" },
+          { path: "persp.png", role: "perspective", subject: "den" },
+        ],
+      } as unknown as StyleBible,
+      dir,
+    };
+    assert.deepEqual(
+      await subjectReferencePaths(
+        { value: { kind: "still", assetId: "den" }, dir: root },
+        undefined,
+        styleBible,
+      ),
+      [join(dir, "den.png")],
+    );
+    assert.deepEqual(
+      await subjectReferencePaths(
+        { value: { kind: "still", assetId: "den", look: "night" }, dir: root },
+        undefined,
+        styleBible,
+      ),
+      [join(dir, "den.png"), join(dir, "den-night.png")],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the brief's words reach the slot as one text", async () => {
+  seen.length = 0;
+  await nearMatchesFor({ kind: "still", assetId: "lantern" }, [], context(slot), {
+    purpose: "a lamp",
+    appearsIn: "the cellar",
+    mood: "calm",
+    context: "",
+  });
+  assert.equal(seen[0]?.brief, "a lamp the cellar calm");
 });
 
 test("is absent with near matches off or the slot empty, and records a failing search", async () => {
@@ -157,9 +275,21 @@ test("the request digest is the same with and without near matches; the spend fo
   const withNear = await buildWorkPlan(spec, {}, { ...parts, near });
   assert.equal(withNear.digest, without.digest);
   assert.equal(without.nearMatches, undefined);
-  assert.equal(withNear.nearMatches?.length, 1);
+  assert.equal(withNear.nearMatches?.length, 3);
   const form = spendRequest("plan", 1, withNear);
-  assert.match(form.summary, /asset:\/\/test-grove\/lantern/);
+  assert.match(form.summary, /1\. asset:\/\/[^ ]+ "Lantern"/);
+  assert.ok(
+    withNear.nearMatchSheet && form.summary.includes(`contact sheet: ${withNear.nearMatchSheet}`),
+  );
+  assert.doesNotMatch(form.summary, /near match/i);
+  assert.deepEqual(
+    form.details["nearMatches"],
+    withNear.nearMatches?.map((m) => ({ rank: m.rank, address: m.address, title: "Lantern" })),
+  );
+  assert.equal(form.details["nearMatchSheet"], withNear.nearMatchSheet);
   assert.equal(form.id, spendRequest("plan", 1, without).id);
-  assert.doesNotMatch(spendRequest("plan", 1, without).summary, /near matches/);
+  const bare = spendRequest("plan", 1, without);
+  assert.doesNotMatch(bare.summary, /contact sheet|picked assets/);
+  assert.equal(bare.details["nearMatches"], undefined);
+  assert.equal(bare.details["nearMatchSheet"], undefined);
 });

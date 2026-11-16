@@ -43,7 +43,8 @@ function stableStyle(model: string = defaultRoutes.vision.model) {
  * Names come from the package blocklist, never from this file: names are kept in policy/ only
  * (docs/decisions.md, "The prompt policy's names live in policy/").
  */
-const named = (kind: string) => packageBlocklist().terms.find((t) => t.kind === kind)!.term;
+const named = (kind: string) =>
+  packageBlocklist().terms.find((t) => t.kind === kind && t.ambiguous !== true)!.term;
 const GAME = named("game");
 const STUDIO = named("studio");
 const ARTIST = named("artist");
@@ -240,39 +241,74 @@ test("brief mood and numeric adjustments clamp to constitution and every clamp i
   );
 });
 
-test("named games, studios, living artists and imitation phrases are refused through the prompt policy", async () => {
+test("named games, studios and living artists are refused for free; an imitation phrase is a hit the model check decides", async () => {
   const f = await fixture();
   for (const context of [
-    "in the style of a famous game",
     `${CHARACTER} scenery`,
     `${STUDIO} animation`,
     `a painting by ${ARTIST}`,
   ]) {
     await assert.rejects(create(f, { brief: { context } }, { provider: scripted() }), refused);
   }
-  await assert.rejects(
-    create(
-      f,
-      {},
-      {
-        provider: scripted({
-          compiler: JSON.stringify({
-            prompt: `a ${CHARACTER} scene`,
-            negativePrompt: "none",
-            violations: [],
-            clamps: [],
-          }),
-        }),
-      },
-    ),
-    refused,
+  // A phrase alone refuses nothing here: it is recorded for the run's model check.
+  const phrase = await create(
+    f,
+    { brief: { context: "in the style of a 1930s rubber-hose cartoon" } },
+    { provider: scripted() },
   );
+  assert.equal(phrase.promptPolicy.verdict, "allowed");
+  assert.ok(phrase.promptPolicy.hits?.some((h) => h.term === "in the style of"));
   await assert.rejects(create(f, { spec: { ...spec, fields: { description: STUDIO } } }), refused);
   await writeFile(f.templatePath, `Draw ${GAME}. {{constitution}}`);
   await assert.rejects(create(f), refused);
   assert.throws(() => assertOriginalDescription(`${CHARACTER} scenery`), refused);
   assertOriginalDescription("a soft painted woodland shelter");
+  assertOriginalDescription("please imitate a woodland shelter");
   assertOriginalDescription(`${CHARACTER} scenery`, [CHARACTER]);
+});
+
+test("a name in the compiler's text falls back to the template's prompt after the spend, never exit 9; its phrases are saved for apply's check", async () => {
+  const f = await fixture();
+  const template = await create(f);
+  const named = await create(
+    f,
+    {},
+    {
+      provider: scripted({
+        compiler: JSON.stringify({
+          prompt: `a ${CHARACTER} scene`,
+          negativePrompt: "none",
+          violations: [],
+          clamps: [],
+        }),
+      }),
+    },
+  );
+  assert.equal(named.compiler.mode, "template-fallback");
+  assert.match(named.compiler.fallbackReason ?? "", /compiler's text names/);
+  assert.equal(named.promptPolicy.fallback, named.compiler.fallbackReason);
+  assert.ok(named.compiler.spentUsd > 0, "the compiler call was paid for");
+  assert.equal(named.plan.prompts.generation, template.plan.prompts.generation);
+  assert.ok(!named.plan.prompts.generation.includes(CHARACTER));
+  const negated = await create(
+    f,
+    {},
+    {
+      provider: scripted({
+        compiler: JSON.stringify({
+          prompt: "a soft painted woodland shelter",
+          negativePrompt: "do not imitate existing characters",
+          violations: [],
+          clamps: [],
+        }),
+      }),
+    },
+  );
+  assert.equal(negated.compiler.mode, "llm");
+  assert.equal(negated.promptPolicy.verdict, "allowed");
+  assert.ok(
+    negated.promptPolicy.hits?.some((h) => h.term === "imitate" && h.part === "model-negative"),
+  );
 });
 
 test("fallback is deterministic and marked, while malformed or unsafe compiler output refuses", async () => {
@@ -893,10 +929,7 @@ test("apply refuses a saved plan whose prompts name a blocklisted term before ap
   const f = await fixture();
   const provider = scripted();
   const { plan } = await create(f, {}, { provider });
-  const edited = redigested(
-    plan,
-    (c) => (c.prompts["generation"] += `\nin the style of ${CHARACTER}`),
-  );
+  const edited = redigested(plan, (c) => (c.prompts["generation"] += `\na ${CHARACTER} scene`));
   const before = provider.calls.length;
   await assert.rejects(applyPlan(edited, { provider, outDir: join(f.root, "runs") }), refused);
   await assert.rejects(
@@ -904,4 +937,35 @@ test("apply refuses a saved plan whose prompts name a blocklisted term before ap
     (error) => failureOutcome(error).exitCode === 9,
   );
   assert.equal(provider.calls.length, before);
+});
+
+test("apply with a template fallback generates from the template's prompt and records why", async () => {
+  const f = await fixture();
+  const provider = scripted({
+    compiler: JSON.stringify({
+      prompt: "a lantern shelter, compiled",
+      negativePrompt: "none",
+      violations: [],
+      clamps: [],
+    }),
+  });
+  const { plan, promptPolicy } = await create(f, {}, { provider });
+  const template = await create(f);
+  assert.notEqual(plan.prompts.generation, template.plan.prompts.generation);
+  const checked = {
+    ...promptPolicy,
+    model: "scripted:prompt-policy:decide",
+    probability: 0.1,
+    fallback: "the check objected only to the compiler's text",
+  };
+  const { run } = await applyPlan(plan, {
+    provider,
+    outDir: join(f.root, "runs"),
+    promptPolicy: checked,
+  });
+  assert.deepEqual(run.promptPolicy, checked, "the run's checked record, not the free one");
+  assert.deepEqual(run.candidates[0]?.provenance.promptPolicy, checked);
+  const image = provider.calls.filter((c) => c.kind === "image").at(-1);
+  assert.equal(image?.request.prompt, template.plan.prompts.images[0]);
+  assert.equal(run.candidates[0]?.provenance.prompt, template.plan.prompts.generation);
 });

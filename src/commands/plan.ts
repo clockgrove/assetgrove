@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { loadProfile, readJson } from "../inputs.ts";
 import { readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { generationTool } from "../mcp.ts";
-import { nearMatchesFor } from "../search/near-match.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { planJobs } from "../planning.ts";
+import type { GenerationBrief } from "../planning.ts";
 import { planningContext, providerSet, spendLedger } from "../providers/index.ts";
 import {
   DRY_RUN_PROPERTY,
@@ -13,7 +14,7 @@ import {
   bibleReads,
   specReads,
   buildWorkPlan,
-  jobOf,
+  policyJobOf,
   paidBy,
 } from "../runs/plan.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
@@ -58,9 +59,11 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
   });
-  // The apply after this plan runs its own prompt-policy check first: forecast it too.
+  // The apply after this plan runs its own prompt-policy check first: forecast it too, with its
+  // second call when the compiler can run and so write model-written text.
+  const compiles = forecast.jobs.some((j) => j.operation === "compiler");
   const jobs = [
-    jobOf(PROMPT_POLICY_OPERATION, providers.routes[PROMPT_POLICY_OPERATION]!),
+    policyJobOf(providers.routes[PROMPT_POLICY_OPERATION]!, compiles),
     ...forecast.jobs,
   ];
   const reads = {
@@ -68,7 +71,12 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     ...specReads("spec", spec),
     ...forecast.reads,
   };
-  const near = await nearMatchesFor(spec.value, forecast.referencePaths, ctx);
+  const near = await nearMatchesFor(
+    spec.value,
+    await subjectReferencePaths(spec, args.bible),
+    ctx,
+    args.brief ? (await readJson<GenerationBrief>(args.brief)).value : undefined,
+  );
   const work: WorkPlan = await buildWorkPlan(planCommand, args, {
     near,
     inputs: ["spec", "bible", "profile", "brief", "runOptions", "template"],

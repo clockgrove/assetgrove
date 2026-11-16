@@ -188,7 +188,14 @@ async function lookDevFiles(dir: string) {
       referenceLicense: "NOASSERTION",
       version: "2026-11-10",
       palette: PALETTE,
-      references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "kit" })),
+      references: roles.map((role) => ({
+        path: `refs/${role}.png`,
+        role,
+        subject: "kit",
+        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+          role
+        ],
+      })),
       perspective: "refs/turnaround-front.png",
       subjects: { kit: { description: "a small synthetic quadruped" } },
     }),
@@ -534,8 +541,9 @@ test("plan's forecast holds the planning call and every job of the later apply",
   assert.ok(Math.abs(forecast["forecastUsd"] - sum) < 1e-9);
   assert.equal(existsSync(events), false);
 
-  // Plan's own prompt-policy check and the one the later apply runs first.
-  assert.equal(job(jobs, "prompt-policy")?.count, 2, "plan's and apply's prompt-policy checks");
+  // Plan's own prompt-policy check and the up to two the later apply runs first (its second
+  // decides on the person's text alone when the first objects to the compiler's).
+  assert.equal(job(jobs, "prompt-policy")?.count, 3, "plan's and apply's prompt-policy checks");
   const saved = await recorder(dir, "saved");
   const made = await cli(["plan", ...f.flags, "--provider-script", saved.script, "--json"]);
   assert.equal(made.code, 0, made.stderr);
@@ -568,7 +576,7 @@ test("plan's forecast holds the planning call and every job of the later apply",
   const expected =
     apply["forecastUsd"] +
     compiler.count * compiler.estimatedCostUsd +
-    policy.count * policy.estimatedCostUsd +
+    policy.estimatedCostUsd + // plan's own one check
     briefPolicy.count * briefPolicy.estimatedCostUsd;
   assert.ok(Math.abs(forecast["forecastUsd"] - expected) < 1e-9, `${forecast["forecastUsd"]}`);
 });

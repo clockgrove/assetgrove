@@ -1,4 +1,4 @@
-import { nearMatchesFor } from "../search/near-match.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { basename, dirname } from "node:path";
 import { InputError } from "../errors.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
@@ -18,6 +18,7 @@ import {
   ROUND_PROPERTY,
   buildWorkPlan,
   jobsOf,
+  mergeJobs,
   paidBy,
   specReads,
   styleBibleReads,
@@ -60,10 +61,18 @@ async function prepare(args: StageArgs, ctx: RunContext) {
     generators: stageGenerators,
     candidates,
     capUsd,
+    bible: bible.value,
   });
-  const jobs = jobsOf(plan.perCandidate, routes, candidates);
+  const jobs = mergeJobs([
+    ...jobsOf(plan.perCandidate, routes, candidates),
+    ...jobsOf(plan.perRequest, routes),
+  ]);
   const bibleFiles = styleBibleReads("bible", bible);
-  const near = await nearMatchesFor(spec.value, Object.values(bibleFiles), ctx);
+  const near = await nearMatchesFor(
+    spec.value,
+    await subjectReferencePaths(spec, undefined, bible),
+    ctx,
+  );
   const work: WorkPlan = await buildWorkPlan(stageCommand, args, {
     near,
     promptAllow: ctx.settings.promptPolicy.allow,
@@ -194,6 +203,7 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       candidates,
       capUsd,
       ledger,
+      stateDir: ctx.settings.stateDir,
       ...(args.note !== undefined && { note: args.note }),
       log: ctx.log,
       ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),

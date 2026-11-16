@@ -229,14 +229,16 @@ export class VercelGateway implements GenerationProvider {
     const question =
       q.type === "score"
         ? { type: "score" as const, instructions: q.instructions, criteria: q.levels }
-        : {
-            type: "boolean" as const,
-            instructions: q.instructions,
-            criteria: {
-              ...(q.whenTrue !== undefined && { true: q.whenTrue }),
-              ...(q.whenFalse !== undefined && { false: q.whenFalse }),
-            },
-          };
+        : q.type === "choice"
+          ? { type: "choice" as const, instructions: q.instructions, criteria: q.options }
+          : {
+              type: "boolean" as const,
+              instructions: q.instructions,
+              criteria: {
+                ...(q.whenTrue !== undefined && { true: q.whenTrue }),
+                ...(q.whenFalse !== undefined && { false: q.whenFalse }),
+              },
+            };
     const result = await this.#guard("decide", (gateway) =>
       retryRateLimited(() =>
         experimental_decide({
@@ -256,7 +258,8 @@ export class VercelGateway implements GenerationProvider {
     );
     const raw = result.answers.answer as
       | { type: "score"; score: number; probabilities?: Record<string, number> }
-      | { type: "boolean"; probability: number };
+      | { type: "boolean"; probability: number }
+      | { type: "choice"; choice: string; probabilities?: Record<string, number> };
     const answer: DecisionAnswer =
       raw.type === "score"
         ? {
@@ -264,7 +267,13 @@ export class VercelGateway implements GenerationProvider {
             score: raw.score,
             ...(raw.probabilities !== undefined && { probabilities: raw.probabilities }),
           }
-        : { type: "boolean", probability: raw.probability };
+        : raw.type === "choice"
+          ? {
+              type: "choice",
+              choice: raw.choice,
+              ...(raw.probabilities !== undefined && { probabilities: raw.probabilities }),
+            }
+          : { type: "boolean", probability: raw.probability };
     const meta = result.providerMetadata as Metadata;
     const confidence = Object.values(meta ?? {})
       .map((entry) => {

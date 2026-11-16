@@ -185,7 +185,14 @@ async function lookDevFiles(dir: string, term: string) {
       referenceLicense: "NOASSERTION",
       version: "2026-11-10",
       palette: PALETTE,
-      references: roles.map((role) => ({ path: `refs/${role}.png`, role, subject: "kit" })),
+      references: roles.map((role) => ({
+        path: `refs/${role}.png`,
+        role,
+        subject: "kit",
+        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+          role
+        ],
+      })),
       perspective: "refs/turnaround-front.png",
       subjects: { kit: { description: "a small synthetic quadruped" } },
     }),

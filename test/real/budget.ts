@@ -46,6 +46,12 @@ export function ledgerDirOf(env: Env = process.env, leg: Leg = legOf(env)): stri
   return env[LEDGER_ENV] || join(stateHome(env), "assetgrove", "real-checks", leg);
 }
 
+/**
+ * When this run started: this module loads once per `pnpm test:real` invocation, before any check
+ * calls a provider. Ledger entries reserved before it are earlier runs' (test/real/reconcile.ts).
+ */
+export const RUN_STARTED_AT = new Date();
+
 /** Work-item spend in each ledger directory when this process (one run) first opened it. */
 const runStarts = new Map<string, number>();
 

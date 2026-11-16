@@ -14,7 +14,11 @@ import type {
   VisionResult,
 } from "./provider.ts";
 
-import { BRIEF_POLICY_OPERATION, PROMPT_POLICY_OPERATION } from "../routes.ts";
+import {
+  BRIEF_POLICY_OPERATION,
+  PROMPT_POLICY_OPERATION,
+  REFERENCE_VIEW_OPERATION,
+} from "../routes.ts";
 
 /**
  * A scripted generation provider for tests and offline runs. It never calls a model: each call is
@@ -47,6 +51,13 @@ export interface Script {
    * no departure (probability 0); its calls do not count toward `decide`'s index.
    */
   briefPolicy?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
+  /**
+   * Answers which view a 3D request's reference shows (the `reference-view` choice decision). A
+   * script without it answers those from `decide`; its calls do not count toward `decide`'s index.
+   */
+  referenceView?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
@@ -97,6 +108,7 @@ export class ScriptedProvider implements GenerationProvider {
   private decideCount = 0;
   private policyCount = 0;
   private briefPolicyCount = 0;
+  private viewCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -149,6 +161,13 @@ export class ScriptedProvider implements GenerationProvider {
         ? this.script.briefPolicy(request)
         : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
       return { requestId: `scripted-brief-policy-${index}`, ...answer };
+    }
+    if (request.operation === REFERENCE_VIEW_OPERATION && this.script.referenceView) {
+      const index = this.viewCount++;
+      return {
+        requestId: `scripted-reference-view-${index}`,
+        ...this.script.referenceView(request),
+      };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

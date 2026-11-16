@@ -57,6 +57,7 @@ import {
   buildWorkPlan,
   jobOf,
   jobsOf,
+  mergeJobs,
   paidBy,
   styleBibleReads,
 } from "../runs/plan.ts";
@@ -213,8 +214,13 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       generators,
       candidates,
       capUsd,
+      bible: bible.value,
     });
-    jobs = jobsOf(plan.perCandidate, routes, candidates);
+    // The request's own calls (the reference views it judges) are part of the confirmed spend.
+    jobs = mergeJobs([
+      ...jobsOf(plan.perCandidate, routes, candidates),
+      ...jobsOf(plan.perRequest, routes),
+    ]);
     job = "3d-round";
   } else {
     const route = routes["edit"];
@@ -547,6 +553,7 @@ version is appended with answers naming the requests. The run that made the asse
         ledger,
         note,
         log: ctx.log,
+        stateDir: ctx.settings.stateDir,
         ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
       });
       run = staging.run;

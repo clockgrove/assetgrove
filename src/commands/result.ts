@@ -123,8 +123,15 @@ export function dryRunOutcome(
     spend,
     withinLimits: over === undefined,
   };
+  const hits = work.promptPolicy?.hits ?? [];
   const text = [
     human,
+    // The plan step calls no model: a hit it did not refuse is decided when the run starts.
+    ...(hits.length > 0
+      ? [
+          `prompt policy: ${hits.map((h) => `"${h.term}" (${h.ambiguous ? `${h.kind}, also an ordinary word` : h.kind}) in ${h.part}`).join(", ")}: decided by the model check when the run starts`,
+        ]
+      : []),
     `request ${work.digest}`,
     `run directory ${work.runDir}`,
     ...formatSpend(spend, counted),
@@ -167,8 +174,12 @@ export function formatPlan(plan: StagePlan): string {
   for (const c of plan.perCandidate) {
     lines.push(`  ${c.operation}  ${c.model}  ~${usd(c.estimatedCostUsd)} per call`);
   }
+  for (const c of plan.perRequest) {
+    lines.push(`  ${c.operation}  ${c.model}  ~${usd(c.estimatedCostUsd)} once per request`);
+  }
   lines.push(
-    `per candidate: ${plan.perCandidate.length} call(s)`,
+    `per candidate: ${plan.perCandidate.length} call(s)` +
+      (plan.perRequest.length > 0 ? `; per request: ${plan.perRequest.length} call(s)` : ""),
     `forecast ${usd(plan.estimateUsd)} against a $${plan.capUsd.toFixed(2)} cap` +
       (plan.withinCap ? "" : " (over the cap)"),
   );

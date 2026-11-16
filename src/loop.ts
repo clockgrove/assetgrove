@@ -1,3 +1,4 @@
+import { ReferenceViewCache } from "./model3d/views.ts";
 import type { PromptPolicyRecord } from "./policy/text.ts";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -77,6 +78,8 @@ export interface StageOptions {
   note?: string;
   /** The measured stability entries model-backed checks filter by; src/qa/stability.json by default. */
   stability?: readonly StabilityEntry[];
+  /** The settings' state directory; judged reference views are cached under it. */
+  stateDir?: string;
 }
 
 /** What a stage run would call and cost, computed without spending anything. */
@@ -86,7 +89,9 @@ export interface StagePlan {
   capUsd: number;
   /** The calls one candidate makes. */
   perCandidate: PlannedCall[];
-  /** Calls across all candidates. */
+  /** The calls the request makes once (a 3D character's reference view calls). */
+  perRequest: PlannedCall[];
+  /** Calls across all candidates and the request's own. */
   calls: number;
   estimateUsd: number;
   /** Whether the estimate fits the cap; a forecast over the cap is reported, not thrown. */
@@ -100,6 +105,8 @@ export function planStage(options: {
   generators: Generator[];
   candidates?: number;
   capUsd?: number;
+  /** The style bible; with it, the request's own calls are forecast too. */
+  bible?: StyleBible;
 }): StagePlan {
   const requested = options.candidates ?? DEFAULT_CANDIDATES;
   const capUsd = options.capUsd ?? DEFAULT_CAP_USD;
@@ -122,13 +129,20 @@ export function planStage(options: {
   // Before any paid call: the paths the hand-off will write for this spec can be written.
   checkLayout(options.profile, options.spec);
   const perCandidate = generator.planCandidate(options.spec, options.profile, options.routes);
-  const estimateUsd = perCandidate.reduce((sum, c) => sum + c.estimatedCostUsd, 0) * requested;
+  const perRequest =
+    options.bible && generator.planRequest
+      ? generator.planRequest(options.spec, options.profile, options.routes, options.bible)
+      : [];
+  const estimateUsd =
+    perCandidate.reduce((sum, c) => sum + c.estimatedCostUsd, 0) * requested +
+    perRequest.reduce((sum, c) => sum + c.estimatedCostUsd, 0);
   return {
     kind: generator.kind,
     requested,
     capUsd,
     perCandidate,
-    calls: perCandidate.length * requested,
+    perRequest,
+    calls: perCandidate.length * requested + perRequest.length,
     estimateUsd,
     withinCap: estimateUsd <= capUsd + 1e-9,
   };
@@ -312,6 +326,8 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
     errors: [],
   };
 
+  // Which view each reference shows is judged once for the run, whatever its candidate count.
+  const referenceViews = new ReferenceViewCache(options.stateDir);
   for (let index = 0; index < requested; index++) {
     const call = new Caller({
       provider: options.provider,
@@ -337,6 +353,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         seed,
         ...(options.note !== undefined && { note: options.note }),
         ...(options.profileDir !== undefined && { profileDir: options.profileDir }),
+        referenceViews,
       });
       const id = `c${index + 1}`;
       // Record paths use "/"; the candidate's writes are checked before the first one.

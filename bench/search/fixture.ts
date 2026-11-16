@@ -86,10 +86,6 @@ export function buildFixtureManifest(): Manifest {
       { id: "wq-3", text: "game icon" },
       { id: "wq-4", text: "armored knight with sword" },
     ],
-    pairs: [
-      ["fx-01", "fx-04"],
-      ["fx-05", "fx-08"],
-    ],
   };
 }
 

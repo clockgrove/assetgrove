@@ -33,13 +33,13 @@ import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcil
 import { Budget } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import { checkPromptModel } from "../policy/model.ts";
-import type { PromptPolicyRecord } from "../policy/text.ts";
+import type { PromptPart, PromptPolicyRecord } from "../policy/text.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { SpendHoldError, ledgerFor } from "../spend.ts";
 import { bindConfirmation, requireConfirmation } from "../confirm/index.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import type { ConfirmationRecord } from "../types.ts";
-import { DEFAULT_ROUND, policyTextOf } from "./plan.ts";
+import { DEFAULT_ROUND, policyPartsOf } from "./plan.ts";
 import type { WorkPlan } from "./plan.ts";
 import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "./dir.ts";
 import { Journal, withRunScope } from "./journal.ts";
@@ -120,7 +120,8 @@ export function spendShown(
     options?: Record<string, unknown>;
   },
   candidates?: number,
-  nearMatches?: readonly { address: string }[],
+  nearMatches?: readonly { address: string; rank: number; sharedText?: { title?: string } }[],
+  nearMatchSheet?: string,
 ): { summary: string; details: Record<string, unknown> } {
   const providers = [...new Set(body.jobs.map((j) => j.provider).filter(Boolean))];
   const region = body.options?.["region"];
@@ -135,14 +136,27 @@ export function spendShown(
         ? `${summary}; regions: ${regions.map((r, i) => `${i + 1}) ${r}`).join("; ")}`
         : summary) +
       (nearMatches !== undefined && nearMatches.length > 0
-        ? `; existing near matches of this kind and subject: ${nearMatches.map((m) => m.address).join(", ")}`
+        ? `; existing picked assets to look at before spending (ranked closest to the request, not checked as matches): ${nearMatches
+            .map(
+              (m, n) =>
+                `${n + 1}. ${m.address}${m.sharedText?.title ? ` "${m.sharedText.title}"` : ""}`,
+            )
+            .join(", ")}` +
+          (nearMatchSheet !== undefined ? `; contact sheet: ${nearMatchSheet}` : "")
         : ""),
     details: {
       command: body.command,
       jobs: body.jobs,
       ...(candidates !== undefined && { candidates }),
       ...(nearMatches !== undefined &&
-        nearMatches.length > 0 && { nearMatches: nearMatches.map((m) => m.address) }),
+        nearMatches.length > 0 && {
+          nearMatches: nearMatches.map((m) => ({
+            rank: m.rank,
+            address: m.address,
+            ...(m.sharedText?.title && { title: m.sharedText.title }),
+          })),
+          ...(nearMatchSheet !== undefined && { nearMatchSheet }),
+        }),
       ...(regions && { regions }),
       forecastUsd: body.forecastUsd,
       capUsd: body.capUsd,
@@ -167,7 +181,7 @@ export function spendRequest(command: string, round: number, plan: WorkPlan): Ki
   return {
     kind: "spend",
     id: plan.digest,
-    ...spendShown(plan.digest, body, plan.candidates, plan.nearMatches),
+    ...spendShown(plan.digest, body, plan.candidates, plan.nearMatches, plan.nearMatchSheet),
     body,
   };
 }
@@ -288,8 +302,10 @@ export async function executeRun(options: {
     try {
       outcome = await withRunScope(scope, async () => {
         // The run's first job (design section 16): the prompt policy's model check, before any
-        // other call. A refusal exits 9; a check that cannot run exits 4 (fails closed).
-        const text = policyTextOf(plan);
+        // other call. A refusal exits 9; a check that cannot run exits 4 (fails closed). When it
+        // objects only to model-written text, the record's `fallback` tells the command to use
+        // the template's prompt in its place.
+        const text = policyPartsOf(plan);
         if (text !== undefined && plan.promptPolicy !== undefined) {
           try {
             const checked = await promptPolicyCheck(ctx, options, plan, text, plan.promptPolicy);
@@ -302,7 +318,10 @@ export async function executeRun(options: {
           }
           promptPolicy = scope.promptPolicy;
         }
-        return options.run({ ...ctx, run: { dir: plan.runDir, plan } });
+        return options.run({
+          ...ctx,
+          run: { dir: plan.runDir, plan, ...(promptPolicy && { promptPolicy }) },
+        });
       });
     } catch (error) {
       outcome = options.toOutcome(error);
@@ -372,7 +391,7 @@ async function promptPolicyCheck(
   ctx: RunContext,
   options: { providerScript?: string; workItem?: string },
   plan: WorkPlan,
-  text: string,
+  text: readonly PromptPart[],
   record: PromptPolicyRecord,
 ): Promise<{ record: PromptPolicyRecord; spentUsd: number }> {
   const providers = await providerSet(options.providerScript, ctx);

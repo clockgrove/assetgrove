@@ -25,7 +25,6 @@ import { bestViewPerAsset, rrf, SearchIndex } from "./find.ts";
 import { refreshTree, type RefreshStats } from "./indexer.ts";
 import { LanceStore } from "./lance-store.ts";
 import { sha256Hex, type Library } from "./library.ts";
-import { IMAGE_THRESHOLD } from "./image-threshold.ts";
 import { findOutliers, type Member } from "./outliers.ts";
 import { acquireWriteLock } from "./lock.ts";
 import { MODEL_MANIFEST } from "./model-manifest.ts";
@@ -439,40 +438,96 @@ async function setup(ctx: SearchContext): Promise<Record<string, unknown>> {
 }
 
 /**
- * Picked assets of exactly the query's kind and subject, at most `limit`. Without references they
- * are ranked by words (the subject); with references each must also reach `threshold` in cosine
- * similarity to one of them, and a null threshold lists none.
+ * The picked assets closest to the request, by rank: its kind, subject and brief as words, fused
+ * with image similarity to its references. Only the kind filters; no similarity cut applies. When
+ * the embedder is paid nothing is embedded, neither the request nor unindexed library files: the
+ * index is searched as it stands, by full text and stored vectors only, and reported not fresh.
  */
 export async function nearMatchesWith(
-  threshold: number | null,
   q: NearMatchQuery,
   ctx: SearchContext,
+  options: { paid: boolean },
 ): Promise<SearchFindResult> {
-  const where = [`kind=${q.kind}`, `subject=${q.subject}`];
-  const base = { where, sources: ["pick" as const] };
-  if (q.references.length === 0) {
-    return find({ ...base, words: q.subject, limit: q.limit }, ctx);
-  }
-  const pool = Math.max(q.limit * 20, 100);
-  let last: SearchFindResult | undefined;
-  const best = new Map<string, SearchHit>();
-  for (const image of q.references) {
-    last = await find({ ...base, like: { image }, limit: pool }, ctx);
-    for (const hit of last.hits) {
-      if (threshold === null || hit.score < threshold) continue;
-      const had = best.get(hit.address);
-      if (!had || hit.score > had.score) best.set(hit.address, hit);
+  const embedder = await embedderFor(ctx);
+  const local = await localIndex(ctx, embedder);
+  const remote = ctx.settings.store ? await openRemote(ctx, embedder) : undefined;
+  // Refreshing embeds every library file not yet indexed: a paid call before the person confirms
+  // spend. Under a paid embedder the index is searched as it stands and reported as not fresh.
+  const refreshed = options.paid ? false : (await local.refresh()).fresh;
+
+  const filter: FilterTerm[] = [
+    { field: "source", op: "=", value: "pick" },
+    { field: "kind", op: "=", value: q.kind },
+  ];
+  const words = [q.kind, q.subject, q.brief]
+    .map((w) => w?.trim() ?? "")
+    .filter((w) => w !== "")
+    .join(" ");
+  const searched: { store: Store; tree: string }[] = [{ store: local.store, tree: local.tree }];
+  if (remote) searched.push({ store: remote, tree: await sharedTree(ctx) });
+
+  const wordVec =
+    !options.paid && words !== "" ? (await embedder.embedTexts([words]))[0] : undefined;
+  const refVecs: Float32Array[] = [];
+  if (!options.paid) {
+    if (q.references.length > 0) refVecs.push(...(await embedder.embedImages(q.references)));
+  } else {
+    for (const bytes of q.references) {
+      const sha256 = sha256Hex(bytes);
+      for (const { store, tree } of searched) {
+        const found = await store.query({
+          filter: [
+            { field: "tree", op: "=", value: tree },
+            { field: "sha256", op: "=", value: sha256 },
+          ],
+          limit: 50,
+        });
+        const vec = found.find((h) => h.row.imageVec)?.row.imageVec;
+        if (vec) {
+          refVecs.push(vec);
+          break;
+        }
+      }
     }
   }
-  const hits = [...best.values()]
-    .sort((a, b) => b.score - a.score || (a.address < b.address ? -1 : 1))
-    .slice(0, q.limit)
-    .map((h, i) => ({ ...h, rank: i + 1 }));
-  return { hits, fresh: last?.fresh ?? true, builtFrom: last?.builtFrom ?? null };
+
+  const pool = Math.max(20 * q.limit, 100);
+  const answers: Hit[][] = [];
+  for (const { store, tree } of searched) {
+    const within: FilterTerm[] = [...filter, { field: "tree", op: "=", value: tree }];
+    // The words fuse as `find` fuses them into one ranking; each reference adds one image ranking.
+    const wordLists: Promise<Hit[]>[] = [];
+    if (words !== "") wordLists.push(store.query({ text: words, filter: within, limit: pool }));
+    if (wordVec) {
+      wordLists.push(
+        store.query({
+          vector: { column: "imageVec", value: wordVec },
+          filter: within,
+          limit: pool,
+        }),
+        store.query({ vector: { column: "textVec", value: wordVec }, filter: within, limit: pool }),
+      );
+    }
+    const lists: Hit[][] = [rrf(await Promise.all(wordLists))];
+    for (const value of refVecs) {
+      lists.push(
+        await store.query({ vector: { column: "imageVec", value }, filter: within, limit: pool }),
+      );
+    }
+    answers.push(rrf(lists));
+  }
+  const ranked = answers.length === 1 ? (answers[0] as Hit[]) : rrf(answers);
+  const hits = bestViewPerAsset(ranked).slice(0, q.limit).map(toHit);
+  if (!remote) {
+    return { hits, fresh: refreshed, builtFrom: (await local.store.builtFrom(local.tree)) ?? null };
+  }
+  const built = await remote.builtFrom(await sharedTree(ctx));
+  const fresh = refreshed && built !== undefined && built.head === (await ctx.library.head());
+  return { hits, fresh, builtFrom: built ?? null };
 }
 
-const nearMatch = (q: NearMatchQuery, ctx: SearchContext) =>
-  nearMatchesWith(IMAGE_THRESHOLD, q, ctx);
+const nearMatch = async (q: NearMatchQuery, ctx: SearchContext) =>
+  nearMatchesWith(q, ctx, { paid: (await embedderFor(ctx)).paid === true });
 
 export const searchSlot: SearchSlot = { find, outliers, index, status, setup, nearMatch };
 

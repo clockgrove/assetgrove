@@ -1,3 +1,4 @@
+import { checkDeclaredView } from "./model3d/views.ts";
 import { readFile } from "node:fs/promises";
 import {
   checkReferenceLicense,
@@ -42,6 +43,7 @@ export async function loadStyleBible(path: string): Promise<{ value: StyleBible;
   const bible = readFormat("style-bible", value, path).value as unknown as StyleBible;
   const references = Array.isArray(bible.references) ? bible.references : [];
   checkReferenceLicense(bible.referenceLicense, references, path);
+  for (const reference of references) checkDeclaredView(reference, path);
   requireInsideProject(
     [
       ...references.map((reference) => reference.path),

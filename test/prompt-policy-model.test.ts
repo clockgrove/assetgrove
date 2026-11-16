@@ -16,6 +16,7 @@ import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Budget, BudgetExceededError } from "../src/budget.ts";
 import { checkPromptText } from "../src/policy/text.ts";
+import type { PromptPartLabel } from "../src/policy/text.ts";
 import { withRunScope } from "../src/runs/journal.ts";
 import { PROMPT_POLICY_QUESTION } from "../src/policy/model.ts";
 import { defaultRoutes } from "../src/routes.ts";
@@ -216,20 +217,34 @@ test("no decisions route exits 2 route_unavailable and no call runs", async () =
 interface RedTeamRow {
   id: string;
   prompt: string;
+  part?: PromptPartLabel;
   expect: "refuse" | "allow";
-  category: "blocklist" | "paraphrase" | "lookalike" | "plain";
+  category: "name" | "phrase" | "paraphrase" | "lookalike" | "plain";
   source: "team" | "outside";
   reference?: string;
 }
 
-const EXPECT: Record<RedTeamRow["category"], RedTeamRow["expect"]> = {
-  blocklist: "refuse",
+/** The fixed expectation of a category; a `phrase` row's is the model check's, set per row. */
+const EXPECT: Record<RedTeamRow["category"], RedTeamRow["expect"] | undefined> = {
+  name: "refuse",
+  phrase: undefined,
   paraphrase: "refuse",
   lookalike: "allow",
   plain: "allow",
 };
 
-test("red-team.jsonl has at least 60 schema-valid rows, outside rows cite https, and the blocklist alone catches every blocklist row", async () => {
+const PART_LABELS: readonly string[] = [
+  "spec",
+  "brief",
+  "tone",
+  "rules",
+  "template",
+  "text",
+  "model-prompt",
+  "model-negative",
+] satisfies PromptPartLabel[];
+
+test("red-team.jsonl has at least 60 schema-valid rows, outside rows cite https, the free check refuses every name row and only those, and phrase rows carry hits for the model check", async () => {
   const lines = (await readFile(RED_TEAM, "utf8")).split("\n").filter((l) => l.trim());
   assert.ok(lines.length >= 60, `${lines.length} rows`);
   const ids = new Set<string>();
@@ -237,23 +252,38 @@ test("red-team.jsonl has at least 60 schema-valid rows, outside rows cite https,
     const row = JSON.parse(line) as RedTeamRow;
     const keys = ["category", "expect", "id", "prompt", "source"];
     if (row.source === "outside") keys.push("reference");
+    if (row.part !== undefined) keys.push("part");
     assert.deepEqual(Object.keys(row).sort(), keys.sort(), line);
     assert.ok(typeof row.id === "string" && !ids.has(row.id), line);
     ids.add(row.id);
     assert.ok(typeof row.prompt === "string" && row.prompt.trim().length > 0, line);
+    assert.ok(row.part === undefined || PART_LABELS.includes(row.part), line);
     assert.ok(Object.hasOwn(EXPECT, row.category), line);
-    assert.equal(row.expect, EXPECT[row.category], line);
+    assert.ok(row.expect === "refuse" || row.expect === "allow", line);
+    if (row.category !== "phrase") assert.equal(row.expect, EXPECT[row.category], line);
     assert.ok(row.source === "team" || row.source === "outside", line);
     if (row.source === "outside") {
       const url = new URL(row.reference!);
       assert.equal(url.protocol, "https:", line);
     }
-    const verdict = checkPromptText(row.prompt).verdict;
-    if (row.category === "blocklist") assert.equal(verdict, "refused", line);
-    else assert.equal(verdict, "allowed", `only the model can tell: ${line}`);
+    const record = checkPromptText([{ label: row.part ?? "brief", text: row.prompt }]);
+    if (row.category === "name") assert.equal(record.verdict, "refused", line);
+    else assert.equal(record.verdict, "allowed", `only the model can tell: ${line}`);
+    if (row.category === "phrase")
+      assert.ok((record.hits ?? []).length > 0, `a phrase row carries a hit: ${line}`);
   }
   const rows = lines.map((l) => JSON.parse(l) as RedTeamRow);
   assert.ok(rows.some((r) => r.expect === "refuse") && rows.some((r) => r.expect === "allow"));
+  for (const part of ["rules", "text", "model-negative"])
+    assert.ok(
+      rows.some((r) => r.part === part),
+      `a row with part ${part}`,
+    );
+  for (const expect of ["refuse", "allow"])
+    assert.ok(
+      rows.some((r) => r.category === "phrase" && r.expect === expect),
+      `a phrase row that expects ${expect}`,
+    );
 });
 
 test("import --no-propose --bible makes the one prompt-policy call, and without --bible makes none", async () => {
