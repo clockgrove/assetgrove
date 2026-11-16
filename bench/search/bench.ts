@@ -483,6 +483,7 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
 
   const bench = await openBench(embedder);
   let rebuilt: Bench | undefined;
+  let lookBench: Bench | undefined;
   try {
     // Index the labelled library through the shipped indexer, timed as it runs.
     const t = bench.timings;
@@ -515,10 +516,11 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     };
 
     // By look, in the look library: the full library the by-look bars were set on
-    // (docs/decisions.md), a second work tree of the same store, so the labelled images' vectors
-    // come from its vector cache. Each query is `find --like <address>`; the query image is left
-    // out of its own results.
-    const lookTree = await benchTree(bench, {
+    // (docs/decisions.md), indexed in a store of its own so that the speed bars below time a store
+    // of exactly padTo rows. Each query is `find --like <address>`; the query image is left out of
+    // its own results.
+    lookBench = await openBench(embedder);
+    const lookTree = await benchTree(lookBench, {
       name: "bench-look",
       images: look.images,
       labels: look.labels,
@@ -552,6 +554,8 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     entry("look-category", mean(shareCategory), shareCategory.length);
     entry("look-recall10", mean(recall), recall.length);
     entry("look-pixel16", mean(pixelRecall), pixelRecall.length);
+    await lookBench.close();
+    lookBench = undefined;
 
     // By words: the image-vector ranking alone, and the shipped find.
     const p5 = async (run: (text: string) => Promise<string[]>): Promise<number[]> => {
@@ -622,6 +626,10 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
       paddingRows(Math.max(0, padTo - images), embedder.dimension, words.index.tree),
     );
     await bench.store.optimize();
+    // The speed bars are set on a store of padTo rows: the timed finds search that and no more.
+    const stored = (await bench.store.query({ limit: Number.MAX_SAFE_INTEGER })).length;
+    if (stored !== Math.max(padTo, images))
+      throw new Error(`the timed store holds ${stored} rows, not ${Math.max(padTo, images)}`);
     const queries = manifest.writtenQueries.map((q) => q.text);
     const textMs: number[] = [];
     for (let i = 0; i < timed; i++) {
@@ -697,6 +705,7 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
     };
   } finally {
     if (rebuilt) await rebuilt.close();
+    if (lookBench) await lookBench.close();
     await bench.close();
   }
 }
