@@ -232,6 +232,26 @@ test("stage generates a target's declared motions beside the walk, with hashes a
   assert.deepEqual(glb.json.asset["extras"], { rig: c.fields.rig });
 });
 
+test("a model judged to face another way than the route gets no shared rig: the head joints would sit at the tail", async () => {
+  const w = await world();
+  const r = await cli(
+    ["stage", ...w.base, "--runs", w.runs, "--provider-script", SCRIPT, "--json"],
+    { SCRIPT_3D_FACING: "270" },
+  );
+  const run = doc(r);
+  assert.equal(run["candidates"].length, 0, r.stdout + r.stderr);
+  const [rejected] = run["rejections"];
+  assert.deepEqual(
+    rejected.reasons.map((x: { check: string; passed: boolean }) => [x.check, x.passed]),
+    [["facing", false]],
+  );
+  assert.match(
+    rejected.reasons[0].reason,
+    /answers -x \(yaw 270, probability 0\.90\); the model3d route faces \+x/,
+  );
+  assert.equal(rejected.fields?.rig, undefined, "no rig was fitted");
+});
+
 test("stage fits the shared rig, generates the walk, checks every clip, and pick hands it off", async () => {
   const w = await world();
   const r = await cli([
