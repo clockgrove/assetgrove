@@ -6,7 +6,14 @@
  */
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +22,8 @@ import type { SearchSlot } from "../src/extension/api.ts";
 import type { RunContext } from "../src/commands/types.ts";
 import { buildWorkPlan, paidBy } from "../src/runs/plan.ts";
 import { spendRequest } from "../src/runs/execute.ts";
-import { nearMatchesFor } from "../src/search/near-match.ts";
+import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../src/search/near-match.ts";
 import { fixtureLibrary } from "./fixtures/library.ts";
 
 const lib = fixtureLibrary();
@@ -119,6 +127,48 @@ test("a reference with an unusual extension is still used", async () => {
     assert.deepEqual(seen, [{ kind: "still", subject: "lantern", references: 1 }]);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the request's references are its key pose and identity turnaround, not the bible's anchors", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-near-bible-")));
+  try {
+    const dir = join(root, ".assetgrove/art-direction");
+    mkdirSync(dir, { recursive: true });
+    const png = join(lib.dir, "assets", "lantern.png");
+    for (const name of ["anchor.png", "avoid.png", "turn.png"]) copyFileSync(png, join(dir, name));
+    copyFileSync(png, join(root, "pose.png"));
+    const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+    data.referenceLicense = "NOASSERTION";
+    data.anchors.positive = [{ path: "anchor.png", role: "composition" }];
+    data.anchors.negative = [{ path: "avoid.png", role: "unwanted-outline" }];
+    data.identities["den"] = {
+      version: "1",
+      approved: true,
+      turnaround: "turn.png",
+      signatureFeatures: ["white muzzle"],
+      proportions: "round",
+      palette: ["#292433"],
+    };
+    const biblePath = join(dir, "BIBLE.md");
+    writeFileSync(biblePath, serializeBible(data, "## Do's and Don'ts\nDo. Don't.\n"));
+    const spec = (assetId: string) => ({
+      value: { kind: "still", assetId, keyPose: "pose.png" },
+      dir: root,
+    });
+    assert.deepEqual(await subjectReferencePaths(spec("den"), biblePath), [
+      join(dir, "turn.png"),
+      join(root, "pose.png"),
+    ]);
+    assert.deepEqual(await subjectReferencePaths(spec("lamp"), biblePath), [
+      join(root, "pose.png"),
+    ]);
+    assert.deepEqual(
+      await subjectReferencePaths({ value: { kind: "still", assetId: "den" }, dir: root }),
+      [],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

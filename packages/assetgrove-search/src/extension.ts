@@ -440,7 +440,8 @@ async function setup(ctx: SearchContext): Promise<Record<string, unknown>> {
 /**
  * The picked assets closest to the request, by rank: its kind, subject and brief as words, fused
  * with image similarity to its references. Only the kind filters; no similarity cut applies. When
- * the embedder is paid nothing about the request is embedded: full text and stored vectors only.
+ * the embedder is paid nothing is embedded, neither the request nor unindexed library files: the
+ * index is searched as it stands, by full text and stored vectors only, and reported not fresh.
  */
 export async function nearMatchesWith(
   q: NearMatchQuery,
@@ -450,7 +451,9 @@ export async function nearMatchesWith(
   const embedder = await embedderFor(ctx);
   const local = await localIndex(ctx, embedder);
   const remote = ctx.settings.store ? await openRemote(ctx, embedder) : undefined;
-  const { fresh: refreshed } = await local.refresh();
+  // Refreshing embeds every library file not yet indexed: a paid call before the person confirms
+  // spend. Under a paid embedder the index is searched as it stands and reported as not fresh.
+  const refreshed = options.paid ? false : (await local.refresh()).fresh;
 
   const filter: FilterTerm[] = [
     { field: "source", op: "=", value: "pick" },

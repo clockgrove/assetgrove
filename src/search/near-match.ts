@@ -5,13 +5,14 @@
  * filter and no similarity cut. A failed search records `searchError` and the plan goes on.
  */
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { loadBible } from "../bible.ts";
 import { calling, searchCall } from "../commands/search.ts";
 import type { RunContext } from "../commands/types.ts";
 import type { SearchHit } from "../extension/api.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import type { GenerationBrief } from "../planning.ts";
-import { sniffMediaType } from "../request.ts";
+import { sniffMediaType, subjectOf } from "../request.ts";
 import type { AssetSpec } from "../types.ts";
 import { writeFindSheet } from "./sheet.ts";
 
@@ -24,6 +25,29 @@ export interface NearMatchOutcome {
   nearMatches?: NearMatch[];
   nearMatchSheet?: string;
   searchError?: string;
+}
+
+/**
+ * The reference images that show the thing requested: the spec's key pose and, when the Markdown
+ * bible at `biblePath` locks the spec's subject, its approved turnaround. The bible's style anchors
+ * (positive and negative) are left out: they show the look of the whole game, not this asset.
+ */
+export async function subjectReferencePaths(
+  spec: { value: AssetSpec; dir: string },
+  biblePath?: string,
+): Promise<string[]> {
+  const paths: string[] = [];
+  if (biblePath !== undefined) {
+    try {
+      const doc = await loadBible(biblePath);
+      const lock = doc.data.identities[subjectOf(spec.value)];
+      if (lock) paths.push(resolve(doc.dir, lock.turnaround));
+    } catch {
+      // A bible that does not load has no identity to compare; the plan step reports it itself.
+    }
+  }
+  if (typeof spec.value.keyPose === "string") paths.push(resolve(spec.dir, spec.value.keyPose));
+  return paths;
 }
 
 /**

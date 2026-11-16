@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { loadProfile, readJson } from "../inputs.ts";
 import { readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { generationTool } from "../mcp.ts";
-import { nearMatchesFor } from "../search/near-match.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { planJobs } from "../planning.ts";
 import type { GenerationBrief } from "../planning.ts";
 import { planningContext, providerSet, spendLedger } from "../providers/index.ts";
@@ -71,7 +71,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
   };
   const near = await nearMatchesFor(
     spec.value,
-    forecast.referencePaths,
+    await subjectReferencePaths(spec, args.bible),
     ctx,
     args.brief ? (await readJson<GenerationBrief>(args.brief)).value : undefined,
   );

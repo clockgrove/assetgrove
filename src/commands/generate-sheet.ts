@@ -1,4 +1,4 @@
-import { nearMatchesFor } from "../search/near-match.ts";
+import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { resolve } from "node:path";
 import type { GenerationBrief } from "../planning.ts";
 import { readJson, lockFor, loadProfile, loadStyleBible } from "../inputs.ts";
@@ -84,7 +84,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   const bibleFiles = styleBibleReads("bible", bible);
   const near = await nearMatchesFor(
     spec.value,
-    Object.values(bibleFiles),
+    await subjectReferencePaths(spec, args.lockBible),
     ctx,
     args.brief === undefined ? undefined : (await readJson<GenerationBrief>(args.brief)).value,
   );

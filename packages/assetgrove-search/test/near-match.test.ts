@@ -37,6 +37,18 @@ describe("near matches by rank", () => {
       title: "Oak",
       text: "A green oak tree.",
     });
+    for (const [name, words] of [
+      ["boulder", "grey mossy boulder"],
+      ["well", "stone water well"],
+      ["fence", "white picket fence"],
+    ]) {
+      await put(p, name as string, words as string, {
+        kind: "sprite",
+        subject: name,
+        title: name,
+        text: `A ${words}.`,
+      });
+    }
     await put(p, "lantern-tile", "red lantern glowing beside a wooden door", {
       kind: "tile",
       subject: "porch lantern",
@@ -58,7 +70,9 @@ describe("near matches by rank", () => {
 
   it("lists a pick of another subject that ranks close", async () => {
     const r = await nearMatchesWith(query(), p.context(), { paid: false });
-    assert.ok(addresses(r).includes(addr("garden-lantern")));
+    // Six sprite picks against a limit of three: the garden lantern is listed by its rank.
+    assert.equal(r.hits.length, 3);
+    assert.ok(addresses(r).slice(0, 2).includes(addr("garden-lantern")));
     assert.deepEqual(
       r.hits.map((h) => h.rank),
       r.hits.map((_, i) => i + 1),
@@ -100,9 +114,36 @@ describe("near matches by rank", () => {
   });
 
   describe("with a paid embedder", () => {
+    it("embeds nothing on a fresh project: no refresh, reported not fresh", async () => {
+      const fresh = await makeProject();
+      await put(fresh, "garden-lantern", "red lantern glowing beside a wooden door", {
+        kind: "sprite",
+        subject: "garden lantern",
+        title: "Garden lantern",
+        text: "A red lantern glowing beside a door.",
+      });
+      const texts = mock.method(ScriptedEmbedder.prototype, "embedTexts");
+      const images = mock.method(ScriptedEmbedder.prototype, "embedImages");
+      try {
+        const r = await nearMatchesWith(
+          query({ references: [Buffer.from("green oak tree")] }),
+          fresh.context(),
+          { paid: true },
+        );
+        assert.equal(texts.mock.callCount(), 0);
+        assert.equal(images.mock.callCount(), 0);
+        assert.equal(r.fresh, false);
+      } finally {
+        texts.mock.restore();
+        images.mock.restore();
+        await cleanup(fresh.root, fresh.stateDir);
+      }
+    });
+
     it("embeds nothing about the request and still ranks by full text", async () => {
       const ctx = p.context();
-      await nearMatchesWith(query(), ctx, { paid: true });
+      // An index built beforehand, as `search index` or an unpaid plan step builds it.
+      await searchSlot.index({}, ctx);
       const texts = mock.method(ScriptedEmbedder.prototype, "embedTexts");
       const images = mock.method(ScriptedEmbedder.prototype, "embedImages");
       try {
@@ -156,6 +197,8 @@ describe("a library whose assets share one subject", () => {
     await put(p, "h4", "hero asleep", hero("Sleeper", "asleep"));
     await put(p, "h5", "hero eating soup", hero("Eater", "eating soup"));
     await put(p, "h6", "hero juggling", hero("Juggler", "juggling"));
+    // A paid embedder searches the index as it stands: build it first.
+    await searchSlot.index({}, p.context());
   });
   after(() => cleanup(p.root, p.stateDir));
 
