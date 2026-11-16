@@ -510,6 +510,8 @@ vectors already in the index and does not bring it up to date (fresh false).`,
   effect: { readOnly: true, spends: "conditional", writes: "state" },
   plan: async (args, ctx) => (await findPlan(args, ctx)).work,
   planned: (args, ctx) => hosted(ctx) && findEmbeds(args),
+  spendsWith: hosted,
+  replayFinished: false,
   async run(args, ctx) {
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;
@@ -549,7 +551,9 @@ starts the local index afresh. An index built by another embedder exits 2 embedd
 under the state directory. With a hosted embedder (search.embedder "route", the embeddings role)
 it is a paid request: its plan step forecasts one embedding per image view and card text not
 embedded yet, one spend confirmation covers it, each call is reserved against the caps and
-journalled, and content embedded before is never paid for again.`,
+journalled, and content embedded before is never paid for again. The same request run again is
+run again, not returned as it ended, so a deleted or changed index is built afresh; its journal
+answers every call it made before.`,
   input: {
     type: "object",
     properties: {
@@ -567,6 +571,8 @@ journalled, and content embedded before is never paid for again.`,
       })
     ).work,
   planned: (_args, ctx) => hosted(ctx),
+  spendsWith: hosted,
+  replayFinished: false,
   async run(args, ctx) {
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;

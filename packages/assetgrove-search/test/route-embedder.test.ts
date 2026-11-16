@@ -10,8 +10,13 @@ import { makeProject, PROJECT, type Project } from "./helpers/project.ts";
 const scripted = new ScriptedEmbedder();
 
 /** A fake hosted route: scripted vectors, one counted call per input. */
-function port(model: string, calls: { n: number }, withEmbed = true): SearchRouteEmbedder {
-  const p: SearchRouteEmbedder = { route: "vercel", model, dimension: 768 };
+function port(
+  model: string,
+  calls: { n: number },
+  withEmbed = true,
+  via = "vercel",
+): SearchRouteEmbedder {
+  const p: SearchRouteEmbedder = { route: via, model, dimension: 768 };
   if (withEmbed) {
     p.embed = async (input) => {
       calls.n++;
@@ -34,9 +39,14 @@ describe("the route embedder", () => {
   });
   after(() => cleanup(p.root, p.stateDir));
 
-  const route = (model: string, calls: { n: number }, withEmbed = true): SearchContext => ({
+  const route = (
+    model: string,
+    calls: { n: number },
+    withEmbed = true,
+    via = "vercel",
+  ): SearchContext => ({
     ...p.context({ embedder: "route" }),
-    embedder: port(model, calls, withEmbed),
+    embedder: port(model, calls, withEmbed, via),
   });
   const files = Object.keys(PROJECT).length;
 
@@ -136,5 +146,17 @@ describe("the route embedder", () => {
       searchSlot.find({ limit: 1 }, route("model-a", calls)),
       isCode("embedder_changed"),
     );
+  });
+
+  it("keeps another route's vectors apart: a rebuild under a new route with the same model re-embeds", async () => {
+    const calls = { n: 0 };
+    const other = route("model-b", calls, true, "openai");
+    await assert.rejects(searchSlot.index({}, other), isCode("embedder_changed"));
+    const f = await searchSlot.forecast!({ index: { rebuild: true } }, other);
+    assert.deepEqual([f.images, f.texts], [files, files], "no vector of the old route counts");
+    await searchSlot.index({ rebuild: true }, other);
+    assert.equal(calls.n, files * 2, "the new route embeds everything once");
+    const status = await searchSlot.status(other);
+    assert.equal((status["recordedEmbedder"] as { route?: string }).route, "openai");
   });
 });

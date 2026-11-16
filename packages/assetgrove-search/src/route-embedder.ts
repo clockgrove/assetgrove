@@ -18,7 +18,9 @@ export class RouteEmbedder implements Embedder {
     this.port = port;
     this.route = port.route;
     this.model = port.model;
-    this.revision = port.model;
+    // The route is part of the revision, so the vector cache and the table names keep one
+    // provider's vectors apart from another's for the same model name.
+    this.revision = `${port.route}/${port.model}`;
     this.dimension = port.dimension;
   }
 

@@ -186,6 +186,12 @@ export async function executeRun(options: {
   /** The work item the spend ledger counts the run's own prompt-policy call against. */
   workItem?: string;
   prior?: () => Promise<ConfirmationRecord | undefined>;
+  /**
+   * False when a finished run is not returned as it ended but run again in its run directory: its
+   * effect can be lost (a deleted index) or its answer can age (a query over a changed index). The
+   * journal still answers every call it holds, so nothing is paid twice.
+   */
+  replayFinished?: boolean;
 }): Promise<Outcome> {
   const { command, plan, ctx } = options;
   if (plan.forecastUsd > plan.capUsd + 1e-9)
@@ -222,7 +228,11 @@ export async function executeRun(options: {
   try {
     const runId = runIdOfDir(plan.runDir);
     const previous = readRunState(plan.runDir);
-    if (previous?.status === "finished" && previous.outcome !== undefined) {
+    if (
+      previous?.status === "finished" &&
+      previous.outcome !== undefined &&
+      options.replayFinished !== false
+    ) {
       // A finished request is returned as it ended: no provider call, no ledger entry.
       const stored = previous.outcome;
       ctx.progress?.({ progress: 1, total: 1, message: `run ${runId} reused` });

@@ -125,6 +125,11 @@ export function isPaid(spec: CommandSpec): boolean {
   return spec.effect.spends !== "never";
 }
 
+/** Whether a command can spend under these settings (its `spendsWith`, else `isPaid`). */
+export function canSpend(spec: CommandSpec, ctx: RunContext): boolean {
+  return isPaid(spec) && (spec.spendsWith?.(ctx) ?? true);
+}
+
 /**
  * Throws `settings_invalid` (exit 2) when a variable that can redirect or unwrap TLS is set and
  * the settings' `environment.allow` does not list it. Run at server start and before every command

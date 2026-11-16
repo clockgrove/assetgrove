@@ -22,6 +22,7 @@ import { describeBible, useBiblePreset } from "./bible.ts";
 import {
   checkContextEnvironment,
   createRunContext,
+  canSpend,
   isPaid,
   settingsScope,
 } from "./commands/context.ts";
@@ -151,9 +152,12 @@ export function requiresUserInteraction(spec: CommandSpec, headless: boolean): b
   return !(headless && HEADLESS_ANSWERS.has(spec.confirm));
 }
 
-/** A tool's annotations, from its command's effect (design section 5). */
-export function toolAnnotations(spec: CommandSpec): ToolAnnotations {
-  const paid = isPaid(spec);
+/**
+ * A tool's annotations, from its command's effect (design section 5) and, for a command that
+ * spends only under some settings (find and search index with a hosted embedder), these settings.
+ */
+export function toolAnnotations(spec: CommandSpec, ctx?: RunContext): ToolAnnotations {
+  const paid = ctx === undefined ? isPaid(spec) : canSpend(spec, ctx);
   return {
     readOnlyHint: spec.effect.readOnly,
     destructiveHint: spec.tool === "pick" || spec.tool === "write_families",
@@ -441,7 +445,7 @@ function createServer(
         description: `${spec.summary[0]!.toUpperCase()}${spec.summary.slice(1)}.`,
         inputSchema: listed as typeof input,
         outputSchema: fromJsonSchema<Arguments>(outputSchema),
-        annotations: toolAnnotations(spec),
+        annotations: toolAnnotations(spec, ctx),
         ...(marked && { _meta: { "anthropic/requiresUserInteraction": true } }),
       },
       async (args, request) => {

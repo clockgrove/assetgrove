@@ -7,10 +7,17 @@
  * another embedder exits 2 `embedder_changed` until `search index --rebuild`.
  */
 import "../../../test/fixtures/env.ts";
-import { approve, ledgerPath, useAttended, writeSettings } from "../../../test/fixtures/env.ts";
+import {
+  approve,
+  ledgerPath,
+  stateDir,
+  useAttended,
+  writeSettings,
+} from "../../../test/fixtures/env.ts";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { after, test } from "node:test";
@@ -24,6 +31,7 @@ import { routeDataFlows } from "../../../src/dataflows.ts";
 import { coreExtension } from "../../../src/extensions/core.ts";
 import { ExtensionRegistry } from "../../../src/extensions/registry.ts";
 import { nearMatchesFor } from "../../../src/search/near-match.ts";
+import { toolAnnotations } from "../../../src/mcp.ts";
 import { loadSettings } from "../../../src/settings.ts";
 import { GAME, fixtureLibrary } from "../../../test/fixtures/library.ts";
 import searchExtension, { nearMatchesWith } from "../src/extension.ts";
@@ -75,6 +83,7 @@ async function run(
   name: string,
   args: Record<string, unknown>,
   asked: ConfirmRequest[] = [],
+  env?: NodeJS.ProcessEnv,
 ): Promise<Outcome> {
   const prompt: ConfirmPort = {
     method: "tty",
@@ -83,7 +92,13 @@ async function run(
       return true;
     },
   };
-  const ctx: RunContext = { settings: loadSettings(), extensions, log: () => {}, prompt };
+  const ctx: RunContext = {
+    settings: loadSettings(),
+    extensions,
+    log: () => {},
+    prompt,
+    ...(env && { env }),
+  };
   return runCommand(spec(name), { target: lib.dir, providerScript: script, runs, ...args }, ctx);
 }
 
@@ -234,4 +249,77 @@ test("an index built by another embedder exits 2 embedder_changed until search i
   const found = await run("find", { where: ["kind=still"] });
   assert.equal(found.exitCode, 0, JSON.stringify(found.error));
   assert.ok((found.fields["hits"] as unknown[]).length > 0);
+});
+
+test("a finished search index or find is run again, not replayed: rebuilds alternate, a deleted index is rebuilt, and a repeated find pays nothing twice", async () => {
+  hosted("scripted/embed-a");
+  const first = await run("search index", { rebuild: true });
+  assert.equal(first.exitCode, 0, JSON.stringify(first.error));
+  // a, b, a, b: the third and fourth have the digests of the first and second.
+  for (const model of ["scripted/embed-b", "scripted/embed-a", "scripted/embed-b"]) {
+    hosted(model);
+    const rebuilt = await run("search index", { rebuild: true });
+    assert.equal(rebuilt.exitCode, 0, `${model}: ${JSON.stringify(rebuilt.error)}`);
+    assert.equal(rebuilt.fields["reused"], false, model);
+    const found = await run("find", { where: ["kind=still"] });
+    assert.equal(found.exitCode, 0, `${model}: ${JSON.stringify(found.error)}`);
+    assert.ok((found.fields["hits"] as unknown[]).length > 0, model);
+  }
+
+  // The index is a projection: deleted, the same request builds it again.
+  await rm(join(stateDir, "search"), { recursive: true, force: true });
+  const again = await run("search index", { rebuild: true });
+  assert.equal(again.exitCode, 0, JSON.stringify(again.error));
+  assert.equal(again.fields["reused"], false);
+  const found = await run("find", { where: ["kind=still"] });
+  assert.equal(found.exitCode, 0, JSON.stringify(found.error));
+  assert.ok((found.fields["hits"] as unknown[]).length > 0);
+
+  // A find with words answers from the index as it is now; its journal pays nothing twice.
+  const words = await run("find", { words: "lantern" });
+  assert.equal(words.exitCode, 0, JSON.stringify(words.error));
+  const before = total();
+  const ledger = embedEntries().length;
+  const repeat = await run("find", { words: "lantern" });
+  assert.equal(repeat.exitCode, 0, JSON.stringify(repeat.error));
+  assert.equal(repeat.fields["reused"], false);
+  assert.deepEqual(repeat.fields["hits"], words.fields["hits"]);
+  assert.equal(total(), before, "the journal answers the query again");
+  assert.equal(embedEntries().length, ledger);
+});
+
+test("with the local model find and search index take no tracked-key guard and no paid annotations", async () => {
+  const name = ["AI", "GATEWAY", "API", "KEY"].join("_");
+  const value = `agk-test-${"0123456789abcdef".split("").reverse().join("")}-synthetic`;
+  const repo = realpathSync(mkdtempSync(join(home, "repo-")));
+  execFileSync("git", ["init", "-q", repo]);
+  await writeFile(join(repo, "notes.txt"), `the gateway key is ${value}\n`);
+  execFileSync("git", ["add", "-A"], { cwd: repo });
+  const env = { ...process.env, [name]: value };
+  const cwd = process.cwd();
+  process.chdir(repo);
+  try {
+    writeSettings({ search: { embedder: "scripted" } });
+    useAttended();
+    const local: RunContext = { settings: loadSettings(), extensions, log: () => {} };
+    for (const [command, args] of [
+      ["find", { words: "lantern" }],
+      ["search index", {}],
+    ] as const) {
+      const outcome = await run(command, args, [], env);
+      assert.notEqual(outcome.error?.code, "key_tracked", command);
+      assert.equal(toolAnnotations(spec(command), local).openWorldHint, false, command);
+    }
+
+    hosted();
+    const paid: RunContext = { settings: loadSettings(), extensions, log: () => {} };
+    const refused = await run("find", { words: "lantern" }, [], env);
+    assert.equal(refused.error?.code, "key_tracked");
+    // A hosted find that embeds nothing reaches no provider and takes no guard either.
+    const free = await run("find", { where: ["kind=still"] }, [], env);
+    assert.notEqual(free.error?.code, "key_tracked");
+    assert.equal(toolAnnotations(spec("find"), paid).openWorldHint, true);
+  } finally {
+    process.chdir(cwd);
+  }
 });
