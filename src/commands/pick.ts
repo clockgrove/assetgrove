@@ -152,6 +152,11 @@ approves it. A human runs pick; agents never do.`,
       const { assetId, version, state, files } = result.library;
       lines.push(`library: ${assetId} version ${version} (${state})`);
       for (const file of files) lines.push(`wrote ${file}`);
+      for (const { file, code } of result.library.unreadable ?? []) {
+        lines.push(
+          `warning: ${file} does not parse (${code}); its folder's index.md and log.md were left as they were until it is fixed and library rebuild runs`,
+        );
+      }
     }
     if (result.contentCredentials) {
       const { subject, files, warning } = result.contentCredentials;

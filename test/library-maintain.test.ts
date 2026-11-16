@@ -11,6 +11,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { parseCard } from "../src/library/card.ts";
 import {
   appendAnnotation,
   appendVersion,
@@ -19,12 +20,14 @@ import {
 } from "../src/library/review.ts";
 import type { AssetSpec } from "../src/types.ts";
 import { gitTarget } from "./fixtures/git.ts";
+import { fixtureLibrary } from "./fixtures/library.ts";
 import { syntheticWorld } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
-approve(passingScript);
+const variantScript = fileURLToPath(new URL("./fixtures/script-variant.ts", import.meta.url));
+approve(passingScript, variantScript);
 
 interface Result {
   code: number;
@@ -71,7 +74,7 @@ interface Library {
 
 const stillSpec = (assetId: string): AssetSpec => ({ kind: "still", assetId, subject: "fern" });
 
-async function pickStill(world: World, assetId: string): Promise<void> {
+async function pickStill(world: World, assetId: string, script = passingScript): Promise<Doc> {
   const profile = join(world.dir, "profile.json");
   const specPath = join(world.dir, "spec.json");
   const bible = join(world.bibleDir, "bible.json");
@@ -82,7 +85,7 @@ async function pickStill(world: World, assetId: string): Promise<void> {
     "stage",
     ...["--spec", specPath, "--bible", bible, "--profile", profile],
     ...["--runs", world.runsDir, "--candidates", "1"],
-    ...["--provider-script", passingScript, "--json"],
+    ...["--provider-script", script, "--json"],
   ]);
   assert.equal(staged.code, 0, staged.stdout + staged.stderr);
   const picked = await cli([
@@ -90,6 +93,7 @@ async function pickStill(world: World, assetId: string): Promise<void> {
     ...["--target", world.targetDir, "--json"],
   ]);
   assert.equal(picked.code, 0, picked.stdout + picked.stderr);
+  return doc(picked);
 }
 
 /** A Git target with media mapped to LFS and a library of the named assets, built by picks. */
@@ -416,4 +420,122 @@ test("library stats counts by kind and state and gives the share of change reque
   assert.deepEqual(d["byState"], { approved: 2 });
   assert.deepEqual(d["changeRequests"], { total: 2, approvedWithinTwoVersions: 1, share: 0.5 });
   await mkdir(join(l.world.dir, "unused"), { recursive: true });
+});
+
+test("a pick whose profile embeds provenance in the manifest, over a version with a provenance file of its own, needs no rebuild and keeps the current version's bible and time (#349)", async () => {
+  const l = await library(["lantern"]);
+  const beside = join(dir(l), "lantern.png.provenance.json");
+  const stale = JSON.parse(await text(beside)) as Doc;
+  assert.equal(stale["bibleVersion"], "synthetic-1");
+
+  // Version 2 is made under a newer bible, by a profile that keeps provenance in the manifest; the
+  // first version's provenance file stays beside the media.
+  l.world.bible.version = "synthetic-2";
+  (l.world.profile.manifest as Doc)["provenance"] = "{{provenance}}";
+  const out = await pickStill(l.world, "lantern", variantScript);
+  assert.equal(out["library"].version, 2);
+  assert.deepEqual(JSON.parse(await text(beside)), stale);
+  const manifest = JSON.parse(await text(join(l.target, "manifests", "lantern.json"))) as Doc;
+  const current = manifest["provenance"] as Doc;
+  assert.equal(current["bibleVersion"], "synthetic-2");
+  assert.notEqual(current["finishedAt"], stale["finishedAt"]);
+
+  const card = join(dir(l), "lantern.md");
+  const picked = await text(card);
+  const checked = await l.lib("check");
+  assert.equal(checked.code, 0, checked.stdout + checked.stderr);
+  assert.deepEqual(doc(checked)["needsRebuild"], []);
+  const fields = (t: string) => parseCard(t, card).data as Doc;
+  assert.equal(fields(picked)["bible"], "synthetic-2");
+  assert.equal(fields(picked)["generated"].at, current["finishedAt"]);
+
+  // Rebuild changes nothing, the first time and the second.
+  for (let run = 0; run < 2; run++) {
+    const rebuilt = await l.lib("rebuild");
+    assert.equal(rebuilt.code, 0, rebuilt.stdout + rebuilt.stderr);
+    assert.deepEqual(doc(rebuilt)["rebuilt"], []);
+    assert.equal(await text(card), picked);
+  }
+});
+
+test("rebuild run twice on the round-trip fixture library changes nothing the second time (#349)", async () => {
+  const fixture = fixtureLibrary();
+  const rebuild = () =>
+    cli([
+      ...["library", "rebuild", "--target", fixture.dir],
+      ...["--profile", join(fixture.dir, ".assetgrove", "profile.json"), "--json"],
+    ]);
+  const first = await rebuild();
+  assert.ok(doc(first)["rebuilt"] !== undefined, first.stdout + first.stderr);
+  const second = await rebuild();
+  assert.deepEqual(doc(second)["rebuilt"], [], second.stdout);
+  assert.deepEqual(doc(second)["problems"], doc(first)["problems"]);
+});
+
+test("a neighbour's card or review record with conflict markers keeps the folder's index and log rows through rebuild and through a pick of another asset, and is named (#349)", async () => {
+  const l = await library();
+  const indexPath = join(dir(l), "index.md");
+  const logPath = join(dir(l), "log.md");
+  let index = "";
+  let log = "";
+  // The log is left as it is; the index keeps the neighbour's row (a review record does not feed it).
+  const unchanged = async (code: string) => {
+    if (code === "card_invalid") assert.equal(await text(indexPath), index);
+    else assert.match(await text(indexPath), /\[torch\]\(torch\.md\)/);
+    assert.equal(await text(logPath), log);
+  };
+
+  const conflicted = async (path: string, edit: (original: string) => string) => {
+    const original = await text(path);
+    await writeFile(path, edit(original));
+    return () => writeFile(path, original);
+  };
+  const cases = [
+    {
+      file: "torch.md",
+      code: "card_invalid",
+      edit: (t: string) =>
+        t.replace(
+          /^title: (.*)$/m,
+          "<<<<<<< ours\ntitle: $1\n=======\ntitle: Torch from b\n>>>>>>> theirs",
+        ),
+    },
+    {
+      file: "torch.review.json",
+      code: "review_invalid",
+      edit: (t: string) => {
+        const lines = t.split("\n");
+        lines.splice(2, 0, "<<<<<<< ours", "=======", ">>>>>>> theirs");
+        return lines.join("\n");
+      },
+    },
+  ];
+  for (const [n, c] of cases.entries()) {
+    index = await text(indexPath);
+    log = await text(logPath);
+    assert.match(index, /torch/);
+    assert.match(log, /torch/);
+    const restore = await conflicted(join(dir(l), c.file), c.edit);
+    const rebuilt = await l.lib("rebuild");
+    assert.equal(rebuilt.code, 6, rebuilt.stdout + rebuilt.stderr);
+    assert.deepEqual(doc(rebuilt)["error"].problems, [{ file: c.file, code: c.code }]);
+    assert.ok(!doc(rebuilt)["rebuilt"].some((f: string) => /(index|log)\.md$/.test(f)));
+    await unchanged(c.code);
+
+    // A pick of another asset in the folder succeeds and names the file it could not read.
+    const out = await pickStill(l.world, `lamp${n}`);
+    assert.deepEqual(
+      (out["library"].unreadable as Doc[]).map((u) => [u.file.split(/[\\/]/).at(-1), u.code]),
+      [[c.file, c.code]],
+    );
+    await unchanged(c.code);
+
+    await restore();
+    const fixed = await l.lib("rebuild");
+    assert.equal(fixed.code, 0, fixed.stdout + fixed.stderr);
+    assert.match(await text(indexPath), new RegExp(`lamp${n}`));
+    assert.match(await text(logPath), new RegExp(`lamp${n}`));
+    assert.match(await text(logPath), /torch/);
+    assert.deepEqual(doc(await l.lib("rebuild"))["rebuilt"], []);
+  }
 });

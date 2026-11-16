@@ -14,6 +14,7 @@ import { parse as parseYaml } from "yaml";
 import { splitFrontMatter } from "../bible.ts";
 import { InputError } from "../errors.ts";
 import type { Provenance, TargetProfile } from "../types.ts";
+import { sha256Hex } from "./canonical.ts";
 import {
   MACHINE_FIELDS,
   machineFields,
@@ -68,6 +69,8 @@ interface Asset {
   reviewPath: string;
   card?: { parsed: Card; text: string };
   review?: { record: ReviewRecord; text: string };
+  /** Which of its files exists but does not parse. */
+  unreadable?: "card" | "review";
 }
 
 /** One library file whose text should be what `text` says. */
@@ -137,24 +140,47 @@ function cardData(card: Card): Record<string, unknown> {
   return card.data;
 }
 
-/** The provenance fields the card's machine fields come from, read from its provenance source. */
-async function readProvenance(
-  card: Card,
+type ProvenanceFields = Pick<Provenance, "route" | "bibleVersion" | "license" | "finishedAt">;
+
+/**
+ * The provenance the current version's records name, and the fields read from it. A version picked
+ * with a provenance file of its own records that file's sha256 (`provenanceSha256`): the source is
+ * the card's named one, or else the file beside the media, whichever holds those bytes. Without
+ * that hash (a manifest that embeds the provenance) the source is the one the card names. A file
+ * that only has a provenance file's name beside the media is never read in its place.
+ */
+async function currentProvenance(
+  asset: Asset,
   config: LibraryConfig,
-  dir: string,
-  source: string,
-): Promise<Pick<Provenance, "route" | "bibleVersion" | "license" | "finishedAt"> | undefined> {
-  const data = cardData(card);
-  const sources = (data["sources"] ?? []) as { id: string; resource: string }[];
-  const entry = sources.find((s) => s.id === "provenance");
-  if (!entry) return undefined;
-  try {
-    const path = libraryPath(config.root, dir, entry.resource, source);
-    const found = findProvenance(JSON.parse(await readFile(path, "utf8")), 0);
-    return found;
-  } catch {
-    return undefined;
+  resourceName: string,
+  named: string | undefined,
+): Promise<{ resource?: string; fields?: ProvenanceFields }> {
+  const recorded = currentVersion(asset.review!.record)?.provenanceSha256;
+  const read = async (resource: string) => {
+    try {
+      const path = libraryPath(config.root, asset.dir, resource, asset.cardPath);
+      return await readFile(path);
+    } catch {
+      return undefined;
+    }
+  };
+  let resource = named;
+  let bytes = named === undefined ? undefined : await read(named);
+  if (recorded !== undefined && (bytes === undefined || sha256Hex(bytes) !== recorded)) {
+    const beside = `${resourceName}.provenance.json`;
+    const besideBytes = await read(beside);
+    if (besideBytes !== undefined && sha256Hex(besideBytes) === recorded) {
+      resource = beside;
+      bytes = besideBytes;
+    }
   }
+  let fields: ProvenanceFields | undefined;
+  try {
+    fields = bytes && findProvenance(JSON.parse(bytes.toString("utf8")), 0);
+  } catch {
+    fields = undefined;
+  }
+  return { ...(resource !== undefined && { resource }), ...(fields && { fields }) };
 }
 
 function findProvenance(
@@ -197,18 +223,16 @@ async function expectedFields(
   const generated = data["generated"] as { by?: string; at?: string } | undefined;
   const byMatch = /^assetgrove\/(\S+) via (.*)$/.exec(generated?.by ?? "");
   const lock = data["lock"] as { bible?: string } | undefined;
-  const provenance = (await readProvenance(card.parsed, config, asset.dir, asset.cardPath)) ?? {
+  const sources = (data["sources"] ?? []) as { id: string; resource: string }[];
+  const resource = (id: string) => sources.find((s) => s.id === id)?.resource;
+  const current = await currentProvenance(asset, config, resourceName, resource("provenance"));
+  const provenance = current.fields ?? {
     route: byMatch?.[2] ?? "",
     bibleVersion: String(data["bible"] ?? lock?.bible ?? ""),
     license: String(data["license"] ?? ""),
     finishedAt: generated?.at ?? "",
   };
-  const sources = (data["sources"] ?? []) as { id: string; resource: string }[];
-  const resource = (id: string) => sources.find((s) => s.id === id)?.resource;
-  // The provenance file sits beside the media as `<resource>.provenance.json` when it was copied there.
-  const beside = `${resourceName}.provenance.json`;
-  const provenanceResource =
-    (await readText(join(asset.dir, beside))) !== undefined ? beside : resource("provenance");
+  const provenanceResource = current.resource;
   const bibleResource = resource("bible");
   const fields = machineFields({
     resource: resourceName,
@@ -268,6 +292,7 @@ async function gather(config: LibraryConfig, problems: LibraryProblem[]): Promis
           found.review = { record, text: reviewText };
         } catch {
           problem(found.reviewPath, "review_invalid");
+          found.unreadable = "review";
         }
       }
       const cardText = await readText(found.cardPath);
@@ -285,6 +310,7 @@ async function gather(config: LibraryConfig, problems: LibraryProblem[]): Promis
           found.card = { parsed, text: cardText };
         } catch {
           problem(found.cardPath, "card_invalid");
+          found.unreadable = "card";
         }
       }
       assets.push(found);
@@ -364,9 +390,15 @@ export async function readLibrary(
 
   // Projections: every folder from the root to each card, from the cards found.
   const cards = assets.filter((a) => a.card);
+  // A folder holding a card that does not parse keeps its index and log as they are, and one holding
+  // a review record that does not parse keeps its log: rebuilt without that asset's rows, they would
+  // say less than the records do. The file is reported by name above.
+  const heldIndex = new Set(assets.filter((a) => a.unreadable === "card").map((a) => a.dir));
+  const heldLog = new Set(assets.filter((a) => a.unreadable).map((a) => a.dir));
+  const listed = assets.filter((a) => a.card || a.unreadable === "card");
   // An empty library has no projections to keep: no cards, no index.
-  const folderSet = new Set<string>(cards.length > 0 ? [config.root] : []);
-  for (const found of cards) {
+  const folderSet = new Set<string>(listed.length > 0 ? [config.root] : []);
+  for (const found of listed) {
     for (let folder = found.dir; within(config.root, folder); folder = dirname(folder)) {
       folderSet.add(folder);
       if (folder === config.root) break;
@@ -395,27 +427,28 @@ export async function readLibrary(
         };
       }),
     });
-    expected.push({
-      path: join(folder, "index.md"),
-      kind: "index",
-      text: index,
-      normalise: (actual) => {
-        const parsed = parseIndex(actual, join(folder, "index.md"));
-        checkIndexPaths(parsed, config.root, folder, join(folder, "index.md"));
-        if (parsed.root && parsed.root.okfVersion !== "0.2") return "";
-        return renderIndex({
-          name,
-          ...(parsed.root && { root: { game: parsed.root.game } }),
-          folders: parsed.folders,
-          assets: parsed.assets.map((a) => ({
-            id: a.id,
-            title: a.title,
-            ...(a.description !== undefined && { description: a.description }),
-          })),
-        });
-      },
-    });
-    if (config.log && (here.length > 0 || (isRoot && bible.length > 0))) {
+    if (!heldIndex.has(folder))
+      expected.push({
+        path: join(folder, "index.md"),
+        kind: "index",
+        text: index,
+        normalise: (actual) => {
+          const parsed = parseIndex(actual, join(folder, "index.md"));
+          checkIndexPaths(parsed, config.root, folder, join(folder, "index.md"));
+          if (parsed.root && parsed.root.okfVersion !== "0.2") return "";
+          return renderIndex({
+            name,
+            ...(parsed.root && { root: { game: parsed.root.game } }),
+            folders: parsed.folders,
+            assets: parsed.assets.map((a) => ({
+              id: a.id,
+              title: a.title,
+              ...(a.description !== undefined && { description: a.description }),
+            })),
+          });
+        },
+      });
+    if (config.log && !heldLog.has(folder) && (here.length > 0 || (isRoot && bible.length > 0))) {
       const entries: LogEntry[] = isRoot ? [...bible] : [];
       for (const c of here) {
         if (c.review) {
