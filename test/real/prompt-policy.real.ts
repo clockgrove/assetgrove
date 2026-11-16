@@ -9,8 +9,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { decidePromptPolicy } from "../../src/policy/model.ts";
-import { checkPromptText } from "../../src/policy/text.ts";
+import { decidePromptPolicy, readAmbiguousNames } from "../../src/policy/model.ts";
+import { checkPromptText, readingTerms } from "../../src/policy/text.ts";
 import type { PolicyHit, PromptPart, PromptPartLabel } from "../../src/policy/text.ts";
 import { defaultRoutes, PROMPT_POLICY_OPERATION } from "../../src/routes.ts";
 import { realBudget, skipWithout } from "./budget.ts";
@@ -68,16 +68,28 @@ test(
     const rb = realBudget();
     const gw = rb.provider("vercel-ai-gateway");
     const estimate = defaultRoutes[PROMPT_POLICY_OPERATION]!.estimatedCostUsd;
-    const { caller } = rb.caller(gw, toModel.length * estimate, "real prompt-policy");
+    const readingCalls = toModel.reduce(
+      (n, r) => n + readingTerms(records.get(r.id)!.hits).length,
+      0,
+    );
+    const { caller } = rb.caller(
+      gw,
+      (toModel.length + readingCalls) * estimate,
+      "real prompt-policy",
+    );
     const refused = new Map<string, boolean>();
     for (const r of rows) if (!toModel.includes(r)) refused.set(r.id, true);
     await rb.cleared("real prompt-policy", async () => {
       for (const r of toModel) {
-        const verdict = await decidePromptPolicy(
-          caller,
-          partsOf(r),
-          records.get(r.id)!.hits ?? ([] as PolicyHit[]),
-        );
+        // As a run does: each ambiguous name is read first, and a protected reading refuses.
+        const hits = records.get(r.id)!.hits ?? ([] as PolicyHit[]);
+        const readings = await readAmbiguousNames(caller, partsOf(r), hits);
+        if (readings.some((x) => x.reading === "protected")) {
+          refused.set(r.id, true);
+          console.log(`${r.id} ${r.expect}: read as the protected name`);
+          continue;
+        }
+        const verdict = await decidePromptPolicy(caller, partsOf(r), hits, readings);
         refused.set(r.id, verdict.refused);
         console.log(`${r.id} ${r.expect}: ${verdict.probability.toFixed(3)}`);
       }

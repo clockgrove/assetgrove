@@ -187,7 +187,7 @@ test("the model check is given labelled parts and the hits; exit 9 follows only 
   assert.deepEqual(await refuse.events(), ["prompt-policy"], "no other call ran");
 });
 
-test("an ambiguous name is decided by the model check and its answer recorded, with no allow entry", async () => {
+test("an ambiguous name is read by the model check and its answer recorded, with no allow entry", async () => {
   writeSettings({});
   const { world, flags } = await stageWorld();
   const provider = await recorder(world.dir, ALLOW);
@@ -203,12 +203,21 @@ test("an ambiguous name is decided by the model check and its answer recorded, w
   assert.deepEqual(policy.allowedBy, []);
   assert.equal(policy.hits[0].term, AMBIGUOUS);
   assert.equal(policy.hits[0].ambiguous, true);
-  assert.equal(policy.probability, 0.1, "the model's answer on it");
-  assert.match((await provider.requests())[0]!, /also an ordinary word or a given name/);
+  assert.equal(policy.probability, 0.1, "the model's answer on the request");
+  // The reading call read it as an ordinary word (the script's default), and the Boolean call is
+  // told so rather than given it as a flagged word (#366; test/prompt-policy-readings.test.ts).
+  assert.deepEqual(
+    policy.readings.map((r: Doc) => [r.term, r.reading]),
+    [[AMBIGUOUS, "word"]],
+  );
+  assert.match(
+    (await provider.requests())[0]!,
+    /already read in the person-written parts as not the protected name/,
+  );
 });
 
 /** A world with a Markdown bible whose Don'ts forbid imitation, a default template and a plan. */
-async function planWorld() {
+async function planWorld(description = "a round lantern icon") {
   const { world, flags } = await stageWorld();
   const art = join(world.dir, ".assetgrove/art-direction");
   await mkdir(art, { recursive: true });
@@ -234,7 +243,7 @@ async function planWorld() {
     JSON.stringify({
       kind: "still",
       assetId: "lantern",
-      fields: { description: "a round lantern icon" },
+      fields: { description },
     }),
   );
   const options = join(world.dir, "run-options.json");
@@ -260,6 +269,70 @@ test("a bible's Don't that forbids imitation is a rules hit, and plan forecasts 
   const job = (doc(dry)["jobs"] as PlanJob[]).find((j) => j.operation === "prompt-policy");
   assert.equal(job?.count, 3);
   assert.deepEqual(await provider.events(), []);
+});
+
+test("plan counts an ambiguous name's reading for its own check and its apply's, and apply counts it once", async () => {
+  writeSettings({});
+  const { world, planFile, planArgs } = await planWorld(
+    `a round lantern icon in a heavy ${AMBIGUOUS}`,
+  );
+  const provider = await recorder(world.dir, ALLOW);
+  const dry = await cli([...planArgs, "--provider-script", provider.script, "--dry-run", "--json"]);
+  assert.equal(dry.code, 0, dry.stdout + dry.stderr);
+  const hit = (doc(dry)["promptPolicy"].hits as Doc[]).find((h) => h.term === AMBIGUOUS);
+  assert.equal(hit?.ambiguous, true);
+  // Plan's own check: one reading and one Boolean call; its apply's: one reading and two Boolean
+  // calls, since the compiler can write model-written text.
+  const job = (doc(dry)["jobs"] as PlanJob[]).find((j) => j.operation === "prompt-policy");
+  assert.equal(job?.count, 5);
+  assert.deepEqual(await provider.events(), [], "a dry run makes no call");
+
+  const made = await cli([...planArgs, "--json"]);
+  assert.equal(made.code, 0, made.stdout + made.stderr);
+  const runs = join(world.dir, "apply-runs");
+  const apply = ["apply", planFile, "--out", runs, "--provider-script", provider.script, "--json"];
+  const applyDry = await cli([...apply, "--dry-run"]);
+  assert.equal(applyDry.code, 0, applyDry.stdout + applyDry.stderr);
+  // The template's plan holds no model-written part: one reading and one Boolean call.
+  const applyJob = (doc(applyDry)["jobs"] as PlanJob[]).find(
+    (j) => j.operation === "prompt-policy",
+  );
+  assert.equal(applyJob?.count, 2);
+
+  // The same plan without the name: 3 (plan's one, apply's two) and apply's 1, so the readings are
+  // one for plan's check, one for apply's, counted again by apply itself.
+  const plain = await planWorld("a round lantern icon in a heavy storm");
+  const plainDry = await cli([
+    ...plain.planArgs,
+    "--provider-script",
+    provider.script,
+    "--dry-run",
+    "--json",
+  ]);
+  assert.equal(plainDry.code, 0, plainDry.stdout + plainDry.stderr);
+  const plainJob = (doc(plainDry)["jobs"] as PlanJob[]).find(
+    (j) => j.operation === "prompt-policy",
+  );
+  assert.equal(plainJob?.count, 3);
+  assert.equal(job!.count - plainJob!.count, 2, "one reading for plan's check, one for apply's");
+  const plainMade = await cli([...plain.planArgs, "--json"]);
+  assert.equal(plainMade.code, 0, plainMade.stdout + plainMade.stderr);
+  const plainApply = await cli([
+    "apply",
+    plain.planFile,
+    "--out",
+    join(plain.world.dir, "apply-runs"),
+    "--provider-script",
+    provider.script,
+    "--dry-run",
+    "--json",
+  ]);
+  assert.equal(plainApply.code, 0, plainApply.stdout + plainApply.stderr);
+  const plainApplyJob = (doc(plainApply)["jobs"] as PlanJob[]).find(
+    (j) => j.operation === "prompt-policy",
+  );
+  assert.equal(plainApplyJob?.count, 1);
+  assert.equal(applyJob!.count - plainApplyJob!.count, 1, "apply counts the reading once");
 });
 
 /**

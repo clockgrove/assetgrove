@@ -14,6 +14,7 @@ import {
   enforcePromptPolicy,
   modelWritten,
   partsText,
+  readingTerms,
 } from "../policy/text.ts";
 import type { PromptPart, PromptPolicyRecord } from "../policy/text.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
@@ -167,11 +168,12 @@ export function jobOf(operation: string, route: Route, count = 1): PlanJob {
 }
 
 /**
- * The prompt-policy job of a request: one decide call, or two when its prompt text holds
- * model-written parts (the second decides on the person's parts alone, src/policy/model.ts).
+ * The prompt-policy job of a request: one reading call per ambiguous name a person-written part
+ * holds (`readings`, src/policy/model.ts), then one decide call, or two when its prompt text holds
+ * model-written parts (the second decides on the person's parts alone).
  */
-export function policyJobOf(route: Route, modelWrittenParts: boolean): PlanJob {
-  return jobOf(PROMPT_POLICY_OPERATION, route, modelWrittenParts ? 2 : 1);
+export function policyJobOf(route: Route, modelWrittenParts: boolean, readings = 0): PlanJob {
+  return jobOf(PROMPT_POLICY_OPERATION, route, (modelWrittenParts ? 2 : 1) + readings);
 }
 
 /**
@@ -262,6 +264,11 @@ export interface WorkPlanParts {
    * files and its compiler-written text, src/planning.ts): checked with the rest.
    */
   promptParts?: readonly PromptPart[];
+  /**
+   * The prompt-policy check a later run makes on this request's text (plan: its apply), forecast
+   * with it: `modelWritten` when that run's text can hold compiler-written parts.
+   */
+  applyPolicy?: { modelWritten: boolean };
   /** The plan step's near matches (src/search/near-match.ts); kept out of the digest. */
   near?: NearMatchOutcome;
   /**
@@ -383,14 +390,29 @@ export async function buildWorkPlan(
   const policyText = partsText(promptParts);
   // The model check (design section 16): one decide call when there is text to check, and a
   // second, on the person's parts alone, when model-written text could be all it objects to.
-  const policyJobs = policyText.trim()
+  const ownPolicyJobs = policyText.trim()
     ? [
         policyJobOf(
           parts.providers.routes[PROMPT_POLICY_OPERATION]!,
           promptParts.some(modelWritten),
+          readingTerms(promptPolicy.hits).length,
         ),
       ]
     : [];
+  // A plan forecasts the prompt-policy check its apply runs too: the same readings, and a second
+  // decide call when the compiler can write model-written text.
+  const policyJobs = [
+    ...ownPolicyJobs,
+    ...(parts.applyPolicy !== undefined
+      ? [
+          policyJobOf(
+            parts.providers.routes[PROMPT_POLICY_OPERATION]!,
+            parts.applyPolicy.modelWritten,
+            readingTerms(promptPolicy.hits).length,
+          ),
+        ]
+      : []),
+  ];
   const policyTextSha256 = promptPolicy.textSha256;
   const options: Record<string, unknown> = {};
   for (const [name, property] of Object.entries(spec.input.properties)) {
@@ -425,7 +447,7 @@ export async function buildWorkPlan(
     digest,
     runDir: runDirOf(resolve(runs), digest),
   };
-  if (policyJobs.length > 0) policyTexts.set(plan, promptParts);
+  if (ownPolicyJobs.length > 0) policyTexts.set(plan, promptParts);
   if (parts.near?.nearMatches !== undefined) plan.nearMatches = parts.near.nearMatches;
   if (parts.near?.nearMatchSheet !== undefined) plan.nearMatchSheet = parts.near.nearMatchSheet;
   if (parts.near?.searchError !== undefined) plan.searchError = parts.near.searchError;

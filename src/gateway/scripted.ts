@@ -47,6 +47,14 @@ export interface Script {
   promptPolicy?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers the prompt policy's reading of an ambiguous name (a `prompt-policy` Choice decision:
+   * `protected`, `word` or `other-name`; `nameReadingAsked` gives the term). A script without it
+   * reads every such name as an ordinary word.
+   */
+  promptReading?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers embedding calls (images and text in one space); a script without it cannot answer one. */
   embed?(request: EmbedRequest, index: number): Scripted<EmbedResult>;
   /**
@@ -156,9 +164,14 @@ export class ScriptedProvider implements GenerationProvider {
     this.calls.push({ kind: "decide", request });
     if (request.operation === PROMPT_POLICY_OPERATION) {
       const index = this.policyCount++;
-      const answer = this.script.promptPolicy
-        ? this.script.promptPolicy(request)
-        : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
+      const answer =
+        request.question.type === "choice"
+          ? this.script.promptReading
+            ? this.script.promptReading(request)
+            : { answer: { type: "choice" as const, choice: "word" }, costUsd: 0 }
+          : this.script.promptPolicy
+            ? this.script.promptPolicy(request)
+            : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
       return { requestId: `scripted-prompt-policy-${index}`, ...answer };
     }
     if (request.operation === BRIEF_POLICY_OPERATION) {
