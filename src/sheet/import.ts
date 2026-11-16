@@ -57,7 +57,12 @@ import { SliceError } from "./slice.ts";
 import { animationQa } from "../animation/qa.ts";
 import { DEFAULT_DURATION_MS, familyLoops, renderPreviews } from "../animation/run.ts";
 import { splitStrip } from "../animation/strip.ts";
-import { registrationPin, templatesFor, thresholdsFor } from "../animation/templates.ts";
+import {
+  registrationPin,
+  templateFor,
+  templatesFor,
+  thresholdsFor,
+} from "../animation/templates.ts";
 import type { AnimationReport } from "../animation/types.ts";
 import type { Grouping, MatteQuality, RegisterPin, SliceOptions } from "./types.ts";
 import type { ConfirmationRecord, LoadedReference } from "../types.ts";
@@ -679,7 +684,8 @@ export async function writeFamilies(
     }
     figures.push(...items);
     families.push(...items.map(() => p.family.name));
-    const pin = registrationPin(p.family.name, record.profile, record.gait);
+    const template = templateFor(p.family.name, templatesFor(record.profile));
+    const pin = registrationPin(template, record.profile, record.gait);
     pins.push(...items.map(() => pin));
   }
   const registration = runOperation(

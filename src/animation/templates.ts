@@ -278,17 +278,17 @@ export function withGait(
 }
 
 /**
- * The point registration pins for a family, from the same template and gait animation QA judges
- * it by: a family whose contacts move (`footprint: "moving"`) pins its centre of mass, so the body
- * stays put while the feet swing; every other family is planted and pins its ground footprint, so
- * the feet stay put while the head or tail moves.
+ * The point registration pins for a family, given the template animation QA judges it by (the
+ * caller resolves it, so a declared or decided template reaches registration too) and its gait: a
+ * template whose contacts move (`footprint: "moving"`) pins its centre of mass, so the body stays
+ * put while the feet swing; a planted one pins its ground footprint, so the feet stay put while
+ * the head or tail moves. No template pins the footprint, as QA's planted defaults judge it.
  */
 export function registrationPin(
-  family: string,
+  template: MotionTemplate | undefined,
   profile?: Pick<TargetProfile, "animation">,
   specGait?: string,
 ): "center" | "footprint" {
-  const template = templateFor(family, templatesFor(profile));
   if (!template) return "footprint";
   return withGait(template, gaitFor(profile, specGait)).template.footprint === "moving"
     ? "center"

@@ -81,6 +81,11 @@ export interface FixFrameOptions {
   frame: Size;
   anchor: Point;
   family: string;
+  /**
+   * The point the fixed frame is registered by, the one its family's strip was registered by
+   * (`registrationPin`), so a planted family's repaired frame keeps its feet on its neighbours'.
+   */
+  pin: "center" | "footprint";
   subject: string;
   /** 1-based frame to fix. */
   index: number;
@@ -324,6 +329,7 @@ export async function fixFrame(
         anchor: options.anchor,
         scale,
         measureThreshold: threshold,
+        pins: [options.pin],
       },
     },
     { style },

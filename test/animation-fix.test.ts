@@ -12,7 +12,9 @@ import {
   provenanceProblems,
 } from "../src/animation/fix.ts";
 import type { FixFrameOptions } from "../src/animation/fix.ts";
-import { splitStrip } from "../src/animation/strip.ts";
+import { animationQa } from "../src/animation/qa.ts";
+import { joinStrip, splitStrip } from "../src/animation/strip.ts";
+import { registrationPin, templateFor, templatesFor } from "../src/animation/templates.ts";
 import { Budget, BudgetExceededError } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { InputError } from "../src/errors.ts";
@@ -22,7 +24,7 @@ import type { Raster } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import { sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
-import { measureFrame } from "../src/sheet/register.ts";
+import { measureFrame, registerFrames } from "../src/sheet/register.ts";
 import { resolveStyle } from "../src/style.ts";
 import { parseRecipe, transformFiles } from "../src/transform/run.ts";
 import type { Provenance } from "../src/types.ts";
@@ -74,6 +76,7 @@ function base(call: Caller, over: Partial<FixFrameOptions> = {}): FixFrameOption
     frame,
     anchor,
     family: "walk",
+    pin: "center",
     subject: "fox",
     index: 3,
     from: { neighbour: 2 },
@@ -349,4 +352,70 @@ test("a recipe's transform record for the strip is carried forward with the fix"
   assert.equal(p.calls.length, 1);
   assert.equal(p.fixes[0].frame, 3);
   assert.equal(p.license, "MIT");
+});
+
+/** A side-view sniff crop: the feet never move, the head drops and reaches forward. */
+function sniffCrop(headDrop: number): Raster {
+  const r = createRaster(64, 40);
+  rect(r, 12, 12, 10, 14, [200, 150, 100]); // body
+  rect(r, 12, 26, 3, 6, [200, 150, 100]); // rear leg
+  rect(r, 19, 26, 3, 6, [200, 150, 100]); // front leg
+  rect(r, 22 + headDrop, 8 + headDrop * 2, 8, 6, [200, 150, 100]); // head
+  return r;
+}
+
+test("a fixed frame of a planted family is registered by its feet, so the strip passes footprint-drift", async () => {
+  const sniffFrame = { width: 64, height: 48 };
+  const sniffAnchor = { x: 32, y: 44 };
+  const style = resolveStyle({ alpha: { mode: "binary" }, edges: "crisp" });
+  const pin = registrationPin(templateFor("sniff", templatesFor()));
+  assert.equal(pin, "footprint");
+  const figures = [0, 3, 6, 3].map(sniffCrop);
+  const registered = registerFrames(figures, {
+    frame: sniffFrame,
+    anchor: sniffAnchor,
+    edges: "crisp",
+    scale: 1,
+    pins: figures.map(() => pin),
+  });
+  const strip = joinStrip(registered.frames.map((f) => f.image));
+  const failures = async (used: "center" | "footprint") => {
+    const provider = new ScriptedProvider({
+      image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(sniffCrop(6)) }] }),
+      vision: () => ({ text: "" }),
+    });
+    const call = new Caller({
+      provider,
+      providerName: "scripted",
+      budget: new Budget(DEFAULT_FIX_CAP_USD),
+      routes: defaultRoutes,
+    });
+    const result = await fixFrame({
+      ...base(call),
+      strip,
+      frame: sniffFrame,
+      anchor: sniffAnchor,
+      family: "sniff",
+      pin: used,
+      index: 3,
+      from: { neighbour: 2 },
+      style,
+    });
+    const report = animationQa(
+      {
+        frames: splitStrip(result.strip, sniffFrame),
+        frame: sniffFrame,
+        anchor: sniffAnchor,
+        family: "sniff",
+      },
+      {},
+      style,
+    );
+    return report.reasons
+      .filter((r) => !r.passed && (r.check === "footprint-drift" || r.check === "ground-contact"))
+      .map((r) => r.check);
+  };
+  assert.deepEqual(await failures(pin), []);
+  // Registered by its centre of mass instead, the repaired frame's feet slide off its neighbours'.
+  assert.ok((await failures("center")).includes("footprint-drift"));
 });

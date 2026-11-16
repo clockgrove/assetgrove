@@ -4,9 +4,15 @@ import { createRaster } from "../src/image/raster.ts";
 import type { Raster } from "../src/image/raster.ts";
 import { flipHorizontal } from "../src/image/resample.ts";
 import { animationQa } from "../src/animation/qa.ts";
-import { registrationPin } from "../src/animation/templates.ts";
+import { registrationPin, templateFor, templatesFor } from "../src/animation/templates.ts";
+import type { TargetProfile } from "../src/types.ts";
 import { jitterOf, measureFrame, registerFrames } from "../src/sheet/register.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
+
+/** The pin for a family whose template is looked up the way sheet import looks it up. */
+function pinOf(family: string, profile?: Pick<TargetProfile, "animation">) {
+  return registrationPin(templateFor(family, templatesFor(profile)), profile);
+}
 
 const sheet = syntheticSheet();
 const crops: Raster[] = sheet.figures.map((f) => {
@@ -136,7 +142,7 @@ test("a planted sniff keeps its feet on the same columns while the centre of mas
     anchor: sniffAnchor,
     edges: "crisp",
     scale: 1,
-    pins: figures.map(() => registrationPin("sniff")),
+    pins: figures.map(() => pinOf("sniff")),
   });
   const anchor = sniffAnchor;
   const [first, ...rest] = reg.frames;
@@ -165,7 +171,7 @@ test("a planted sniff registered from a sheet passes animation QA's footprint-dr
       frame: sniffFrame,
       anchor: sniffAnchor,
       edges,
-      pins: figures.map(() => registrationPin("sniff")),
+      pins: figures.map(() => pinOf("sniff")),
     });
     const r = animationQa(
       {
@@ -208,13 +214,13 @@ function bodyLeft(img: Raster, row: number): number {
 }
 
 test("the pin follows the family's footprint rule: planted families pin the feet, moving ones the centre of mass", () => {
-  assert.equal(registrationPin("sniff"), "footprint");
-  assert.equal(registrationPin("idle"), "footprint");
-  assert.equal(registrationPin("walk"), "center");
-  assert.equal(registrationPin("walk-left"), "center");
+  assert.equal(pinOf("sniff"), "footprint");
+  assert.equal(pinOf("idle"), "footprint");
+  assert.equal(pinOf("walk"), "center");
+  assert.equal(pinOf("walk-left"), "center");
   // A profile template that plants a family pins its feet, whatever its name.
   assert.equal(
-    registrationPin("walk", {
+    pinOf("walk", {
       animation: {
         templates: [
           {
@@ -233,6 +239,17 @@ test("the pin follows the family's footprint rule: planted families pin the feet
   );
 });
 
+test("the pin follows the template the caller resolved, not the family's name", () => {
+  const [walk, play, sniff] = ["walk", "play", "sniff"].map((n) => templateFor(n, templatesFor()));
+  // A template declared or decided for a family reaches registration as given: play-dead judged
+  // by the sniff template pins its feet, and a jump judged by the walk template its centre.
+  assert.equal(registrationPin(sniff), "footprint");
+  assert.equal(registrationPin(walk), "center");
+  assert.equal(registrationPin(play), "center");
+  // No template: QA's planted defaults judge it, so registration pins its footprint.
+  assert.equal(registrationPin(undefined), "footprint");
+});
+
 test("a walk registered with its family's pin keeps the body still while the stance foot steps", () => {
   const steps = [-8, -4, 0, 4, 8, 4, 0, -4];
   const figures = steps.map(walkCrop);
@@ -240,7 +257,7 @@ test("a walk registered with its family's pin keeps the body still while the sta
     const options = { frame: sniffFrame, anchor: sniffAnchor, edges, scale: 1 };
     const walk = registerFrames(figures, {
       ...options,
-      pins: figures.map(() => registrationPin("walk")),
+      pins: figures.map(() => pinOf("walk")),
     });
     const lefts = walk.frames.map((f) => bodyLeft(f.image, 20));
     assert.ok(Math.max(...lefts) - Math.min(...lefts) <= 2, `${edges}: body left edges ${lefts}`);
