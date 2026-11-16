@@ -152,7 +152,7 @@ export const tripoAdapter: ProviderAdapter = {
       billing: {
         adapter: "tripo",
         paid: true,
-        reconcile: "balance-delta",
+        reconcile: "per-call-cost",
         ...billingFrom(c),
       },
     }),

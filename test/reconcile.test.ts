@@ -204,40 +204,67 @@ test("a gap within the margin writes no hold", async () => {
   assert.equal(existsSync(join(stateDir, "holds.jsonl")), false);
 });
 
-test("with default margins, a failed call on a balance-delta provider raises no hold, whether or not it was billed", async () => {
-  for (const billedOnFailure of [false, true]) {
-    const stateDir = await freshState();
-    settings(stateDir);
-    const { args, dir } = await stageArgs();
-    // The balance moves by each answered call's estimate; the third image call fails.
-    const script = join(dir, "balance-script.mjs");
-    await writeFile(
-      script,
-      `import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
+/**
+ * A paid provider script that reports per-call cost as Tripo does, by task: each answered call
+ * costs `costUsd` and is billed at the provider exactly that, except the calls `skew` names, whose
+ * task is billed `skewUsd`. Its balance moves by far more than the run spends, as when another run
+ * shares the key or credits are added; reconciling must not read it. The third image call fails.
+ */
+async function taskScript(dir: string, skew?: { requestId: string; billedUsd: number }) {
+  const script = join(dir, "task-script.mjs");
+  await writeFile(
+    script,
+    `import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 let images = 0;
-let billed = 0;
+const billed = (id) => ${
+      skew === undefined
+        ? "0.05"
+        : `id === ${JSON.stringify(skew.requestId)} ? ${skew.billedUsd} : 0.05`
+    };
 export default {
   paid: true,
-  reconcile: "balance-delta",
-  limitReading: () => ({ balanceUsd: 50 - billed, source: "scripted balance" }),
+  reconcile: "per-call-cost",
+  limitReading: () => ({ balanceUsd: 50 - 7.77 * images + 100, source: "scripted balance" }),
+  callCost: (id) => (id.startsWith("scripted-image-") ? billed(id) : 0),
   image: (r, i) => {
-    billed += 0.05;
-    if (++images >= 3) {
-      ${billedOnFailure ? "" : "billed -= 0.05;"}
-      throw new Error("the task failed");
-    }
-    return base.image(r, i);
+    if (++images >= 3) throw new Error("the task failed");
+    return { ...base.image(r, i), costUsd: 0.05 };
   },
-  vision: (r, i) => ((billed += 0.02), base.vision(r, i)),
+  vision: (r, i) => base.vision(r, i),
 };`,
-    );
-    approve(script);
-    const r = await cli([...args, "--provider-script", script]);
-    assert.equal(r.code, 4, r.stderr);
-    const [entry] = await runReconcile(r);
-    assert.equal(entry?.status, "reconciled", JSON.stringify(entry));
-    assert.equal(existsSync(join(stateDir, "holds.jsonl")), false, "no hold");
-  }
+  );
+  approve(script);
+  return script;
+}
+
+test("the account balance moving by more than the run spent raises no hold; each journaled task's own cost is compared", async () => {
+  const stateDir = await freshState();
+  settings(stateDir);
+  const { args, dir } = await stageArgs();
+  const r = await cli([...args, "--provider-script", await taskScript(dir)]);
+  assert.equal(r.code, 4, r.stderr);
+  const [entry] = (await runReconcile(r)) as Array<ReconcileEntry & { unmatched?: number }>;
+  assert.equal(entry?.status, "reconciled", JSON.stringify(entry));
+  assert.ok((entry?.providerUsd ?? 0) > 0);
+  assert.equal(entry?.gapUsd !== undefined && entry.gapUsd < 1e-9, true, JSON.stringify(entry));
+  assert.equal(entry?.unmatched, 1, "the failed call has no journaled task ID");
+  assert.equal(existsSync(join(stateDir, "holds.jsonl")), false, "no hold");
+});
+
+test("a task whose reported cost differs from the ledger by more than the margin holds", async () => {
+  const stateDir = await freshState();
+  settings(stateDir);
+  const { args, dir } = await stageArgs();
+  const r = await cli([
+    ...args,
+    "--provider-script",
+    await taskScript(dir, { requestId: "scripted-image-0", billedUsd: 0.5 }),
+  ]);
+  assert.equal(r.code, 4, r.stderr);
+  const [entry] = await runReconcile(r);
+  assert.equal(entry?.status, "held", JSON.stringify(entry));
+  assert.ok(Math.abs((entry?.gapUsd ?? 0) - 0.45) < 1e-9, JSON.stringify(entry));
+  assert.equal((await readLines<Hold>(join(stateDir, "holds.jsonl"))).length, 1);
 });
 
 test("a provider without usage records reconcile unavailable, and settings check says so", async () => {

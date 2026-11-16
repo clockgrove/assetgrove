@@ -91,8 +91,8 @@ export interface Billing {
   limit?: DeclaredLimit;
   /** Reads the provider's balance; spends nothing. Absent where the provider offers no reading. */
   readLimit?: () => Promise<LimitReading>;
-  /** How spend is reconciled with the provider: per-call cost, balance delta, or not at all. */
-  reconcile: "per-call-cost" | "balance-delta" | "unavailable";
+  /** How spend is reconciled with the provider: per-call cost, or not at all. */
+  reconcile: "per-call-cost" | "unavailable";
   /**
    * The provider's own cost of one call, in USD, by the request ID it returned; spends nothing.
    * Undefined while the provider has not reported it yet (the lookup stays pending); null for an ID

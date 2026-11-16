@@ -60,7 +60,7 @@ export class TripoProvider implements GenerationProvider {
     keyEnv?: string;
     /** USD per Tripo credit, from settings (`providers.<id>.usdPerCredit`). */
     usdPerCredit?: number;
-    billing?: Omit<Billing, "hosts" | "readLimit">;
+    billing?: Omit<Billing, "hosts" | "readLimit" | "callCost">;
     /** Tests only: a loopback fixture. Settings never set it. */
     baseUrl?: string;
     fetch?: typeof fetch;
@@ -76,10 +76,11 @@ export class TripoProvider implements GenerationProvider {
       adapter: "tripo",
       providerId: "tripo",
       paid: true,
-      reconcile: "balance-delta",
+      reconcile: "per-call-cost",
       ...options.billing,
       hosts: [new URL(this.#baseUrl).host],
       readLimit: () => this.limitReading(),
+      callCost: (taskId) => this.callCost(taskId),
     };
     this.#fetch = options.fetch ?? fetch;
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -112,6 +113,20 @@ export class TripoProvider implements GenerationProvider {
       ...(this.#usdPerCredit !== undefined && { balanceUsd: balance * this.#usdPerCredit }),
       source: "tripo balance",
     };
+  }
+
+  /**
+   * One task's cost in USD by its task ID (the journaled request ID); spends nothing. Undefined
+   * while the task is queued or running or reports no credits yet; null when no `usdPerCredit`
+   * prices it, or a task that ended without a credit count.
+   */
+  async callCost(taskId: string): Promise<number | null | undefined> {
+    const task = await this.#call("task", "GET", `/task/${encodeURIComponent(taskId)}`);
+    const status = task["status"];
+    const credits = task["consumed_credit"];
+    if (status === "queued" || status === "running" || status === "unknown") return undefined;
+    if (typeof credits !== "number") return status === "success" ? undefined : null;
+    return this.#usdPerCredit === undefined ? null : credits * this.#usdPerCredit;
   }
 
   async generateModel(request: ModelRequest): Promise<ModelResult> {

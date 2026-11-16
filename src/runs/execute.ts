@@ -23,12 +23,7 @@ import { CONTACT_SHEET_FILE } from "../contact.ts";
 import type { Outcome, RunContext } from "../commands/types.ts";
 import { createProviders } from "../providers/adapter.ts";
 import { loadScript } from "../providers/script.ts";
-import {
-  beginRunReconcile,
-  finishRunReconcile,
-  recordReconcile,
-  startRunReconcile,
-} from "../reconcile.ts";
+import { finishRunReconcile, recordReconcile, startRunReconcile } from "../reconcile.ts";
 import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcile.ts";
 import { Budget } from "../budget.ts";
 import { Caller } from "../calls.ts";
@@ -230,7 +225,7 @@ export async function executeRun(options: {
       3,
     );
   // A paid run first retries pending reconcile lookups, then is refused while a spend hold is not
-  // acknowledged, and takes the balance readings its end compares with (src/reconcile.ts).
+  // acknowledged (src/reconcile.ts).
   let reconcileCtx: ReconcileContext | undefined;
   let reconcile: RunReconcile | undefined;
   if (plan.paid) {
@@ -294,8 +289,6 @@ export async function executeRun(options: {
       attempts: (previous?.attempts ?? 0) + 1,
     };
     await writeState(plan.runDir, state);
-    // An interrupted earlier attempt's balance readings stay this run's start (src/reconcile.ts).
-    if (reconcile !== undefined) beginRunReconcile(reconcile);
     // A record left by an earlier attempt of the same request is replaced by this one's.
     await rm(join(plan.runDir, RUN_RECORD_FILE), { force: true });
     await rm(join(plan.runDir, CONTACT_SHEET_FILE), { force: true });
