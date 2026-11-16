@@ -13,6 +13,7 @@ import { collectPromptText, enforcePromptPolicy } from "../policy/text.ts";
 import type { PromptPolicyRecord } from "../policy/text.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
+import type { NearMatch, NearMatchOutcome } from "../search/near-match.ts";
 import { runDirOf } from "./dir.ts";
 
 /** One kind of call a request makes: `count` calls on a route, each estimated at `estimatedCostUsd`. */
@@ -44,6 +45,16 @@ export interface WorkPlan {
   policyTextSha256: string;
   /** The prompt policy's check of that text. */
   promptPolicy?: PromptPolicyRecord;
+  /**
+   * Up to three picked assets of exactly the spec's kind and subject (design section 7.6), when
+   * search is loaded and near matches are on. Never part of the digest: a changing index must not
+   * void a confirmation.
+   */
+  nearMatches?: NearMatch[];
+  /** The numbered sheet of `nearMatches`. */
+  nearMatchSheet?: string;
+  /** Why the near-match search failed; the plan went on without it. */
+  searchError?: string;
   /** sha256 hex of the canonical JSON of the request (`requestDigest`). */
   digest: string;
   /** `<runs>/r-<first 16 hex of the digest>/`, absolute. */
@@ -233,6 +244,8 @@ export interface WorkPlanParts {
    * blocklist and the model check.
    */
   promptText?: readonly string[];
+  /** The plan step's near matches (src/search/near-match.ts); kept out of the digest. */
+  near?: NearMatchOutcome;
   /**
    * Content the request covers that is not a file it names (search's pending work), name to
    * sha256 hex: added to `inputs`, so other content is another request.
@@ -377,6 +390,9 @@ export async function buildWorkPlan(
     runDir: runDirOf(resolve(runs), digest),
   };
   if (policyJobs.length > 0) policyTexts.set(plan, policyText);
+  if (parts.near?.nearMatches !== undefined) plan.nearMatches = parts.near.nearMatches;
+  if (parts.near?.nearMatchSheet !== undefined) plan.nearMatchSheet = parts.near.nearMatchSheet;
+  if (parts.near?.searchError !== undefined) plan.searchError = parts.near.searchError;
   return plan;
 }
 

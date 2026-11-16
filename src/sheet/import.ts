@@ -507,6 +507,73 @@ export async function readImport(importDir: string): Promise<ImportRecord> {
   return JSON.parse(await readFile(join(importDir, IMPORT_FILE), "utf8")) as ImportRecord;
 }
 
+/**
+ * The spec and output fields one family of an import hands off with, for its strip of `count`
+ * frames: the frames and anchor, the union of the frames' visible boxes, the palette colours the
+ * strip uses and the registration jitter. `writeFamilies` writes each family with them, and
+ * `library adopt` renders a family's hand-off again from them for a hand-edited strip.
+ */
+export function familyHandoff(
+  record: ImportRecord,
+  family: string,
+  strip: Raster,
+  count: number,
+  jitterPx: number,
+): { spec: AssetSpec; fields: Record<string, unknown> } {
+  const { frame, anchor, style } = record;
+  let union: Box | undefined;
+  const usedColours = new Set<string>();
+  for (let i = 0; i < count; i++) {
+    for (let y = 0; y < frame.height; y++) {
+      for (let x = 0; x < frame.width; x++) {
+        const px = getPixel(strip, i * frame.width + x, y);
+        if (px[3] > 0) usedColours.add(toHex([px[0], px[1], px[2]]));
+      }
+    }
+    const box = visibleBox(strip, style.alpha.threshold, { x: i * frame.width, y: 0, ...frame });
+    if (box) {
+      if (!union) union = box;
+      else {
+        const x = Math.min(union.x, box.x);
+        const y = Math.min(union.y, box.y);
+        union = {
+          x,
+          y,
+          width: Math.max(union.x + union.width, box.x + box.width) - x,
+          height: Math.max(union.y + union.height, box.y + box.height) - y,
+        };
+      }
+    }
+  }
+  if (!union) throw new InputError(`family ${family} has no visible pixel`);
+  const spec: AssetSpec = {
+    kind: "sprite-strip",
+    assetId: record.assetId,
+    ...(record.subject !== undefined && { subject: record.subject }),
+    ...(record.gait !== undefined && { gait: record.gait }),
+    animationFamily: family,
+    // The requesting spec's target fields (atlas slot, labels, semantics) belong to the family it asked for.
+    ...(record.spec?.animationFamily === family && { fields: record.spec.fields }),
+    frames: {
+      count,
+      width: frame.width,
+      height: frame.height,
+      ...(record.durationMs !== undefined && { durationMs: record.durationMs }),
+    },
+    anchor,
+  };
+  const fields = {
+    frames: spec.frames,
+    anchor,
+    bounds: union,
+    ...(style.color.rule === "palette" && {
+      palette: style.color.palette.filter((hex) => usedColours.has(toHex(parseHex(hex)))),
+    }),
+    jitterPx,
+  };
+  return { spec, fields };
+}
+
 export interface WriteFamiliesOptions {
   importDir: string;
   /** The author's confirmed grouping (the parsed `grouping.json`). */
@@ -680,33 +747,7 @@ export async function writeFamilies(
     const familySteps = [...(flip ? [flip] : []), registration.step, styled.step, joined.step];
     const strip = (joined.items[0] as ImageItem).raster;
     const frameProvenance: FrameProvenance[] = [];
-    let union: Box | undefined;
-    const usedColours = new Set<string>();
     s.registered.forEach((r, i) => {
-      for (let y = 0; y < frame.height; y++) {
-        for (let x = 0; x < frame.width; x++) {
-          const px = getPixel(strip, i * frame.width + x, y);
-          if (px[3] > 0) usedColours.add(toHex([px[0], px[1], px[2]]));
-        }
-      }
-      const box = visibleBox(strip, style.alpha.threshold, {
-        x: i * frame.width,
-        y: 0,
-        ...frame,
-      });
-      if (box) {
-        if (!union) union = box;
-        else {
-          const x = Math.min(union.x, box.x);
-          const y = Math.min(union.y, box.y);
-          union = {
-            x,
-            y,
-            width: Math.max(union.x + union.width, box.x + box.width) - x,
-            height: Math.max(union.y + union.height, box.y + box.height) - y,
-          };
-        }
-      }
       const id = s.frames[i] as number;
       const source = byId.get(id) as ImportedFrame;
       const styleSteps: Transform[] = [];
@@ -730,29 +771,13 @@ export async function writeFamilies(
         ],
       });
     });
-    if (!union) throw new InputError(`family ${s.family.name} has no visible pixel`);
+    const { spec, fields } = familyHandoff(record, s.family.name, strip, count, s.jitterPx);
     const digitalSourceType =
       joined.items[0]?.digitalSourceType ??
       record.digitalSourceType ??
       DIGITAL_SOURCE_TYPES.undeclared;
     const bytes = embedDigitalSourceType(encodePng(strip), "image/png", digitalSourceType);
 
-    const spec: AssetSpec = {
-      kind: "sprite-strip",
-      assetId: record.assetId,
-      ...(record.subject !== undefined && { subject: record.subject }),
-      ...(record.gait !== undefined && { gait: record.gait }),
-      animationFamily: s.family.name,
-      // The requesting spec's target fields (atlas slot, labels, semantics) belong to the family it asked for.
-      ...(record.spec?.animationFamily === s.family.name && { fields: record.spec.fields }),
-      frames: {
-        count,
-        width: frame.width,
-        height: frame.height,
-        ...(record.durationMs !== undefined && { durationMs: record.durationMs }),
-      },
-      anchor,
-    };
     const prompt =
       record.generation?.prompt ??
       `Imported from a contact sheet made with ${record.sheet.tool}; that tool's own prompt is not recorded.`;
@@ -811,15 +836,7 @@ export async function writeFamilies(
         bytes,
         mediaType: "image/png",
         extension: "png",
-        fields: {
-          frames: spec.frames,
-          anchor,
-          bounds: union,
-          ...(style.color.rule === "palette" && {
-            palette: style.color.palette.filter((hex) => usedColours.has(toHex(parseHex(hex)))),
-          }),
-          jitterPx: s.jitterPx,
-        },
+        fields,
       },
       provenance,
       run: { runId: record.importId, candidateId: s.family.name, pickedAt: at },

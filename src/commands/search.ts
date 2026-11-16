@@ -44,7 +44,9 @@ import { createLibraryReader } from "../search/reader.ts";
 import type { LibraryReader } from "../search/reader.ts";
 import { writeFindSheet } from "../search/sheet.ts";
 import type { SearchSettings, Settings } from "../settings.ts";
-import { projectDir } from "../tree/project.ts";
+import { formatAddress, parseAddress } from "../tree/address.ts";
+import { openProject, projectDir } from "../tree/project.ts";
+import { readTree } from "../tree/read.ts";
 import { defineCommand } from "./types.ts";
 import type { CommandSpec, JsonSchemaProperty, RunContext } from "./types.ts";
 
@@ -71,7 +73,7 @@ export function searchSettings(settings: Settings): SearchSettings {
 }
 
 /** The slot and the context one call hands it. */
-async function searchCall(
+export async function searchCall(
   command: string,
   target: string | undefined,
   ctx: RunContext,
@@ -80,6 +82,9 @@ async function searchCall(
 ): Promise<{ slot: SearchSlot; context: SearchContext; reader: LibraryReader }> {
   const slot = (ctx.extensions ?? CORE_REGISTRY).requireSearch(command);
   const settings = searchSettings(ctx.settings);
+  // A hosted embedder with no port given: the route's identity, so the slot embeds nothing.
+  if (embedder === undefined && needsProject && settings.embedder === "route")
+    embedder = (await embedRoute(undefined, ctx)).embedder;
   const dir = projectDir(target);
   const reader = await createLibraryReader({
     dir,
@@ -142,7 +147,7 @@ export function slotError(error: unknown): unknown {
   return new InputError(`${code}: ${error.message}`, { cause: error });
 }
 
-async function calling<T>(run: () => Promise<T>): Promise<T> {
+export async function calling<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
@@ -298,6 +303,7 @@ async function paidEmbedder(
 
 /** Whether a find query embeds: words, or an image file to rank by look. */
 function findEmbeds(args: FindArgs): boolean {
+  if (args.outliers !== undefined) return false;
   return (
     (args.words !== undefined && args.words.trim() !== "") ||
     (args.like !== undefined && !args.like.startsWith("asset://"))
@@ -311,7 +317,33 @@ interface FindArgs extends PaidArgs {
   source?: string[];
   game?: string;
   limit?: number;
+  outliers?: string;
   target?: string;
+}
+
+/**
+ * The asset addresses of a tree folder, every page of it, as the search index names them (an asset
+ * has no trailing slash).
+ */
+async function folderMembers(dir: string, stateDir: string, set: string): Promise<string[]> {
+  const project = await openProject(dir, stateDir);
+  const members: string[] = [];
+  let address: string | undefined = set;
+  while (address !== undefined) {
+    const read = await readTree(project, address);
+    const document = read.document as
+      { kind?: string; children?: { address: string; kind: string }[]; next?: string } | undefined;
+    if (!read.folder || document?.kind !== "folder") {
+      throw new InputError(`--outliers ${set} is not a folder address of the asset tree`);
+    }
+    for (const child of document.children ?? []) {
+      if (child.kind !== "asset" && child.kind !== "candidate") continue;
+      const at = parseAddress(child.address);
+      members.push(formatAddress(at.game, at.segments));
+    }
+    address = document.next;
+  }
+  return members;
 }
 
 /** The query of a find call; an image file for --like is read here. */
@@ -343,6 +375,60 @@ async function findQuery(args: FindArgs, game: string): Promise<SearchQuery> {
   };
 }
 
+/**
+ * One find, as the `find` command and the tree's search paths both run it (design sections 2 and
+ * 7.5): the same slot call over the same query, so both return the same hits. `sheet` is false for
+ * a resource read, which writes nothing. With a hosted embedder, `embedder` is the paid run's port;
+ * without it the slot answers from the vectors already in the index and embeds nothing.
+ */
+export async function runFind(
+  args: FindArgs,
+  ctx: RunContext,
+  options: { sheet: boolean; embedder?: SearchRouteEmbedder },
+): Promise<{ fields: Record<string, unknown>; human: string }> {
+  // Without the paid run's port a hosted embedder is the route's identity only: stored vectors.
+  const embedder =
+    options.embedder ??
+    (hosted(ctx) ? (await embedRoute(args.providerScript, ctx)).embedder : undefined);
+  const { slot, context, reader } = await searchCall("find", args.target, ctx, true, embedder);
+  if (args.outliers !== undefined) {
+    for (const source of args.source ?? [])
+      if (!(SEARCH_SOURCES as readonly string[]).includes(source))
+        throw new InputError(`unknown --source "${source}"; use ${SEARCH_SOURCES.join(", ")}`);
+    if (args.game !== undefined && args.game !== "all" && args.game !== context.game)
+      throw new InputError(`--game takes all or this project's game "${context.game}"`);
+    const members = await folderMembers(context.worktree, ctx.settings.stateDir, args.outliers);
+    const result = await calling(() => slot.outliers(members, context));
+    const human = [
+      ...result.outliers.map((o) => `${o.address} (z ${o.z.toFixed(2)})`),
+      `${result.outliers.length} outlier${result.outliers.length === 1 ? "" : "s"} among ${result.members} members of ${args.outliers}`,
+    ].join("\n");
+    return { fields: { set: args.outliers, ...result }, human };
+  }
+  const query = await findQuery(args, context.game);
+  const result = await calling(() => slot.find(query, context));
+  const fields: Record<string, unknown> = {
+    hits: result.hits,
+    fresh: result.fresh,
+    builtFrom: result.builtFrom,
+  };
+  let sheet: string | undefined;
+  if (options.sheet) {
+    const images = await Promise.all(result.hits.map((hit) => reader.loadImageByPath(hit.path)));
+    sheet = await writeFindSheet(
+      result.hits,
+      images,
+      join(ctx.settings.stateDir, "search", "sheets"),
+    );
+    fields["sheet"] = sheet;
+  }
+  const human = [
+    ...result.hits.map((h) => `${h.rank}. ${h.address} (${h.source}, ${h.score.toFixed(4)})`),
+    `${result.hits.length} hit${result.hits.length === 1 ? "" : "s"}${result.fresh ? "" : " (index not fresh)"}${sheet ? `; sheet ${sheet}` : ""}`,
+  ].join("\n");
+  return { fields, human };
+}
+
 /** A hosted find's plan step: the refresh and the query it would embed. */
 async function findPlan(args: FindArgs, ctx: RunContext) {
   const game = (
@@ -372,8 +458,11 @@ fields match (field=value, !=, <, >, tag=value; fields kind, subject, state, bib
 source, game, id, address, path, view, title). Returns hits [{address, rank, score, source, path,
 view, fields, sharedText}] (card text only under sharedText), fresh, builtFrom, and sheet: a PNG of
 the hits numbered by rank, which the tool also returns as image content. The index is brought up
-to date first unless another process is writing it (fresh false then). With the local model it
-spends nothing and writes only the index and the sheet under the state directory.
+to date first unless another process is writing it (fresh false then). --outliers <folder> instead
+lists the members of an asset:// folder whose indexed image is off the rest (mean cosine distance
+to its five nearest neighbours, as a robust z above 3): {set, members, outliers: [{address,
+distance, z}]}; it spends nothing. With the local model find spends nothing and writes only the
+index and the sheet under the state directory.
 With a hosted embedder (search.embedder "route", the embeddings role) a find with words or an
 image file is a paid request: its plan step forecasts the images, card texts and query to embed,
 one spend confirmation covers it, and each embedding is reserved against the caps and journalled
@@ -406,6 +495,12 @@ vectors already in the index and does not bring it up to date (fresh false).`,
         placeholder: "all",
       },
       limit: { type: "integer", description: "the most hits", default: 20, minimum: 1 },
+      outliers: {
+        type: "string",
+        description:
+          "an asset:// folder address (a kind, subject, tag or the root): list its members whose look is off the set's (robust z above 3) instead of searching",
+        placeholder: "<set>",
+      },
       target: TARGET,
       ...PAID_PROPERTIES,
     },
@@ -418,39 +513,19 @@ vectors already in the index and does not bring it up to date (fresh false).`,
   async run(args, ctx) {
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;
-    if (hosted(ctx)) {
-      if (findEmbeds(args)) {
-        const { work, forecast } = await findPlan(args, ctx);
-        if (args.dryRun || ctx.run === undefined)
-          return dryRunOutcome(work, formatWork("find", work), spendLedger(ctx, args.workItem), {
-            embed: forecast,
-          });
-        ({ embedder, budget } = await paidEmbedder(args, ctx, ctx.run.plan));
-      } else {
-        // A free read: the route's identity, no port, so the slot answers from stored vectors.
-        embedder = (await embedRoute(args.providerScript, ctx)).embedder;
-      }
+    if (hosted(ctx) && findEmbeds(args)) {
+      const { work, forecast } = await findPlan(args, ctx);
+      if (args.dryRun || ctx.run === undefined)
+        return dryRunOutcome(work, formatWork("find", work), spendLedger(ctx, args.workItem), {
+          embed: forecast,
+        });
+      ({ embedder, budget } = await paidEmbedder(args, ctx, ctx.run.plan));
     }
-    const { slot, context, reader } = await searchCall("find", args.target, ctx, true, embedder);
-    const query = await findQuery(args, context.game);
-    const result = await calling(() => slot.find(query, context));
-    const images = await Promise.all(result.hits.map((hit) => reader.loadImageByPath(hit.path)));
-    const sheet = await writeFindSheet(
-      result.hits,
-      images,
-      join(ctx.settings.stateDir, "search", "sheets"),
-    );
-    const fields = {
-      hits: result.hits,
-      fresh: result.fresh,
-      builtFrom: result.builtFrom,
-      sheet,
-      ...(budget && { spentUsd: budget.spentUsd }),
-    };
-    const human = [
-      ...result.hits.map((h) => `${h.rank}. ${h.address} (${h.source}, ${h.score.toFixed(4)})`),
-      `${result.hits.length} hit${result.hits.length === 1 ? "" : "s"}${result.fresh ? "" : " (index not fresh)"}; sheet ${sheet}`,
-    ].join("\n");
+    const { fields, human } = await runFind(args, ctx, {
+      sheet: true,
+      ...(embedder && { embedder }),
+    });
+    if (budget) fields["spentUsd"] = budget.spentUsd;
     return { exitCode: 0, fields, human };
   },
 });

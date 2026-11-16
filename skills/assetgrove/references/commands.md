@@ -93,6 +93,46 @@ A person confirms the pick: headless settings record it unattended and must name
 
 MCP tool: `pick`, arguments `run`, `candidate`, `target`.
 
+### `review`
+
+```text
+review <address> [--candidate <id>] [--version <n|sha256>] [--comment <text>] [--reply <id>] [--resolve <id>] [--reject <reason>] [--json]
+```
+
+Appends one annotation to a review record, never changing an existing line. The address is an asset's card, media or review record, or, with `--candidate`, a run directory. `--version` names the version by number or sha256 (the current one by default; not with `--candidate`). `--comment` comments; `--reply` with `--comment` replies to the annotation it names; `--resolve` closes a request, with `--comment` as its note; `--reject` rejects with its reason and takes no `--comment`. Give one of `--reply`, `--resolve` or `--reject`. For a version it then rewrites the card's state, the folder indexes and `log.md`. No confirmation, no model call and no spend. The annotation's text is returned only under `sharedText`.
+
+MCP tool: `review`, arguments `address`, `candidate`, `version`, `comment`, `reply`, `resolve`, `reject`.
+
+### `approve`
+
+```text
+approve <address> [--version <n|sha256>] [--json]
+```
+
+The only way to approve a version. The address is the asset's card, media or review record; `--version` names the version by number or sha256, the current one by default. A person confirms it like a pick (a record at `<configDir>/confirmations/<hex>.json`, an MCP client's form, the inline prompt on a TTY, or exit 8 `confirmation_required` and `assetgrove confirm <hex>`). The digest covers the asset id, the version's sha256 and the record's head, so a confirmation no longer applies once the record gains a line. Under headless settings it exits 8 `confirmation_required` and writes nothing; if the record changes between confirming and writing it exits 2 `plan_changed`. Appends an assessing annotation carrying the confirmation, sets the card's state to approved, rewrites its lock and logs a line. The manifest's review stays pending. Calls no model and spends nothing. Only a person runs it.
+
+MCP tool: `approve`, arguments `address`, `version`.
+
+### `library adopt`
+
+```text
+library adopt (<address> | --asset <id>) --original <file> [--target <dir>] [--profile <profile.json>] [--bible <bible.json>] [--json]
+```
+
+Hands off a person's edit of a picked asset's file as its next version, the way `pick` hands off. The address is the asset's card, media or review record; `--asset <id>` names it in the library of `--target`'s profile instead. `--original` is the AI-made version the card locks (its sha256 must equal `lock.sha256`). Runs the free QA checks again on the edited file (transparency, the frame count its provenance records, and the palette of `--bible` when given); a failure exits 5 `qa_found_nothing`. A person then confirms it like a pick, over the asset id, the file's sha256, the version it replaces, the original, the run that made the asset, its profile's sha256 and the review record's head; under headless settings it exits 8 `confirmation_required` and writes nothing. The hand-off is rendered from the run that made the asset (`<target>/.assetgrove/runs/<run>`, or the import `<target>/.assetgrove/imports/<run>` of a family `write-families` handed off; the target is `--target`, else the Git top level of the asset's folder; a run id that is not one path segment, a missing run or a run without the version's candidate exits 2) in the version's media type (edited bytes of another type exit 2): the file is marked `compositeWithTrainedAlgorithmicMedia` and signed with C2PA credentials that name the original as a `parentOf` ingredient, its provenance gets a `human-edit` step and the confirmation, and every file the profile's hand-off presets write, the manifest included (review pending), is rendered again and read back. The profile's validator runs under pick's rules: an unapproved one exits 8 before any write. A failed read-back (6 `handoff_check_failed`) or a rejecting validator (6 `validator_rejected`) records no version and puts back every file it wrote. Otherwise it appends the version and an adopt annotation and rewrites the card, its lock, the indexes and `log.md`. A file equal to the current version or a Git LFS pointer exits 2; the bytes of an older version exit 2 `version_exists`. Calls no model and spends nothing. Only a person runs it.
+
+MCP tool: `library_adopt`, arguments `address`, `asset`, `original`, `target`, `profile`, `bible`.
+
+### `card edit`
+
+```text
+card edit <address> [--title <text>] [--description <text>] [--tag <tag>]... [--body <markdown>] [--field <name=value>]... [--json]
+```
+
+Changes the person fields of a picked asset's card. `--tag` is repeatable and replaces the card's tags; `--body` replaces the Markdown after the front matter; `--field` is repeatable and sets a field Assetgrove does not own. Naming a machine field exits 2 `card_field_owned` before anything is written. Appends a describing annotation (tagging when only the tags change) that names the changed fields, rewrites the card and the folder indexes, and logs a line. No confirmation, no model call and no spend. The card's text is returned only under `sharedText`.
+
+MCP tool: `card_edit`, arguments `address`, `title`, `description`, `tag`, `body`, `field`.
+
 ### `rig`
 
 ```text
@@ -307,16 +347,6 @@ library drift [--target <dir>] [--profile <profile.json>] [--bible <bible>] [--j
 Lists `stale` assets (the card's bible is older than the style bible's version; default bible `<target>/.assetgrove/art-direction/BIBLE.md`) and `modified` ones (the file's sha256, or a Git LFS pointer's oid, differs from the card's `lock.sha256`; a matching pointer is not modified). Computed from the cards; nothing is stored or logged. Read-only.
 
 MCP tool: `library_drift`, arguments `target`, `profile`, `bible`.
-
-### `library adopt`
-
-```text
-library adopt --asset <id> --original <file> [--target <dir>] [--profile <profile.json>] [--json]
-```
-
-Adopts the asset's hand-edited working media as its next version. `--original` is the AI-made version the card locks (its sha256 must equal `lock.sha256`). The file gets the IPTC mark `compositeWithTrainedAlgorithmicMedia` and C2PA content credentials that record the edit with the original as a `parentOf` ingredient; the version is appended with the annotation action `adopt`, under the library write lock, with the person's confirmation recorded on it. A person confirms the adopt first (a `write` request: headless settings, a confirmation record, an MCP form, the TTY, or exit 8 `confirmation_required` and `assetgrove confirm <hex>`); agents never confirm it. Exits 2 when the file is unchanged, is not a PNG, JPEG or WebP, or the original is not the locked version; 6 `handoff_check_failed` when the written file does not read back. Result: `assetId`, `version`, `sha256`, `files`, `contentCredentials` (with a `warning` when the development certificate signed).
-
-MCP tool: `library_adopt`, arguments `target`, `profile`, `asset`, `original`.
 
 ### `settings`
 

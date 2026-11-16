@@ -1,0 +1,6 @@
+{
+  "threshold": null,
+  "rule": "the lowest cosine similarity t such that, over every pair of library images at or above t, at least 0.9 are labelled same-asset pairs (docs/decisions.md, Search bars)",
+  "measuredBy": "node bench/search/run.ts --embedder siglip2",
+  "note": "not yet measured: the bench needs the SigLIP2 model download, which the run that wrote this had no network for"
+}

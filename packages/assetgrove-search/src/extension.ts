@@ -10,9 +10,11 @@ import type {
   Extension,
   SearchContext,
   SearchFindResult,
+  NearMatchQuery,
   SearchForecast,
   SearchHit,
   SearchLibrary,
+  SearchOutliersResult,
   SearchQuery,
   SearchSlot,
   SearchSource,
@@ -22,6 +24,7 @@ import type { Embedder } from "./embedder.ts";
 import { SearchError } from "./errors.ts";
 import { bestViewPerAsset, rrf, SearchIndex } from "./find.ts";
 import {
+  embedderKey,
   embedderRecord,
   pendingWork,
   refreshTree,
@@ -30,6 +33,8 @@ import {
 } from "./indexer.ts";
 import { LanceStore } from "./lance-store.ts";
 import { sha256Hex, type Library } from "./library.ts";
+import { IMAGE_THRESHOLD } from "./image-threshold.ts";
+import { findOutliers, type Member } from "./outliers.ts";
 import { acquireWriteLock } from "./lock.ts";
 import { RouteEmbedder } from "./route-embedder.ts";
 import { MODEL_MANIFEST } from "./model-manifest.ts";
@@ -266,7 +271,24 @@ async function likeVector(
   like: NonNullable<SearchQuery["like"]>,
   embedder: Embedder,
   searched: Store[],
+  storedOnly = false,
 ): Promise<Float32Array> {
+  if ("image" in like && storedOnly) {
+    // A hosted embedder without its paid-run port: only an image already indexed has a vector.
+    const sha256 = sha256Hex(like.image);
+    for (const store of searched) {
+      const [cached] = await store.cachedVectors(embedderKey(embedder), [{ sha256, view: "" }]);
+      if (cached) return cached.vec;
+    }
+    throw new SearchError(
+      "invalid_input",
+      "This image is not in the index, and the hosted embedder embeds only in a paid request.",
+      {
+        details: { sha256, reason: "not_indexed" },
+        hint: "Use the find tool (assetgrove find --like <file>), which asks before it spends.",
+      },
+    );
+  }
   if ("image" in like) return (await embedder.embedImages([like.image]))[0] as Float32Array;
   for (const store of searched) {
     const found = await store.query({
@@ -332,6 +354,7 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
       q.like,
       embedder,
       remote ? [local.store, remote] : [local.store],
+      spends,
     );
   }
 
@@ -359,6 +382,38 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
   const built = await remote.builtFrom(await sharedTree(ctx));
   const fresh = refreshed && built !== undefined && built.head === (await ctx.library.head());
   return { hits, fresh, builtFrom: built ?? null };
+}
+
+/** The off-style members of a set of asset addresses, by their indexed image vectors. */
+async function outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult> {
+  const embedder = await embedderFor(ctx);
+  const local = await localIndex(ctx, embedder);
+  await assertSameEmbedder(local.store, embedder, localDir(ctx));
+  // Advisory and free (design 7.5): a hosted embedder without its paid port refreshes nothing.
+  if (!(ctx.settings.embedder === "route" && !ctx.embedder?.embed)) await local.refresh();
+  // Pick and reference rows live in the shared store when one is set (design 7.8): look in both.
+  const stores: { store: Store; tree: string }[] = [{ store: local.store, tree: local.tree }];
+  if (ctx.settings.store) {
+    stores.push({ store: await openRemote(ctx, embedder), tree: await sharedTree(ctx) });
+  }
+  const members: Member[] = [];
+  for (const address of new Set(addresses)) {
+    for (const { store, tree } of stores) {
+      const found = await store.query({
+        filter: [
+          { field: "tree", op: "=", value: tree },
+          { field: "address", op: "=", value: address },
+        ],
+        limit: 50,
+      });
+      const vector = found.find((h) => h.row.imageVec)?.row.imageVec;
+      if (vector) {
+        members.push({ address, vector });
+        break;
+      }
+    }
+  }
+  return { members: members.length, outliers: findOutliers(members) };
 }
 
 async function index(
@@ -467,6 +522,51 @@ async function setup(ctx: SearchContext): Promise<Record<string, unknown>> {
   return { dir, model: MODEL_MANIFEST.id, installed: true };
 }
 
+/**
+ * Picked assets of exactly the query's kind and subject, at most `limit`. Without references they
+ * are ranked by words (the subject); with references each must also reach `threshold` in cosine
+ * similarity to one of them, and a null threshold lists none.
+ */
+export async function nearMatchesWith(
+  threshold: number | null,
+  q: NearMatchQuery,
+  ctx: SearchContext,
+): Promise<SearchFindResult> {
+  const where = [`kind=${q.kind}`, `subject=${q.subject}`];
+  const base = { where, sources: ["pick" as const] };
+  // A plan step never spends (design section 7.7): with a hosted embedder and no paid-run port it
+  // lists same-kind, same-subject picks unranked, and compares only references already indexed.
+  const storedOnly = ctx.settings.embedder === "route" && !ctx.embedder?.embed;
+  if (q.references.length === 0) {
+    return find({ ...base, ...(!storedOnly && { words: q.subject }), limit: q.limit }, ctx);
+  }
+  const pool = Math.max(q.limit * 20, 100);
+  let last: SearchFindResult | undefined;
+  const best = new Map<string, SearchHit>();
+  for (const image of q.references) {
+    try {
+      last = await find({ ...base, like: { image }, limit: pool }, ctx);
+    } catch (error) {
+      if (storedOnly && error instanceof SearchError && error.details["reason"] === "not_indexed")
+        continue;
+      throw error;
+    }
+    for (const hit of last.hits) {
+      if (threshold === null || hit.score < threshold) continue;
+      const had = best.get(hit.address);
+      if (!had || hit.score > had.score) best.set(hit.address, hit);
+    }
+  }
+  const hits = [...best.values()]
+    .sort((a, b) => b.score - a.score || (a.address < b.address ? -1 : 1))
+    .slice(0, q.limit)
+    .map((h, i) => ({ ...h, rank: i + 1 }));
+  return { hits, fresh: last?.fresh ?? true, builtFrom: last?.builtFrom ?? null };
+}
+
+const nearMatch = (q: NearMatchQuery, ctx: SearchContext) =>
+  nearMatchesWith(IMAGE_THRESHOLD, q, ctx);
+
 const sumPending = (a: PendingWork, b: PendingWork): PendingWork => ({
   images: a.images + b.images,
   texts: a.texts + b.texts,
@@ -523,7 +623,7 @@ async function forecast(
   return { images: pending.images, texts: pending.texts, queries, state };
 }
 
-export const searchSlot: SearchSlot = { find, index, status, setup, forecast };
+export const searchSlot: SearchSlot = { find, outliers, index, status, setup, nearMatch, forecast };
 
 /** Core's entry: refuses on darwin-x64 before LanceDB or Transformers.js is imported. */
 export default function searchExtension(_context: { api: 1 }): Extension {

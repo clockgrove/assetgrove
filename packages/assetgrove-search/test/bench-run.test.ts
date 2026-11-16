@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { PNG } from "pngjs";
 import { readBars } from "../../../bench/search/bars.ts";
 import { formatReport, runBench } from "../../../bench/search/bench.ts";
 import {
   CARD_PROMPT,
+  forVision,
   markSpotChecked,
+  MIN_VISION_SIDE,
   ScriptedVision,
   spotCheckSample,
-  writeCardTexts,
   type VisionProvider,
+  writeCardTexts,
 } from "../../../bench/search/card-text.ts";
 import { buildFixtureManifest, fixtureSource } from "../../../bench/search/fixture.ts";
 import { readManifest } from "../../../bench/search/manifest.ts";
@@ -152,5 +155,27 @@ describe("manifest building", () => {
       /cap/,
     );
     assert.equal(saved, 3);
+  });
+});
+
+describe("the image a vision model is shown", () => {
+  it("scales a small PNG up by a whole factor with hard pixels, and leaves other bytes alone", () => {
+    const small = new PNG({ width: 2, height: 1 });
+    small.data.set([255, 0, 0, 255, 0, 0, 255, 0]);
+    const shown = PNG.sync.read(Buffer.from(forVision(new Uint8Array(PNG.sync.write(small)))));
+    assert.equal(shown.width, MIN_VISION_SIDE);
+    assert.equal(shown.height, MIN_VISION_SIDE / 2);
+    const at = (x: number, y: number) => [
+      ...shown.data.subarray((y * shown.width + x) * 4).subarray(0, 4),
+    ];
+    assert.deepEqual(at(0, 0), [255, 0, 0, 255]);
+    assert.deepEqual(at(MIN_VISION_SIDE / 2 - 1, MIN_VISION_SIDE / 2 - 1), [255, 0, 0, 255]);
+    assert.deepEqual(at(MIN_VISION_SIDE / 2, 0), [0, 0, 255, 0]);
+
+    const big = new PNG({ width: MIN_VISION_SIDE, height: 4 });
+    const bigBytes = new Uint8Array(PNG.sync.write(big));
+    assert.equal(forVision(bigBytes), bigBytes);
+    const text = new TextEncoder().encode("a caption, not an image");
+    assert.equal(forVision(text), text);
   });
 });

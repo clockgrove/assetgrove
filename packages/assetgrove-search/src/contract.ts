@@ -117,6 +117,26 @@ export interface SearchFindResult {
   builtFrom: { head: string; at: string } | null;
 }
 
+/** Picked assets of exactly this kind and subject (design section 7.6). */
+export interface NearMatchQuery {
+  kind: string;
+  subject: string;
+  /** The images the request sends; with any, a match must clear the image-similarity threshold. */
+  references: Uint8Array[];
+  limit: number;
+}
+
+export interface SearchOutlier {
+  address: string;
+  distance: number;
+  z: number;
+}
+
+export interface SearchOutliersResult {
+  members: number;
+  outliers: SearchOutlier[];
+}
+
 /** What a request would embed, counted without embedding anything. */
 export interface SearchForecast {
   /** Image views neither in the vector cache nor already indexed unchanged. */
@@ -130,6 +150,8 @@ export interface SearchForecast {
 }
 
 export interface SearchSlot {
+  nearMatch?(query: NearMatchQuery, ctx: SearchContext): Promise<SearchFindResult>;
+  outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult>;
   find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;

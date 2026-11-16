@@ -800,6 +800,8 @@ export interface JobForecast {
   capUsd: number;
   /** Files the plan reads that no argument names: the default prompt template. */
   reads?: Record<string, string>;
+  /** The reference images the request loads (the key pose included), as apply's saved plan lists them. */
+  referencePaths: string[];
 }
 
 /** Whether the compiler runs: its route's provider can be called; otherwise the template applies. */
@@ -827,6 +829,9 @@ export async function planJobs(options: CreatePlanOptions): Promise<JobForecast>
     ],
     candidates: p.runOptions.candidates,
     capUsd: p.capUsd,
+    referencePaths: Object.entries(p.inputs)
+      .filter(([name]) => name.startsWith("reference/"))
+      .map(([, input]) => input.path),
     ...(options.templatePath === undefined && { reads: { template: p.template.path } }),
   };
 }
@@ -998,6 +1003,9 @@ export async function applyJobs(
     jobs: prepared.applyJobs,
     candidates: prepared.runOptions.candidates,
     capUsd: prepared.capUsd,
+    referencePaths: Object.entries(prepared.inputs)
+      .filter(([name]) => name.startsWith("reference/"))
+      .map(([, input]) => input.path),
   };
 }
 

@@ -22,6 +22,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { confirmCommand } from "../src/commands/confirm.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
+import { decodeImage, encodePng } from "../src/image/raster.ts";
 import { loadSettings } from "../src/settings.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
@@ -307,4 +308,59 @@ test("pick over MCP: a run changed while the form is open exits 2 plan_changed",
   const doc = await call(client, "pick", { run: runDir, target: world.targetDir });
   assert.equal(doc["exitCode"], 2, JSON.stringify(doc["error"]));
   assert.equal(doc["error"].code, "plan_changed");
+});
+
+test("library adopt over MCP: the pick form names the run and its profile, and accepting it adopts the hand edit", async () => {
+  const staging = await stageWorld();
+  const { world } = staging;
+  const runs = join(world.targetDir, ".assetgrove", "runs");
+  const { client: stager } = await connect(freeScript);
+  const staged = await call(stager, "stage", { ...staging.args, runs });
+  assert.equal(staged["exitCode"], 0, JSON.stringify(staged["error"]));
+  useAttended();
+  const { client, forms } = await connect(freeScript, (form): ElicitResult => {
+    const schema = (
+      form as { requestedSchema: { properties: Record<string, { enum?: string[] }> } }
+    ).requestedSchema.properties;
+    return schema["candidate"]
+      ? { action: "accept", content: { candidate: schema["candidate"].enum![0]! } }
+      : { action: "accept", content: { approve: true } };
+  });
+  const picked = await call(client, "pick", {
+    run: staged["runDir"] as string,
+    candidate: "c1",
+    target: world.targetDir,
+  });
+  assert.equal(picked["exitCode"], 0, JSON.stringify(picked["error"]));
+
+  // A person swaps the colours of two opaque pixels: the palette and the bounds stay.
+  const media = join(world.targetDir, "assets/source/fern/shelter.png");
+  const original = join(world.dir, "original.png");
+  await writeFile(original, await readFile(media));
+  const raster = decodeImage(new Uint8Array(await readFile(media)));
+  const rgb = (p: number) => [...raster.data.subarray(p, p + 3)].join();
+  const opaque = [...Array(raster.width * raster.height).keys()]
+    .map((n) => n * 4)
+    .filter((p) => raster.data[p + 3] === 255);
+  const a = opaque[0]!;
+  const b = opaque.find((p) => rgb(p) !== rgb(a))!;
+  const colour = raster.data.slice(a, a + 3);
+  raster.data.copyWithin(a, b, b + 3);
+  raster.data.set(colour, b);
+  await writeFile(media, encodePng(raster));
+
+  forms.length = 0;
+  const doc = await call(client, "library_adopt", {
+    address: join(world.targetDir, "assets/source/fern/fern-shelter.md"),
+    original,
+    target: world.targetDir,
+  });
+  assert.equal(doc["exitCode"], 0, JSON.stringify(doc["error"]));
+  assert.equal(forms.length, 1);
+  assert.match(forms[0]!.message, /profile synthetic-grove \(sha256 [0-9a-f]{64}\)/);
+  assert.match(forms[0]!.message, /of the run \S+ \(/);
+  assert.equal(doc["confirmation"].method, "elicitation");
+  assert.equal(doc["version"], 2);
+  const saved = await record(doc["confirmation"].digest);
+  assert.equal(saved["client"], CLIENT);
 });

@@ -13,6 +13,7 @@ import { parseArgs } from "node:util";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  BACKGROUND_NOTE,
   CARD_PROMPT,
   gatewayVision,
   markSpotChecked,
@@ -98,7 +99,8 @@ if (values.sample) {
     manifest,
     source,
     provider,
-    prompt: CARD_PROMPT,
+    // The scripted provider keeps the bare prompt its fixture records.
+    prompt: scripted ? CARD_PROMPT : `${CARD_PROMPT} ${BACKGROUND_NOTE}`,
     force: values.force,
     maxCalls: Number(values["max-calls"]),
     // Save after every text: a failure late in the run loses nothing already paid for.

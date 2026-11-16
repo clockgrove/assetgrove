@@ -1,0 +1,69 @@
+/**
+ * Near matches before paid generation (design section 7.6): with search loaded and `search.nearMatch`
+ * on, the plan step of plan, stage, apply and generate-sheet lists up to three picked assets of
+ * exactly the spec's kind and subject. The slot applies the image-similarity threshold it ships
+ * when the request has references. A failed search records `searchError` and the plan goes on.
+ */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { calling, searchCall } from "../commands/search.ts";
+import type { RunContext } from "../commands/types.ts";
+import type { SearchHit } from "../extension/api.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
+import type { AssetSpec } from "../types.ts";
+import { writeFindSheet } from "./sheet.ts";
+
+/** The most near matches a plan lists. */
+export const NEAR_MATCH_LIMIT = 3;
+
+const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
+
+export type NearMatch = SearchHit;
+
+export interface NearMatchOutcome {
+  nearMatches?: NearMatch[];
+  nearMatchSheet?: string;
+  searchError?: string;
+}
+
+/**
+ * The near matches of one spec: `{}` when no extension fills the search slot or near matches are
+ * off, so every field is absent; `searchError` when the search failed.
+ */
+export async function nearMatchesFor(
+  spec: Pick<AssetSpec, "kind" | "assetId" | "subject">,
+  referencePaths: readonly string[],
+  ctx: RunContext,
+): Promise<NearMatchOutcome> {
+  const slot = (ctx.extensions ?? CORE_REGISTRY).search;
+  if (slot?.nearMatch === undefined || ctx.settings.search?.nearMatch === false) return {};
+  try {
+    const { context, reader } = await searchCall("find", undefined, ctx);
+    if (!context.settings.nearMatch) return {};
+    const references: Uint8Array[] = [];
+    for (const path of new Set(referencePaths.filter((p) => IMAGE.test(p))))
+      references.push(new Uint8Array(await readFile(path)));
+    const result = await calling(() =>
+      slot.nearMatch!(
+        {
+          kind: spec.kind,
+          subject: spec.subject ?? spec.assetId,
+          references,
+          limit: NEAR_MATCH_LIMIT,
+        },
+        context,
+      ),
+    );
+    const hits = result.hits.slice(0, NEAR_MATCH_LIMIT);
+    if (hits.length === 0) return { nearMatches: [] };
+    const images = await Promise.all(hits.map((hit) => reader.loadImageByPath(hit.path)));
+    const nearMatchSheet = await writeFindSheet(
+      hits,
+      images,
+      join(ctx.settings.stateDir, "search", "sheets"),
+    );
+    return { nearMatches: hits, nearMatchSheet };
+  } catch (error) {
+    return { searchError: error instanceof Error ? error.message : String(error) };
+  }
+}

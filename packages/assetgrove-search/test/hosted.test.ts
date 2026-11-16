@@ -12,19 +12,21 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { commands } from "../../../src/commands/registry.ts";
+import { searchCall } from "../../../src/commands/search.ts";
 import { runCommand } from "../../../src/commands/runner.ts";
 import type { CommandSpec, Outcome, RunContext } from "../../../src/commands/types.ts";
 import type { ConfirmPort, ConfirmRequest } from "../../../src/confirm/prompt.ts";
 import { routeDataFlows } from "../../../src/dataflows.ts";
 import { coreExtension } from "../../../src/extensions/core.ts";
 import { ExtensionRegistry } from "../../../src/extensions/registry.ts";
+import { nearMatchesFor } from "../../../src/search/near-match.ts";
 import { loadSettings } from "../../../src/settings.ts";
 import { GAME, fixtureLibrary } from "../../../test/fixtures/library.ts";
-import searchExtension from "../src/extension.ts";
+import searchExtension, { nearMatchesWith } from "../src/extension.ts";
 
 const script = fileURLToPath(new URL("./fixtures/embed-script.ts", import.meta.url));
 const calls = ((globalThis as { embedCalls?: { image: number; text: number } }).embedCalls ??= {
@@ -142,7 +144,38 @@ test("reads with a hosted embedder use stored vectors only; find with words is a
     assert.equal(found.exitCode, 0, JSON.stringify(found.error));
     assert.ok((found.fields["hits"] as unknown[]).length > 0, JSON.stringify(args));
   }
-  assert.equal(total(), before, "no provider call from a read");
+  // A plan step's near matches: by stored vectors only, with and without a reference image.
+  const lanternHit = (
+    (await run("find", { where: ["subject=lantern"] })).fields["hits"] as { path: string }[]
+  )[0]!;
+  const reference = isAbsolute(lanternHit.path) ? lanternHit.path : join(lib.dir, lanternHit.path);
+  const cwd = process.cwd();
+  process.chdir(lib.dir);
+  try {
+    const near: RunContext = { settings: loadSettings(), extensions, log: () => {} };
+    const spec = { kind: "still", assetId: "lantern", subject: "lantern" };
+    for (const refs of [[], [reference]]) {
+      const outcome = await nearMatchesFor(spec, refs, near);
+      assert.equal(outcome.searchError, undefined, JSON.stringify(refs));
+      // The shipped threshold is unmeasured (null), so a reference lists none; without, by subject.
+      if (refs.length === 0) assert.ok((outcome.nearMatches ?? []).length > 0);
+    }
+    // With a threshold, the reference's stored vector finds the lantern itself.
+    const { context } = await searchCall("find", undefined, near);
+    const image = new Uint8Array(readFileSync(reference));
+    const matched = await nearMatchesWith(
+      0.99,
+      { kind: "still", subject: "lantern", references: [image], limit: 3 },
+      context,
+    );
+    assert.deepEqual(
+      matched.hits.map((h) => h.address),
+      [`asset://${GAME}/lantern`],
+    );
+  } finally {
+    process.chdir(cwd);
+  }
+  assert.equal(total(), before, "no provider call from a read or a plan step");
   assert.equal(asked.length, 0);
   assert.equal(embedEntries().length, ledger);
 

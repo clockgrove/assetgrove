@@ -77,6 +77,12 @@ writeFileSync(
           builtFrom: { head: await ctx.library.head(), at: "2026-01-01T00:00:00.000Z" },
         };
       },
+      async outliers(addresses) {
+        return {
+          members: addresses.length,
+          outliers: addresses.slice(0, 1).map((address) => ({ address, distance: 0.9, z: 5 })),
+        };
+      },
       async index() { return { indexed: true }; },
       async status(ctx) { return { game: ctx.game, store: ctx.stateDir + "/search" }; },
       async setup() { return { installed: true }; },
@@ -243,4 +249,59 @@ test("an AWS variable that could redirect index data exits 2 settings_invalid be
   const allowed = await cli(["search", "status", "--json"], env);
   assert.equal(allowed.code, 0, allowed.stderr);
   assert.equal(doc(allowed).game, GAME);
+});
+
+test("the tree's find, like and where paths return the same hits as find, and are listed only with the package", async () => {
+  useSettings(false);
+  const absent = await connect();
+  const none = (await absent.listResourceTemplates()).resourceTemplates.map((t) => t.uriTemplate);
+  for (const path of ["find/", "like/", "where/"])
+    assert.ok(!none.some((t) => t.includes(`/${path}`)), path);
+
+  useSettings(true);
+  const client = await connect();
+  const templates = (await client.listResourceTemplates()).resourceTemplates.map(
+    (t) => t.uriTemplate,
+  );
+  for (const path of ["find/{words}", "like/{asset}", "where/{filter}"])
+    assert.ok(
+      templates.some((t) => t.endsWith(`/${path}`)),
+      path,
+    );
+
+  const cases = [
+    { uri: `asset://${GAME}/find/lantern`, tool: { words: "lantern" } },
+    { uri: `asset://${GAME}/like/lantern`, tool: { like: `asset://${GAME}/lantern` } },
+    {
+      uri: `asset://${GAME}/where/${encodeURIComponent("kind=still")}`,
+      tool: { where: ["kind=still"] },
+    },
+  ];
+  for (const { uri, tool } of cases) {
+    const read = await client.readResource({ uri });
+    const text = (read.contents[0] as { text: string }).text;
+    const path = JSON.parse(text);
+    const call = await client.callTool({ name: "find", arguments: tool });
+    const found = call.structuredContent as { hits: unknown[]; fresh: boolean; builtFrom: unknown };
+    assert.ok(found.hits.length > 0, uri);
+    assert.deepEqual(path.hits, found.hits, uri);
+    assert.equal(path.fresh, found.fresh);
+    assert.deepEqual(path.builtFrom, found.builtFrom);
+    assert.equal(path.sheet, undefined, "a read writes no sheet");
+  }
+});
+
+test("find --outliers hands the slot a folder's assets and lists what it returns", async () => {
+  useSettings(true);
+  const result = await cli(["find", "--outliers", `asset://${GAME}/`, "--json"]);
+  assert.equal(result.code, 0, result.stderr);
+  const document = doc(result);
+  assert.ok(document.members > 1);
+  assert.equal(document.outliers.length, 1);
+  assert.ok(document.outliers[0].z > 3);
+  assert.ok(document.outliers[0].address.startsWith(`asset://${GAME}/`));
+  assert.ok(!document.outliers[0].address.endsWith("/"));
+  assert.equal(document.hits, undefined);
+  const bad = await cli(["find", "--outliers", `asset://${GAME}/lantern/card`, "--json"]);
+  assert.equal(bad.code, 2);
 });

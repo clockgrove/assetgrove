@@ -395,7 +395,11 @@ export async function readText(path: string): Promise<string | undefined> {
   }
 }
 
-async function readOwnCard(path: string, root: string, dir: string): Promise<Card | undefined> {
+export async function readOwnCard(
+  path: string,
+  root: string,
+  dir: string,
+): Promise<Card | undefined> {
   const text = await readText(path);
   if (text === undefined) return undefined;
   const card = parseCard(text, path);
@@ -403,7 +407,7 @@ async function readOwnCard(path: string, root: string, dir: string): Promise<Car
   return card;
 }
 
-async function readOwnReview(
+export async function readOwnReview(
   path: string,
   root: string,
   dir: string,
@@ -433,7 +437,7 @@ export async function writeAtomic(path: string, content: string | Uint8Array): P
 }
 
 /** Writes `text` atomically unless the file already holds it; whether it wrote. */
-async function writeIfChanged(path: string, text: string): Promise<boolean> {
+export async function writeIfChanged(path: string, text: string): Promise<boolean> {
   if ((await readText(path)) === text) return false;
   await writeAtomic(path, text);
   return true;
@@ -552,6 +556,8 @@ export interface LibraryVersionInput {
   now: Date;
   /** The annotation's action for the new version; `pick` or `replace` when absent. */
   action?: "adopt";
+  /** The version's digital source type, recorded on an adopted version. */
+  digitalSourceType?: string;
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
 }
@@ -611,6 +617,7 @@ export async function commitLibraryWrite(
       candidate: input.candidate,
       at,
       ...(confirmation && { confirmation }),
+      ...(input.digitalSourceType !== undefined && { digitalSourceType: input.digitalSourceType }),
     });
     record = appendAnnotation(record, {
       type: "Annotation",
@@ -660,6 +667,36 @@ export async function commitLibraryWrite(
 
   // 5. Each index.md from the library root down.
   const cards = scanCards(config.root);
+  files.push(...(await writeIndexes(config, cards)));
+
+  // 6. log.md, projected from the review records, unless logs are off.
+  if (config.log) {
+    files.push(
+      ...(await writeLogs(config, cards, {
+        dir,
+        assetId,
+        title,
+        record,
+        at,
+        bibleVersion: input.provenance.bibleVersion,
+        before: plan.cards,
+      })),
+    );
+  }
+
+  return {
+    assetId,
+    version: versionNumber(record, record.versions.at(-1)!.sha256)!,
+    sha256: record.versions.at(-1)!.sha256,
+    state: versionStatus(record, record.versions.at(-1)!.sha256),
+    appended,
+    files,
+  };
+}
+
+/** Writes each `index.md` from the library root down to every card; the files it changed. */
+export async function writeIndexes(config: LibraryConfig, cards: FoundCard[]): Promise<string[]> {
+  const files: string[] = [];
   const folders = new Set<string>([config.root]);
   for (const found of cards) {
     for (let folder = found.dir; within(config.root, folder); folder = dirname(folder)) {
@@ -686,58 +723,73 @@ export async function commitLibraryWrite(
     const path = join(folder, "index.md");
     if (await writeIfChanged(path, text)) files.push(path);
   }
+  return files;
+}
 
-  // 6. log.md, projected from the review records, unless logs are off.
-  if (config.log) {
-    const rootLog = join(config.root, "log.md");
-    const bible = bibleLines(await readText(rootLog));
-    const baseline =
-      bible.at(-1)?.to ??
-      plan.cards
-        .map((c) => c.bible)
-        .filter((v): v is string => v !== undefined)
-        .reduce<string | undefined>(
-          (max, v) => (max === undefined || newer(v, max) ? v : max),
-          undefined,
-        );
-    const current = input.provenance.bibleVersion;
-    const bibleChanged =
-      baseline !== undefined && current !== undefined && newer(current, baseline);
-    if (bibleChanged) bible.push({ at, action: "bible", from: baseline, to: current });
-    const logFolders = new Set([dir]);
-    if (bibleChanged) logFolders.add(config.root);
-    for (const folder of logFolders) {
-      const entries: LogEntry[] = folder === config.root ? [...bible] : [];
-      for (const found of cards.filter((c) => c.dir === folder)) {
-        const own = found.id === assetId && folder === dir;
-        let review: ReviewRecord | undefined = own ? record : undefined;
-        if (!review) {
-          const reviewPath = join(folder, `${found.id}.review.json`);
-          try {
-            review = await readOwnReview(reviewPath, config.root, folder, undefined);
-          } catch {
-            review = undefined;
-          }
-        }
-        if (review) {
-          entries.push(
-            ...logEntriesFromReview(review, { id: found.id, title: own ? title : found.title }),
-          );
+/** The asset a log write is for: its record as just written, and the bible it was made under. */
+export interface LogSubject {
+  dir: string;
+  assetId: string;
+  title: string;
+  record: ReviewRecord;
+  /** The time of a `bible` line this write adds. */
+  at: string;
+  /** The bible version of this write; a newer one than the log's latest adds a `bible` line. */
+  bibleVersion?: string;
+  /** The cards before this write, for the bible baseline of a log with no `bible` line. */
+  before: FoundCard[];
+}
+
+/**
+ * Writes the asset folder's `log.md` from the review records of the cards in it, and the root log
+ * when a `bible` line is added (it keeps its `bible` lines); the files it changed.
+ */
+export async function writeLogs(
+  config: LibraryConfig,
+  cards: FoundCard[],
+  subject: LogSubject,
+): Promise<string[]> {
+  const files: string[] = [];
+  const { dir, assetId, title, record, at } = subject;
+  const rootLog = join(config.root, "log.md");
+  const bible = bibleLines(await readText(rootLog));
+  const baseline =
+    bible.at(-1)?.to ??
+    subject.before
+      .map((c) => c.bible)
+      .filter((v): v is string => v !== undefined)
+      .reduce<string | undefined>(
+        (max, v) => (max === undefined || newer(v, max) ? v : max),
+        undefined,
+      );
+  const current = subject.bibleVersion;
+  const bibleChanged = baseline !== undefined && current !== undefined && newer(current, baseline);
+  if (bibleChanged) bible.push({ at, action: "bible", from: baseline, to: current });
+  const logFolders = new Set([dir]);
+  if (bibleChanged) logFolders.add(config.root);
+  for (const folder of logFolders) {
+    const entries: LogEntry[] = folder === config.root ? [...bible] : [];
+    for (const found of cards.filter((c) => c.dir === folder)) {
+      const own = found.id === assetId && folder === dir;
+      let review: ReviewRecord | undefined = own ? record : undefined;
+      if (!review) {
+        const reviewPath = join(folder, `${found.id}.review.json`);
+        try {
+          review = await readOwnReview(reviewPath, config.root, folder, undefined);
+        } catch {
+          review = undefined;
         }
       }
-      const path = join(folder, "log.md");
-      if (await writeIfChanged(path, renderLog(entries))) files.push(path);
+      if (review) {
+        entries.push(
+          ...logEntriesFromReview(review, { id: found.id, title: own ? title : found.title }),
+        );
+      }
     }
+    const path = join(folder, "log.md");
+    if (await writeIfChanged(path, renderLog(entries))) files.push(path);
   }
-
-  return {
-    assetId,
-    version: versionNumber(record, record.versions.at(-1)!.sha256)!,
-    sha256: record.versions.at(-1)!.sha256,
-    state: versionStatus(record, record.versions.at(-1)!.sha256),
-    appended,
-    files,
-  };
+  return files;
 }
 
 /** This build's package version, for the card's `generated.by`. */
