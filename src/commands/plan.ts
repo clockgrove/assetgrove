@@ -68,13 +68,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     ...specReads("spec", spec),
     ...forecast.reads,
   };
-  const near = await nearMatchesFor(
-    spec.value,
-    Object.entries(reads)
-      .filter(([name]) => name.startsWith("bible/"))
-      .map(([, path]) => path),
-    ctx,
-  );
+  const near = await nearMatchesFor(spec.value, forecast.referencePaths, ctx);
   const work: WorkPlan = await buildWorkPlan(planCommand, args, {
     near,
     inputs: ["spec", "bible", "profile", "brief", "runOptions", "template"],
