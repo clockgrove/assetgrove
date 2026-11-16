@@ -300,6 +300,16 @@ test("every paid Caller call reserves in the budget's ledger with its route and 
       `paid-test:vision:${defaultRoutes["vision"]!.model}`,
       `paid-test:still:${defaultRoutes["still"]!.model}`,
     ]);
+    // The answered call's settlement records the provider's request ID; the failed call has none,
+    // and the refused one is cancelled at 0.
+    assert.deepEqual(
+      l.entries().map((e) => [e.provider, e.costUsd, e.requestId ?? null]),
+      [
+        ["paid-test", 0.1, "scripted-image-0"],
+        ["paid-test", defaultRoutes["vision"]!.estimatedCostUsd, null],
+        ["paid-test", 0, null],
+      ],
+    );
   }));
 
 test("free Caller calls never reach the ledger, whatever the provider is named; the run's cap still applies", async () => {
