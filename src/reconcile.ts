@@ -297,8 +297,9 @@ async function perCall(
   billing: Billing,
   lookups: PendingCall[],
   unmatchedBefore: number,
-  pendingId?: string,
+  pending?: PendingRecord,
 ): Promise<ReconcileEntry> {
+  const pendingId = pending?.id;
   const retry = pendingId !== undefined;
   let unmatched = unmatchedBefore;
   let ledgerUsd = 0;
@@ -307,6 +308,8 @@ async function perCall(
   const ledger = SpendLedger.fromSettings(ctx.settings, { env: {} });
   const waiting: PendingCall[] = [];
   const looked: PendingCall[] = [];
+  // The calls this pass settled, so a retry's updated pending record carries their settled cost.
+  const settledNow = new Map<PendingCall, PendingCall>();
   for (const call of lookups) {
     const cost = await billing.callCost!(call.requestId);
     if (cost === null) {
@@ -323,7 +326,9 @@ async function perCall(
       if (Math.abs(call.ledgerUsd - cost) > EPSILON) ledger.settle(call.id, cost, call.requestId);
       settled++;
       // The pending record keeps the settled cost, so a retry finds nothing left to settle.
-      looked.push({ ...call, ledgerUsd: cost });
+      const after = { ...call, ledgerUsd: cost };
+      if (Math.abs(call.ledgerUsd - cost) > EPSILON) settledNow.set(call, after);
+      looked.push(after);
       continue;
     }
     looked.push(call);
@@ -348,6 +353,14 @@ async function perCall(
         runId,
         calls: looked,
         unmatched,
+      };
+      appendJsonLine(reconcilePath(ctx.settings.stateDir), record, "reconcile record");
+    } else if (settledNow.size > 0 && pending !== undefined) {
+      // A retry that settled an estimate rewrites the lookup (same id and age), so the next retry
+      // finds that call's ledger cost equal to the provider's and settles it no second time.
+      const record: PendingRecord = {
+        ...pending,
+        calls: lookups.map((c) => settledNow.get(c) ?? c),
       };
       appendJsonLine(reconcilePath(ctx.settings.stateDir), record, "reconcile record");
     }
@@ -384,21 +397,27 @@ async function perCall(
   );
 }
 
-/** The pending lookups not yet resolved, oldest first. */
+/**
+ * The pending lookups not yet resolved, oldest first. A retry that settled an estimate appends the
+ * lookup again under its id; the last record of an id is the one that holds.
+ */
 export function pendingLookups(stateDir: string): PendingRecord[] {
   const values = readJsonLines(reconcilePath(stateDir), "reconcile record") as Array<
     PendingRecord | ResolvedRecord
   >;
   const resolved = new Set(values.filter((v) => v.op === "resolved").map((v) => v.id));
-  return values.filter(
-    (v): v is PendingRecord =>
+  const latest = new Map<string, PendingRecord>();
+  for (const v of values)
+    if (
       v.op === "pending" &&
       typeof v.id === "string" &&
       typeof v.provider === "string" &&
       typeof v.runId === "string" &&
       Array.isArray(v.calls) &&
-      !resolved.has(v.id),
-  );
+      !resolved.has(v.id)
+    )
+      latest.set(v.id, v);
+  return [...latest.values()];
 }
 
 /** An expired lookup: the provider never reported its calls in time, so nothing was compared. */
@@ -455,7 +474,7 @@ export async function retryPending(ctx: ReconcileContext): Promise<ReconcileEntr
         billing,
         pending.calls,
         typeof pending.unmatched === "number" ? pending.unmatched : 0,
-        pending.id,
+        pending,
       );
     } catch (error) {
       entry = {

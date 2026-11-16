@@ -535,3 +535,57 @@ export default {
   assert.equal(await settles(), once);
   assert.equal(existsSync(join(stateDir, "holds.jsonl")), false, "no hold");
 });
+
+test("an estimate first reported on a retry is settled once over the following retries", async () => {
+  const stateDir = await freshState();
+  settings(stateDir);
+  const { args, dir } = await stageArgs();
+  const images = join(dir, "images-reported.txt");
+  const vision = join(dir, "vision-reported.txt");
+  const path = join(dir, "late-script.mjs");
+  await writeFile(
+    path,
+    `import { existsSync } from "node:fs";
+import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
+export default {
+  paid: true,
+  reconcile: "per-call-cost",
+  callCost: (id) =>
+    id.startsWith("scripted-image-") ? (existsSync(${JSON.stringify(images)}) ? 0.0001 : undefined)
+    : !id.startsWith("scripted-vision-") ? 0
+    : existsSync(${JSON.stringify(vision)}) ? 0.05 : undefined,
+  image: (r, i) => base.image(r, i),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+};`,
+  );
+  approve(path);
+  const r = await cli([...args, "--provider-script", path]);
+  assert.equal(r.code, 0, r.stderr);
+  const [entry] = await runReconcile(r);
+  assert.equal(entry?.status, "pending", JSON.stringify(entry));
+  const settles = async () =>
+    (await readLines<{ op: string }>(join(stateDir, "spend.jsonl"))).filter(
+      (e) => e.op === "settle",
+    ).length;
+  const before = await settles();
+  await writeFile(images, "");
+  const retry = async () => {
+    const out = await cli(["spend", "reconcile", "--provider-script", path, "--json"]);
+    assert.equal(out.code, 0, out.stderr);
+    return JSON.parse(out.stdout) as { reconciled: ReconcileEntry[] };
+  };
+  await retry();
+  const once = await settles();
+  assert.ok(once > before, "the retry that first sees the image costs settles them");
+  await retry();
+  await retry();
+  assert.equal(await settles(), once, "later retries append no second settle");
+  await writeFile(vision, "");
+  const done = await retry();
+  assert.deepEqual(
+    done.reconciled.map((e) => e.status),
+    ["reconciled"],
+  );
+  assert.equal(await settles(), once);
+  assert.equal(existsSync(join(stateDir, "holds.jsonl")), false, "no hold");
+});
