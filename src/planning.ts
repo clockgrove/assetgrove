@@ -822,11 +822,12 @@ function templateOutput(p: Prepared): CompilerRecord["output"] {
   return { prompt: `${p.rendered}\n${p.canonical}`, negativePrompt: p.negative };
 }
 
-/** `text` without `suffix`, or undefined when it does not end with it after some text. */
+/**
+ * `text` without `suffix`, or undefined when it does not end with it. Text that is exactly the
+ * suffix splits, as "": the compiler wrote nothing of its own there (an empty negative prompt).
+ */
 function before(text: string, suffix: string): string | undefined {
-  return text.length > suffix.length && text.endsWith(suffix)
-    ? text.slice(0, -suffix.length)
-    : undefined;
+  return text.endsWith(suffix) ? text.slice(0, -suffix.length) : undefined;
 }
 
 /**
@@ -851,6 +852,7 @@ function compiledParts(prompts: PlanPrompts, p: Prepared): PromptPart[] {
   const template = split(planPrompts(p, templateOutput(p)));
   const parts: PromptPart[] = [];
   const add = (label: PromptPartLabel, own: string | undefined, whole: string, tpl?: string) => {
+    if (own === "") return; // split, with nothing compiler-written: no part
     const part = own === undefined ? { label: "text" as const, text: whole } : { label, text: own };
     if (own !== tpl && !parts.some((q) => q.label === part.label && q.text === part.text))
       parts.push(part);

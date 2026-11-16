@@ -340,6 +340,26 @@ test("when the check objects only to compiler-written text, apply falls back to 
   assert.equal(policy.probability, 0.1, "the deciding answer's probability");
 });
 
+test("a compiler's empty negative prompt adds no part: the bible's rules are not read again as request text", async () => {
+  writeSettings({});
+  const { world, planFile, planArgs } = await planWorld();
+  const made = await cli([...planArgs, "--json"]);
+  assert.equal(made.code, 0, made.stdout + made.stderr);
+  await compiledPlan(planFile, "");
+  const runs = join(world.dir, "apply-runs");
+  const provider = await recorder(world.dir, ALLOW);
+  const apply = ["apply", planFile, "--out", runs, "--provider-script", provider.script, "--json"];
+  const dry = await cli([...apply, "--dry-run"]);
+  assert.equal(dry.code, 0, dry.stdout + dry.stderr);
+  const hits = doc(dry)["promptPolicy"].hits as Doc[];
+  assert.deepEqual(
+    hits.filter((h) => h.term === "imitate").map((h) => h.part),
+    ["rules"],
+    "the bible's Don't is a rule only, not also a text or model-written part",
+  );
+  assert.deepEqual(await provider.events(), []);
+});
+
 test("when the check also objects to the person's text, apply exits 9 with no generation", async () => {
   writeSettings({});
   const { world, planFile, planArgs } = await planWorld();
