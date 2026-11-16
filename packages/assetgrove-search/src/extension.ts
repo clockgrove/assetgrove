@@ -400,7 +400,7 @@ async function find(q: SearchQuery, ctx: SearchContext): Promise<SearchFindResul
   });
 }
 
-/** The off-style members of a set of asset addresses, by their indexed image vectors. */
+/** Every member of a set of asset addresses ranked by its indexed image vector, uncut (design 7.5). */
 async function outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult> {
   const embedder = await embedderFor(ctx);
   const local = await localIndex(ctx, embedder);
@@ -413,7 +413,7 @@ async function outliers(addresses: string[], ctx: SearchContext): Promise<Search
     await assertSameEmbedder(remote, embedder, remoteWhere(ctx));
     stores.push({ store: remote, tree: await sharedTree(ctx) });
   }
-  // Advisory and free (design 7.5): a hosted embedder without its paid port refreshes nothing.
+  // The ranking is free (design 7.5): a hosted embedder without its paid port refreshes nothing.
   if (!(ctx.settings.embedder === "route" && !ctx.embedder?.embed)) await local.refresh();
   const members: Member[] = [];
   for (const address of new Set(addresses)) {
@@ -432,7 +432,7 @@ async function outliers(addresses: string[], ctx: SearchContext): Promise<Search
       }
     }
   }
-  return { members: members.length, outliers: findOutliers(members) };
+  return { members: members.length, ranking: findOutliers(members) };
 }
 
 async function index(

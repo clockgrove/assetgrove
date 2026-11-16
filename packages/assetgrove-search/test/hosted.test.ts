@@ -473,7 +473,7 @@ test("a finished search index or find is run again, not replayed: rebuilds alter
   assert.equal(embedEntries().length, ledger);
 });
 
-test("with the local model find and search index take no tracked-key guard and no paid annotations", async () => {
+test("with the local model find and search index embed nothing and take no tracked-key guard; only find --outliers pays", async () => {
   const name = ["AI", "GATEWAY", "API", "KEY"].join("_");
   const value = `agk-test-${"0123456789abcdef".split("").reverse().join("")}-synthetic`;
   const repo = realpathSync(mkdtempSync(join(home, "repo-")));
@@ -493,20 +493,27 @@ test("with the local model find and search index take no tracked-key guard and n
     ] as const) {
       const outcome = await run(command, args, [], env);
       assert.notEqual(outcome.error?.code, "key_tracked", command);
-      assert.equal(toolAnnotations(spec(command), local).openWorldHint, false, command);
-      assert.equal(requiresUserInteraction(spec(command), false, local), false, command);
     }
+    assert.equal(toolAnnotations(spec("search index"), local).openWorldHint, false);
+    assert.equal(requiresUserInteraction(spec("search index"), false, local), false);
+    // find --outliers asks style-outlier decisions under every embedder (#366): it takes the guard,
+    // and the find tool is marked as asking a spend confirmation, except under headless settings.
+    const judged = await run("find", { outliers: `asset://${GAME}/` }, [], env);
+    assert.equal(judged.error?.code, "key_tracked");
+    assert.equal(toolAnnotations(spec("find"), local).openWorldHint, true);
+    assert.equal(requiresUserInteraction(spec("find"), false, local), true);
+    assert.equal(requiresUserInteraction(spec("find"), true, local), false);
 
     hosted();
     const paid: RunContext = { settings: loadSettings(), extensions, log: () => {} };
     const refused = await run("find", { words: "lantern" }, [], env);
     assert.equal(refused.error?.code, "key_tracked");
     // A hosted find without words still brings the index up to date, which can embed: it takes
-    // the guard too. Only --outliers, advisory and free, reaches no provider and takes none.
+    // the guard too, as does --outliers, which asks style-outlier decisions.
     const where = await run("find", { where: ["kind=still"] }, [], env);
     assert.equal(where.error?.code, "key_tracked");
-    const free = await run("find", { outliers: `asset://${GAME}/` }, [], env);
-    assert.notEqual(free.error?.code, "key_tracked");
+    const hostedJudged = await run("find", { outliers: `asset://${GAME}/` }, [], env);
+    assert.equal(hostedJudged.error?.code, "key_tracked");
     assert.equal(toolAnnotations(spec("find"), paid).openWorldHint, true);
     // A hosted embedder asks a spend confirmation, so the server marks both tools at start,
     // except under headless settings.

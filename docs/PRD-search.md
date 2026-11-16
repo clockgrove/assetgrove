@@ -143,7 +143,7 @@ One search takes any mix of three inputs: words, an image, and field filters. It
 - **The same search everywhere:** the CLI command, an MCP tool of the same name, and the search paths in the asset tree below all call one search.
 - **Results:** a numbered contact sheet with each match beside its score and card fields, plus JSON with paths, scores and cards. The contact sheet is the same kind of image the developer already uses to pick candidates.
 - **Before spending:** when the agent plans a paid generation, Assetgrove searches for near matches first and shows them with the cost forecast: "three existing lanterns look close; reuse one, or generate?" The developer can turn this off.
-- **Set outliers:** `assetgrove find --outliers <set>` lists the assets in a set whose nearest neighbours are farthest from the rest, a cheap second check on style consistency.
+- **Set outliers:** `assetgrove find --outliers <set>` ranks every asset in a set by its image's mean embedding distance to the rest, free and uncut, and asks one `style-outlier` decision (about $0.001) for each of the five most distant: shown it, a contact sheet of about eight typical members and the style bible's text, is it drawn in a different art style? It lists the yes answers and prints the whole ranking. The distance alone is never the verdict: it tracks subject and pose as much as style.
 - **Scope:** one game by default, every indexed game with `--game all`.
 
 ## The asset tree

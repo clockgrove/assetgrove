@@ -2,7 +2,7 @@
  * The set-level audit (issue #243, design section 8): a tree folder's members scored for style
  * and, where the subject has a lock, for identity; one spend confirmation, a repeat reused with no
  * call; each score's spread and the members beyond the set-consistency bar; advisory scores; search
- * outliers at no cost when the slot is loaded; nothing written into the target.
+ * ranking at no cost when the slot is loaded; nothing written into the target.
  */
 import "./fixtures/env.ts";
 import { approve, ledgerPath, writeSettings, SCRIPTED_LIMIT } from "./fixtures/env.ts";
@@ -222,7 +222,7 @@ test("an audit scores the set once, reports the spread and the members beyond th
   );
 });
 
-test("with the search slot loaded the audit adds embedding outliers and no call", async () => {
+test("with the search slot loaded the audit adds the free embedding ranking, uncut, and no call", async () => {
   const pkg = join(lib.dir, "node_modules", "audit-search-stub");
   mkdirSync(pkg, { recursive: true });
   writeFileSync(
@@ -243,7 +243,8 @@ test("with the search slot loaded the audit adds embedding outliers and no call"
     search: {
       async find() { return { hits: [], fresh: true, builtFrom: null }; },
       async outliers(addresses) {
-        return { members: addresses.length, outliers: addresses.filter((a) => a.endsWith("bulk-005")).map((address) => ({ address, distance: 0.9, z: 5 })) };
+        const ranked = [...addresses].sort((a, b) => (a.endsWith("bulk-005") ? -1 : b.endsWith("bulk-005") ? 1 : 0));
+        return { members: addresses.length, ranking: ranked.map((address, i) => ({ address, distance: 0.9 - i / 10 })) };
       },
       async index() { return {}; },
       async status() { return {}; },
@@ -262,10 +263,10 @@ test("with the search slot loaded the audit adds embedding outliers and no call"
     const r = await cli([...base, "--checks", "style", "--json"]);
     assert.equal(r.code, 0, r.stderr + r.stdout);
     const d = doc(r);
-    assert.deepEqual(d.outliers, {
-      members: 6,
-      outliers: [{ address: OFF, distance: 0.9, z: 5 }],
-    });
+    assert.equal(d.outliers.members, 6);
+    assert.equal(d.outliers.ranking.length, 6, "every member, uncut");
+    assert.deepEqual(d.outliers.ranking[0], { address: OFF, distance: 0.9 });
+    assert.equal(d.outliers.outliers, undefined, "the audit judges no style");
     assert.equal(
       calls()
         .slice(before)

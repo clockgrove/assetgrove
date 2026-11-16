@@ -80,7 +80,7 @@ writeFileSync(
       async outliers(addresses) {
         return {
           members: addresses.length,
-          outliers: addresses.slice(0, 1).map((address) => ({ address, distance: 0.9, z: 5 })),
+          ranking: addresses.map((address, i) => ({ address, distance: 0.9 - i / 100 })),
         };
       },
       async index() { return { indexed: true }; },
@@ -305,16 +305,17 @@ test("the tree's find, like and where paths return the same hits as find, and ar
   }
 });
 
-test("find --outliers hands the slot a folder's assets and lists what it returns", async () => {
+test("find --outliers hands the slot a folder's assets and returns its whole ranking", async () => {
   useSettings(true);
   const result = await cli(["find", "--outliers", `asset://${GAME}/`, "--json"]);
   assert.equal(result.code, 0, result.stderr);
   const document = doc(result);
   assert.ok(document.members > 1);
-  assert.equal(document.outliers.length, 1);
-  assert.ok(document.outliers[0].z > 3);
-  assert.ok(document.outliers[0].address.startsWith(`asset://${GAME}/`));
-  assert.ok(!document.outliers[0].address.endsWith("/"));
+  assert.equal(document.ranking.length, document.members, "every member, uncut");
+  assert.ok(document.ranking[0].address.startsWith(`asset://${GAME}/`));
+  assert.ok(!document.ranking[0].address.endsWith("/"));
+  // The scripted provider with no style-outlier answer judges every member the same style.
+  assert.deepEqual(document.outliers, []);
   assert.equal(document.hits, undefined);
   const bad = await cli(["find", "--outliers", `asset://${GAME}/lantern/card`, "--json"]);
   assert.equal(bad.code, 2);

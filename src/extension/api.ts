@@ -192,20 +192,21 @@ export interface NearMatchQuery {
   limit: number;
 }
 
-/** One member of a set whose style differs from the rest (`find --outliers`). */
-export interface SearchOutlier {
+/** One member of a set as `find --outliers` ranks it (design section 7.5). */
+export interface SearchRankedMember {
   address: string;
-  /** Mean cosine distance to the member's five nearest neighbours in the set. */
+  /** Mean cosine distance of the member's indexed image to every other member's. */
   distance: number;
-  /** That distance as a robust z-score against the set. */
-  z: number;
 }
 
 export interface SearchOutliersResult {
   /** How many of the set's members had an indexed image. */
   members: number;
-  /** Members with z > 3, most distant first. */
-  outliers: SearchOutlier[];
+  /**
+   * Every one of those members, most distant first, uncut: a free ranking, never a verdict. Core
+   * asks a `style-outlier` decision which of the most distant are drawn in another style.
+   */
+  ranking: SearchRankedMember[];
 }
 
 /** The search slot's operations; each result is a JSON object core passes on as the command's fields. */
@@ -216,7 +217,7 @@ export interface SearchSlot {
    */
   nearMatch?(query: NearMatchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;
-  /** The off-style members of a set of asset addresses, by their indexed image vectors. */
+  /** Every member of a set of asset addresses ranked by its indexed image's distance to the rest. */
   outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult>;
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;

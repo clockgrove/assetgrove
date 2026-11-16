@@ -24,18 +24,15 @@ describe("the slot's outliers over an indexed fixture set", () => {
   });
   after(() => cleanup(p.root, p.stateDir, remoteDir, join(remoteDir, "..")));
 
-  it("lists the planted asset and nothing on the uniform set", async () => {
+  it("ranks every member, the planted asset first, uncut", async () => {
     const ctx = p.context();
     const found = await searchSlot.outliers([...uniform, planted], ctx);
     assert.equal(found.members, 9);
-    assert.deepEqual(
-      found.outliers.map((o) => o.address),
-      [planted],
-    );
-    assert.ok(found.outliers[0]!.z > 3);
+    assert.equal(found.ranking.length, 9);
+    assert.equal(found.ranking[0]!.address, planted);
     const none = await searchSlot.outliers(uniform, ctx);
     assert.equal(none.members, 8);
-    assert.deepEqual(none.outliers, []);
+    assert.equal(none.ranking.length, 8);
   });
 
   it("finds pick vectors in the shared store", async () => {
@@ -45,9 +42,6 @@ describe("the slot's outliers over an indexed fixture set", () => {
     await searchSlot.index({}, ctx);
     const found = await searchSlot.outliers([...uniform, planted], ctx);
     assert.equal(found.members, 9);
-    assert.deepEqual(
-      found.outliers.map((o) => o.address),
-      [planted],
-    );
+    assert.equal(found.ranking[0]!.address, planted);
   });
 });

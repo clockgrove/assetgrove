@@ -27,13 +27,14 @@ import type {
 import { providerSet, spendLedger } from "../providers/index.ts";
 import type { ProviderSet } from "../providers/set.ts";
 import { sniffMediaType } from "../request.ts";
-import { EMBED_OPERATION } from "../routes.ts";
+import { EMBED_OPERATION, STYLE_OUTLIER_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import {
   DRY_RUN_PROPERTY,
   ROUND_PROPERTY,
   RUNS_PROPERTY,
   buildWorkPlan,
+  canonicalJson,
   jobOf,
   paidBy,
 } from "../runs/plan.ts";
@@ -45,10 +46,19 @@ import { createLibraryReader } from "../search/reader.ts";
 import type { LibraryReader } from "../search/reader.ts";
 import { writeFindSheet } from "../search/sheet.ts";
 import type { SearchSettings, Settings } from "../settings.ts";
-import { folderChildren } from "../audit/members.ts";
+import { folderChildren, resolveMembers } from "../audit/members.ts";
+import { BIBLE_PATH } from "../init.ts";
+import { sha256Hex } from "../library/canonical.ts";
+import {
+  bibleStyleText,
+  judgeStyleOutlier,
+  selectMembers,
+  styleOutlierWork,
+} from "../search/style-outliers.ts";
+import type { StyleAnswer } from "../search/style-outliers.ts";
 import { openProject, projectDir } from "../tree/project.ts";
 import { defineCommand } from "./types.ts";
-import type { CommandSpec, JsonSchemaProperty, RunContext } from "./types.ts";
+import type { CommandSpec, JsonSchemaProperty, Outcome, RunContext } from "./types.ts";
 
 const TARGET = {
   type: "string",
@@ -175,15 +185,13 @@ interface PaidArgs {
 }
 
 /**
- * A dry run of a call that spends nothing (the local model, or a hosted find that embeds nothing)
- * is invalid input, so it never runs the real index or query in its place.
+ * A dry run of a call that spends nothing (find or search index with the local model) is invalid
+ * input, so it never runs the real index or query in its place.
  */
-function refuseDryRun(name: string, args: PaidArgs, ctx: RunContext): void {
+function refuseDryRun(name: string, args: PaidArgs): void {
   if (args.dryRun !== true) return;
   throw new InputError(
-    hosted(ctx)
-      ? `${name} spends nothing here: --outliers embeds nothing, so it has no dry run or estimate`
-      : `${name} spends nothing with the local model, so it has no dry run or estimate; dry runs and estimates need search.embedder "route"`,
+    `${name} spends nothing with the local model, so it has no dry run or estimate; dry runs and estimates need search.embedder "route" (or find --outliers)`,
   );
 }
 
@@ -316,18 +324,13 @@ async function paidEmbedder(
 }
 
 /**
- * Whether a find query embeds: words, or an image file to rank by look. The runner asks before
- * it validates the input, so an argument of the wrong type embeds nothing here and is refused
- * by validation (exit 2 invalid_input).
+ * Whether a find takes its plan step: --outliers always (it asks style-outlier decisions, #366),
+ * any other find only with a hosted embedder. A hosted find without words or an image file still
+ * brings the index up to date first (design 7.4), so it forecasts and confirms the images that
+ * adds; with nothing to embed or judge it pays nothing and asks nothing.
  */
-/**
- * Whether a hosted find takes its plan step: every find but --outliers (advisory and free, design
- * 7.5). A find without words or an image file still brings the index up to date first (design
- * 7.4), so it forecasts and confirms the images that adds; with nothing to embed it pays nothing
- * and asks nothing.
- */
-function findPlanned(args: FindArgs): boolean {
-  return args.outliers === undefined;
+function findPlanned(args: FindArgs, ctx: RunContext): boolean {
+  return args.outliers !== undefined || hosted(ctx);
 }
 
 interface FindArgs extends PaidArgs {
@@ -342,17 +345,9 @@ interface FindArgs extends PaidArgs {
 }
 
 /**
- * The asset addresses of a tree folder, every page of it, as the search index names them (an asset
- * has no trailing slash).
- */
-async function folderMembers(dir: string, stateDir: string, set: string): Promise<string[]> {
-  const project = await openProject(dir, stateDir);
-  return (await folderChildren(project, set, "--outliers")).map((m) => m.address);
-}
-
-/**
- * The embedding outliers of a set's members (design section 8), when a loaded extension fills the
- * search slot; undefined without one. Free: the slot reads its index, no model is called.
+ * The free ranking of a set's members by their indexed images (design section 8), when a loaded
+ * extension fills the search slot; undefined without one. Free: the slot reads its index, no
+ * model is called, and nothing is judged.
  */
 export async function setOutliers(
   addresses: string[],
@@ -409,20 +404,6 @@ export async function runFind(
     options.embedder ??
     (hosted(ctx) ? (await embedRoute(args.providerScript, ctx)).embedder : undefined);
   const { slot, context, reader } = await searchCall("find", args.target, ctx, true, embedder);
-  if (args.outliers !== undefined) {
-    for (const source of args.source ?? [])
-      if (!(SEARCH_SOURCES as readonly string[]).includes(source))
-        throw new InputError(`unknown --source "${source}"; use ${SEARCH_SOURCES.join(", ")}`);
-    if (args.game !== undefined && args.game !== "all" && args.game !== context.game)
-      throw new InputError(`--game takes all or this project's game "${context.game}"`);
-    const members = await folderMembers(context.worktree, ctx.settings.stateDir, args.outliers);
-    const result = await calling(() => slot.outliers(members, context));
-    const human = [
-      ...result.outliers.map((o) => `${o.address} (z ${o.z.toFixed(2)})`),
-      `${result.outliers.length} outlier${result.outliers.length === 1 ? "" : "s"} among ${result.members} members of ${args.outliers}`,
-    ].join("\n");
-    return { fields: { set: args.outliers, ...result }, human };
-  }
   const query = await findQuery(args, context.game);
   const result = await calling(() => slot.find(query, context));
   const fields: Record<string, unknown> = {
@@ -445,6 +426,146 @@ export async function runFind(
     `${result.hits.length} hit${result.hits.length === 1 ? "" : "s"}${result.fresh ? "" : " (index not fresh)"}${sheet ? `; sheet ${sheet}` : ""}`,
   ].join("\n");
   return { fields, human };
+}
+
+/**
+ * The plan step of find --outliers (#366): the slot's free ranking of the set, the members asked
+ * about (the most distant, at most five) with their images, the contact sheet of the typical
+ * members, the bible's style text, and one style-outlier decision per member asked about.
+ */
+async function prepareOutliers(args: FindArgs & { outliers: string }, ctx: RunContext) {
+  // The ranking reads stored vectors: a hosted embedder is the route's identity only, no refresh.
+  const embedder = hosted(ctx) ? (await embedRoute(args.providerScript, ctx)).embedder : undefined;
+  const { slot, context } = await searchCall("find", args.target, ctx, true, embedder);
+  for (const source of args.source ?? [])
+    if (!(SEARCH_SOURCES as readonly string[]).includes(source))
+      throw new InputError(`unknown --source "${source}"; use ${SEARCH_SOURCES.join(", ")}`);
+  if (args.game !== undefined && args.game !== "all" && args.game !== context.game)
+    throw new InputError(`--game takes all or this project's game "${context.game}"`);
+  const project = await openProject(context.worktree, ctx.settings.stateDir);
+  const addresses = await folderChildren(project, args.outliers, "--outliers");
+  const result = await calling(() =>
+    slot.outliers(
+      addresses.map((m) => m.address),
+      context,
+    ),
+  );
+  const { judged, typical } = selectMembers(result.ranking);
+  const wanted = new Set([...judged, ...typical].map((m) => m.address));
+  // A member whose media cannot be resolved (a path that leaves the library root) has no image.
+  const resolved = (
+    await Promise.all(
+      addresses
+        .filter((m) => wanted.has(m.address))
+        .map((m) => resolveMembers(project, [m]).catch(() => [])),
+    )
+  ).flat();
+  const byAddress = new Map(resolved.map((m) => [m.address, m.image]));
+  const { pending, sheet, notJudged } = styleOutlierWork(result.ranking, (address) =>
+    byAddress.get(address),
+  );
+  const style = bibleStyleText(join(context.worktree, BIBLE_PATH));
+  const providers = await providerSet(args.providerScript, ctx);
+  const jobs =
+    pending.length > 0
+      ? [
+          jobOf(
+            STYLE_OUTLIER_OPERATION,
+            providers.routes[STYLE_OUTLIER_OPERATION] as Route,
+            pending.length,
+          ),
+        ]
+      : [];
+  const work = await buildWorkPlan(findCommand, args, {
+    inputs: [],
+    jobs,
+    capUsd: runCap(args.cap, ctx.settings),
+    paid: paidBy(providers, jobs),
+    providers,
+    candidates: 0,
+    hashes: {
+      "search/outliers": sha256Hex(
+        canonicalJson([
+          result.ranking.map((m) => m.address),
+          pending.map((p) => [p.member.address, p.image.sha256]),
+          sheet?.sheet.sha256 ?? null,
+          style,
+        ]),
+      ),
+    },
+  });
+  return {
+    work,
+    result,
+    typical: typical.map((m) => m.address),
+    sheet,
+    style,
+    pending,
+    notJudged,
+    providers,
+  };
+}
+
+/** find --outliers inside its confirmed run: one style-outlier decision per member asked about. */
+async function runOutliers(
+  args: FindArgs & { outliers: string },
+  ctx: RunContext,
+): Promise<Outcome> {
+  const { work, result, typical, sheet, style, pending, notJudged, providers } =
+    await prepareOutliers(args, ctx);
+  if (args.dryRun || ctx.run === undefined)
+    return dryRunOutcome(work, formatWork("find", work), spendLedger(ctx, args.workItem));
+  const budget = new Budget(work.capUsd, ledgerFor(spendLedger(ctx, args.workItem), providers));
+  budget.check(work.forecastUsd, `the ${pending.length} style-outlier decisions`);
+  const caller = new Caller({
+    provider: providers,
+    budget,
+    routes: providers.routes,
+    log: ctx.log,
+  });
+  const answers = new Map<string, StyleAnswer>();
+  for (const { member, image } of pending)
+    answers.set(
+      member.address,
+      await judgeStyleOutlier(caller, member, image, sheet!.sheet, sheet!.count, style),
+    );
+  const ranking = result.ranking.map((m) => {
+    const answer = answers.get(m.address);
+    return {
+      ...m,
+      ...(answer && { differentStyle: answer.differentStyle, probability: answer.probability }),
+    };
+  });
+  const outliers = [...answers.values()]
+    .filter((a) => a.differentStyle)
+    .map((a) => ({ address: a.address, distance: a.distance, probability: a.probability }));
+  const fields = {
+    set: args.outliers,
+    members: result.members,
+    outliers,
+    ranking,
+    typical,
+    notJudged,
+    spentUsd: budget.spentUsd,
+  };
+  const human = [
+    ...ranking.map(
+      (m, i) =>
+        `${i + 1}. ${m.address} (distance ${m.distance.toFixed(4)})${
+          m.differentStyle === undefined
+            ? ""
+            : m.differentStyle
+              ? `: drawn in another style (${m.probability})`
+              : `: same style (${m.probability})`
+        }`,
+    ),
+    ...(notJudged.length > 0
+      ? [`not judged, no image on this machine: ${notJudged.join(", ")}`]
+      : []),
+    `${outliers.length} drawn in another style among ${result.members} members of ${args.outliers} (${answers.size} judged)`,
+    ...outliers.map((o) => `  ${o.address}`),
+  ].join("\n");
+  return { exitCode: 0, fields, human };
 }
 
 /** A hosted find's plan step: the refresh and the query it would embed. */
@@ -477,15 +598,21 @@ source, game, id, address, path, view, title). Returns hits [{address, rank, sco
 view, fields, sharedText}] (card text only under sharedText), fresh, builtFrom, and sheet: a PNG of
 the hits numbered by rank, which the tool also returns as image content. The index is brought up
 to date first unless another process is writing it (fresh false then). --outliers <folder> instead
-lists the members of an asset:// folder whose indexed image is off the rest (mean cosine distance
-to its five nearest neighbours, as a robust z above 3): {set, members, outliers: [{address,
-distance, z}]}; it spends nothing. With the local model find spends nothing and writes only the
-index and the sheet under the state directory.
+asks which members of an asset:// folder are drawn in a different style: the search index ranks
+every member by its image's mean cosine distance to the rest (free, uncut), and for the five most
+distant (at most half the set) one style-outlier decision each ($0.001 estimate on the default
+route) is shown the member's image, a contact sheet of up to eight typical (least distant) members
+and the style bible's text. It returns {set, members, outliers: [{address, distance,
+probability}] (the yes answers), ranking: [{address, distance, differentStyle?, probability?}]
+(every member, most distant first), typical, notJudged, spentUsd} and prints the whole ranking.
+--outliers is a paid request under every embedder: plan step, forecast, one spend confirmation,
+caps and spend ledger; it embeds nothing. With the local model any other find spends nothing and
+writes only the index and the sheet under the state directory.
 With a hosted embedder (search.embedder "route", the embeddings role) find is a paid request: its
 plan step forecasts the images and card texts that bringing the index up to date embeds, and the
 words or image file to embed, one spend confirmation covers it, and each embedding is reserved
 against the caps and journalled in its run directory. With nothing to embed it pays nothing and
-asks nothing. --outliers stays free: it answers from the vectors already in the index.`,
+asks nothing.`,
   input: {
     type: "object",
     properties: {
@@ -516,7 +643,7 @@ asks nothing. --outliers stays free: it answers from the vectors already in the 
       outliers: {
         type: "string",
         description:
-          "an asset:// folder address (a kind, subject, tag or the root): list its members whose look is off the set's (robust z above 3) instead of searching",
+          "an asset:// folder address (a kind, subject, tag or the root): rank its members by embedding distance and list those a style-outlier decision judges drawn in another style, instead of searching (paid)",
         placeholder: "<set>",
       },
       target: TARGET,
@@ -526,14 +653,19 @@ asks nothing. --outliers stays free: it answers from the vectors already in the 
   },
   positionals: [{ name: "words" }],
   effect: { readOnly: true, spends: "conditional", writes: "state" },
-  plan: async (args, ctx) => (await findPlan(args, ctx)).work,
-  planned: (args, ctx) => hosted(ctx) && findPlanned(args),
-  spendsWith: hosted,
+  plan: async (args, ctx) =>
+    args.outliers !== undefined
+      ? (await prepareOutliers({ ...args, outliers: args.outliers }, ctx)).work
+      : (await findPlan(args, ctx)).work,
+  planned: findPlanned,
+  // --outliers asks style-outlier decisions under every embedder, so find can always spend.
+  spendsWith: () => true,
   replayFinished: false,
   async run(args, ctx) {
+    if (args.outliers !== undefined) return runOutliers({ ...args, outliers: args.outliers }, ctx);
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;
-    if (!(hosted(ctx) && findPlanned(args))) refuseDryRun("find", args, ctx);
+    if (!findPlanned(args, ctx)) refuseDryRun("find", args);
     else {
       const { work, forecast } = await findPlan(args, ctx);
       if (args.dryRun || ctx.run === undefined)
@@ -601,7 +733,7 @@ answers every call it made before.`,
     let embedder: SearchRouteEmbedder | undefined;
     let budget: Budget | undefined;
     let embedded: SearchForecast | undefined;
-    if (!hosted(ctx)) refuseDryRun("search index", args, ctx);
+    if (!hosted(ctx)) refuseDryRun("search index", args);
     else {
       const { work, forecast } = await hostedPlan(searchIndexCommand, args, ctx, {
         index: args.rebuild === true ? { rebuild: true } : {},
