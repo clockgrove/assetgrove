@@ -265,9 +265,9 @@ failed write, read-back (exit 6 handoff_check_failed) or library write, or a rej
 (exit 6 validator_rejected), records no version and puts back every file it wrote, through
 symbolic links, and remakes a link that pointed at nothing where it wrote a file; a file it could not put back is named in the error. Otherwise the version is appended
 with its confirmation, source type and an adopt annotation, and the card, its lock, the indexes and
-log.md are rewritten. An unchanged file, a Git LFS pointer, edited bytes of another media type, a
-run id that is not one path segment, a missing run or a run without the version's candidate exits 2;
-bytes of an older version exit 2 version_exists.`,
+log.md are rewritten. A Git LFS pointer, edited bytes of another media type, a run id that is not
+one path segment, a missing run or a run without the version's candidate exits 2; an unchanged file
+(the current version's bytes) or bytes of an older version exit 2 version_exists.`,
   input: {
     type: "object",
     properties: {
