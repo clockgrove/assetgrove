@@ -299,9 +299,13 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
       assetId: spec.assetId,
       ...(spec.subject !== undefined && { subject: spec.subject }),
       ...(spec.gait !== undefined && { gait: spec.gait }),
-      // A declared or decided template is the family's from here on: write-families reads it.
-      ...((choice.source === "declared" || choice.source === "judged") && {
+      // A declared or decided template is the family's from here on: write-families reads it,
+      // the decided one as judged (its call is in the generation's calls).
+      ...(choice.source === "declared" && {
         templates: { [spec.animationFamily as string]: template?.name ?? NO_TEMPLATE },
+      }),
+      ...(choice.source === "judged" && {
+        judgedTemplates: { [spec.animationFamily as string]: template?.name ?? NO_TEMPLATE },
       }),
       ...(spec.fields !== undefined && {
         spec: { animationFamily: spec.animationFamily as string, fields: spec.fields },

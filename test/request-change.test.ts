@@ -96,7 +96,10 @@ async function project(spec: AssetSpec = { kind: "still", assetId: "lamp" }, med
  * with the current version (reference 1) painted red in its top-left 10×10 corner, plus `outside`
  * painted pixels at the bottom right.
  */
-async function script(dir: string, options: { mask?: boolean; outside?: number } = {}) {
+async function script(
+  dir: string,
+  options: { mask?: boolean; outside?: number; template?: string } = {},
+) {
   const path = join(dir, `script-${options.mask === false ? "plain" : "mask"}.mjs`);
   const events = `${path}.events`;
   await writeFile(
@@ -120,6 +123,7 @@ export default {
   },
   vision: () => ({ text: "ok" }),
   promptPolicy: () => ({ answer: { type: "boolean", probability: 0 } }),
+  ${options.template !== undefined ? `motionTemplate: () => ({ answer: { type: "choice", choice: ${JSON.stringify(options.template)} }, costUsd: 0.001 }),` : ""}
 };`,
   );
   approve(path);
@@ -469,6 +473,51 @@ test("a frame region edits only that frame, through fix-frame's path", async () 
     assert.notDeepEqual(frameOf(after, 2), frameOf(strip, 2), "frame 3 changed");
     assert.equal(typeof f.candidates[0].outsideChange, "number");
     assert.ok(existsSync(join(f.runDir, "compare.png")));
+  });
+});
+
+test("a frame region of a family no template names makes one motion-template decision, recorded in every candidate's provenance", async () => {
+  const strip = createRaster(128, 32);
+  for (let i = 0; i < 4; i++)
+    for (let y = 12; y < 30; y++)
+      for (let x = i * 32 + 10; x < i * 32 + 20; x++)
+        setPixel(strip, x, y, [60 + i * 30, 90, 140, 255]);
+  const p = await project(
+    { kind: "sprite-strip", assetId: "walker", animationFamily: "trot" },
+    strip,
+  );
+  const s = await script(p.dir, { template: "walk" });
+  await inProject(p.dir, async () => {
+    const done = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,16,16 frame 3 : raise the paw"],
+        candidates: 2,
+        runs: p.runs,
+        providerScript: s.path,
+      },
+      context(),
+    );
+    assert.equal(done.exitCode, 0, done.error?.message);
+    const f = done.fields as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    assert.equal(f.job, "fix-frame");
+    const run = JSON.parse(await readFile(join(f.runDir, "run.json"), "utf8"));
+    assert.equal(run.candidates.length, 2);
+    const decisions = run.candidates.map(
+      (c: { provenance: { calls: Array<{ operation: string; requestId: string }> } }) =>
+        c.provenance.calls.filter((call) => call.operation === "motion-template"),
+    );
+    // One decision for the run, the same call in each candidate's record.
+    for (const d of decisions) assert.equal(d.length, 1);
+    assert.equal(decisions[0][0].requestId, decisions[1][0].requestId);
+    for (const c of run.candidates) {
+      assert.deepEqual(
+        c.provenance.calls.map((call: { operation: string }) => call.operation),
+        ["motion-template", "edit"],
+      );
+      assert.ok(c.provenance.requestIds.includes(decisions[0][0].requestId));
+    }
   });
 });
 

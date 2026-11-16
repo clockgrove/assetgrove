@@ -18,6 +18,7 @@ import { generateSheet, motionLines, sheetBrief } from "../src/sheet/generate.ts
 import { templateFor, templatesFor } from "../src/animation/templates.ts";
 import { SliceError } from "../src/sheet/slice.ts";
 import { GROUPING_FILE, importSheet, writeFamilies } from "../src/sheet/import.ts";
+import { importTargets, runAnimationQa } from "../src/animation/commands.ts";
 import { jitterOf } from "../src/sheet/register.ts";
 import type { Grouping } from "../src/sheet/types.ts";
 import type { AssetSpec, FrameProvenance, TargetProfile } from "../src/types.ts";
@@ -391,6 +392,116 @@ test("sheet generation: one request for the whole cycle within the cap, then the
   // The spec's fields reach the family it asked for, not a generic default.
   assert.equal(manifest.accessibilityLabel, "Fern walking");
   assert.deepEqual(manifest.semantic, { role: "actor", entity: "grove.fern" });
+});
+
+test("sheet generation decides a family no template names before the sheet, and the import keeps the answer as judged for write-families and animation-qa --import", async () => {
+  const world = await syntheticWorld();
+  const { importsDir, targetDir } = await dirs();
+  const sheet = syntheticSheet({
+    families: [{ name: "walk-right", count: 6, facing: 1, walk: true }],
+    columns: 3,
+  });
+  const spec: AssetSpec = {
+    kind: "sprite-sheet",
+    assetId: "fern",
+    animationFamily: "trot",
+    frames: { count: 6 },
+  };
+  const asked: string[] = [];
+  const provider = new ScriptedProvider({
+    image: () => ({ images: [{ mediaType: "image/png", bytes: sheet.png }], costUsd: 0.21 }),
+    vision: () => ({
+      text: JSON.stringify({
+        families: [{ name: "trot", frames: [1, 2, 3, 4, 5, 6], reason: "one trot cycle" }],
+        unassigned: [],
+      }),
+      costUsd: 0.01,
+    }),
+    motionTemplate: (request) => {
+      asked.push(request.prompt);
+      return { answer: { type: "choice", choice: "walk" }, costUsd: 0.001 };
+    },
+  });
+  const { record, importDir, grouping, spentUsd } = await generateSheet({
+    spec,
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: painterlyProfile(),
+    routes: defaultRoutes,
+    providerName: "scripted",
+    importsDir,
+    provider,
+  });
+  // One decision, before the sheet call, whose prompt states the decided walk's motion.
+  assert.equal(asked.length, 1);
+  assert.match(asked[0]!, /"trot"/);
+  assert.deepEqual(
+    provider.calls.map((c) => c.kind),
+    ["decide", "image", "vision"],
+  );
+  const image = provider.calls.find((c) => c.kind === "image")!.request as ImageRequest;
+  assert.match(image.prompt, /Motion: a walk cycle/);
+  assert.ok(Math.abs(spentUsd - 0.221) < 1e-9, String(spentUsd));
+  // Judged, not declared: the answer is kept apart from the spec's declarations.
+  assert.deepEqual(record.judgedTemplates, { trot: "walk" });
+  assert.equal(record.templates, undefined);
+  assert.ok(record.generation?.calls.some((c) => c.operation === "motion-template"));
+
+  const written = await writeFamilies({
+    importDir,
+    grouping: { ...grouping, status: "confirmed" },
+    targetDir,
+  });
+  const family = written.families[0]!;
+  assert.equal(family.animation.template, "walk");
+  assert.equal(family.animation.templateSource, "judged");
+  const manifest = JSON.parse(await readFile(family.result.manifestPath, "utf8"));
+  assert.ok(
+    manifest.provenance.generated.calls.some(
+      (c: { operation: string }) => c.operation === "motion-template",
+    ),
+  );
+
+  // animation-qa --import reads the recorded answer: judged, and no new decision.
+  const targets = await importTargets(importDir);
+  assert.equal(targets[0]!.judgedTemplate, "walk");
+  assert.equal(targets[0]!.template, undefined);
+  const noDecision = new ScriptedProvider({
+    image: () => {
+      throw new Error("no image calls expected");
+    },
+    vision: () => ({
+      text: JSON.stringify({ label: "same", confidence: 0.95, reason: "same figure" }),
+    }),
+  });
+  const qa = await runAnimationQa({
+    targets,
+    outDir: join(importDir, "qa"),
+    routes: defaultRoutes,
+    capUsd: 1,
+    provider: { provider: noDecision, name: "scripted" },
+    vision: false,
+  });
+  assert.equal(noDecision.calls.length, 0);
+  assert.equal(qa.results[0]!.report.template, "walk");
+  assert.equal(qa.results[0]!.report.templateSource, "judged");
+  assert.deepEqual(qa.templateDecisions, []);
+
+  // A grouping family's own template is a declaration, over the recorded decision.
+  const again = await writeFamilies({
+    importDir,
+    grouping: {
+      ...grouping,
+      status: "confirmed",
+      families: grouping.families.map((f) => ({ ...f, template: "none" })),
+    },
+    targetDir,
+  });
+  assert.equal(again.families[0]!.animation.template, undefined);
+  assert.equal(again.families[0]!.animation.templateSource, "declared");
+  const declared = await importTargets(importDir);
+  assert.equal(declared[0]!.template, "none");
 });
 
 test("write-families gives the spec's fields to the family it asked for under another name, or refuses", async () => {

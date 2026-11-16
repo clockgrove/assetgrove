@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { planAnimationQa, runAnimationQa, stripTarget } from "../src/animation/commands.ts";
+import {
+  planAnimationQa,
+  runAnimationQa,
+  stripTarget,
+  TEMPLATE_LOG,
+} from "../src/animation/commands.ts";
 import type { StripTarget } from "../src/animation/commands.ts";
 import { TemplateChooser } from "../src/animation/template-choice.ts";
 import { BUILTIN_TEMPLATES, templateFor, templatesFor } from "../src/animation/templates.ts";
@@ -73,7 +78,7 @@ const qaRun = async (targets: StripTarget[], setup?: Setup, vision = true) => {
     provider: { provider: scripted, name: "scripted" },
     vision,
   });
-  return { ...run, scripted, asked };
+  return { ...run, scripted, asked, outDir: out };
 };
 
 type Reason = { check: string; passed: boolean; reason: string };
@@ -208,6 +213,45 @@ test("the plan forecasts one motion-template call per undecided family at the ro
   assert.equal(plan.calls, 1);
   assert.equal(plan.estimateUsd, defaultRoutes["motion-template"]!.estimatedCostUsd);
   assert.equal(plan.estimateUsd, 0.001);
+});
+
+test("each motion-template decision is logged with its call to motion-template.jsonl, apart from the flicker log", async () => {
+  const jump = await strip("jump", { motion: "walk" }, "jump", { subject: "fox" });
+  const run = await qaRun([jump], { answer: () => "none", costUsd: 0.001 }, false);
+  assert.equal(run.templateDecisions.length, 1);
+  const line = run.templateDecisions[0]!;
+  assert.equal(line.family, "jump");
+  assert.equal(line.subject, "fox");
+  assert.equal(line.template, "none");
+  assert.equal(line.model, defaultRoutes["motion-template"]!.model);
+  assert.equal(line.requestId, "scripted-motion-template-0");
+  assert.equal(line.costUsd, 0.001);
+  const logged = (await readFile(join(run.outDir, TEMPLATE_LOG), "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+  assert.deepEqual(logged, [line]);
+  // A --no-vision run writes no flicker log.
+  await assert.rejects(access(join(run.outDir, "flicker.jsonl")));
+});
+
+test("a scripted provider with no motionTemplate answer refuses the decision instead of answering none", async () => {
+  const scripted = new ScriptedProvider({
+    image: () => {
+      throw new Error("no image calls expected");
+    },
+    vision: () => ({ text: "" }),
+  });
+  const call = new Caller({
+    provider: scripted,
+    providerName: "scripted",
+    budget: new Budget(1),
+    routes: defaultRoutes,
+  });
+  await assert.rejects(
+    new TemplateChooser(templatesFor(profile), call).choose({ family: "jump", subject: "fox" }),
+    /no motionTemplate answer/,
+  );
 });
 
 test("a chooser with no caller leaves an unnamed family undecided", async () => {

@@ -7,6 +7,7 @@
  * template's contact, footprint and loop rules say "not applicable" (src/animation/qa.ts).
  */
 import type { Caller } from "../calls.ts";
+import type { CallRecord } from "../types.ts";
 import { InputError } from "../errors.ts";
 import type { PlannedCall } from "../generators/generator.ts";
 import { MOTION_TEMPLATE_OPERATION } from "../routes.ts";
@@ -27,6 +28,11 @@ export interface TemplateChoice {
   source: TemplateSource;
   /** The judged answer's probability, when the model reports one. */
   probability?: number;
+  /**
+   * The motion-template call that judged it, when this run made it: its model, request id and
+   * cost belong in the provenance of whatever the choice shaped, and in the run's decision log.
+   */
+  record?: CallRecord;
 }
 
 /**
@@ -54,6 +60,30 @@ export function knownTemplate(
   return named ? { template: named, source: "named" } : undefined;
 }
 
+/**
+ * The template a family has without a new call: the declared or named one, else the answer an
+ * earlier motion-template decision recorded (`generate-sheet` keeps it in the import), which is
+ * still `judged`. Undefined when only a decision can say.
+ */
+export function recordedTemplate(
+  family: string,
+  templates: readonly MotionTemplate[],
+  declared?: string,
+  judged?: string,
+): TemplateChoice | undefined {
+  const known = knownTemplate(family, templates, declared);
+  if (known || judged === undefined) return known;
+  if (judged === NO_TEMPLATE) return { source: "judged" };
+  const template = templateFor(judged, templates);
+  if (!template) {
+    throw new InputError(
+      `the recorded motion-template decision for family ${family} chose ${JSON.stringify(judged)}, ` +
+        `which is not one of ${[...templates.map((t) => t.name), NO_TEMPLATE].join(", ")}`,
+    );
+  }
+  return { template, source: "judged" };
+}
+
 /** The choice of a family nothing declared and no call decided. */
 export const UNDECIDED: TemplateChoice = { source: "undecided" };
 
@@ -62,8 +92,9 @@ export function templateWithoutCall(
   family: string,
   templates: readonly MotionTemplate[],
   declared?: string,
+  judged?: string,
 ): TemplateChoice {
-  return knownTemplate(family, templates, declared) ?? UNDECIDED;
+  return recordedTemplate(family, templates, declared, judged) ?? UNDECIDED;
 }
 
 /** What a template describes, for the decision: its own description, else its rules in words. */
@@ -92,6 +123,8 @@ export interface TemplateRequest {
   subject: string;
   /** The template the spec or grouping declares for this family, if any. */
   declared?: string;
+  /** The template an earlier motion-template decision chose and a record kept, if any. */
+  judged?: string;
 }
 
 /**
@@ -105,7 +138,7 @@ export function planTemplateDecisions(
 ): PlannedCall[] {
   const asked = new Set(
     requests
-      .filter((r) => knownTemplate(r.family, templates, r.declared) === undefined)
+      .filter((r) => recordedTemplate(r.family, templates, r.declared, r.judged) === undefined)
       .map((r) => JSON.stringify([r.family, r.subject])),
   );
   if (asked.size === 0) return [];
@@ -136,7 +169,12 @@ export class TemplateChooser {
   }
 
   async choose(request: TemplateRequest): Promise<TemplateChoice> {
-    const known = knownTemplate(request.family, this.#templates, request.declared);
+    const known = recordedTemplate(
+      request.family,
+      this.#templates,
+      request.declared,
+      request.judged,
+    );
     if (known) return known;
     const call = this.#call;
     if (!call) return UNDECIDED;
@@ -171,6 +209,7 @@ export class TemplateChooser {
       ...(template && { template }),
       source: "judged",
       ...(probability !== undefined && { probability }),
+      record,
     };
   }
 }

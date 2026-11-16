@@ -682,6 +682,10 @@ version is appended with answers naming the requests. The run that made the asse
                 from: { neighbour: f > 1 ? f - 1 : Math.min(2, count) },
                 style: qaStyle(source.profile),
                 call: caller,
+                // The decision chose the pin of every candidate's fix, so each candidate's
+                // provenance records it once, with its first fixed frame.
+                ...(choice.record !== undefined &&
+                  f === frames[0] && { decisions: [choice.record] }),
                 note: regions
                   .filter((r) => r.frame === f)
                   .map((r) => `${whereOf(r)} of the frame: ${r.note}`)

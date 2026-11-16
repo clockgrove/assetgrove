@@ -137,6 +137,11 @@ export interface ImportRecord {
    */
   templates?: Record<string, string>;
   /**
+   * The template `generate-sheet`'s motion-template decision chose for the spec's family (or
+   * `none`), by family: judged, not declared. The call itself is in `generation.calls`.
+   */
+  judgedTemplates?: Record<string, string>;
+  /**
    * The asset spec's family and its target fields (`fields`), when a spec asked for the sheet. The family of that name
    * written by `writeFamilies` carries the fields to the target's templates, as a `pick` does.
    */
@@ -209,6 +214,8 @@ export interface ImportOptions {
   gait?: string;
   /** The motion templates the asset spec declares, by family, recorded for animation QA. */
   templates?: Record<string, string>;
+  /** The motion templates a motion-template decision chose, by family, recorded for animation QA. */
+  judgedTemplates?: Record<string, string>;
   /** The asset spec's family and target fields, recorded for `writeFamilies`. */
   spec?: ImportRecord["spec"];
   profile: TargetProfile;
@@ -436,6 +443,7 @@ export async function importSheet(
     ...(options.subject !== undefined && { subject: options.subject }),
     ...(options.gait !== undefined && { gait: options.gait }),
     ...(options.templates !== undefined && { templates: options.templates }),
+    ...(options.judgedTemplates !== undefined && { judgedTemplates: options.judgedTemplates }),
     ...(options.spec !== undefined && { spec: options.spec }),
     sheet: {
       path: options.sheetPath,
@@ -724,7 +732,8 @@ export async function writeFamilies(
   const grouping = checkConfirmed(options.grouping, ids);
   // The profile's motion templates and thresholds, and each family's declared template, are
   // checked before anything is written. Writing makes no call: a family no grouping or spec
-  // declares a template for, and no template is named for, is undecided (animation-qa decides it).
+  // declares a template for, no template is named for and no recorded decision (generate-sheet's)
+  // chose one for, is undecided (animation-qa decides it).
   const templates = templatesFor(record.profile);
   thresholdsFor(record.profile);
   const declaredTemplates = new Map<string, string>();
@@ -735,7 +744,12 @@ export async function writeFamilies(
   const choices = new Map(
     grouping.families.map((f) => [
       f.name,
-      templateWithoutCall(f.name, templates, declaredTemplates.get(f.name)),
+      templateWithoutCall(
+        f.name,
+        templates,
+        declaredTemplates.get(f.name),
+        record.judgedTemplates?.[f.name],
+      ),
     ]),
   );
   const byId = new Map(record.frames.map((f) => [f.id, f]));

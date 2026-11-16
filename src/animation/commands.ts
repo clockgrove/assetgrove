@@ -8,7 +8,7 @@ import {
   checkProvenance,
   ProvenanceError,
 } from "../provenance-binding.ts";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Budget } from "../budget.ts";
 import { ledgerFor } from "../spend.ts";
@@ -32,14 +32,15 @@ import type { Routes } from "../routes.ts";
 import { readImport } from "../sheet/import.ts";
 import { resolveStyle } from "../style.ts";
 import type { ResolvedStyle } from "../style.ts";
-import type { Point, Provenance, Size, TargetProfile } from "../types.ts";
+import type { CallRecord, Point, Provenance, Size, TargetProfile } from "../types.ts";
 import { DEFAULT_FIX_CAP_USD, fixBaseProvenance, fixFrame, planFix } from "./fix.ts";
 import type { FrameFix } from "./fix.ts";
 import { planFlicker } from "./flicker.ts";
 import { planHoles } from "./holes.ts";
 import { measureThreshold, splitStrip } from "./strip.ts";
-import { registrationPin, templatesFor, thresholdsFor } from "./templates.ts";
+import { NO_TEMPLATE, registrationPin, templatesFor, thresholdsFor } from "./templates.ts";
 import { planTemplateDecisions, TemplateChooser } from "./template-choice.ts";
+import type { TemplateChoice } from "./template-choice.ts";
 import { defaultAnchor, familyMayLoop, profileFrame, qaStrip } from "./run.ts";
 import type { StripQaResult } from "./run.ts";
 
@@ -57,6 +58,8 @@ export interface StripTarget {
   gait?: string;
   /** The motion template its spec or grouping declares for the family (`none`: no template). */
   template?: string;
+  /** The template a recorded motion-template decision (generate-sheet's) chose for the family. */
+  judgedTemplate?: string;
 }
 
 /** QA measures alpha only, so a palette rule needs no palette here. */
@@ -117,6 +120,9 @@ export async function importTargets(importDir: string): Promise<StripTarget[]> {
   return families.map((family) => ({
     family,
     ...(declared.has(family) && { template: declared.get(family) as string }),
+    ...(record.judgedTemplates?.[family] !== undefined && {
+      judgedTemplate: record.judgedTemplates[family],
+    }),
     path: join(importDir, "preview", `${family}.png`),
     frame: record.frame,
     anchor: record.anchor,
@@ -203,6 +209,7 @@ export async function planAnimationQa(
                 family: t.family,
                 subject: t.subject,
                 ...(t.template !== undefined && { declared: t.template }),
+                ...(t.judgedTemplate !== undefined && { judged: t.judgedTemplate }),
               },
             ],
             templatesFor(t.profile),
@@ -260,7 +267,12 @@ export async function runAnimationQa(options: {
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   now?: () => Date;
-}): Promise<{ results: StripQaResult[]; spentUsd: number }> {
+}): Promise<{
+  results: StripQaResult[];
+  spentUsd: number;
+  /** The motion-template decisions this run made, as logged to `motion-template.jsonl`. */
+  templateDecisions: TemplateDecisionLine[];
+}> {
   const decide = options.provider !== undefined;
   const vision = decide && options.vision !== false;
   const plan = await planAnimationQa(
@@ -289,6 +301,8 @@ export async function runAnimationQa(options: {
   // One chooser per profile: a family is decided once per run, whichever strip asks first.
   const choosers = new Map<TargetProfile, TemplateChooser>();
   const results: StripQaResult[] = [];
+  const templateDecisions: TemplateDecisionLine[] = [];
+  const logged = new Set<CallRecord>();
   for (const t of options.targets) {
     const { raster, origin } = await readStrip(t.path);
     let chooser = choosers.get(t.profile);
@@ -300,7 +314,15 @@ export async function runAnimationQa(options: {
       family: t.family,
       subject: t.subject,
       ...(t.template !== undefined && { declared: t.template }),
+      ...(t.judgedTemplate !== undefined && { judged: t.judgedTemplate }),
     });
+    if (choice.record !== undefined && !logged.has(choice.record)) {
+      logged.add(choice.record);
+      const line = templateDecisionLine(t.family, t.subject, choice);
+      templateDecisions.push(line);
+      await mkdir(options.outDir, { recursive: true });
+      await appendFile(join(options.outDir, TEMPLATE_LOG), `${JSON.stringify(line)}\n`);
+    }
     results.push(
       await qaStrip({
         choice,
@@ -326,7 +348,41 @@ export async function runAnimationQa(options: {
       }),
     );
   }
-  return { results, spentUsd: budget.spentUsd };
+  return { results, spentUsd: budget.spentUsd, templateDecisions };
+}
+
+/** The motion-template decision log beside the reports, one JSON line per call. */
+export const TEMPLATE_LOG = "motion-template.jsonl";
+
+/** One logged motion-template decision: which call, for which family, and what it chose. */
+export interface TemplateDecisionLine {
+  family: string;
+  subject: string;
+  /** The chosen template, or `none`. */
+  template: string;
+  probability?: number;
+  model: string;
+  requestId: string;
+  costUsd: number;
+  at: string;
+}
+
+function templateDecisionLine(
+  family: string,
+  subject: string,
+  choice: TemplateChoice,
+): TemplateDecisionLine {
+  const record = choice.record as CallRecord;
+  return {
+    family,
+    subject,
+    template: choice.template?.name ?? NO_TEMPLATE,
+    ...(choice.probability !== undefined && { probability: choice.probability }),
+    model: record.model,
+    requestId: record.requestId,
+    costUsd: record.costUsd,
+    at: record.finishedAt,
+  };
 }
 
 export { DEFAULT_FIX_CAP_USD };
@@ -344,6 +400,7 @@ export function planFrameFix(routes: Routes, capUsd: number, target?: StripTarge
               family: target.family,
               subject: target.subject,
               ...(target.template !== undefined && { declared: target.template }),
+              ...(target.judgedTemplate !== undefined && { judged: target.judgedTemplate }),
             },
           ],
           templatesFor(target.profile),
@@ -480,6 +537,7 @@ export async function runFixFrame(options: {
     family: target.family,
     subject: target.subject,
     ...(target.template !== undefined && { declared: target.template }),
+    ...(target.judgedTemplate !== undefined && { judged: target.judgedTemplate }),
   });
   const fixed = await fixFrame({
     strip: raster,
@@ -493,6 +551,8 @@ export async function runFixFrame(options: {
     from: keyPose ? { keyPose } : (options.from as { neighbour: number }),
     style,
     call,
+    // The decision chose the pin, so the fixed strip's provenance records it.
+    ...(choice.record !== undefined && { decisions: [choice.record] }),
     ...(options.note !== undefined && { note: options.note }),
     ...(provenance !== undefined && { provenance }),
     stripPath: target.path,

@@ -225,10 +225,12 @@ export class ScriptedProvider implements GenerationProvider {
     }
     if (request.operation === MOTION_TEMPLATE_OPERATION) {
       const index = this.templateCount++;
-      const answer = this.script.motionTemplate
-        ? this.script.motionTemplate(request)
-        : { answer: { type: "choice" as const, choice: "none" }, costUsd: 0 };
-      return { requestId: `scripted-motion-template-${index}`, ...answer };
+      if (!this.script.motionTemplate)
+        throw new Error("the provider script has no motionTemplate answer");
+      return {
+        requestId: `scripted-motion-template-${index}`,
+        ...this.script.motionTemplate(request),
+      };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

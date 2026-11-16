@@ -5,8 +5,9 @@ import {
   planAnimationQa,
   runAnimationQa,
   stripTarget,
+  TEMPLATE_LOG,
 } from "../animation/commands.ts";
-import { formatReport } from "../animation/run.ts";
+import { FLICKER_LOG, formatReport } from "../animation/run.ts";
 import { InputError } from "../errors.ts";
 import { specForQa, loadProfile } from "../inputs.ts";
 import { runCap } from "../budget.ts";
@@ -126,8 +127,9 @@ sheet <family>.onion.png and the looping preview <family>.webp into --out.
 --spec reads the asset spec's gait, template (and its subject, unless --subject is given); the
 gait picks the motion template's footprint rule for it, over the profile's animation.gait.
 A family no spec or grouping declares a template for, and that no template is named for, costs
-one motion-template decision per run (--no-vision too); with none chosen, ground contact,
-footprint drift and the loop seam are not applicable.
+one motion-template decision per run, logged to motion-template.jsonl; --no-vision skips only
+the vision checks, so such a run still needs a key (declare template for one that needs none).
+With none chosen, ground contact, footprint drift and the loop seam are not applicable.
 --dry-run prints the planned calls, the cost forecast and the spend left under the daily and
 work-item limits, writes nothing and needs no key.
 Give --strip, --family and --profile for one strip, or --import for every family of an import.
@@ -218,7 +220,7 @@ Exits 5 when any check fails; every failed check names its frame.`,
       return dryRunOutcome(work, human, ledger, plan as unknown as Record<string, unknown>);
     }
     const outDir = resolve(args.out ?? ".assetgrove/animation");
-    const { results, spentUsd } = await runAnimationQa({
+    const { results, spentUsd, templateDecisions } = await runAnimationQa({
       targets,
       outDir,
       routes,
@@ -232,11 +234,20 @@ Exits 5 when any check fails; every failed check names its frame.`,
       lines.push(...formatReport(r.report));
       lines.push(`  onion skin ${r.files.onion}`, `  preview ${r.files.preview}`);
     }
+    // Each log is named only when this run wrote to it.
+    const logs = [
+      ...(vision ? [join(outDir, FLICKER_LOG)] : []),
+      ...(templateDecisions.length > 0 ? [join(outDir, TEMPLATE_LOG)] : []),
+    ];
     if (vision || spentUsd > 0)
-      lines.push(`$${spentUsd.toFixed(4)} spent; decisions in ${join(outDir, "flicker.jsonl")}`);
+      lines.push(
+        `$${spentUsd.toFixed(4)} spent` +
+          (logs.length > 0 ? `; decisions in ${logs.join(" and ")}` : ""),
+      );
     const fields = {
       outDir,
       spentUsd,
+      templateDecisions,
       families: results.map((r) => ({
         ...r.report,
         decisions: r.decisions,

@@ -352,6 +352,34 @@ test("write-families writes the onion skin and loop preview and reports animatio
   );
 });
 
+test("animation-qa: --spec declares the template, so a --no-vision run of a family no template names needs no key", async () => {
+  const { root } = await setup(
+    { alpha: { mode: "binary" }, color: { rule: "full" } },
+    { count: 8, style: "flat", motion: "walk" },
+  );
+  const strip = join(root, "walk-right.png");
+  await writeFile(strip, await readFile(join(root, "walk.png")));
+  await writeFile(
+    join(root, "spec.json"),
+    JSON.stringify({ kind: "sprite-strip", assetId: "testcoon", template: "walk" }),
+  );
+  const args = [
+    "animation-qa",
+    ...["--strip", strip, "--family", "walk-right"],
+    ...["--profile", join(root, "profile.json"), "--out", join(root, "qa"), "--no-vision"],
+    "--json",
+  ];
+  // Nothing declares or names walk-right: the motion-template decision needs a key.
+  const undeclared = await cli(args);
+  assert.equal(undeclared.code, 4, undeclared.stdout + undeclared.stderr);
+  const declared = await cli([...args, "--spec", join(root, "spec.json")]);
+  assert.equal(declared.code, 0, declared.stdout + declared.stderr);
+  const family = doc(declared).families[0];
+  assert.equal(family.template, "walk");
+  assert.equal(family.templateSource, "declared");
+  assert.deepEqual(doc(declared).templateDecisions, []);
+});
+
 test("animation-qa: --spec declares the gait; a four-legged walk passes under it", async () => {
   const root = await mkdtemp(join(tmpdir(), "assetgrove-anim-gait-"));
   const walk = quadrupedWalk(8);
