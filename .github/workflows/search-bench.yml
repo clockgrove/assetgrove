@@ -19,6 +19,11 @@ on:
         type: string
         default: "400"
 
+      model:
+        description: relevance only - the decision model that judges; empty uses the script's default
+        type: string
+        default: ""
+
 concurrency:
   group: search-bench
   cancel-in-progress: false
@@ -89,7 +94,12 @@ jobs:
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           MAX_CALLS: ${{ inputs.max-calls }}
-        run: node bench/search/judge-relevance.ts --provider gateway --max-calls "$MAX_CALLS"
+          JUDGE_MODEL: ${{ inputs.model }}
+        shell: bash
+        run: |
+          args=(--provider gateway --max-calls "$MAX_CALLS")
+          if [ -n "$JUDGE_MODEL" ]; then args+=(--model "$JUDGE_MODEL"); fi
+          node bench/search/judge-relevance.ts "${args[@]}"
 
       - name: Upload the manifest with its judgements
         if: always() && inputs.step == 'relevance'
