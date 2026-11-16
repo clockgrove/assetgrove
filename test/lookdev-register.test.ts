@@ -183,3 +183,20 @@ test("luminance, speckle and markings count the pale outline pixels the mask hol
   const outline = measureBox(crop.image, [0, 0, 1, 1], crop.mask);
   assert.equal(outline?.pixels, n);
 });
+
+test("a gap the figure encloses is figure on both sides, so a faithful edit overlaps fully", () => {
+  // The body has a hole the ground shows through (between the legs, seen at three-quarter).
+  const hole = (x: number, y: number) => x >= 56 && x < 72 && y >= 80 && y < 100;
+  const { raster, mask } = render();
+  for (let y = 0; y < SIZE; y++)
+    for (let x = 0; x < SIZE; x++)
+      if (hole(x, y)) {
+        mask[y * SIZE + x] = 0;
+        raster.data.set([...GREY, 255], (y * SIZE + x) * 4);
+      }
+  const edited = edit(identity);
+  for (let y = 0; y < SIZE; y++)
+    for (let x = 0; x < SIZE; x++)
+      if (hole(x, y)) edited.data.set([250, 250, 250, 255], (y * SIZE + x) * 4);
+  assert.ok(register(edited, raster, mask).overlap > 0.99);
+});
