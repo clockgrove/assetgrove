@@ -108,6 +108,34 @@ export const animationsOf = (g: StripGeometry): Record<string, string[]> => ({
   [g.animation]: Array.from({ length: g.count }, (_, i) => frameName(g.assetId, i)),
 });
 
+/**
+ * Compares a read-back document's `animations` with what the preset wrote (`animationsOf`): the same
+ * animation names, each listing the same frame names in the same order.
+ */
+export function animationProblems(
+  g: StripGeometry,
+  doc: Record<string, unknown>,
+  file: string,
+): string[] {
+  const want = animationsOf(g);
+  const raw = doc["animations"];
+  if (!isObject(raw)) return [`${file} has no animations object`];
+  const problems: string[] = [];
+  const names = Object.keys(want);
+  for (const name of Object.keys(raw)) {
+    if (!names.includes(name)) problems.push(`${file} animations has an unexpected ${name}`);
+  }
+  for (const name of names) {
+    const got = raw[name];
+    const frames = want[name]!;
+    if (!Array.isArray(got)) problems.push(`${file} animations has no ${name}`);
+    else if (got.length !== frames.length || got.some((n, i) => n !== frames[i])) {
+      problems.push(`${file} animations.${name} does not list frames 0 to ${g.count - 1} in order`);
+    }
+  }
+  return problems;
+}
+
 export function atlasFile(path: string, doc: unknown): PresetFile {
   return { path, content: `${JSON.stringify(doc, null, 2)}\n` };
 }
@@ -209,13 +237,6 @@ export const atlasJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
   async check(ctx, { shape }, files, read) {
     const g = stripGeometry(ctx, "atlas-json");
     const file = files[0]?.path ?? sidecarPath(g.media, ".atlas.json");
-    return checkAtlas(g, shape, file, read, (doc) => {
-      const anim = isObject(doc["animations"]) ? doc["animations"] : {};
-      const got = anim[g.animation];
-      const want = Array.from({ length: g.count }, (_, i) => frameName(g.assetId, i));
-      return Array.isArray(got) && got.length === want.length && got.every((n, i) => n === want[i])
-        ? []
-        : [`${file} animations.${g.animation} does not cover frames 0 to ${g.count - 1}`];
-    });
+    return checkAtlas(g, shape, file, read, (doc) => animationProblems(g, doc, file));
   },
 };

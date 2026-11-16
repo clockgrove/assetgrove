@@ -191,6 +191,27 @@ const CORRUPTIONS: Array<[string, (doc: Doc) => Doc, RegExp]> = [
     },
     /frameTags|animations/,
   ],
+  [
+    "missing animations",
+    (d) => {
+      delete d.animations;
+      return d;
+    },
+    /animations/,
+  ],
+  [
+    "renamed animation",
+    (d) => ({ ...d, animations: { renamed: d.animations.shelter } }),
+    /animations/,
+  ],
+  [
+    "dropped animation frame",
+    (d) => {
+      d.animations.shelter.splice(1, 1);
+      return d;
+    },
+    /animations\.shelter/,
+  ],
 ];
 
 test("corrupting each checked field exits 6 handoff_check_failed", async () => {

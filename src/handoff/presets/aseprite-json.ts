@@ -6,6 +6,7 @@
 import type { z } from "zod";
 import type { HandoffPreset } from "./index.ts";
 import {
+  animationProblems,
   animationsOf,
   atlasFile,
   atlasOptions,
@@ -37,7 +38,7 @@ export const asepriteJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
           : {};
       const tags = Array.isArray(meta["frameTags"]) ? (meta["frameTags"] as unknown[]) : [];
       const covered = new Set<number>();
-      const problems: string[] = [];
+      const problems = animationProblems(g, doc, file);
       for (const t of tags) {
         const { from, to } = (t ?? {}) as { from?: unknown; to?: unknown };
         if (Number.isInteger(from) && Number.isInteger(to)) {
