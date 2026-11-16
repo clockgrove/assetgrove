@@ -101,7 +101,17 @@ export interface SearchFindResult {
   builtFrom: { head: string; at: string } | null;
 }
 
+/** Picked assets of exactly this kind and subject (design section 7.6). */
+export interface NearMatchQuery {
+  kind: string;
+  subject: string;
+  /** The images the request sends; with any, a match must clear the image-similarity threshold. */
+  references: Uint8Array[];
+  limit: number;
+}
+
 export interface SearchSlot {
+  nearMatch?(query: NearMatchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;

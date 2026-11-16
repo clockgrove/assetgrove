@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadProfile, readJson } from "../inputs.ts";
 import { readConfirmation, writeConfirmation } from "../confirm/records.ts";
 import { generationTool } from "../mcp.ts";
+import { nearMatchesFor } from "../search/near-match.ts";
 import { planJobs } from "../planning.ts";
 import { planningContext, providerSet, spendLedger } from "../providers/index.ts";
 import {
@@ -62,13 +63,22 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     jobOf(PROMPT_POLICY_OPERATION, providers.routes[PROMPT_POLICY_OPERATION]!),
     ...forecast.jobs,
   ];
+  const reads = {
+    ...(await bibleReads("bible", args.bible)),
+    ...specReads("spec", spec),
+    ...forecast.reads,
+  };
+  const near = await nearMatchesFor(
+    spec.value,
+    Object.entries(reads)
+      .filter(([name]) => name.startsWith("bible/"))
+      .map(([, path]) => path),
+    ctx,
+  );
   const work: WorkPlan = await buildWorkPlan(planCommand, args, {
+    near,
     inputs: ["spec", "bible", "profile", "brief", "runOptions", "template"],
-    reads: {
-      ...(await bibleReads("bible", args.bible)),
-      ...specReads("spec", spec),
-      ...forecast.reads,
-    },
+    reads,
     jobs,
     capUsd: forecast.capUsd,
     paid: paidBy(providers, jobs),

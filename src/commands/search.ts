@@ -45,7 +45,7 @@ export function searchSettings(settings: Settings): SearchSettings {
 }
 
 /** The slot and the context one call hands it. */
-async function searchCall(
+export async function searchCall(
   command: string,
   target: string | undefined,
   ctx: RunContext,
@@ -114,7 +114,7 @@ export function slotError(error: unknown): unknown {
   return new InputError(`${code}: ${error.message}`, { cause: error });
 }
 
-async function calling<T>(run: () => Promise<T>): Promise<T> {
+export async function calling<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
