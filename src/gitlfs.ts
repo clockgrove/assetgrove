@@ -61,9 +61,29 @@ function existingDir(path: string): string {
   return dir;
 }
 
+/**
+ * The directory git runs from for `path`: the nearest one at or above it that holds a `.git`
+ * entry, so a target deeper than Windows can enter (260 characters) never becomes the cwd; the
+ * nearest existing directory when none does (outside Git, or GIT_DIR is set).
+ */
+function gitCwd(path: string): string {
+  const start = existingDir(path);
+  if (process.env["GIT_DIR"] !== undefined) return start;
+  for (let at = start; ; at = dirname(at)) {
+    if (existsSync(join(at, ".git"))) return at;
+    if (dirname(at) === at) return start;
+  }
+}
+
+/** A git that could not be run at all is not "not a work tree": say so. */
+function ran(result: ReturnType<typeof git>): ReturnType<typeof git> {
+  if (result.error) throw new Error(`could not run git: ${result.error.message}`);
+  return result;
+}
+
 /** Whether `path` (which may not exist yet) is inside a Git work tree. */
 export function insideWorkTree(path: string): boolean {
-  const result = git(existingDir(path), ["rev-parse", "--is-inside-work-tree"]);
+  const result = ran(git(gitCwd(path), ["rev-parse", "--is-inside-work-tree"]));
   return result.status === 0 && result.stdout.trim() === "true";
 }
 
@@ -86,9 +106,9 @@ export function requireLfsMedia(paths: readonly string[]): void {
   const refused: string[] = [];
   for (const path of paths) {
     const abs = resolve(path);
-    const dir = existingDir(dirname(abs));
+    const dir = gitCwd(dirname(abs));
     requireWorkTree(dir);
-    const result = git(dir, ["check-attr", "filter", "--", abs]);
+    const result = ran(git(dir, ["check-attr", "filter", "--", abs]));
     if (result.status !== 0) throw new GitRequiredError(abs);
     if (!/: filter: lfs\s*$/.test(result.stdout.trim())) refused.push(abs);
   }

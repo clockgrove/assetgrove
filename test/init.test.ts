@@ -438,8 +438,11 @@ test("with no git-lfs on PATH init gives a needs-person step", async () => {
   const fake = join(bin, process.platform === "win32" ? "git-lfs.exe" : "git-lfs");
   if (process.platform === "win32") copyFileSync(process.execPath, fake);
   else symlinkSync(process.execPath, fake);
+  // Git looks in its exec-path before PATH (and Git for Windows' wrapper puts mingw64\\bin first),
+  // so the failing git-lfs is also the only entry of GIT_EXEC_PATH: it wins on every system.
   const result = await cli(initArgs(dir), {
     PATH: [bin, process.env["PATH"] ?? ""].join(delimiter),
+    GIT_EXEC_PATH: bin,
   });
   assert.equal(result.code, 0, result.stderr);
   const step = result.json.steps.find((s) => s.id === "git-lfs")!;
