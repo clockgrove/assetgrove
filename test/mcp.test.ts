@@ -875,7 +875,7 @@ export default {
       const w = await stripWorld();
       return {
         strip: w.strip,
-        family: "walk-right",
+        family: "walk",
         profile: w.profile,
         out: join(w.dir, "qa"),
         noVision: true,
@@ -891,7 +891,7 @@ export default {
       const w = join(work, "strip");
       return {
         strip: join(w, "walk-right.png"),
-        family: "walk-right",
+        family: "walk",
         profile: join(w, "profile.json"),
         frame: 3,
         from: 2,
