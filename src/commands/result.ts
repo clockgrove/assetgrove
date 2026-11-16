@@ -123,8 +123,15 @@ export function dryRunOutcome(
     spend,
     withinLimits: over === undefined,
   };
+  const hits = work.promptPolicy?.hits ?? [];
   const text = [
     human,
+    // The plan step calls no model: a hit it did not refuse is decided when the run starts.
+    ...(hits.length > 0
+      ? [
+          `prompt policy: ${hits.map((h) => `"${h.term}" (${h.ambiguous ? `${h.kind}, also an ordinary word` : h.kind}) in ${h.part}`).join(", ")}: decided by the model check when the run starts`,
+        ]
+      : []),
     `request ${work.digest}`,
     `run directory ${work.runDir}`,
     ...formatSpend(spend, counted),

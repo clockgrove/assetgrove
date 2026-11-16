@@ -68,6 +68,7 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
     candidates: forecast.candidates,
     runsArg: "out",
     promptAllow: ctx.settings.promptPolicy.allow,
+    ...(forecast.promptParts && { promptParts: forecast.promptParts }),
     promptText: args.note !== undefined ? [args.note] : [],
   });
   return { providers, work };
@@ -178,6 +179,7 @@ confirmation authorizes this generation spend; resulting assets remain pending r
       promptAllow: ctx.settings.promptPolicy.allow,
       outDir: dirname(dir),
       ...(args.note !== undefined && { note: args.note }),
+      ...(ctx.run?.promptPolicy !== undefined && { promptPolicy: ctx.run.promptPolicy }),
       runId: basename(dir),
     });
     const bible = await loadBible(
