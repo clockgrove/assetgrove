@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { createDefaultContainer, read as readKtx, write as writeKtx } from "ktx-parse";
 import { validateBytes } from "gltf-validator";
 import { writeToTarget } from "../src/handoff.ts";
+import { markProblems } from "../src/handoff/mark-check.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { PRESETS } from "../src/handoff/presets/index.ts";
 import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
@@ -89,9 +90,12 @@ test("a preset's file in a markable format without the mark fails the check with
       ...stripWrite(target, [{ preset: "extra-image" }]),
       registry: withExtra(unmarked),
     }),
-    (error: { code?: string; problems?: { problem: string }[] }) =>
+    (error: { code?: string; problems?: { problem: string; code?: string }[] }) =>
       error.code === "handoff_check_failed" &&
-      error.problems!.some((p) => p.problem.includes("assets/extra.png lacks the AI mark")),
+      error.problems!.some(
+        (p) =>
+          p.problem.includes("assets/extra.png lacks the AI mark") && p.code === "mark_missing",
+      ),
   );
   const marked = embedDigitalSourceType(unmarked, "image/png", types.generated, {
     models: provenance.models,
@@ -184,4 +188,21 @@ test("a KTX2 carries the key-value entry ktx-parse reads back", () => {
     models: ["model-a"],
   });
   assert.deepEqual(Buffer.from(again), Buffer.from(marked));
+});
+
+test("markProblems codes the branch that found the problem, not the wording of the sentence", () => {
+  const expected = { digitalSourceType: types.generated, models: provenance.models };
+  const code = (path: string, bytes: Uint8Array) =>
+    markProblems(path, bytes, "image/png", expected).map((p) => p.code);
+
+  assert.deepEqual(code("hero.png", unmarked), ["mark_missing"]);
+  assert.deepEqual(code("hero.png", new Uint8Array([1, 2, 3])), ["mark_invalid"]);
+  const noModels = embedDigitalSourceType(unmarked, "image/png", types.generated);
+  const [models] = markProblems("hero.png", noModels, "image/png", expected);
+  assert.equal(models!.code, "mark_invalid");
+  assert.match(models!.message, /lacks the provenance's models/);
+  const wrongType = embedDigitalSourceType(unmarked, "image/png", types.composite, {
+    models: provenance.models,
+  });
+  assert.deepEqual(code("hero lacks armor.png", wrongType), ["mark_invalid"]);
 });

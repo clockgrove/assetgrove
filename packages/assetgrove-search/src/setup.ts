@@ -90,6 +90,7 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
         { host: "mirror", url: mirrorUrl(manifest.mirrorBase, file) },
       ];
       const failures: string[] = [];
+      let mismatch = false;
       let saved = false;
       for (const a of attempts) {
         say(`${file.path} from ${a.host}`);
@@ -97,6 +98,7 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
           const bytes = await download(doFetch, a.url);
           const got = createHash("sha256").update(bytes).digest("hex");
           if (got !== file.sha256) {
+            mismatch = true;
             failures.push(`${a.host}: sha256 ${got} does not match ${file.sha256}`);
             continue;
           }
@@ -110,7 +112,6 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
         }
       }
       if (!saved) {
-        const mismatch = failures.some((f) => f.includes("does not match"));
         throw new SearchError(
           mismatch ? "hash_mismatch" : "setup_failed",
           `Could not fetch ${file.path}: ${failures.join("; ")}`,

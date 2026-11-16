@@ -6,12 +6,15 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { upstreamOf } from "./dataflows.ts";
 import { canCarryCredentials, readCredentials } from "./credentials.ts";
 import { markableMediaType } from "./handoff/mark-check.ts";
 import { readDigitalSourceType, readMarkedModels } from "./metadata.ts";
 import { parseCard } from "./library/card.ts";
 import { libraryPath } from "./library/paths.ts";
 import { scanCards } from "./library/write.ts";
+import { adapterOf } from "./providers/adapter.ts";
+import type { Settings } from "./settings.ts";
 
 export interface DisclosureCount {
   name: string;
@@ -46,6 +49,8 @@ export interface Disclosure {
   bySourceType: DisclosureCount[];
   models: DisclosureCount[];
   providers: DisclosureCount[];
+  /** The model vendors behind gateway calls; empty without settings to name the adapters. */
+  vendors: DisclosureCount[];
   terms: DisclosureTerms[];
   contentCredentials: DisclosureCredentials;
   /** Cards whose provenance could not be read; they count as `unknown`. */
@@ -81,13 +86,26 @@ function findProvenance(value: unknown, depth: number): Record<string, unknown> 
   return undefined;
 }
 
+/**
+ * The date a record made before routes carried `providerTermsAsOf` wrote into its terms text as
+ * `(as of YYYY-MM-DD)`; read only when no call of the library records the date as a field.
+ */
+function legacyTermsAsOf(text: string): string | undefined {
+  return /\(as of (\d{4}-\d{2}-\d{2})\)/.exec(text)?.[1];
+}
+
 /** Summarises the library under `root` from its cards and provenance. */
-export async function disclose(root: string): Promise<Disclosure> {
+export async function disclose(
+  root: string,
+  options: { settings?: Pick<Settings, "providers"> } = {},
+): Promise<Disclosure> {
   const byKind: Record<string, Record<string, number>> = {};
   const sources = new Map<string, number>();
   const models = new Map<string, number>();
   const providers = new Map<string, number>();
+  const vendors = new Map<string, number>();
   const terms = new Map<string, number>();
+  const termDates = new Map<string, string>();
   const withoutProvenance: string[] = [];
   const signers = new Map<string, DisclosureSigner>();
   let approvedAi = 0;
@@ -161,9 +179,18 @@ export async function disclose(root: string): Promise<Disclosure> {
       bump(models, model);
     const calls = Array.isArray(provenance?.["calls"]) ? (provenance["calls"] as unknown[]) : [];
     const named = new Set<string>();
+    const vendorNames = new Set<string>();
     for (const call of calls) {
-      const model = (call as { model?: unknown } | null)?.model;
-      if (typeof model === "string" && model.includes("/")) named.add(model.split("/")[0]!);
+      const fields = call as { route?: unknown; model?: unknown } | null;
+      const route = typeof fields?.route === "string" ? fields.route.split(":") : [];
+      const providerId = route[0];
+      if (route.length < 3 || !providerId) continue;
+      named.add(providerId);
+      const entry = options.settings?.providers[providerId] ?? {};
+      const adapter = options.settings === undefined ? undefined : adapterOf(providerId, entry);
+      const model = route.slice(2).join(":");
+      const vendor = adapter === undefined ? null : upstreamOf(adapter.id, model);
+      if (vendor !== null) vendorNames.add(vendor);
     }
     if (
       named.size === 0 &&
@@ -171,8 +198,14 @@ export async function disclose(root: string): Promise<Disclosure> {
       typeof provenance?.["route"] === "string"
     )
       named.add(provenance["route"]);
+    for (const vendor of vendorNames) bump(vendors, vendor);
     for (const provider of named) bump(providers, provider);
     for (const t of new Set(strings(provenance?.["providerTerms"]))) bump(terms, t);
+    for (const call of calls) {
+      const fields = call as { providerTerms?: unknown; providerTermsAsOf?: unknown } | null;
+      if (typeof fields?.providerTerms === "string" && typeof fields.providerTermsAsOf === "string")
+        termDates.set(fields.providerTerms, fields.providerTermsAsOf);
+    }
     const signer = (provenance?.["contentCredentials"] ?? credentials) as
       Record<string, unknown> | null | undefined;
     if (signer && typeof signer === "object" && typeof signer["certificateSha256"] === "string") {
@@ -205,7 +238,7 @@ export async function disclose(root: string): Promise<Disclosure> {
   };
   const termList = [...terms]
     .map(([text, assets]): DisclosureTerms => {
-      const asOf = /\(as of (\d{4}-\d{2}-\d{2})\)/.exec(text)?.[1];
+      const asOf = termDates.get(text) ?? legacyTermsAsOf(text);
       return { terms: text, ...(asOf !== undefined && { asOf }), assets };
     })
     .sort((a, b) => compare(a.terms, b.terms));
@@ -234,6 +267,7 @@ export async function disclose(root: string): Promise<Disclosure> {
     bySourceType: list(sources),
     models: list(models),
     providers: list(providers),
+    vendors: list(vendors),
     terms: termList,
     contentCredentials,
     withoutProvenance,
@@ -262,6 +296,9 @@ export function disclosureMarkdown(d: Disclosure): string {
       "",
       "## Providers",
       ...rows(d.providers),
+      "",
+      "## Model vendors behind gateways",
+      ...rows(d.vendors),
       "",
       "## Provider terms",
       ...(d.terms.length

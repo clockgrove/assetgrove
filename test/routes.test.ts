@@ -150,6 +150,37 @@ test("overriding only the model of a gateway route resolves with no outputGrant 
     ],
   );
   assert.deepEqual(same.outputGrant, defaultRoutes.edit.outputGrant);
+  assert.equal(same.providerTermsAsOf, defaultRoutes.edit.providerTermsAsOf);
+});
+
+test("an override of the default's pair with new terms text and no date does not take the default's date", () => {
+  const gateway = [
+    {
+      id: "gateway",
+      adapter: {
+        id: "vercel-ai-gateway",
+        capabilities: ["edit"],
+        defaultRoutes: GATEWAY_DEFAULT_ROUTES,
+      },
+    },
+  ];
+  const providers = { gateway: { adapter: "vercel-ai-gateway" } };
+  const pair = { provider: "gateway", model: defaultRoutes.edit.model };
+  const resolve = (extra: object) =>
+    resolveRoute(
+      settingsOf(providers, { roles: { edit: { ...pair, ...extra } } }),
+      "edit",
+      gateway,
+    );
+  const undated = resolve({ providerTerms: "BFL terms as the studio read them" });
+  assert.equal(undated.providerTerms, "BFL terms as the studio read them");
+  assert.equal(undated.providerTermsAsOf, undefined);
+  const dated = resolve({ providerTerms: "BFL terms", providerTermsAsOf: "2026-11-15" });
+  assert.equal(dated.providerTermsAsOf, "2026-11-15");
+  // Leaving the terms alone keeps the default's text and its date together.
+  const kept = resolve({ estimatedCostUsd: 0.06 });
+  assert.equal(kept.providerTerms, defaultRoutes.edit.providerTerms);
+  assert.equal(kept.providerTermsAsOf, defaultRoutes.edit.providerTermsAsOf);
 });
 
 test("a route to a provider whose adapter lacks the capability is route_unavailable", () => {

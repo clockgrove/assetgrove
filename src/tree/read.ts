@@ -13,6 +13,7 @@ import { extname, join, relative, sep } from "node:path";
 import { turntableViews } from "../compare.ts";
 import { InputError } from "../errors.ts";
 import { BIBLE_PATH } from "../init.ts";
+import { findProvenance } from "../library/adopt.ts";
 import { MACHINE_FIELDS } from "../library/card.ts";
 import { sha256Hex } from "../library/canonical.ts";
 import { logEntriesFromReview, renderLog } from "../library/folder.ts";
@@ -21,6 +22,8 @@ import { findGitDir, lfsObjectPath, readMedia } from "../library/lfs.ts";
 import { versionStatus } from "../library/review.ts";
 import type { ReviewRecord } from "../library/review.ts";
 import { sniffMediaType } from "../request.ts";
+import { readRunState } from "../runs/execute.ts";
+import { runLockLive } from "../runs/lock.ts";
 import { VIEWS, formatAddress, pageAddress, parseAddress } from "./address.ts";
 import type { Address } from "./address.ts";
 import {
@@ -280,6 +283,7 @@ interface CandidateInfo {
   reasons: unknown[];
   costUsd?: number;
   artifacts: string[];
+  parameters?: unknown;
 }
 
 /** A run's candidates: each staged one, and each one QA filtered out (`c<n>`). */
@@ -293,7 +297,9 @@ function candidates(record: JsonObject | undefined): CandidateInfo[] {
     ? record["candidates"]
     : []) as JsonObject[]) {
     if (typeof c["id"] !== "string") continue;
-    const cost = (c["provenance"] as JsonObject | undefined)?.["costUsd"];
+    const provenance = c["provenance"] as JsonObject | undefined;
+    const cost = provenance?.["costUsd"];
+    const parameters = provenance?.["parameters"];
     out.push({
       id: c["id"],
       state: c["id"] === picked ? "picked" : "staged",
@@ -303,6 +309,7 @@ function candidates(record: JsonObject | undefined): CandidateInfo[] {
       reasons: Array.isArray(c["reasons"]) ? c["reasons"] : [],
       ...(typeof cost === "number" && { costUsd: cost }),
       artifacts: strings(c["artifacts"]),
+      ...(parameters !== undefined && { parameters }),
     });
   }
   const taken = new Set(out.map((c) => c.id));
@@ -351,8 +358,35 @@ function readBytes(path: string | undefined): Uint8Array | undefined {
   }
 }
 
-function shapeOf(asset: { kind?: string } | undefined): ThumbShape {
-  return asset?.kind === "sprite-strip" ? "strip" : "image";
+/** A strip's frame from provenance parameters (`frame`, `frameCount`); the whole image when absent. */
+function shapeFrom(kind: unknown, parameters: unknown): ThumbShape {
+  if (kind !== "sprite-strip" || parameters === null || typeof parameters !== "object") {
+    return "image";
+  }
+  // An import records them at the top of its parameters; a generated strip under `postprocess`.
+  const top = parameters as { frame?: JsonObject; frameCount?: unknown; postprocess?: unknown };
+  const post = (
+    top.postprocess !== null && typeof top.postprocess === "object" ? top.postprocess : {}
+  ) as { frame?: JsonObject; frameCount?: unknown };
+  const frame = top.frame ?? post.frame;
+  const frameCount = top.frameCount ?? post.frameCount;
+  if (
+    typeof frame?.["width"] === "number" &&
+    typeof frame["height"] === "number" &&
+    typeof frameCount === "number"
+  ) {
+    return { strip: { width: frame["width"], height: frame["height"], count: frameCount } };
+  }
+  return "image";
+}
+
+/** How a library asset's image is cut for its thumbnail, from its own provenance record. */
+function shapeOf(project: Project, asset: Asset): ThumbShape {
+  if (asset.kind !== "sprite-strip") return "image";
+  const path = sourcePath(project, asset, "provenance");
+  // The record may be the file itself or embedded in a manifest, as `library check` finds it.
+  const record = path === undefined ? undefined : findProvenance(readJsonObject(path));
+  return shapeFrom(asset.kind, record?.parameters);
 }
 
 function stillAsset(view: View, id: string): Asset {
@@ -484,6 +518,15 @@ async function readView(view: View, at: Address, r: Reader): Promise<void> {
   r.json(folderDoc(r.address, page(r.address, children, at.after), {}));
 }
 
+/** A run's state as `assetgrove runs` words it; "running" only while its lock is held. */
+function runState(dir: string, record: JsonObject | undefined): string {
+  const status = readRunState(dir)?.status;
+  if (status === "running") return runLockLive(dir) ? "running" : "interrupted";
+  if (status === "finished" || status === "failed") return status;
+  if (record) return record["ok"] === false ? "failed" : "finished";
+  return runLockLive(dir) ? "running" : "interrupted";
+}
+
 async function readRuns(view: View, at: Address, r: Reader): Promise<void> {
   const [, run, candidate, ...rest] = at.segments;
   const { game } = view;
@@ -514,7 +557,7 @@ async function readRuns(view: View, at: Address, r: Reader): Promise<void> {
       folderDoc(r.address, page(r.address, children, at.after), {
         run: {
           id: run,
-          state: record ? "finished" : "running",
+          state: runState(dir, record),
           ...(typeof spec["kind"] === "string" && { assetKind: spec["kind"] }),
           ...(typeof spec["assetId"] === "string" && { assetId: spec["assetId"] }),
           ...(typeof record?.["command"] === "string" && { command: record["command"] }),
@@ -544,7 +587,7 @@ async function readRuns(view: View, at: Address, r: Reader): Promise<void> {
     ...(found.artifacts.length > 0 && { artifacts: found.artifacts }),
   });
   const bytes = readBytes(file);
-  const shape = shapeOf({ ...(typeof spec["kind"] === "string" && { kind: spec["kind"] }) });
+  const shape = shapeFrom(spec["kind"], found.parameters);
   if (bytes && found.mediaType?.startsWith("image/")) {
     r.thumb([bytes], shape);
   } else {
@@ -655,7 +698,7 @@ async function readImage(
     if (images.length > 0) r.thumb(images, "row");
     return media.bytes;
   }
-  if (!r.thumb([media.bytes], shapeOf(asset))) {
+  if (!r.thumb([media.bytes], shapeOf(view.project, asset))) {
     r.json({ address: r.address, kind: "file", ...where, bytes: media.bytes.length });
   }
   return media.bytes;
@@ -696,7 +739,7 @@ async function readVersions(
     current: n === versions.length,
     image: found?.from ?? null,
   });
-  if (found && !is3d(path)) r.thumb([found.bytes], shapeOf(asset));
+  if (found && !is3d(path)) r.thumb([found.bytes], shapeOf(view.project, asset));
   return undefined;
 }
 

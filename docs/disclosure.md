@@ -28,7 +28,7 @@ The manifests are built and read by the Content Authenticity Initiative's SDK ([
 
 Each hand-off preset's check reads the mark back from the media and from every file the preset wrote in a format that can carry it, the atlas images of `atlas-json` and `aseprite-json` included. A file that lacks the mark, or whose mark differs from the provenance's source type or models, fails the hand-off with exit 6 `handoff_check_failed`, and nothing reaches the library.
 
-For a PNG, JPEG or WebP the check also reads the C2PA manifest back and validates it, offline: its signature, its certificate chain, its assertions' hashes and its hard binding to the bytes. An untrusted signing credential passes (no trust list is configured); any other failure does not. Each problem in `error.problems` names the file (`file`, relative to the target) and a `code`: `credentials_missing` (no manifest), `credentials_mismatch` (the manifest does not match the file's bytes), `credentials_invalid` (any other validation failure, or actions, source type or models that differ from the provenance), and `mark_missing` or `mark_invalid` for the IPTC mark.
+For a PNG, JPEG or WebP the check also reads the C2PA manifest back and validates it, offline: its signature, its certificate chain, its assertions' hashes and its hard binding to the bytes. An untrusted signing credential passes (no trust list is configured); any other failure does not. Each problem in `error.problems` names the file (`file`, relative to the target) and a `code`: `credentials_missing` (no manifest), `credentials_mismatch` (the manifest does not match the file's bytes), `credentials_invalid` (any other validation failure, or actions, source type or models that differ from the provenance), and for the IPTC mark `mark_missing` (the file carries no digital source type) or `mark_invalid` (the file cannot be read, or its source type or models differ from the provenance's). The code comes from the check that found the problem, never from the problem's wording.
 
 ## `disclosure`
 
@@ -39,8 +39,9 @@ assetgrove disclosure [root] [--out <file>] [--json]
 The `disclosure` tool takes the same arguments. It reads the cards under `root` (the current directory by default) and the provenance each names (or the manifest that embeds it; a card with neither is read from its media file's mark). It reports:
 
 - assets by kind and by IPTC source type;
-- models and providers, with the number of assets each made;
-- provider terms, with the date each was recorded as of;
+- models and providers, with the number of assets each made. A provider is the settings id at the head of each call's route (`<providerId>:<operation>:<model>`), so a direct call whose model id has no slash counts as surely as a gateway call, and a local server's model id never names its provider. A record whose calls carry no such route counts the provenance's `route`;
+- the model vendors behind gateway calls (`vendors`): the model id's prefix on a call whose provider's adapter is `vercel-ai-gateway`, by the rule `init` uses for each route's data flow. It needs the developer settings to know which provider is a gateway; without them the list is empty;
+- provider terms, with the date each was recorded as of: the call's `providerTermsAsOf`, which each route records beside `providerTerms`. Only for a record made before calls carried that field is the date read from the text's `(as of YYYY-MM-DD)`;
 - content credentials: how many assets were signed, by which certificate, and, when any were signed with Assetgrove's local development certificate, a note that no C2PA trust list holds it and that a certificate from a C2PA-recognised authority (developer settings `contentCredentials`) replaces it before release;
 - text for Steam's AI content survey and tags and text for itch.io's AI disclosure.
 

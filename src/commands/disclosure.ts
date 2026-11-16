@@ -33,9 +33,9 @@ Spends nothing; nothing is written without --out.`,
   },
   positionals: [{ name: "root" }],
   effect: { readOnly: false, spends: "never", writes: "out" },
-  async run(args) {
+  async run(args, ctx) {
     const root = resolve(args.root ?? ".");
-    const summary = await disclose(root);
+    const summary = await disclose(root, { settings: ctx.settings });
     if (args.out !== undefined) {
       if (args.out === "") throw new InputError("--out needs a file");
       if (isAbsolute(args.out) || args.out.split(/[\\/]/).includes(".."))
@@ -49,6 +49,9 @@ Spends nothing; nothing is written without --out.`,
       ...summary.bySourceType.map((s) => `  ${s.name}: ${s.assets}`),
       `models: ${summary.models.map((m) => m.name).join(", ") || "none"}`,
       `providers: ${summary.providers.map((m) => m.name).join(", ") || "none"}`,
+      ...(summary.vendors.length > 0
+        ? [`vendors: ${summary.vendors.map((m) => m.name).join(", ")}`]
+        : []),
       ...summary.terms.map((t) => `terms: ${t.terms}`),
       ...(summary.contentCredentials.signed > 0 || summary.contentCredentials.note
         ? [
