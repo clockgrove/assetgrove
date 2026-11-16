@@ -35,6 +35,10 @@ interface BenchWorld {
   benchAt?: string;
   /** Whether the bench run's head commit holds the bars' commit (default true). */
   barsInHead?: boolean;
+  /** The bench run's head commit (default `c` x 40); `null` lists the run with no head_sha. */
+  headSha?: string | null;
+  /** The exit status `git merge-base` gives for the expected argv, overriding `barsInHead`. */
+  ancestryStatus?: number;
   /** The bench report's lines. */
   report?: object[];
   /** The runs search-bench.yml lists, newest first, and which uploaded the bench report. */
@@ -48,6 +52,7 @@ interface BenchWorld {
  */
 function passingWith(world: BenchWorld = {}): Runner {
   const runs = world.runs ?? [{ id: 1, report: true }];
+  const headSha = world.headSha === undefined ? "c".repeat(40) : world.headSha;
   return (argv) => {
     if (argv[0] === "git" && argv[1] === "log")
       return {
@@ -62,8 +67,16 @@ function passingWith(world: BenchWorld = {}): Runner {
         ? { status: 128, stdout: "", stderr: "no such path" }
         : { status: 0, stdout: BARS, stderr: "" };
     }
-    if (argv[0] === "git" && argv[1] === "merge-base")
-      return { status: world.barsInHead === false ? 1 : 0, stdout: "", stderr: "" };
+    if (argv[0] === "git" && argv[1] === "merge-base") {
+      // Only the ancestry question "is the bars' commit in the run's head?" is answered; any other
+      // argv (another order, another commit) is an unknown revision, as Git reports it.
+      const expected = ["git", "merge-base", "--is-ancestor", "a".repeat(40), headSha];
+      if (JSON.stringify(argv) !== JSON.stringify(expected))
+        return { status: 128, stdout: "", stderr: `fatal: unexpected ${argv.join(" ")}` };
+      const status = world.ancestryStatus ?? (world.barsInHead === false ? 1 : 0);
+      const stderr = status > 1 ? `fatal: Not a valid commit name ${headSha}` : "";
+      return { status, stdout: "", stderr };
+    }
     if (argv[0] === "gh" && argv[1] === "run" && argv[2] === "download") {
       const dir = argv[argv.indexOf("-D") + 1]!;
       writeFileSync(
@@ -100,7 +113,7 @@ function passingWith(world: BenchWorld = {}): Runner {
         conclusion: "success",
         html_url: `https://example.test/run/${r.id}`,
         created_at: world.benchAt ?? BENCH_AT,
-        head_sha: "c".repeat(40),
+        ...(headSha === null ? {} : { head_sha: headSha }),
       }));
       return { status: 0, stdout: JSON.stringify({ workflow_runs: listed }), stderr: "" };
     }
@@ -312,6 +325,31 @@ test("the search bars entry fails when the bench run is later in time but its he
   });
   assert.equal(report.entries[0]!.status, "fail");
   assert.match(report.entries[0]!.detail, /does not hold the bars' commit a{40}/);
+  assert.equal(report.ok, false);
+});
+
+test("the search bars entry fails when the bench run names no head commit", () => {
+  const report = runGate({
+    entries: [bench()],
+    run: passingWith({ headSha: null }),
+    commit: COMMIT,
+  });
+  assert.equal(report.entries[0]!.status, "fail");
+  assert.match(report.entries[0]!.detail, /names no head commit/);
+  assert.equal(report.ok, false);
+});
+
+test("the search bars entry fails, naming the Git error, when the ancestry check cannot run", () => {
+  const report = runGate({
+    entries: [bench()],
+    run: passingWith({ ancestryStatus: 128 }),
+    commit: COMMIT,
+  });
+  assert.equal(report.entries[0]!.status, "fail");
+  assert.match(
+    report.entries[0]!.detail,
+    /failed \(fetch main's history\): fatal: Not a valid commit name c{40}/,
+  );
   assert.equal(report.ok, false);
 });
 
