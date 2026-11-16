@@ -5,6 +5,7 @@ export type SearchErrorCode =
   | "setup_failed"
   | "hash_mismatch"
   | "invalid_input"
+  | "settings_invalid"
   | "extension_unavailable"
   | "store_locked";
 

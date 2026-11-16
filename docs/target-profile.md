@@ -29,7 +29,7 @@ Assetgrove reads three files: the asset spec and the target profile (JSON) and t
 
 The shared files carry a `format` line as their first field, `assetgrove-<kind>/<n>`: `assetgrove-target-profile/2`, `assetgrove-style-bible/1` (the JSON style bible and the front matter of `BIBLE.md`), `assetgrove-style-preset/1` and `assetgrove-recipe/1`. A file with no line is refused with exit 2 (`format_unsupported`, `error.reason` `missing`) and the message names the line to add. A newer version is `too_new`, and a line that is unknown or belongs to another kind is `unknown`. An older version is migrated in memory. Specs, briefs, groupings and other request inputs carry no format line.
 
-`assetgrove migrate <file> --kind <kind>` adds the line to an unversioned file, as its first field (Markdown front matter is edited in place and the prose kept), and moves an older file forward. A file already current is reported as `current` and not written. Loaders still refuse an unversioned file until it is migrated.
+`assetgrove migrate <file> --kind <kind>` adds the line to an unversioned file, as its first field (Markdown front matter is edited in place and the prose kept), and moves an older file forward; `--kind` is `target-profile`, `style-bible`, `style-preset`, `recipe` or `settings` (a developer settings file, moved from `/1` to `/2`). A file already current is reported as `current` and not written. Loaders still refuse an unversioned file until it is migrated.
 
 ## Style bible
 

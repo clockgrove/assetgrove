@@ -13,6 +13,7 @@ import { InputError } from "./errors.ts";
 import { formatLine } from "./formats.ts";
 import { checkTrackedKeys, KeyTrackedError } from "./guard.ts";
 import { HARNESSES, keyRecipe, type Harness } from "./keys.ts";
+import { resolvePackage, SEARCH_PACKAGE } from "./extensions/registry.ts";
 import { CORE_ADAPTERS } from "./providers/adapter.ts";
 import { suggestRoles, type SuggestedRole } from "./providers/set.ts";
 import type { Settings } from "./settings.ts";
@@ -305,6 +306,32 @@ function checkOptions(options: InitOptions): Harness {
 }
 
 /**
+ * The search steps (design sections 7.1 and 7.8): a needs-person step when the search package is
+ * installed in the project but the settings do not list it, so installing it loads nothing; and,
+ * with a shared remote store configured, the notice of what the bucket's readers can see.
+ */
+export function searchSteps(directory: string, settings: Settings): InitStep[] {
+  const steps: InitStep[] = [];
+  const listed = settings.extensions.includes(SEARCH_PACKAGE);
+  if (!listed && resolvePackage(SEARCH_PACKAGE, directory) !== undefined) {
+    steps.push({
+      id: "search",
+      status: "needs-person",
+      detail: `${SEARCH_PACKAGE} is installed in the project but not listed, so it is not loaded: add "${SEARCH_PACKAGE}" to the extensions list in ${settings.path} by hand to search the library (find, search index), then run assetgrove search setup.`,
+    });
+  }
+  const store = settings.search?.store;
+  if (store !== undefined) {
+    steps.push({
+      id: "notice.shared-index",
+      status: "notice",
+      detail: `A shared index exposes embeddings to whoever can read the bucket: ${store.uri} will hold the card fields, text, paths and embeddings of every pick and bible reference (never images), readable by anyone with read access to it.`,
+    });
+  }
+  return steps;
+}
+
+/**
  * Runs init: the tracked-key guard on the target (a refusal throws InitRefusedError before
  * anything is written), the project files, then the steps that remain.
  */
@@ -366,6 +393,7 @@ export async function initProject(
       detail:
         "Run spend check once the limit is declared: it shows, per provider, whether a limit is declared and whether the provider's reading verifies it.",
     },
+    ...searchSteps(directory, context.settings),
     {
       id: "notice.auto-answer",
       status: "notice",

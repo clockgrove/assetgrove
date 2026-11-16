@@ -33,7 +33,7 @@ A fresh machine has no providers and no routes, so `stage` exits 2 `route_unavai
 
 ```json
 {
-  "format": "assetgrove-settings/1",
+  "format": "assetgrove-settings/2",
   "providers": {
     "gateway": {
       "adapter": "vercel-ai-gateway",

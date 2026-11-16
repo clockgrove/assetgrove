@@ -27,7 +27,7 @@ import {
 } from "./commands/context.ts";
 import { commands } from "./commands/registry.ts";
 import { resultDocument } from "./commands/result.ts";
-import { errorOutcome, runCommand, toolInputSchema } from "./commands/runner.ts";
+import { availableCommands, errorOutcome, runCommand, toolInputSchema } from "./commands/runner.ts";
 import type { CommandSpec, Outcome, RunContext } from "./commands/types.ts";
 import { clientOf, confirmForm, elicitationPort } from "./confirm/mcp.ts";
 import type { FormAnswer, SealedRequest } from "./confirm/mcp.ts";
@@ -236,14 +236,23 @@ function packageInfo(): { name: string; version: string } {
   };
 }
 
-/** The contact sheet a result names (`runDir` and `contactSheet`) as MCP image content. */
+/**
+ * The contact sheet a result names (`runDir` and `contactSheet`), or find's numbered sheet
+ * (`sheet`), as MCP image content.
+ */
 async function contactImage(
   document: Record<string, unknown>,
 ): Promise<Array<{ type: "image"; data: string; mimeType: string }>> {
-  const { runDir, contactSheet } = document;
-  if (typeof runDir !== "string" || typeof contactSheet !== "string") return [];
+  const { runDir, contactSheet, sheet, command } = document;
+  const path =
+    command === "find" && typeof sheet === "string"
+      ? sheet
+      : typeof runDir === "string" && typeof contactSheet === "string"
+        ? join(runDir, contactSheet)
+        : undefined;
+  if (path === undefined) return [];
   try {
-    const bytes = await readFile(join(runDir, contactSheet));
+    const bytes = await readFile(path);
     return [{ type: "image", data: bytes.toString("base64"), mimeType: "image/png" }];
   } catch {
     return [];
@@ -279,9 +288,13 @@ async function callContext(server: RunContext, args: Arguments): Promise<RunCont
   });
 }
 
-/** `ls` and `cat` read the tree the server serves unless the call names another project. */
+/**
+ * `ls`, `cat` and the search commands read the tree the server serves unless the call names
+ * another project.
+ */
 function browseArgs(spec: CommandSpec, args: Arguments, tree: TreeServer): Arguments {
-  if ((spec.tool !== "ls" && spec.tool !== "cat") || args["target"] !== undefined) return args;
+  const browses = spec.tool === "ls" || spec.tool === "cat" || spec.requires === "search";
+  if (!browses || args["target"] !== undefined) return args;
   return { ...args, target: tree.dir };
 }
 
@@ -397,7 +410,8 @@ function createServer(
       inputRequired: { roundTimeoutMs: FORM_TTL_SECONDS * 1000 },
     },
   );
-  for (const spec of commands) {
+  // A search-only command is listed only when a loaded extension fills the search slot.
+  for (const spec of availableCommands(commands, ctx.extensions)) {
     if (spec.tool === null) continue;
     const input = fromJsonSchema<Arguments>(toolInputSchema(spec));
     // tools/list shows the schema; the handler checks it, so a refusal is a result document too.

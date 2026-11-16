@@ -36,6 +36,12 @@ import { rigCommand } from "./rig.ts";
 import { runsListCommand, runsShowCommand } from "./runs.ts";
 import { settingsChangeCommand, settingsCommand } from "./settings.ts";
 import { spendCommand, spendReconcileCommand } from "./spend.ts";
+import {
+  findCommand,
+  searchIndexCommand,
+  searchSetupCommand,
+  searchStatusCommand,
+} from "./search.ts";
 import { stageCommand } from "./stage.ts";
 import type { CommandSpec } from "./types.ts";
 import { varyCommand } from "./vary.ts";
@@ -84,6 +90,10 @@ export const commands: readonly CommandSpec[] = [
   runsShowCommand,
   lsCommand,
   catCommand,
+  findCommand,
+  searchIndexCommand,
+  searchStatusCommand,
+  searchSetupCommand,
   estimateCommand,
   disclosureCommand,
   confirmCommand,

@@ -177,7 +177,10 @@ before(async () => {
 
 test("tools/list names equal the registry's tool names and no tool takes a CLI-only argument", async () => {
   const { tools } = await server.listTools();
-  const expected = commands.flatMap((c) => (c.tool === null ? [] : [c.tool]));
+  // With no extension filling the search slot, the search-only commands have no tool.
+  const expected = commands.flatMap((c) =>
+    c.tool === null || c.requires === "search" ? [] : [c.tool],
+  );
   assert.deepEqual(tools.map((t) => t.name).sort(), [...expected].sort());
   assert.ok(!expected.includes("mcp"));
   for (const tool of tools) {
@@ -937,7 +940,9 @@ export default {
 
 test("every tool's structuredContent deep-equals the CLI --json document", async () => {
   const covered = new Set(rows.map((r) => r.tool));
-  for (const c of commands) if (c.tool !== null) assert.ok(covered.has(c.tool), c.tool);
+  // The search-only tools are compared in test/search-commands.test.ts, with a slot loaded.
+  for (const c of commands)
+    if (c.tool !== null && c.requires !== "search") assert.ok(covered.has(c.tool), c.tool);
   // One server per scripted provider; the shared one serves every row that names none.
   const servers = new Map<string, Client>([[script, server]]);
   let previous: Doc = {};

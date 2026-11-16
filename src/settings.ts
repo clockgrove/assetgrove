@@ -8,7 +8,7 @@ import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
 import { configHome, configOverride, SettingsError, stateHome, type Env } from "./env.ts";
-import { FormatError, readFormat } from "./formats.ts";
+import { FormatError, formatLine, readFormat } from "./formats.ts";
 import { grantProblems } from "./license.ts";
 
 export { SettingsError } from "./env.ts";
@@ -46,12 +46,38 @@ const limitSchema = z
     path: ["acceptUnlimited"],
   });
 
+const envName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name");
+
+const storeSchema = z.strictObject({
+  uri: z
+    .string()
+    .refine((uri) => /^(s3|gs|az):\/\/\S+$/.test(uri), "must be an s3://, gs:// or az:// URI"),
+  options: z.strictObject({ endpoint: z.url().optional(), region: name.optional() }).optional(),
+  credentialsEnv: z.strictObject({
+    accessKeyId: envName.optional(),
+    secretAccessKey: envName.optional(),
+    sessionToken: envName.optional(),
+    serviceAccountKey: envName.optional(),
+    accountName: envName.optional(),
+    accountKey: envName.optional(),
+  }),
+  writer: z.boolean().optional(),
+});
+
+const searchSchema = z.strictObject({
+  store: storeSchema.optional(),
+  embedder: z.enum(["local", "scripted"]).optional(),
+  model: z.enum(["siglip2-base"]).optional(),
+  candidates: z.boolean().optional(),
+  nearMatch: z.boolean().optional(),
+  folders: z.array(z.string().refine(isAbsolute, "must be an absolute path")).optional(),
+});
+
 const providerSchema = z.strictObject({
   adapter: name.optional(),
-  keyEnv: z
-    .string()
-    .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name")
-    .optional(),
+  keyEnv: envName.optional(),
   baseURL: z.url().optional(),
   free: z.boolean().optional(),
   usdPerCredit: z.number().finite().positive().optional(),
@@ -114,6 +140,7 @@ const settingsSchema = z.strictObject({
   confirmedBy: z
     .record(name, z.strictObject({ method: name, at: name, client: z.string().optional() }))
     .optional(),
+  search: searchSchema.optional(),
 });
 
 /** The settings file as written, after validation. */
@@ -147,6 +174,57 @@ export interface Settings {
   /** The C2PA signing certificate chain and key files; absent, a development certificate signs. */
   contentCredentials?: NonNullable<SettingsFile["contentCredentials"]>;
   confirmedBy: NonNullable<SettingsFile["confirmedBy"]>;
+  /** The search block (design section 7.2), its defaults filled; absent when the file has none. */
+  search?: SearchSettings;
+}
+
+/** The credential variable names a remote store takes, per scheme. */
+export interface StoreCredentialsEnv {
+  /** s3:// */
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  sessionToken?: string;
+  /** gs://: a variable holding the service account key JSON. */
+  serviceAccountKey?: string;
+  /** az:// */
+  accountName?: string;
+  accountKey?: string;
+}
+
+/** Per URI scheme, the credential fields a store must name and those it may also name. */
+export const STORE_CREDENTIALS: Record<
+  "s3" | "gs" | "az",
+  { required: (keyof StoreCredentialsEnv)[]; optional: (keyof StoreCredentialsEnv)[] }
+> = {
+  s3: { required: ["accessKeyId", "secretAccessKey"], optional: ["sessionToken"] },
+  gs: { required: ["serviceAccountKey"], optional: [] },
+  az: { required: ["accountName", "accountKey"], optional: [] },
+};
+
+/** A shared remote search store (design sections 7.2 and 7.8). */
+export interface SearchStoreSettings {
+  /** `s3://`, `gs://` or `az://`. */
+  uri: string;
+  /** The only object-store options Lance is given. */
+  options: { endpoint?: string; region?: string };
+  /**
+   * The names of the variables holding the store's credentials, never the values; the fields
+   * follow the URI's scheme (STORE_CREDENTIALS).
+   */
+  credentialsEnv: StoreCredentialsEnv;
+  /** True on the one machine that builds the shared index; false makes the store read-only here. */
+  writer: boolean;
+}
+
+/** The settings' `search` block with every default filled. */
+export interface SearchSettings {
+  store?: SearchStoreSettings;
+  embedder: "local" | "scripted";
+  model: "siglip2-base";
+  candidates: boolean;
+  nearMatch: boolean;
+  /** Absolute folders whose images are indexed beside the library. */
+  folders: string[];
 }
 
 export interface LoadOptions {
@@ -198,7 +276,7 @@ export function loadSettings(options: LoadOptions = {}): Settings {
     }
     refuseConfigDir(configDir, projectOf(configDir));
     refuseDefaultStateDir(defaultStateDir, projectOf(defaultStateDir));
-    return complete({ format: "assetgrove-settings/1" }, path, configDir, false, defaultStateDir);
+    return complete({ format: formatLine("settings") }, path, configDir, false, defaultStateDir);
   }
 
   const real = realpathSync.native(path);
@@ -246,6 +324,7 @@ export function loadSettings(options: LoadOptions = {}): Settings {
   const file = parsed.data;
 
   checkProviders(file, path);
+  checkSearch(file, path);
   if (file.stateDir !== undefined) {
     const inside = projectOf(file.stateDir);
     if (inside !== undefined) {
@@ -311,7 +390,69 @@ function complete(
     promptPolicy: { allow: file.promptPolicy?.allow ?? [] },
     ...(file.contentCredentials && { contentCredentials: file.contentCredentials }),
     confirmedBy: file.confirmedBy ?? {},
+    ...(file.search && { search: completeSearch(file.search) }),
   };
+}
+
+function completeSearch(search: NonNullable<SettingsFile["search"]>): SearchSettings {
+  const { store } = search;
+  return {
+    ...(store && {
+      store: {
+        uri: store.uri,
+        options: store.options ?? {},
+        credentialsEnv: store.credentialsEnv,
+        writer: store.writer ?? false,
+      },
+    }),
+    embedder: search.embedder ?? "local",
+    model: search.model ?? "siglip2-base",
+    candidates: search.candidates ?? true,
+    nearMatch: search.nearMatch ?? true,
+    folders: search.folders ?? [],
+  };
+}
+
+/** The refusals on the search block zod's per-field schema cannot express. */
+function checkSearch(file: SettingsFile, path: string): void {
+  const store = file.search?.store;
+  if (store !== undefined) {
+    // Every remote store is handed its credentials explicitly, in the fields its scheme reads, so
+    // the object store never falls back to credentials it finds on the machine.
+    const scheme = store.uri.slice(0, store.uri.indexOf(":")) as keyof typeof STORE_CREDENTIALS;
+    const { required, optional } = STORE_CREDENTIALS[scheme];
+    const named = Object.keys(store.credentialsEnv) as (keyof StoreCredentialsEnv)[];
+    const missing = required.filter((field) => !named.includes(field));
+    const foreign = named.filter((field) => !required.includes(field) && !optional.includes(field));
+    if (missing.length > 0 || foreign.length > 0) {
+      const takes = [...required, ...optional.map((f) => `optional ${f}`)].join(", ");
+      throw new SettingsError(
+        `${path}: search.store.credentialsEnv for a ${scheme}:// store names ${takes}; ${
+          missing.length > 0 ? `missing ${missing.join(", ")}` : `${foreign.join(", ")} is not one`
+        }.`,
+      );
+    }
+  }
+  const endpoint = file.search?.store?.options?.endpoint;
+  if (endpoint !== undefined) {
+    const url = new URL(endpoint);
+    const shown = `${url.protocol}//${url.host}${url.pathname}`;
+    if (url.username !== "" || url.password !== "") {
+      throw new SettingsError(
+        `${path}: search.store.options.endpoint ${shown} carries a user name or password; settings never hold a key. Name the variables with credentialsEnv.`,
+      );
+    }
+    if (url.search !== "") {
+      throw new SettingsError(
+        `${path}: search.store.options.endpoint ${shown} carries a query string; settings never hold a key. Name the variables with credentialsEnv.`,
+      );
+    }
+    if (url.protocol !== "https:") {
+      throw new SettingsError(
+        `${path}: search.store.options.endpoint must be https; got ${shown}.`,
+      );
+    }
+  }
 }
 
 /** Endpoint and reference refusals zod's per-field schema cannot express. */

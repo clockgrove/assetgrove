@@ -333,7 +333,9 @@ test("--help with --json is one JSON document carrying the usage", async () => {
 });
 
 test("--help --json lists exactly the registry's commands, and src/cli.ts is a short entry", async () => {
-  const { commandNames } = await import("../src/commands/registry.ts");
+  const { commands } = await import("../src/commands/registry.ts");
+  // With no extension filling the search slot, help leaves the search-only commands out.
+  const commandNames = commands.filter((c) => c.requires === undefined).map((c) => c.name);
   const d = doc(await cli(["--help", "--json"]));
   assert.deepEqual(d["commands"], [...commandNames]);
   for (const name of commandNames) assert.match(d["usage"], new RegExp(`^  ${name} `, "m"));

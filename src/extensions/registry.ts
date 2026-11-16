@@ -17,6 +17,7 @@ import type {
   Extension,
   ExtensionContext,
   ProviderAdapter,
+  SearchSlot,
 } from "../extension/api.ts";
 import type { Settings } from "../settings.ts";
 import { CORE_EXTENSION_NAME, coreExtension } from "./core.ts";
@@ -35,7 +36,12 @@ export interface LoadedExtension {
   kinds: string[];
   presets: string[];
   adapters: string[];
+  /** True when the extension fills the search slot. */
+  search?: true;
 }
+
+/** The package that fills the search slot, named when a search-only command is refused. */
+export const SEARCH_PACKAGE = "@clockgrove/assetgrove-search";
 
 const EXTENSION_NAME = /^[a-z][a-z0-9-]*$/;
 /** An npm package name, with no path parts beyond its scope. */
@@ -47,6 +53,8 @@ export class ExtensionRegistry {
   readonly kinds: readonly AssetKind[];
   readonly presets: ReadonlyMap<string, EnginePreset>;
   readonly adapters: readonly ProviderAdapter[];
+  /** The search slot (design section 7.1), when a loaded extension fills it. */
+  readonly search: SearchSlot | undefined;
   /** The settings file, named when an id's extension is not loaded. */
   readonly settingsPath: string | undefined;
 
@@ -62,6 +70,7 @@ export class ExtensionRegistry {
     const presets = new Map<string, EnginePreset>();
     const adapters = new Map<string, ProviderAdapter>();
     const loaded: LoadedExtension[] = [];
+    let search: { slot: SearchSlot; by: string } | undefined;
     const add = <T>(table: Map<string, T>, what: string, id: string, value: T, ext: string) => {
       if (table.has(id))
         throw new ExtensionError(
@@ -80,18 +89,28 @@ export class ExtensionRegistry {
       for (const k of extension.kinds ?? []) add(kinds, "asset kind", k.kind, k, extension.name);
       for (const p of extension.presets ?? []) add(presets, "preset", p.name, p, extension.name);
       for (const a of extension.adapters ?? []) add(adapters, "adapter", a.id, a, extension.name);
+      if (extension.search !== undefined) {
+        if (search !== undefined)
+          throw new ExtensionError(
+            "extension_conflict",
+            `the search slot of extension "${extension.name}" is already filled by "${search.by}"`,
+          );
+        search = { slot: extension.search, by: extension.name };
+      }
       loaded.push({
         name: extension.name,
         ...info,
         kinds: (extension.kinds ?? []).map((k) => k.kind),
         presets: (extension.presets ?? []).map((p) => p.name),
         adapters: (extension.adapters ?? []).map((a) => a.id),
+        ...(extension.search !== undefined && { search: true as const }),
       });
     }
     this.loaded = loaded;
     this.kinds = [...kinds.values()];
     this.presets = presets;
     this.adapters = [...adapters.values()];
+    this.search = search?.slot;
     this.settingsPath = settingsPath;
   }
 
@@ -102,6 +121,19 @@ export class ExtensionRegistry {
   requireKind(kind: string): void {
     if (extensionOf(kind) !== undefined && !this.kinds.some((k) => k.kind === kind))
       throw unavailableId(kind, "asset kind", this.settingsPath);
+  }
+
+  /**
+   * The search slot; throws `extension_unavailable` naming the settings line that would load it
+   * when no loaded extension fills it (design section 7.1).
+   */
+  requireSearch(command: string): SearchSlot {
+    if (this.search !== undefined) return this.search;
+    const where = this.settingsPath ?? "the developer settings";
+    throw new ExtensionError(
+      "extension_unavailable",
+      `${command} needs the search package, which is not loaded; add "${SEARCH_PACKAGE}" to the extensions list in ${where} (install it in the project first)`,
+    );
   }
 }
 
@@ -130,7 +162,7 @@ function isInside(path: string, dir: string): boolean {
 }
 
 /** The package's directory, found the way Node resolves a bare name from `cwd`. */
-function resolvePackage(name: string, cwd: string): string | undefined {
+export function resolvePackage(name: string, cwd: string): string | undefined {
   let dir = resolve(cwd);
   for (;;) {
     const candidate = join(dir, "node_modules", ...name.split("/"));
@@ -268,6 +300,11 @@ async function loadOne(
         ? await (module.default as (c: ExtensionContext) => unknown)(context)
         : module.default;
   } catch (error) {
+    // An extension that cannot run here (the search package on darwin-x64) says so itself.
+    if ((error as { code?: unknown } | null)?.code === "extension_unavailable")
+      throw new ExtensionError("extension_unavailable", `${line}: ${messageOf(error)}`, {
+        cause: error,
+      });
     throw new ExtensionError(
       "extension_refused",
       `${line}: its entry's default export threw: ${messageOf(error)}`,
@@ -316,6 +353,12 @@ function checkExtension(value: unknown, line: string): Extension {
           `every id of its ${field} must be "${ext.name}:<name>", got ${JSON.stringify(id)}`,
         );
     }
+  }
+  if (ext.search !== undefined) {
+    const slot = ext.search as unknown as Record<string, unknown> | null;
+    for (const op of ["find", "index", "status", "setup"])
+      if (slot === null || typeof slot !== "object" || typeof slot[op] !== "function")
+        throw refuse(`its search slot must have a ${op} function`);
   }
   return ext as Extension;
 }

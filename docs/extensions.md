@@ -8,7 +8,7 @@ An extension adds asset kinds, engine presets and provider adapters. Core regist
 
 | Type               | Shape                                                                                                                                                       |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Extension`        | `{ api: 1, name, kinds?, presets?, adapters? }`                                                                                                             |
+| `Extension`        | `{ api: 1, name, kinds?, presets?, adapters?, search? }`                                                                                                    |
 | `ExtensionContext` | `{ api: 1, z }`: zod, so an extension imports no core module.                                                                                               |
 | `AssetKind`        | `kind`, `planCandidate(spec, profile, routes)`, `generate(ctx)`.                                                                                            |
 | `EnginePreset`     | `name`, zod `optionsSchema`, `write(ctx, options)`, `check(ctx, options, files, read)`.                                                                     |
@@ -37,6 +37,12 @@ Each loads once per process, when the CLI or MCP server starts. A package.json d
 | 2         | `extension_conflict`    | Two extensions share a name, or an id repeats.                                                                                                                                                                                                                                                                                         |
 
 Unknown core-form ids keep their existing codes.
+
+## The search slot
+
+`search?: SearchSlot` is filled by `@clockgrove/assetgrove-search` (design section 7.1); at most one loaded extension may fill it (`extension_conflict` otherwise). Its `find(query, context)`, `index({rebuild?}, context)`, `status(context)` and `setup(context)` back core's commands `find`, `search index`, `search status` and `search setup`, which core declares with `requires: "search"`. While the slot is empty, `--help` and the MCP tool list leave those commands out and a call exits 2 `extension_unavailable`, naming the settings file whose `extensions` list would load the package. A factory that throws an error with code `extension_unavailable` (the search package on darwin-x64) is refused with that code.
+
+Core hands each call a `SearchContext`: `stateDir`, `worktree` (the project), `game`, the settings' `search` block with its defaults, `env` (only the variables `search.store.credentialsEnv` names) and `library`, the library reader. The reader's `list(sources?)` gives every indexable file (`SearchLibraryItem`: picks with their card fields and text, the style bible's references, run candidates unless `search.candidates` is false, and the files of `search.folders`) with size and mtime; `load(item)` reads one, applying the library path rule and reading a Git LFS pointer's local object, never the network; `head()` is the work tree's commit and `clean()` says whether nothing under the library root differs from it; `origin()` is the repository's root commits, sorted (empty outside Git, before the first commit or in a shallow clone). A shared remote store keys its rows by the sha256 of the game id and `origin()`, so every clone of one repository shares them and another repository with the same game id never does; with `origin()` empty a remote store is refused. `find` returns `{hits: [{address, rank, score, source, path, view, fields, sharedText}], fresh, builtFrom}`; core adds `sheet`, a numbered PNG of the hits, and the `find` tool returns it as image content.
 
 ## Not extensible
 
