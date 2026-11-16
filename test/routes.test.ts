@@ -299,3 +299,55 @@ test("a 2D stage checks the limits of the providers it calls, not of every confi
   const r = await cli(await stageArgs());
   assert.equal(r.code, 0, r.stderr);
 });
+
+test("with more than one provider that could serve an operation and no route or role, reading it exits 2 settings_invalid naming the role field", () => {
+  for (const other of ["anthropic", "zz-anthropic"]) {
+    const providers = {
+      gateway: { adapter: "vercel-ai-gateway" },
+      [other]: { adapter: "anthropic" },
+    };
+    const routes = ProviderSet.fromSettings(settingsOf(providers), { env: {} }).routes;
+    assert.throws(
+      () => routes.vision,
+      (error: unknown) =>
+        error instanceof SettingsError &&
+        error.code === "settings_invalid" &&
+        /settings\.roles\.vision/.test(error.message) &&
+        error.message.includes("gateway") &&
+        error.message.includes(other),
+    );
+    // Read, not loaded: an operation that is not ambiguous still resolves.
+    assert.equal(routes.edit.provider === undefined, false);
+
+    const picked = ProviderSet.fromSettings(
+      settingsOf(providers, {
+        roles: {
+          vision: {
+            provider: "gateway",
+            model: defaultRoutes.vision.model,
+            estimatedCostUsd: 0.01,
+          },
+        },
+      }),
+      { env: {} },
+    ).routes;
+    assert.equal(picked.vision.provider, "gateway");
+    assert.equal(picked.vision.model, defaultRoutes.vision.model);
+  }
+});
+
+test("a lone provider serves its defaults, and providers with disjoint operations are not ambiguous", () => {
+  const alone = ProviderSet.fromSettings(
+    settingsOf({ gateway: { adapter: "vercel-ai-gateway" } }),
+    {
+      env: {},
+    },
+  ).routes;
+  assert.equal(alone.vision.provider, "gateway");
+  const split = ProviderSet.fromSettings(
+    settingsOf({ gateway: { adapter: "vercel-ai-gateway" }, tripo: {} }),
+    { env: {} },
+  ).routes;
+  assert.equal(split.vision.provider, "gateway");
+  assert.equal(split.model3d.provider, "tripo");
+});
