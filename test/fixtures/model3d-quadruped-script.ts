@@ -5,9 +5,11 @@
  * no rig or clip call, so those throw.
  */
 import type { Script } from "../../src/gateway/scripted.ts";
+import { referenceView } from "./scripted-views.ts";
 import { syntheticQuadruped } from "./quadruped.ts";
 
 const script: Script = {
+  referenceView,
   image() {
     throw new Error("the 3D script makes no images");
   },

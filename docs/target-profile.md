@@ -44,6 +44,7 @@ The shared files carry a `format` line as their first field, `assetgrove-<kind>/
       "path": "refs/fern-sheet.png",
       "role": "character sheet",
       "subject": "fern",
+      "view": "sheet",
       "license": "LicenseRef-studio-owned"
     },
     { "path": "refs/yard-perspective.png", "role": "perspective" }
@@ -67,6 +68,8 @@ The shared files carry a `format` line as their first field, `assetgrove-<kind>/
 ```
 
 A bible that lists references requires `referenceLicense`, the terms they were provided under: an SPDX identifier, a `LicenseRef-*` or `NOASSERTION`. It is checked as non-empty text and not parsed. Each reference may set its own `license`. In `BIBLE.md` the same rule covers the anchors and the identity-lock turnarounds and references.
+
+A reference may set `view`, which says what it shows of its subject: `front`, `left`, `right`, `back`, `three-quarter`, `sheet` (several views on one sheet) or `detail` (not a full-body view). `left` and `right` are the character's own sides, not the viewer's. A value outside this list is refused when the bible loads (exit 2). `role` stays free text and is never read for the view. A 3D character request ([characters-3d.md](characters-3d.md#what-a-candidate-is)) uses `view`; when it is not set, a model judges the view, and the answer is cached by the image's hash. A request whose references show no `front` view is refused before the first expensive call; a `sheet` does not count as a front view.
 
 `perspectiveDescription` (optional) tells the vision QA pass what view the perspective sample shows; without it QA compares against the sample alone. The subject's references, the perspective sample and a swatch of the palette are sent to the model as image references; the prompt is composed from these fields and the spec, never typed freehand. Post-processing snaps every colour to the palette, and QA compares the candidate with the references.
 

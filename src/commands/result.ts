@@ -174,8 +174,12 @@ export function formatPlan(plan: StagePlan): string {
   for (const c of plan.perCandidate) {
     lines.push(`  ${c.operation}  ${c.model}  ~${usd(c.estimatedCostUsd)} per call`);
   }
+  for (const c of plan.perRequest) {
+    lines.push(`  ${c.operation}  ${c.model}  ~${usd(c.estimatedCostUsd)} once per request`);
+  }
   lines.push(
-    `per candidate: ${plan.perCandidate.length} call(s)`,
+    `per candidate: ${plan.perCandidate.length} call(s)` +
+      (plan.perRequest.length > 0 ? `; per request: ${plan.perRequest.length} call(s)` : ""),
     `forecast ${usd(plan.estimateUsd)} against a $${plan.capUsd.toFixed(2)} cap` +
       (plan.withinCap ? "" : " (over the cap)"),
   );
