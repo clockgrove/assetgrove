@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { searchSlot } from "../src/extension.ts";
+import { nearMatchesWith, searchSlot } from "../src/extension.ts";
 import { mergeByScore, rankAcross, rankingQueries, rrf } from "../src/find.ts";
 import { MemoryStore } from "../src/memory-store.ts";
 import type { Hit, Row } from "../src/store.ts";
@@ -109,5 +109,64 @@ describe("find over a shared store", () => {
     for (const h of hits) {
       assert.match(h.path, /rock\d+\.png$/, `${h.path} ranked among the relevant rows`);
     }
+  });
+});
+
+describe("near matches over a shared store", () => {
+  const projects: Project[] = [];
+  let remoteDir: string;
+  // The same library twice: ten unrelated door candidates and thirty relevant rock picks.
+  async function library(): Promise<Project> {
+    const p = await makeProject();
+    projects.push(p);
+    await mkdir(join(p.root, "candidate"), { recursive: true });
+    for (let i = 0; i < 10; i++) {
+      const base = join(p.root, "candidate", `door${i}`);
+      await writeFile(`${base}.png`, `wooden door number ${i}`);
+      await writeFile(
+        `${base}.card.json`,
+        JSON.stringify({ kind: "sprite", title: `Door ${i}`, text: "A wooden door." }),
+      );
+    }
+    for (let i = 0; i < 30; i++) {
+      const base = join(p.root, "pick", `rock${i}`);
+      await writeFile(`${base}.png`, `mossy rock number ${i}`);
+      await writeFile(
+        `${base}.card.json`,
+        JSON.stringify({
+          kind: "sprite",
+          subject: "rock",
+          title: `Rock ${i}`,
+          text: "A mossy rock.",
+        }),
+      );
+    }
+    return p;
+  }
+  before(async () => {
+    remoteDir = join(await tempDir("remote-near"), "remote");
+  });
+  after(() =>
+    cleanup(...projects.flatMap((p) => [p.root, p.stateDir]), remoteDir, join(remoteDir, "..")),
+  );
+
+  it("lists the relevant remote picks in the order one store gives them", async () => {
+    const q = { kind: "sprite", subject: "mossy rock", references: [], limit: 20 };
+    const shared = await library();
+    const ctx = shared.context({
+      store: { uri: pathToFileURL(remoteDir).href, options: {}, writer: true },
+    });
+    await searchSlot.index({}, ctx);
+    const across = await nearMatchesWith(q, ctx, { paid: false });
+    const alone = await nearMatchesWith(q, (await library()).context(), { paid: false });
+
+    assert.equal(across.hits.length, 20);
+    for (const h of across.hits) {
+      assert.match(h.address, /\/pick\/rock\d+$/, `${h.address} ranked among the relevant picks`);
+    }
+    assert.deepEqual(
+      across.hits.map((h) => h.address),
+      alone.hits.map((h) => h.address),
+    );
   });
 });
