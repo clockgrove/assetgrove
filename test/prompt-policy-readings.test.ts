@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
-import { nameReadingPrompt, nameReadingQuestion } from "../src/policy/model.ts";
+import { nameReadingPrompt, nameReadingQuestion, promptPolicyPrompt } from "../src/policy/model.ts";
 import { checkPromptText, readingTerms } from "../src/policy/text.ts";
 import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
 
@@ -206,4 +206,28 @@ test("only ambiguous names a person wrote are read; phrases and compiler-written
   assert.match(prompt, /\[brief\]/);
   const question = nameReadingQuestion(WEATHER, "studio");
   assert.equal(question.type, "choice");
+});
+
+test("a person-written reading leaves the compiler's use of the same name on the Boolean call's flagged words", () => {
+  const parts = [
+    { label: "brief" as const, text: `heavy ${WEATHER} over a snow level` },
+    { label: "model-prompt" as const, text: `snow level, ${WEATHER} style` },
+  ];
+  const record = checkPromptText(parts);
+  assert.deepEqual(
+    record.hits!.filter((h) => h.term === WEATHER).map((h) => h.part),
+    ["brief", "model-prompt"],
+  );
+  assert.deepEqual(
+    readingTerms(record.hits).map((g) => g.map((h) => h.part)),
+    [["brief"]],
+    "only the person's use is read",
+  );
+  const prompt = promptPolicyPrompt(parts, record.hits, [
+    { term: WEATHER, kind: "studio", reading: "word", model: "script:prompt-policy:test" },
+  ]);
+  const flagged = prompt.split("\n").filter((l) => l.startsWith(`- "${WEATHER}" (`));
+  assert.equal(flagged.length, 1, "the compiler's use is still flagged");
+  assert.match(flagged[0]!, /in \[model-prompt\]/);
+  assert.match(prompt, /already read in the person-written parts/);
 });

@@ -71,9 +71,11 @@ export function promptPolicyPrompt(
   const sections = text
     .filter((p) => p.text.trim().length > 0)
     .map((p) => `[${p.label}] ${PART_TITLES[p.label]}:\n<<<\n${p.text}\n>>>`);
+  // A reading covers the person-written hits it was asked about; the compiler's use of the same
+  // name was never read, so it stays on the Boolean call's flagged words.
   const read = new Set(readings.map((r) => r.term));
   const flagged = hits
-    .filter((h) => !read.has(h.term))
+    .filter((h) => !(read.has(h.term) && !modelWritten({ label: h.part })))
     .map(
       (h) =>
         `- "${h.term}" (${h.ambiguous ? `${h.kind} name that is also an ordinary word or a given name` : h.kind}) in [${h.part}]: "... ${h.context} ..."`,
@@ -89,7 +91,7 @@ export function promptPolicyPrompt(
       : []),
     ...(readings.length > 0
       ? [
-          "Flagged names already read in their sentences as not the protected name (do not count them as one):",
+          "Flagged names already read in the person-written parts as not the protected name (do not count those uses as one; a model-written use listed above is still to be decided):",
           ...readings.map(
             (r) =>
               `- "${r.term}": ${r.reading === "word" ? "an ordinary word" : "an unrelated name"}`,

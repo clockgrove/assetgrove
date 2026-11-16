@@ -212,12 +212,12 @@ test("an ambiguous name is read by the model check and its answer recorded, with
   );
   assert.match(
     (await provider.requests())[0]!,
-    /already read in their sentences as not the protected name/,
+    /already read in the person-written parts as not the protected name/,
   );
 });
 
 /** A world with a Markdown bible whose Don'ts forbid imitation, a default template and a plan. */
-async function planWorld() {
+async function planWorld(description = "a round lantern icon") {
   const { world, flags } = await stageWorld();
   const art = join(world.dir, ".assetgrove/art-direction");
   await mkdir(art, { recursive: true });
@@ -243,7 +243,7 @@ async function planWorld() {
     JSON.stringify({
       kind: "still",
       assetId: "lantern",
-      fields: { description: "a round lantern icon" },
+      fields: { description },
     }),
   );
   const options = join(world.dir, "run-options.json");
@@ -269,6 +269,35 @@ test("a bible's Don't that forbids imitation is a rules hit, and plan forecasts 
   const job = (doc(dry)["jobs"] as PlanJob[]).find((j) => j.operation === "prompt-policy");
   assert.equal(job?.count, 3);
   assert.deepEqual(await provider.events(), []);
+});
+
+test("plan counts an ambiguous name's reading for its own check and its apply's, and apply counts it once", async () => {
+  writeSettings({});
+  const { world, planFile, planArgs } = await planWorld(
+    `a round lantern icon in a heavy ${AMBIGUOUS}`,
+  );
+  const provider = await recorder(world.dir, ALLOW);
+  const dry = await cli([...planArgs, "--provider-script", provider.script, "--dry-run", "--json"]);
+  assert.equal(dry.code, 0, dry.stdout + dry.stderr);
+  const hit = (doc(dry)["promptPolicy"].hits as Doc[]).find((h) => h.term === AMBIGUOUS);
+  assert.equal(hit?.ambiguous, true);
+  // Plan's own check: one reading and one Boolean call; its apply's: one reading and two Boolean
+  // calls, since the compiler can write model-written text.
+  const job = (doc(dry)["jobs"] as PlanJob[]).find((j) => j.operation === "prompt-policy");
+  assert.equal(job?.count, 5);
+  assert.deepEqual(await provider.events(), [], "a dry run makes no call");
+
+  const made = await cli([...planArgs, "--json"]);
+  assert.equal(made.code, 0, made.stdout + made.stderr);
+  const runs = join(world.dir, "apply-runs");
+  const apply = ["apply", planFile, "--out", runs, "--provider-script", provider.script, "--json"];
+  const applyDry = await cli([...apply, "--dry-run"]);
+  assert.equal(applyDry.code, 0, applyDry.stdout + applyDry.stderr);
+  // The template's plan holds no model-written part: one reading and one Boolean call.
+  const applyJob = (doc(applyDry)["jobs"] as PlanJob[]).find(
+    (j) => j.operation === "prompt-policy",
+  );
+  assert.equal(applyJob?.count, 2);
 });
 
 /**
