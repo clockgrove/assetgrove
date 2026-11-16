@@ -6,11 +6,10 @@
 import { createHash } from "node:crypto";
 import { createGateway } from "ai";
 import type { Embedder } from "../../packages/assetgrove-search/src/embedder.ts";
-import type { Store } from "../../packages/assetgrove-search/src/store.ts";
 import type { DecisionQuestion } from "../../src/gateway/provider.ts";
 import { decideStructured } from "../../src/gateway/structured.ts";
 import { VercelGateway } from "../../src/gateway/vercel.ts";
-import { indexLibrary, RANKINGS, rankingsFor } from "./bench.ts";
+import { indexLabelled, openBench, RANKINGS, rankingsFor } from "./bench.ts";
 import { forVision } from "./card-text.ts";
 import type { ImageSource } from "./fetch.ts";
 import {
@@ -31,8 +30,6 @@ export interface PoolOptions {
   manifest: Manifest;
   source: ImageSource;
   embedder: Embedder;
-  /** An empty store; the labelled library is indexed into it as the bench indexes it. */
-  store: Store;
   depth?: number;
   /** Pool again a query that has candidates already (judgements of images still pooled are kept). */
   force?: boolean;
@@ -40,30 +37,37 @@ export interface PoolOptions {
 
 /**
  * Sets each written query's candidates: the union of the top `depth` of every ranking the bench
- * scores (image vector, card-text vector, full text, fused), in ranking order. Returns how many
- * queries it pooled. Makes no model call: the embedder is the bench's own.
+ * scores (image vector, card-text vector, full text, fused), in ranking order. The labelled
+ * library is indexed as the bench indexes it, by the package's indexer into a `LanceStore` in a
+ * temporary folder, and ranked by the package's own find. Returns how many queries it pooled.
+ * Makes no model call: the embedder is the bench's own.
  */
 export async function poolCandidates(o: PoolOptions): Promise<number> {
   const depth = o.depth ?? POOL_DEPTH;
-  await indexLibrary(o.manifest, o.source, o.embedder, o.store);
+  const bench = await openBench(o.embedder);
   let pooled = 0;
-  for (const q of o.manifest.writtenQueries) {
-    if (q.candidates !== undefined && !o.force) continue;
-    const ranked = await rankingsFor(o.store, o.embedder, q.text, depth);
-    const pool = [...new Set(RANKINGS.flatMap((r) => ranked[r]))];
-    q.candidates = pool;
-    q.pooledBy = {
-      embedder: o.embedder.id,
-      revision: o.embedder.revision,
-      depth,
-      rankings: [...RANKINGS],
-    };
-    if (q.judgements) {
-      const kept = q.judgements.filter((j) => pool.includes(j.image));
-      if (kept.length > 0) q.judgements = kept;
-      else delete q.judgements;
+  try {
+    const tree = await indexLabelled(bench, o.manifest, o.source);
+    for (const q of o.manifest.writtenQueries) {
+      if (q.candidates !== undefined && !o.force) continue;
+      const ranked = await rankingsFor(tree, q.text, depth);
+      const pool = [...new Set(RANKINGS.flatMap((r) => ranked[r]))];
+      q.candidates = pool;
+      q.pooledBy = {
+        embedder: o.embedder.id,
+        revision: o.embedder.revision,
+        depth,
+        rankings: [...RANKINGS],
+      };
+      if (q.judgements) {
+        const kept = q.judgements.filter((j) => pool.includes(j.image));
+        if (kept.length > 0) q.judgements = kept;
+        else delete q.judgements;
+      }
+      pooled++;
     }
-    pooled++;
+  } finally {
+    await bench.close();
   }
   return pooled;
 }

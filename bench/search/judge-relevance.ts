@@ -3,7 +3,7 @@
  *
  * - `node bench/search/judge-relevance.ts --pool --embedder siglip2 --models <dir>` sets each
  *   written query's candidates: the union of the top POOL_DEPTH of every ranking the bench scores,
- *   ranked on the shipped LanceStore. No model call; `--embedder scripted` runs offline.
+ *   indexed and ranked by the package's own indexer and find on a LanceStore. No model call; `--embedder scripted` runs offline.
  * - `node bench/search/judge-relevance.ts --provider gateway [--judge structured|decision]
  *   [--model <id>] --max-calls <n>` judges each candidate not yet judged, one call each, saving after
  *   every answer. `structured` (the default) asks a vision model through structured output;
@@ -15,12 +15,9 @@
  * `--mark <query:image,...> --by <name>` records that a person did. The gateway endpoint and key come
  * from the developer settings as for write-card-texts.ts.
  */
-import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { LanceStore } from "../../packages/assetgrove-search/src/lance-store.ts";
-import { MemoryStore } from "../../packages/assetgrove-search/src/memory-store.ts";
 import { ScriptedEmbedder } from "../../packages/assetgrove-search/src/scripted.ts";
 import { keyValue } from "../../src/env.ts";
 import { fetchImages, type ImageSource } from "./fetch.ts";
@@ -46,7 +43,6 @@ const { values } = parseArgs({
     pool: { type: "boolean", default: false },
     embedder: { type: "string", default: "scripted" },
     models: { type: "string" },
-    store: { type: "string" },
     force: { type: "boolean", default: false },
     provider: { type: "string" },
     model: { type: "string" },
@@ -98,26 +94,15 @@ if (values.sample) {
         await import("../../packages/assetgrove-search/src/siglip2.ts")
       ).loadSiglip2(values.models as string)
     : new ScriptedEmbedder();
-  const storeKind = values.store ?? (siglip ? "lance" : "memory");
   const source = siglip
     ? await fetchImages(manifest, values.images as string)
     : labelSource(manifest);
-  const dir = storeKind === "lance" ? await mkdtemp(join(tmpdir(), "bench-pool-")) : "";
-  const store =
-    storeKind === "lance"
-      ? await LanceStore.open(join(dir, "store"), { embedder })
-      : new MemoryStore();
-  try {
-    const n = await poolCandidates({ manifest, source, embedder, store, force: values.force });
-    await save();
-    const sizes = manifest.writtenQueries.map((q) => q.candidates?.length ?? 0);
-    console.log(
-      `pooled ${n} queries with ${embedder.id}; ${sizes.reduce((a, b) => a + b, 0)} candidates in all`,
-    );
-  } finally {
-    if (store instanceof LanceStore) store.close();
-    if (dir) await rm(dir, { recursive: true, force: true });
-  }
+  const n = await poolCandidates({ manifest, source, embedder, force: values.force });
+  await save();
+  const sizes = manifest.writtenQueries.map((q) => q.candidates?.length ?? 0);
+  console.log(
+    `pooled ${n} queries with ${embedder.id}; ${sizes.reduce((a, b) => a + b, 0)} candidates in all`,
+  );
 } else {
   const provider = values.provider;
   const cap = values["max-calls"] as string;

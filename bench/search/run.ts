@@ -1,15 +1,11 @@
 /**
  * `node bench/search/run.ts [--fixture] [--manifest p] [--library csv] [--images dir]
- * [--embedder siglip2|scripted] [--store lance|memory]`. By-look searches the full library
- * (`--library`, default inventory-full.csv); with siglip2 the store defaults to the shipped LanceStore.
+ * [--embedder siglip2|scripted] [--models dir]`. By-look searches the full library (`--library`,
+ * default inventory-full.csv). Every run indexes through the package's indexer into a `LanceStore`
+ * in a temporary folder and searches through the package's find.
  */
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { parseArgs } from "node:util";
 import { join } from "node:path";
-import { LanceStore } from "../../packages/assetgrove-search/src/lance-store.ts";
-import { MemoryStore } from "../../packages/assetgrove-search/src/memory-store.ts";
-import type { Store } from "../../packages/assetgrove-search/src/store.ts";
 import { ScriptedEmbedder } from "../../packages/assetgrove-search/src/scripted.ts";
 import { readBars } from "./bars.ts";
 import { formatReport, runBench } from "./bench.ts";
@@ -27,7 +23,6 @@ const { values } = parseArgs({
     images: { type: "string", default: join(import.meta.dirname, ".cache") },
     library: { type: "string", default: FULL_INVENTORY },
     embedder: { type: "string", default: "scripted" },
-    store: { type: "string" },
     models: { type: "string" },
     pad: { type: "string", default: "10000" },
   },
@@ -41,12 +36,6 @@ if (values.embedder === "siglip2") {
   embedder = await loadSiglip2(values.models as string);
 } else embedder = new ScriptedEmbedder();
 
-const storeKind = values.store ?? (values.embedder === "siglip2" ? "lance" : "memory");
-if (storeKind !== "lance" && storeKind !== "memory") {
-  console.error(`--store must be lance or memory, not ${storeKind}`);
-  process.exit(1);
-}
-
 let manifest;
 let source;
 let lookLibrary: LookLibrary | undefined;
@@ -55,7 +44,7 @@ if (values.fixture) {
   source = fixtureSource();
   await writeCardTexts({ manifest, source, provider: new ScriptedVision() });
   // Relevance offline: pooled with the scripted embedder, judged by the scripted judge.
-  await poolCandidates({ manifest, source, embedder, store: new MemoryStore() });
+  await poolCandidates({ manifest, source, embedder });
   await judgeRelevance({ manifest, source, judge: new ScriptedJudge() });
 } else {
   manifest = await readManifest(values.manifest as string);
@@ -74,29 +63,14 @@ if (values.fixture) {
   );
 }
 
-// Each store the bench asks for is a fresh LanceStore in its own folder, removed afterwards.
-const stores: LanceStore[] = [];
-const storeDir = storeKind === "lance" ? await mkdtemp(join(tmpdir(), "bench-store-")) : "";
-const newStore = async (): Promise<Store> => {
-  if (storeKind === "memory") return new MemoryStore();
-  const s = await LanceStore.open(join(storeDir, `store-${stores.length}`), { embedder });
-  stores.push(s);
-  return s;
-};
-try {
-  const report = await runBench({
-    manifest,
-    source,
-    embedder,
-    bars,
-    padTo,
-    lookLibrary,
-    newStore,
-    // Only the offline fixture is judged by the scripted judge.
-    scriptedJudgements: values.fixture === true,
-  });
-  for (const line of formatReport(report)) console.log(line);
-} finally {
-  for (const s of stores) s.close();
-  if (storeDir) await rm(storeDir, { recursive: true, force: true });
-}
+const report = await runBench({
+  manifest,
+  source,
+  embedder,
+  bars,
+  padTo,
+  lookLibrary,
+  // Only the offline fixture is judged by the scripted judge.
+  scriptedJudgements: values.fixture === true,
+});
+for (const line of formatReport(report)) console.log(line);

@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PNG } from "pngjs";
-import { indexLibrary, RANKINGS, rankingsFor } from "../../../bench/search/bench.ts";
+import { indexLabelled, openBench, RANKINGS, rankingsFor } from "../../../bench/search/bench.ts";
 import {
   MIN_VISION_SIDE,
   ScriptedVision,
@@ -35,7 +35,6 @@ import {
   ScriptedJudge,
   type RelevanceJudge,
 } from "../../../bench/search/relevance.ts";
-import { MemoryStore } from "../src/memory-store.ts";
 import { ScriptedEmbedder } from "../src/scripted.ts";
 import { cleanup, tempDir } from "./helpers/fixture.ts";
 
@@ -47,7 +46,6 @@ const pooledFixture = async () => {
     manifest,
     source,
     embedder: new ScriptedEmbedder(),
-    store: new MemoryStore(),
   });
   return { manifest, source };
 };
@@ -56,29 +54,29 @@ describe("relevance candidates", () => {
   it("are the union of the top results of every ranking the bench scores, and nothing else", async () => {
     const { manifest, source } = await pooledFixture();
     const embedder = new ScriptedEmbedder();
-    const store = new MemoryStore();
-    await indexLibrary(manifest, source, embedder, store);
-    assert.deepEqual(RANKINGS, ["image-vector", "card-text-vector", "full-text", "fused"]);
-    for (const q of manifest.writtenQueries) {
-      const ranked: Record<string, string[]> = await rankingsFor(
-        store,
-        embedder,
-        q.text,
-        POOL_DEPTH,
-      );
-      const union: Set<string> = new Set(RANKINGS.flatMap((r) => ranked[r] ?? []));
-      assert.deepEqual(new Set(q.candidates), union);
-      // Bounded: each ranking adds at most POOL_DEPTH images.
-      assert.ok(q.candidates!.length <= RANKINGS.length * POOL_DEPTH);
-      assert.deepEqual(q.pooledBy, {
-        embedder: "scripted",
-        revision: embedder.revision,
-        depth: POOL_DEPTH,
-        rankings: [...RANKINGS],
-      });
+    // Indexed and ranked as the bench does: the package's indexer and find, on a LanceStore.
+    const bench = await openBench(embedder);
+    try {
+      const tree = await indexLabelled(bench, manifest, source);
+      assert.deepEqual(RANKINGS, ["image-vector", "card-text-vector", "full-text", "fused"]);
+      for (const q of manifest.writtenQueries) {
+        const ranked: Record<string, string[]> = await rankingsFor(tree, q.text, POOL_DEPTH);
+        const union: Set<string> = new Set(RANKINGS.flatMap((r) => ranked[r] ?? []));
+        assert.deepEqual(new Set(q.candidates), union);
+        // Bounded: each ranking adds at most POOL_DEPTH images.
+        assert.ok(q.candidates!.length <= RANKINGS.length * POOL_DEPTH);
+        assert.deepEqual(q.pooledBy, {
+          embedder: "scripted",
+          revision: embedder.revision,
+          depth: POOL_DEPTH,
+          rankings: [...RANKINGS],
+        });
+      }
+    } finally {
+      await bench.close();
     }
     // A pooled query is not pooled again unless asked.
-    assert.equal(await poolCandidates({ manifest, source, embedder, store: new MemoryStore() }), 0);
+    assert.equal(await poolCandidates({ manifest, source, embedder }), 0);
   });
 });
 
