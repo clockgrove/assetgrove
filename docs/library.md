@@ -222,11 +222,11 @@ asset://<game>/                          views, counts and the root index.md
 
 ## Change requests
 
-`request-change` records its request as annotations once the spend is confirmed, before the first provider call. Each region becomes an `editing` annotation on the current version. Its target is `ag:version` with `ag:frame` or `ag:view`, `ag:mask`, and a media-fragment selector, `xywh=pixel:` or `xywh=percent:`. Its body is the note, plus a SpecificResource linking each copied reference. `ag:run` names the request's run. The version turns changes-requested.
+`request-change` records its request as annotations once the spend is confirmed, before the first provider call. Each region becomes an `editing` annotation on the current version. Its target is `ag:version` with `ag:frame` or `ag:view`, `ag:mask`, and a media-fragment selector in percent, `xywh=percent:`: a pixel box converts through the frame's or the image's size, and stays `xywh=pixel:` only on a 3D view, whose render size the record does not know. Its body is the note, plus a SpecificResource linking each copied reference. `ag:run` names the request's run. The version turns changes-requested.
 
 Masks and references are copied to `<assetId>.review/<sha256>.<ext>` beside the record, so the record does not depend on files outside it.
 
-`pick` of one of the run's candidates answers the request. The version is appended with `answers` naming the requests, and a `moderating` annotation with `ag:action` `answer` and body `answers #…` is written, so `log.md` gets an `answer` line. A candidate made on an older version exits 2 `version_changed`.
+`pick` of one of the run's candidates answers the request. The version is appended with `answers` naming the requests, and a `moderating` annotation with `ag:action` `answer` and no body is written. Which version answered a request lives only in `ag:versions[].answers`; `log.md`'s `answer` line reads `answers #…` from there. Re-running a pick of the same candidate completes it rather than exiting `version_changed`. A candidate made on an older version exits 2 `version_changed`.
 
 ## Merges
 
