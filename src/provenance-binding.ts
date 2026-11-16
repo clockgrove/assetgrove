@@ -137,14 +137,7 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
 
   const credentials = await credentialsOf(media.bytes, media.mediaType);
 
-  // Evidence outside the file that names this exact record: it answers first. A record of no call
-  // it vouches for is media made outside Assetgrove handed off before, and the statement of that is
-  // derived again from the media's own mark, not taken from the file.
-  if (markedCalls !== undefined || library === "same" || run !== undefined) {
-    return calls.length === 0 ? madeOutside(own, media, credentials) : own;
-  }
-
-  // Else the model names the mark (all a 0.1.0 mark carries) and the content credentials' actions
+  // The model names the mark (all a 0.1.0 mark carries) and the content credentials' actions
   // name are each a call's model, or the tool of the sheet an imported strip came from
   // (src/sheet/import.ts).
   const marked = markRead(() => readMarkedModels(media.bytes, media.mediaType));
@@ -161,6 +154,18 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   ];
   const missing = names.filter((m) => !allowed.has(m));
   const plural = (n: string[]) => (n.length === 1 ? "" : "s");
+  // A record of no call whose media's mark names its own sheet tool is a strip Assetgrove imported
+  // from a sheet, not media made outside Assetgrove, whichever evidence answers for it.
+  const imported = typeof tool === "string" && names.includes(tool);
+  const outside = calls.length === 0 && !imported;
+
+  // Evidence outside the file that names this exact record: it answers first. A record of no call
+  // it vouches for is media made outside Assetgrove handed off before (unless it is an imported
+  // strip), and the statement of that is derived again from the media's own mark, not taken from
+  // the file.
+  if (markedCalls !== undefined || library === "same" || run !== undefined) {
+    return outside ? madeOutside(own, media, credentials) : own;
+  }
 
   // A record of no call on media whose mark or credentials name a model it does not account for, bound or not:
   // a binding is two digests anyone can recompute, so an emptied record re-bound by hand is refused
@@ -176,7 +181,7 @@ export async function checkProvenance(named: NamedProvenance): Promise<Provenanc
   }
   // No call, and nothing outside the file names a model or records calls: media made outside
   // Assetgrove.
-  if (calls.length === 0 && names.length === 0) return madeOutside(own, media, credentials);
+  if (outside && names.length === 0) return madeOutside(own, media, credentials);
   if (binding === undefined) {
     // Unbound, and nothing outside the file vouches for it: a record 0.1.0 wrote, or a staged
     // record moved out of its run. Its contents are not taken as written.

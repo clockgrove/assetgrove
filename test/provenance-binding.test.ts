@@ -358,34 +358,43 @@ test("media another tool marked as model-made hands off with a record of no call
   assert.equal(rerun3.candidates[0].provenance.madeOutsideAssetgrove, true);
 });
 
-test("a record of no calls is refused on an image whose content credentials name a model its mark no longer does", async () => {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-c2pa-")));
-  const signer = await developmentSigner(join(dir, "signer"));
-  const type = DIGITAL_SOURCE_TYPES.generated;
+test("fix-frame refuses a record of no calls on a strip whose content credentials name a model its mark no longer does, before any call", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-c2pa-")));
+  const signer = await developmentSigner(join(root, "signer"));
+  const { strip } = syntheticStrip({ count: 8, style: "painterly", motion: "walk" });
   // Signed, with no XMP packet: the mark was removed, the content credentials stay.
   const bytes = await signCredentials(
-    encodePng(drawSubject(32, 0)),
+    encodePng(strip),
     "image/png",
-    { digitalSourceType: type, models: ["model-z"], title: "kit.png" },
+    { digitalSourceType: DIGITAL_SOURCE_TYPES.generated, models: ["model-z"], title: "walk.png" },
     signer,
     "0.1.0",
   );
-  const path = join(dir, "kit.png");
-  await writeFile(path, bytes);
-  const provenancePath = join(dir, "kit.png.provenance.json");
-  const value = { generator: "sprite", calls: [], models: [] } as never;
-  await assert.rejects(
-    checkProvenance({
-      media: { path, bytes, mediaType: "image/png" },
-      provenance: { path: provenancePath, bytes: JSON.stringify(value), value },
+  const stripPath = join(root, "walk-right.png");
+  await writeFile(stripPath, bytes);
+  await writeFile(
+    join(root, "profile.json"),
+    JSON.stringify({
+      ...syntheticProfile(),
+      style: { alpha: { mode: "soft" }, color: { rule: "full" } },
+      frames: { width: 64, height: 64, durationMs: 100 },
     }),
-    (error: ProvenanceError) => {
-      assert.equal(error.code, "provenance_mismatch");
-      assert.ok(error.message.includes(path) && error.message.includes(provenancePath));
-      assert.match(error.message, /\(or its content credentials\) names the model model-z/);
-      return true;
-    },
   );
+  const provenance = join(root, "walk-right.png.provenance.json");
+  const record: Doc = { ...importedStripRecord([]), generator: "sprite", models: [] };
+  delete record["sheet"];
+  for (const written of [record, bindProvenance(record as never, bytes)]) {
+    await writeFile(provenance, JSON.stringify(written));
+    const out = join(root, "fixed");
+    const r = await cli([
+      ...["fix-frame", "--strip", stripPath, "--family", "walk-right"],
+      ...["--profile", join(root, "profile.json"), "--frame", "3", "--from", "2", "--out", out],
+      ...["--provenance", provenance, "--provider-script", FIX_SCRIPT, "--json"],
+    ]);
+    await refused(r, stripPath, provenance);
+    assert.match(doc(r)["error"].message, /\(or its content credentials\) names the model model-z/);
+    await assert.rejects(readFile(join(out, "walk-right.png")), "nothing written");
+  }
 });
 
 test("an emptied record with its binding deleted is refused on media whose mark names a model", async () => {
@@ -779,7 +788,23 @@ test("an imported strip's record, whose mark names the sheet tool, is accepted b
     DIGITAL_SOURCE_TYPES.composite,
     { models: ["hand"] },
   );
-  await check(path, toolBytes, toolOnly);
+  assert.equal((await check(path, toolBytes, toolOnly)).madeOutsideAssetgrove, undefined);
+  // Handed off by this release, its mark also carries the sha256 of no calls, which answers first:
+  // still an imported strip, not media made outside Assetgrove.
+  const handedBytes = embedDigitalSourceType(
+    encodePng(drawSubject(32, 0)),
+    "image/png",
+    DIGITAL_SOURCE_TYPES.composite,
+    { models: ["hand"], callsSha256: callsSha256({ calls: [] } as never) },
+  );
+  for (const written of [
+    importedStripRecord([]),
+    bindProvenance(importedStripRecord([]) as never, handedBytes) as unknown as Doc,
+  ]) {
+    const kept = await check(path, handedBytes, written);
+    assert.equal(kept.madeOutsideAssetgrove, undefined);
+    assert.equal(kept.modelMadeOutsideAssetgrove, undefined);
+  }
 
   // A library review record that lists these bytes with this exact file answers first: a hand-off's
   // own review record, listing the strip and this record as 0.1.0's never did.

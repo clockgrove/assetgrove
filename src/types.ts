@@ -347,7 +347,8 @@ export interface Provenance {
   contentCredentials?: import("./credentials.ts").SignerRecord;
   /**
    * Set when the media was made outside Assetgrove: its record came with no model call, and the
-   * media's mark neither records calls nor names a model (src/provenance-binding.ts).
+   * media's mark neither records calls nor names a model; never on a strip imported from a sheet
+   * whose mark names its sheet tool (src/provenance-binding.ts).
    */
   madeOutsideAssetgrove?: true;
   /**
