@@ -29,7 +29,11 @@ function modeOf(operations: readonly string[]): string | undefined {
 }
 
 /** Writes the bible's own identity-eval record, as `identity-eval --record` does, for the default routes' models. */
-async function recordThresholds(dir: string, thresholds: { score: number; cast: number }) {
+async function recordThresholds(
+  dir: string,
+  thresholds: { score: number; cast: number },
+  barMet = true,
+) {
   const entry = (question: "score" | "cast", model: string, threshold: number) => ({
     question,
     model,
@@ -42,7 +46,7 @@ async function recordThresholds(dir: string, thresholds: { score: number; cast: 
       scored: 10,
       falseAcceptRate: 0,
       falseRejectRate: 0,
-      barMet: true,
+      barMet,
     },
   });
   await writeFile(
@@ -298,6 +302,39 @@ test("enforce mode uses the recorded threshold; the profile's own threshold stil
   });
   assert.equal(explicit.run.identity?.threshold, 0.68);
   assert.equal(explicit.run.filtered, 1);
+});
+
+test("enforce mode refuses a record whose eval did not meet the bar", async () => {
+  const f = await fixture();
+  await recordThresholds(
+    join(f.root, ".assetgrove/art-direction"),
+    { score: 0.99, cast: 0.99 },
+    false,
+  );
+  const specPath = join(f.root, "spec.json");
+  await writeFile(specPath, JSON.stringify(spec));
+  const profilePath = join(f.root, "profile.json");
+  await writeFile(profilePath, JSON.stringify(syntheticProfile({ identity: { mode: "enforce" } })));
+  await assert.rejects(
+    createPlan({ biblePath: f.biblePath, specPath, profilePath }),
+    (error: unknown) => error instanceof InputError && /met the enforce bar/.test(error.message),
+  );
+});
+
+test("a record changed between plan and apply makes the plan stale", async () => {
+  const f = await fixture();
+  const dir = join(f.root, ".assetgrove/art-direction");
+  const specPath = join(f.root, "spec.json");
+  const profilePath = join(f.root, "profile.json");
+  await writeFile(specPath, JSON.stringify(spec));
+  await writeFile(profilePath, JSON.stringify(syntheticProfile({ identity: { mode: "enforce" } })));
+  const { plan } = await createPlan({ biblePath: f.biblePath, specPath, profilePath });
+  assert.ok(plan.inputs["identityThresholds"], "the record is a plan input");
+  await recordThresholds(dir, { score: 0.4, cast: 0.5 });
+  await assert.rejects(
+    applyPlan(plan, { provider: scripted([2]), outDir: join(f.root, "runs") }),
+    /stale plan: identityThresholds changed since planning/,
+  );
 });
 
 test("a subject with no lock is not scored and its plan has no identity check", async () => {

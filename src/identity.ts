@@ -168,9 +168,9 @@ export async function recordIdentityThreshold(
 
 /**
  * `identitySettings` for a run against a bible. Enforce mode needs a threshold recorded for this
- * bible, question and decision model by `identity-eval --record`, and refuses without one; it
- * uses the profile's own `identity.threshold` when set, else the recorded one. Other modes keep
- * the profile's threshold, else the recorded one, else the defaults.
+ * bible, question and decision model by `identity-eval --record`, whose eval met the enforce bar,
+ * and refuses without one; it uses the profile's own `identity.threshold` when set, else the
+ * recorded one. Other modes keep the profile's threshold, else the recorded one, else the defaults.
  */
 export async function identitySettingsFor(
   profile: Pick<TargetProfile, "identity">,
@@ -178,8 +178,21 @@ export async function identitySettingsFor(
   bible: { dir: string; path?: string },
   routes: Record<string, { model: string }>,
 ): Promise<IdentitySettings> {
+  return (await identitySettingsWithRecord(profile, mode, bible, routes)).settings;
+}
+
+/**
+ * As `identitySettingsFor`, and the path of the record file when its threshold is the one used, so
+ * a plan can hash it as an input: a record changed between plan and apply then makes the plan stale.
+ */
+export async function identitySettingsWithRecord(
+  profile: Pick<TargetProfile, "identity">,
+  mode: string | undefined,
+  bible: { dir: string; path?: string },
+  routes: Record<string, { model: string }>,
+): Promise<{ settings: IdentitySettings; recordPath?: string }> {
   const settings = identitySettings(profile, mode);
-  if (settings.mode === "off") return settings;
+  if (settings.mode === "off") return { settings };
   const operation = settings.question === "cast" ? IDENTITY_CAST_OPERATION : IDENTITY_OPERATION;
   const model = routes[operation]?.model;
   const recorded =
@@ -190,9 +203,16 @@ export async function identitySettingsFor(
     throw new InputError(
       `enforce needs an identity-eval of this bible for this model: no ${settings.question} threshold is recorded for ${bible.path ?? bible.dir} and ${model ?? operation}; run identity-eval --record`,
     );
+  if (settings.mode === "enforce" && recorded?.eval?.barMet !== true)
+    throw new InputError(
+      `enforce needs an identity-eval of this bible for this model that met the enforce bar: the ${settings.question} threshold recorded for ${bible.path ?? bible.dir} and ${model} did not; run shadow mode`,
+    );
   if (recorded && profile.identity?.threshold === undefined)
-    return { ...settings, threshold: recorded.threshold };
-  return settings;
+    return {
+      settings: { ...settings, threshold: recorded.threshold },
+      recordPath: join(bible.dir, IDENTITY_THRESHOLDS_FILE),
+    };
+  return { settings };
 }
 
 /**
