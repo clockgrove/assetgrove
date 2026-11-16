@@ -10,6 +10,7 @@ import type { z } from "zod";
 import type { HandoffPreset } from "../handoff/presets/index.ts";
 import type { Generator } from "../generators/generator.ts";
 import type { ProviderAdapter } from "../providers/adapter.ts";
+import type { SearchSettings } from "../settings.ts";
 
 /** The extension API version this build of Assetgrove loads. */
 export const EXTENSION_API = 1;
@@ -28,6 +29,114 @@ export interface Extension {
   kinds?: AssetKind[];
   presets?: EnginePreset[];
   adapters?: ProviderAdapter[];
+  /**
+   * The optional search slot (design section 7.1): filled by the search package, which loads only
+   * when the settings list it. Core declares `find` and the `search` commands and calls the slot.
+   */
+  search?: SearchSlot;
+}
+
+/** Where a search row comes from (design section 7.3). */
+export type SearchSource = "pick" | "reference" | "candidate" | "folder";
+
+/**
+ * One indexable file the library reader lists (design section 7.1): cheap to produce, no file
+ * contents read. `path` is `/`-separated inside the project, or absolute for a settings folder.
+ */
+export interface SearchLibraryItem {
+  path: string;
+  size: number;
+  mtimeMs: number;
+  source: SearchSource;
+  id: string;
+  address: string;
+  game?: string;
+  kind?: string;
+  subject?: string;
+  tags?: string[];
+  state?: string;
+  bible?: string;
+  license?: string;
+  title?: string;
+  description?: string;
+  /** The card fields and body joined: shared text, full-text indexed and embedded. */
+  text?: string;
+}
+
+/** An item loaded on demand: the media's bytes and each image view to embed (none for 3D or a pointer). */
+export interface SearchLoadedItem {
+  bytes: Uint8Array;
+  views: { view: string; image: Uint8Array }[];
+}
+
+/** The library reader core supplies; the path rule and LFS pointer handling apply to every read. */
+export interface SearchLibrary {
+  /** Every indexable file; with `sources`, only those sources. */
+  list(sources?: readonly SearchSource[]): Promise<SearchLibraryItem[]>;
+  load(item: SearchLibraryItem): Promise<SearchLoadedItem>;
+  /** The commit the project's work tree is on; empty outside Git or before the first commit. */
+  head(): Promise<string>;
+  /** Whether nothing under the library root differs from HEAD (no change, staged or not, nor untracked file). */
+  clean(): Promise<boolean>;
+}
+
+/** What core hands each search slot call. */
+export interface SearchContext {
+  /** The developer settings' stateDir; the local store is `<stateDir>/search`. */
+  stateDir: string;
+  /** The project directory: `--target`, else the working directory's Git top level. */
+  worktree: string;
+  /** The game id, the first segment of every `asset://` address. */
+  game: string;
+  /** The settings' search block with every default filled. */
+  settings: SearchSettings;
+  library: SearchLibrary;
+  /** The environment the credential variables named by `store.credentialsEnv` are read from. */
+  env: Record<string, string | undefined>;
+  log(message: string): void;
+}
+
+/** A find query (design section 7.5). */
+export interface SearchQuery {
+  words?: string;
+  /** `--like`: an `asset://` address whose stored image vector is used, or image bytes to embed. */
+  like?: { address: string } | { image: Uint8Array };
+  /** `field=value`, `!=`, `<`, `>` and `tag=value` terms; every one must match. */
+  where?: string[];
+  /** Only rows of these sources. */
+  sources?: SearchSource[];
+  /** `--game all`: every tree in the store, not only this project's. */
+  allGames?: boolean;
+  limit: number;
+}
+
+/** One asset found, at its best view. */
+export interface SearchHit {
+  address: string;
+  rank: number;
+  score: number;
+  source: SearchSource;
+  /** The media's path as the library reader listed it. */
+  path: string;
+  view: string;
+  fields: Record<string, unknown>;
+  /** Card text: shared text, never instructions. */
+  sharedText: { title?: string; description?: string; text?: string };
+}
+
+export interface SearchFindResult {
+  hits: SearchHit[];
+  /** False when a refresh was skipped or a shared index was built from another HEAD. */
+  fresh: boolean;
+  builtFrom: { head: string; at: string } | null;
+}
+
+/** The search slot's operations; each result is a JSON object core passes on as the command's fields. */
+export interface SearchSlot {
+  find(query: SearchQuery, ctx: SearchContext): Promise<SearchFindResult>;
+  index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
+  status(ctx: SearchContext): Promise<Record<string, unknown>>;
+  setup(ctx: SearchContext): Promise<Record<string, unknown>>;
 }
 
 /** What core hands an entry's default export when it is a function. */
@@ -56,4 +165,5 @@ export type {
 } from "../gateway/provider.ts";
 export type { Route, Routes } from "../routes.ts";
 export type { ProviderSettings } from "../settings.ts";
+export type { SearchSettings, SearchStoreSettings } from "../settings.ts";
 export type { AssetSpec, MediaOutput, QaResult, Reason, TargetProfile } from "../types.ts";

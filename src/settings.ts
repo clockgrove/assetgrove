@@ -147,6 +147,31 @@ export interface Settings {
   /** The C2PA signing certificate chain and key files; absent, a development certificate signs. */
   contentCredentials?: NonNullable<SettingsFile["contentCredentials"]>;
   confirmedBy: NonNullable<SettingsFile["confirmedBy"]>;
+  /** The search block (design section 7.2), its defaults filled; absent when the file has none. */
+  search?: SearchSettings;
+}
+
+/** A shared remote search store (design sections 7.2 and 7.8). */
+export interface SearchStoreSettings {
+  /** `s3://`, `gs://` or `az://`. */
+  uri: string;
+  /** The only object-store options Lance is given. */
+  options: { endpoint?: string; region?: string };
+  /** The names of the variables holding the store's credentials, never the values. */
+  credentialsEnv?: { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
+  /** True on the one machine that builds the shared index; false makes the store read-only here. */
+  writer: boolean;
+}
+
+/** The settings' `search` block with every default filled. */
+export interface SearchSettings {
+  store?: SearchStoreSettings;
+  embedder: "local" | "scripted";
+  model: "siglip2-base";
+  candidates: boolean;
+  nearMatch: boolean;
+  /** Absolute folders whose images are indexed beside the library. */
+  folders: string[];
 }
 
 export interface LoadOptions {
