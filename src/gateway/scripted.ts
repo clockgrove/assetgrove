@@ -164,7 +164,10 @@ export class ScriptedProvider implements GenerationProvider {
     }
     if (request.operation === REFERENCE_VIEW_OPERATION && this.script.referenceView) {
       const index = this.viewCount++;
-      return { requestId: `scripted-reference-view-${index}`, ...this.script.referenceView(request) };
+      return {
+        requestId: `scripted-reference-view-${index}`,
+        ...this.script.referenceView(request),
+      };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

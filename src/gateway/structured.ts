@@ -65,7 +65,11 @@ export async function decideStructured(
     q.type === "score"
       ? `${q.instructions}\nAnswer with score, the index (0 to ${top}) of the level that fits: ${q.levels.map((l, i) => `${i}: ${l}`).join("; ")}.`
       : q.type === "choice"
-        ? `${q.instructions}\nAnswer with choice, the one option that fits, and probability, from 0 to 1, that it is right. Options: ${Object.entries(q.options).map(([name, meaning]) => `${name}: ${meaning}`).join("; ")}.`
+        ? `${q.instructions}\nAnswer with choice, the one option that fits, and probability, from 0 to 1, that it is right. Options: ${Object.entries(
+            q.options,
+          )
+            .map(([name, meaning]) => `${name}: ${meaning}`)
+            .join("; ")}.`
         : `${q.instructions}\nAnswer with probability, from 0 to 1, that this holds.` +
           `${q.whenTrue !== undefined ? ` True means: ${q.whenTrue}.` : ""}` +
           `${q.whenFalse !== undefined ? ` False means: ${q.whenFalse}.` : ""}`;
@@ -79,8 +83,7 @@ export async function decideStructured(
     }),
   );
   const raw = result.output as
-    | { score?: number; probability?: number; choice?: string }
-    | undefined;
+    { score?: number; probability?: number; choice?: string } | undefined;
   let answer: DecisionAnswer;
   if (q.type === "score" && typeof raw?.score === "number")
     answer = { type: "score", score: raw.score };
@@ -90,7 +93,11 @@ export async function decideStructured(
     names.includes(raw.choice) &&
     typeof raw.probability === "number"
   )
-    answer = { type: "choice", choice: raw.choice, probabilities: { [raw.choice]: raw.probability } };
+    answer = {
+      type: "choice",
+      choice: raw.choice,
+      probabilities: { [raw.choice]: raw.probability },
+    };
   else if (q.type === "boolean" && typeof raw?.probability === "number")
     answer = { type: "boolean", probability: raw.probability };
   else throw new ProviderError(`${provider} decide: the answer did not match the question`);

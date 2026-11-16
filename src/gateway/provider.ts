@@ -120,7 +120,10 @@ export interface GenerationProvider {
 
 /** Reference views for image-to-3D, by the view each image shows. */
 export interface ModelView extends ImageInput {
-  /** `front`, `left`, `back`, `right`, or another role when the view is unknown. */
+  /**
+   * `front`, `left`, `back` or `right` (the character's own side), else `three-quarter`, `sheet`
+   * or `detail` (src/model3d/views.ts).
+   */
   view: string;
 }
 

@@ -220,7 +220,7 @@ export class Caller {
   }
 
   /**
-   * Image-to-3D from reference views. Each reference's `role` is sent as its view; the result's
+   * Image-to-3D from reference views. Each reference's `view` is sent as the view it shows; the result's
    * handle lets a later rig call name the model.
    */
   async model3d(
