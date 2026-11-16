@@ -24,21 +24,7 @@ import {
 import { fetchImages } from "./fetch.ts";
 import { checkManifest, type Manifest } from "./manifest.ts";
 import { keyValue } from "../../src/env.ts";
-import { adapterOf } from "../../src/providers/adapter.ts";
-import { loadSettings } from "../../src/settings.ts";
-
-/** The gateway entry of the developer settings, as core's gateway adapter reads it. */
-function gatewaySettings(): { baseURL?: string; keyEnv: string } {
-  const settings = loadSettings();
-  const id = Object.keys(settings.providers)
-    .sort()
-    .find((key) => adapterOf(key, settings.providers[key]!)?.id === "vercel-ai-gateway");
-  const entry = id !== undefined ? settings.providers[id]! : undefined;
-  return {
-    ...(entry?.baseURL !== undefined && { baseURL: entry.baseURL }),
-    keyEnv: entry?.keyEnv ?? "AI_GATEWAY_API_KEY",
-  };
-}
+import { gatewaySettings } from "./gateway.ts";
 
 const { values } = parseArgs({
   options: {

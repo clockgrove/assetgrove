@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { fixtureSource, buildFixtureManifest } from "../../../bench/search/fixture.ts";
 import { checkManifest, containsStem, readManifest } from "../../../bench/search/manifest.ts";
 import { buildManifest, parseInventory } from "../../../bench/search/build-manifest.ts";
+import { WRITTEN_QUERIES } from "../../../bench/search/queries.ts";
 import { stratifiedSample, type InventoryImage } from "../../../bench/search/sample.ts";
 
 const fixtureUrl = new URL("../../../bench/search/fixture/manifest.json", import.meta.url);
@@ -31,7 +32,7 @@ describe("manifest checks", () => {
         m.labels.push({ image: "nope", category: "tiles", pack: "pack-a" }),
       (m: Awaited<ReturnType<typeof readManifest>>) => m.lookQueries.push("nope"),
       (m: Awaited<ReturnType<typeof readManifest>>) =>
-        m.writtenQueries.push({ id: "w", text: "x", relevant: ["nope"] }),
+        m.writtenQueries.push({ id: "w", text: "x", candidates: ["nope"] }),
       (m: Awaited<ReturnType<typeof readManifest>>) => m.pairs.push(["fx-01", "nope"]),
     ]) {
       const m = await readManifest(fixtureUrl);
@@ -58,10 +59,24 @@ describe("manifest checks", () => {
     assert.equal(containsStem("a tile", "tile_0042.png"), false);
   });
 
+  it("fails on a judgement that is not of a candidate, names no prompt or is not a probability", async () => {
+    const m = await readManifest(fixtureUrl);
+    const q = m.writtenQueries[0]!;
+    const j = q.judgements![0]!;
+    q.judgements!.push({ ...j, image: "fx-20", prompt: "nope", probability: 2 });
+    q.candidates = q.candidates!.filter((c) => c !== "fx-20");
+    const problems = checkManifest(m).join("\n");
+    assert.match(problems, /fx-20 is judged but not a candidate/);
+    assert.match(problems, /unknown prompt/);
+    assert.match(problems, /not in 0\.\.1/);
+  });
+
   it("records which texts a person spot-checked", async () => {
     const m = await readManifest(fixtureUrl);
     const checked = m.images.filter((i) => i.card?.spotCheck).map((i) => i.id);
     assert.deepEqual(checked, ["fx-01", "fx-09"]);
+    const judged = m.writtenQueries.flatMap((q) => q.judgements ?? []);
+    assert.equal(judged.filter((j) => j.spotCheck?.by === "fixture").length, 2);
   });
 
   it("the real manifest, when present, holds about 300 images covering every stratum", async (t) => {
@@ -69,13 +84,13 @@ describe("manifest checks", () => {
     const m = await readManifest(realUrl);
     assert.deepEqual(checkManifest(m, { cardsPending: true }), []);
     assert.ok(m.images.length >= 250 && m.images.length <= 350);
-    assert.equal(m.writtenQueries.length, 30);
+    assert.ok(m.writtenQueries.length >= 60);
     assert.ok(m.pairs.length > 0);
   });
 });
 
 describe("real manifest", () => {
-  it("is what build-manifest.ts makes from inventory.csv, with the owner's 300 rows and 30 queries", async () => {
+  it("is what build-manifest.ts makes from inventory.csv and queries.ts, with the owner's 300 rows", async () => {
     const rows = parseInventory(
       readFileSync(new URL("../../../bench/search/inventory.csv", import.meta.url), "utf8"),
     );
@@ -84,8 +99,34 @@ describe("real manifest", () => {
     assert.deepEqual(m, buildManifest(rows, m));
     assert.equal(m.strata.categories.length, 9);
     assert.equal(m.strata.packs.length, 11);
-    assert.equal(m.writtenQueries.length, 30);
-    assert.ok(m.writtenQueries.filter((q) => q.relevant.length > 0).length >= 20);
+    assert.deepEqual(
+      m.writtenQueries.map((q) => q.text),
+      WRITTEN_QUERIES,
+    );
+    // No written query keeps a rule-made label: relevance comes only from judgements.
+    for (const q of m.writtenQueries) assert.equal(q.relevant, undefined);
+  });
+
+  it("has at least 60 written queries, none taken from a file name of the full library", () => {
+    assert.ok(WRITTEN_QUERIES.length >= 60);
+    assert.equal(new Set(WRITTEN_QUERIES).size, WRITTEN_QUERIES.length);
+    const words = (s: string) =>
+      s
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .replace(/\.[^./]+$/, "")
+        .split(/[^a-z]+/)
+        .filter((w) => w !== "")
+        .join(" ");
+    const files = parseInventory(
+      readFileSync(new URL("../../../bench/search/inventory-full.csv", import.meta.url), "utf8"),
+    ).map((r) => r.path.split("/").pop()!);
+    assert.ok(files.length > 1700);
+    const stems = new Set(files.map(words).filter((s) => s !== ""));
+    for (const q of WRITTEN_QUERIES) {
+      assert.equal(stems.has(words(q)), false, `"${q}" is a file name`);
+      for (const f of files) assert.equal(containsStem(q, f), false, `"${q}" holds ${f}`);
+    }
   });
 });
 
