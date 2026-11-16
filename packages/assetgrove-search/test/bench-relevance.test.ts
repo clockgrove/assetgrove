@@ -24,6 +24,7 @@ import {
 } from "../../../bench/search/manifest.ts";
 import {
   gatewayJudge,
+  structuredJudge,
   JUDGE_QUESTION,
   judgementSample,
   judgePromptRecord,
@@ -220,6 +221,14 @@ describe("the relevance record", () => {
     await assert.rejects(
       judge.judge({ image: new Uint8Array(), query: "q", prompt: "p", question: JUDGE_QUESTION }),
       /AI_GATEWAY_API_KEY is not set/,
+    );
+  });
+
+  it("the structured judge refuses to be built without a key, so it makes no request", () => {
+    assert.throws(
+      () =>
+        structuredJudge("anthropic/claude-sonnet-5-5", { keyEnv: "ASSETGROVE_TEST_NO_SUCH_KEY" }),
+      /needs a key in ASSETGROVE_TEST_NO_SUCH_KEY/,
     );
   });
 });

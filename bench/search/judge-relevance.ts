@@ -4,8 +4,10 @@
  * - `node bench/search/judge-relevance.ts --pool --embedder siglip2 --models <dir>` sets each
  *   written query's candidates: the union of the top POOL_DEPTH of every ranking the bench scores,
  *   ranked on the shipped LanceStore. No model call; `--embedder scripted` runs offline.
- * - `node bench/search/judge-relevance.ts --provider gateway [--model <id>] --max-calls <n>` judges
- *   each candidate not yet judged, one decision call each, saving after every answer. It prints how
+ * - `node bench/search/judge-relevance.ts --provider gateway [--judge structured|decision]
+ *   [--model <id>] --max-calls <n>` judges each candidate not yet judged, one call each, saving after
+ *   every answer. `structured` (the default) asks a vision model through structured output;
+ *   `decision` asks one of the gateway's decision models. It prints how
  *   many calls it will make before the first and stops at `--max-calls` (default 2000). Without
  *   `--provider` it only prints that count; `--provider scripted` judges offline.
  *
@@ -25,7 +27,10 @@ import { fetchImages, type ImageSource } from "./fetch.ts";
 import { gatewaySettings } from "./gateway.ts";
 import { checkManifest, droppedQueries, relevantOf, unjudged, type Manifest } from "./manifest.ts";
 import {
+  DECISION_JUDGE_MODEL,
   gatewayJudge,
+  STRUCTURED_JUDGE_MODEL,
+  structuredJudge,
   judgementSample,
   judgeRelevance,
   markJudgementsChecked,
@@ -44,7 +49,8 @@ const { values } = parseArgs({
     store: { type: "string" },
     force: { type: "boolean", default: false },
     provider: { type: "string" },
-    model: { type: "string", default: "perplexity/pplx-decider-v1.2" },
+    model: { type: "string" },
+    judge: { type: "string", default: "structured" },
     "max-calls": { type: "string", default: "2000" },
     sample: { type: "string" },
     seed: { type: "string", default: "spot-check" },
@@ -129,11 +135,20 @@ if (values.sample) {
     console.error(
       `gateway endpoint: ${gateway.baseURL !== undefined ? new URL(gateway.baseURL).host : "the fixed endpoint"} (key from ${gateway.keyEnv})`,
     );
-    judge = gatewayJudge(values.model as string, {
+    // `structured` asks any vision model through structured output; `decision` asks one of the
+    // gateway's decision models. The committed judgements use `structured` (docs/decisions.md).
+    const kind = values.judge as string;
+    if (kind !== "structured" && kind !== "decision")
+      throw new Error(`--judge must be structured or decision, not ${kind}`);
+    const options = {
       keyEnv: gateway.keyEnv,
       ...(gateway.baseURL !== undefined && { baseURL: gateway.baseURL }),
       ...(apiKey !== undefined && { apiKey }),
-    });
+    };
+    judge =
+      kind === "structured"
+        ? structuredJudge((values.model as string | undefined) ?? STRUCTURED_JUDGE_MODEL, options)
+        : gatewayJudge((values.model as string | undefined) ?? DECISION_JUDGE_MODEL, options);
     source = await fetchImages(manifest, values.images as string);
   } else if (provider !== undefined) {
     throw new Error(`--provider must be gateway or scripted, not ${provider}`);
