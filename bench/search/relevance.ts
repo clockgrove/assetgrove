@@ -4,9 +4,11 @@
  * label comes from a file name.
  */
 import { createHash } from "node:crypto";
+import { createGateway } from "ai";
 import type { Embedder } from "../../packages/assetgrove-search/src/embedder.ts";
 import type { Store } from "../../packages/assetgrove-search/src/store.ts";
 import type { DecisionQuestion } from "../../src/gateway/provider.ts";
+import { decideStructured } from "../../src/gateway/structured.ts";
 import { VercelGateway } from "../../src/gateway/vercel.ts";
 import { indexLibrary, RANKINGS, rankingsFor } from "./bench.ts";
 import { forVision } from "./card-text.ts";
@@ -135,6 +137,11 @@ export class ScriptedJudge implements RelevanceJudge {
   }
 }
 
+/** The vision model the committed judgements come from: the one that wrote the card texts. */
+export const STRUCTURED_JUDGE_MODEL = "anthropic/claude-sonnet-5-5";
+/** The gateway decision model `--judge decision` asks by default. */
+export const DECISION_JUDGE_MODEL = "perplexity/pplx-decider-v1.2";
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 /**
@@ -160,6 +167,50 @@ export function gatewayJudge(
         question: r.question,
         operation: "relevance",
       });
+      if (result.answer.type !== "boolean" || !Number.isFinite(result.answer.probability))
+        throw new Error("the relevance judge did not answer with a probability");
+      return {
+        probability: result.answer.probability,
+        model,
+        route: "ai-gateway",
+        ...(result.requestIdSource === "provider" && { requestId: result.requestId }),
+      };
+    },
+  };
+}
+
+/**
+ * Any vision model the gateway serves, asked the same typed question through structured output
+ * (core's `decideStructured`). The gateway's decision models were tried first and did not pass the
+ * spot-check on this library's small sprites (docs/decisions.md, Relevance judgements), so the
+ * committed judgements come from a model that reads the image well.
+ */
+export function structuredJudge(
+  model: string,
+  options: { baseURL?: string; apiKey?: string; keyEnv?: string } = {},
+): RelevanceJudge {
+  const apiKey = options.apiKey ?? process.env[options.keyEnv ?? "AI_GATEWAY_API_KEY"];
+  if (apiKey === undefined || apiKey === "")
+    throw new Error(`the relevance judge needs a key in ${options.keyEnv ?? "AI_GATEWAY_API_KEY"}`);
+  const gateway = createGateway({
+    apiKey,
+    ...(options.baseURL !== undefined && { baseURL: options.baseURL }),
+  });
+  return {
+    async judge(r) {
+      const png = PNG_SIGNATURE.every((byte, i) => r.image[i] === byte);
+      const result = await decideStructured(
+        "ai-gateway",
+        gateway(model),
+        {
+          model,
+          prompt: r.prompt,
+          images: [{ mediaType: png ? "image/png" : "application/octet-stream", bytes: r.image }],
+          question: r.question,
+          operation: "relevance",
+        },
+        (_label, call) => call(),
+      );
       if (result.answer.type !== "boolean" || !Number.isFinite(result.answer.probability))
         throw new Error("the relevance judge did not answer with a probability");
       return {
