@@ -490,9 +490,16 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
         };
   });
   // A binding the record came with describes other bytes; this hand-off binds it again below.
-  const { binding: _stale, ...unbound } = licensed;
+  // "Made outside Assetgrove" means no call, so it is read from the final calls: a step that added
+  // a call to outside media (look-dev, fix-frame) leaves it behind.
+  const { binding: _stale, madeOutsideAssetgrove: _outside, ...unbound } = licensed;
   void _stale;
-  const provenance: Provenance = { ...unbound, digitalSourceType };
+  void _outside;
+  const provenance: Provenance = {
+    ...unbound,
+    digitalSourceType,
+    ...(_outside === true && unbound.calls.length === 0 && { madeOutsideAssetgrove: true }),
+  };
   const last = provenance.steps?.at(-1);
   if (
     last?.op !== "embed-digital-source-type" ||

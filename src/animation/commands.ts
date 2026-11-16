@@ -2,7 +2,12 @@
  * The work behind `assetgrove animation-qa` and `assetgrove fix-frame`, kept apart from argument
  * parsing so tests and the MCP surface can call it directly.
  */
-import { bindProvenance, callsSha256, checkProvenance } from "../provenance-binding.ts";
+import {
+  bindProvenance,
+  callsSha256,
+  checkProvenance,
+  ProvenanceError,
+} from "../provenance-binding.ts";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Budget } from "../budget.ts";
@@ -14,7 +19,11 @@ import type { GenerationProvider } from "../gateway/provider.ts";
 import type { PlannedCall } from "../generators/generator.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
-import { embedDigitalSourceType, readDigitalSourceType } from "../metadata.ts";
+import {
+  embedDigitalSourceType,
+  readDigitalSourceType,
+  readMarkedCallsSha256,
+} from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
 import { requireInsideProject } from "../bible.ts";
 import { loadReference, sniffMediaType } from "../request.ts";
@@ -336,6 +345,24 @@ export async function runFixFrame(options: {
         },
         provenance: { path: sidecar, bytes: bytes!, value: provenance },
       });
+    }
+  }
+  if (provenance === undefined) {
+    // No record beside the strip: one whose mark records calls had a record, and a fix from no
+    // record would write a new one without them (and without their grant).
+    const bytes = new Uint8Array(await readFile(target.path));
+    let marked: string | undefined;
+    try {
+      marked = readMarkedCallsSha256(bytes, "image/png");
+    } catch {
+      marked = undefined;
+    }
+    if (marked !== undefined && marked !== callsSha256({ calls: [] })) {
+      throw new ProvenanceError(
+        `refused: ${target.path} has no provenance at ${sidecar}, but its own mark records model ` +
+          "calls (its calls sha256 is not that of no call). Give the strip with the provenance " +
+          "file Assetgrove wrote beside it, with --provenance",
+      );
     }
   }
   if (provenance && origin !== undefined && provenance.digitalSourceType === undefined) {

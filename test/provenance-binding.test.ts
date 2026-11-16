@@ -15,7 +15,12 @@ import { fileURLToPath } from "node:url";
 import { encodePng } from "../src/image/raster.ts";
 import { parseReview, writeReview } from "../src/library/review.ts";
 import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../src/metadata.ts";
-import { bindProvenance, checkProvenance, ProvenanceError } from "../src/provenance-binding.ts";
+import {
+  bindProvenance,
+  callsSha256,
+  checkProvenance,
+  ProvenanceError,
+} from "../src/provenance-binding.ts";
 import { sha256 } from "../src/request.ts";
 import { gitTarget } from "./fixtures/git.ts";
 import { syntheticStrip } from "./fixtures/strip.ts";
@@ -517,6 +522,21 @@ test("an emptied unbound record is refused on media 0.1.0 or staging marked with
           return true;
         },
       );
+      // Re-bound by hand to these bytes: the binding is a digest anyone recomputes, so the mark's
+      // digital source type still refuses it.
+      const rebound = bindProvenance(value, bytes);
+      await assert.rejects(
+        checkProvenance({
+          media: { path: m.path, bytes, mediaType: m.mediaType },
+          provenance: { path: provenancePath, bytes: JSON.stringify(rebound), value: rebound },
+        }),
+        (error: ProvenanceError) => {
+          assert.equal(error.code, "provenance_mismatch");
+          assert.match(error.message, /says a model made it/);
+          assert.match(error.message, /another tool marked as made by a model/);
+          return true;
+        },
+      );
     }
     // Marked as made by a person: media made outside Assetgrove.
     const human = embedDigitalSourceType(m.raw, m.mediaType, DIGITAL_SOURCE_TYPES.human);
@@ -679,4 +699,33 @@ test("a staged candidate copied out of its run folder is refused, naming pick", 
   const r = await rig(w, model, provenance);
   await refused(r, model, provenance);
   assert.match(doc(r)["error"].message, /assetgrove pick --run/);
+});
+
+test("fix-frame refuses a strip whose mark records calls when its provenance was moved away, before any call", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-binding-moved-")));
+  const { strip } = syntheticStrip({ count: 8, style: "painterly", motion: "walk" });
+  const stripPath = join(root, "walk-right.png");
+  await writeFile(
+    stripPath,
+    embedDigitalSourceType(encodePng(strip), "image/png", DIGITAL_SOURCE_TYPES.composite, {
+      callsSha256: callsSha256({ calls: [{ operation: "edit", model: "x/y" }] as never }),
+    }),
+  );
+  await writeFile(
+    join(root, "profile.json"),
+    JSON.stringify({
+      ...syntheticProfile(),
+      style: { alpha: { mode: "soft" }, color: { rule: "full" } },
+      frames: { width: 64, height: 64, durationMs: 100 },
+    }),
+  );
+  const out = join(root, "fixed");
+  const r = await cli([
+    ...["fix-frame", "--strip", stripPath, "--family", "walk-right"],
+    ...["--profile", join(root, "profile.json"), "--frame", "3", "--from", "2", "--out", out],
+    ...["--provider-script", FIX_SCRIPT, "--json"],
+  ]);
+  await refused(r, stripPath, `${stripPath}.provenance.json`);
+  assert.match(doc(r)["error"].message, /mark records model calls/);
+  await assert.rejects(readFile(join(out, "walk-right.png")), "nothing written");
 });

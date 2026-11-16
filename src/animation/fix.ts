@@ -375,8 +375,11 @@ export async function fixFrame(
     costUsd: 0,
     calls: [],
   };
+  // The fix adds a call, so the strip is no longer media made outside Assetgrove.
+  const { madeOutsideAssetgrove: _outside, ...extended } = base;
+  void _outside;
   const provenance: FixedProvenance = {
-    ...base,
+    ...extended,
     digitalSourceType: combineDigitalSourceTypes([
       base.digitalSourceType ?? DIGITAL_SOURCE_TYPES.undeclared,
       DIGITAL_SOURCE_TYPES.generated,
