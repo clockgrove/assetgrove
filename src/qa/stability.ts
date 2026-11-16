@@ -101,7 +101,13 @@ export const IMAGE_QA_CHECKS: readonly QaCheck[] = [
  * vision model's text).
  */
 export const ANIMATION_VISION_CHECKS: readonly QaCheck[] = [
-  { id: "identity-flicker", version: "2", modelBacked: true, source: "decision", operation: "flicker" },
+  {
+    id: "identity-flicker",
+    version: "2",
+    modelBacked: true,
+    source: "decision",
+    operation: "flicker",
+  },
   { id: "holes", version: "2", modelBacked: true, source: "decision", operation: "holes" },
 ];
 

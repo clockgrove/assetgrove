@@ -123,7 +123,10 @@ test("a same answer passes and prints its probability; a person's cutoff applies
     reasons.map((r) => r.passed),
     [true, true],
   );
-  assert.match(reasons[0]?.reason ?? "", /frame 1 → frame 2: same \(probability 0\.30 < cutoff 0\.8\)/);
+  assert.match(
+    reasons[0]?.reason ?? "",
+    /frame 1 → frame 2: same \(probability 0\.30 < cutoff 0\.8\)/,
+  );
   assert.equal(decisions[1]?.label, "flicker");
   assert.equal(decisions[1]?.flagged, false);
 });
@@ -136,7 +139,12 @@ test("an answer of the wrong type fails the call", async () => {
     vision: () => ({ text: "" }),
     decide: () => ({ answer: { type: "score", score: 1 } }),
   });
-  const call = new Caller({ provider, providerName: "scripted", budget: new Budget(1), routes: defaultRoutes });
+  const call = new Caller({
+    provider,
+    providerName: "scripted",
+    budget: new Budget(1),
+    routes: defaultRoutes,
+  });
   await assert.rejects(checkFlicker({ ...base, frames: frames(2), loop: false, call }));
 });
 

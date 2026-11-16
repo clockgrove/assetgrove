@@ -198,7 +198,10 @@ const base = { family: "idle", subject: "a fox", threshold: 128, minShare: 0.001
 test("only frames with an enclosed area are judged; a hole fails that frame for holes", async () => {
   const frames = [disc(), disc({ hole: true }), disc({ hole: true })];
   const plan = planHoles(frames, base, defaultRoutes);
-  assert.deepEqual([plan.calls, plan.estimatedCostUsd], [2, 2 * defaultRoutes.holes.estimatedCostUsd]);
+  assert.deepEqual(
+    [plan.calls, plan.estimatedCostUsd],
+    [2, 2 * defaultRoutes.holes.estimatedCostUsd],
+  );
   const { call, seen } = caller([0.95, 0.1]);
   const { reasons, decisions } = await checkHoles({ ...base, frames, call });
   assert.equal(seen.length, 2);

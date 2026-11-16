@@ -1,8 +1,8 @@
 /**
- * A provider script module for `--provider-script` on the animation commands: every flicker call
- * answers "same", unless the pair names frame 3 as its second image, which is labelled a flicker;
- * every holes call answers that the areas are openings between parts; every edit returns a
- * synthetic figure with alpha. Nothing here is real art.
+ * A provider script module for `--provider-script` on the animation commands: every flicker
+ * decision answers that the identity holds (probability 0.03), unless the pair names frame 3 as its
+ * second image, which is a flicker (0.91); every holes decision answers that nothing is missing
+ * (0.1); every edit returns a synthetic figure with alpha. Nothing here is real art.
  */
 import { encodePng } from "../../src/image/raster.ts";
 import { syntheticStrip } from "./strip.ts";
@@ -14,6 +14,13 @@ export default {
     images: [{ mediaType: "image/png", bytes: encodePng(figure as never) }],
     costUsd: 0.04,
   }),
+  decide: (request: { prompt: string; operation?: string }) => {
+    if (request.operation === "holes") {
+      return { answer: { type: "boolean", probability: 0.1 }, costUsd: 0.003 };
+    }
+    const flicker = /image 2 is frame 3\b/.test(request.prompt);
+    return { answer: { type: "boolean", probability: flicker ? 0.91 : 0.03 }, costUsd: 0.01 };
+  },
   vision: (request: { prompt: string }) => {
     if (/Magenta marks/.test(request.prompt)) {
       return {

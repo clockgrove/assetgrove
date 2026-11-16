@@ -28,9 +28,7 @@ import type { DigitalSourceType } from "../metadata.ts";
 import { requireInsideProject } from "../bible.ts";
 import { loadReference, sniffMediaType } from "../request.ts";
 import type { Routes } from "../routes.ts";
-import { GROUPING_FILE, readImport } from "../sheet/import.ts";
-import { familyFrames } from "../sheet/group.ts";
-import type { Grouping } from "../sheet/types.ts";
+import { readImport } from "../sheet/import.ts";
 import { resolveStyle } from "../style.ts";
 import type { ResolvedStyle } from "../style.ts";
 import type { Point, Provenance, Size, TargetProfile } from "../types.ts";
@@ -97,18 +95,6 @@ async function readStrip(path: string): Promise<{ raster: Raster; origin?: Digit
   return { raster, ...(origin !== undefined && { origin }) };
 }
 
-/** The import's confirmed grouping, when it has one. */
-async function readGrouping(importDir: string): Promise<Grouping | undefined> {
-  try {
-    const grouping = JSON.parse(
-      await readFile(join(importDir, GROUPING_FILE), "utf8"),
-    ) as Grouping;
-    return grouping.status === "confirmed" ? grouping : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Which strip frames have an image before background removal: planning needs only that, so it
  * stands in for the image. A strip whose frame count differs from its family's frames gets none.
@@ -147,18 +133,14 @@ export async function importTargets(importDir: string): Promise<StripTarget[]> {
   if (families.length === 0) {
     throw new InputError(`import ${importDir} has written no family yet; run write-families first`);
   }
-  const grouping = await readGrouping(importDir);
   const byId = new Map(record.frames.map((f) => [f.id, f]));
-  // The frames each family was written from, in strip order, with the crop before removal the
-  // import kept for each (an import written before #376 kept none).
+  // The frames the family's last write made its strip from, in strip order, with the crop before
+  // removal the import kept for each (an import or write before #376 recorded neither).
   const sourcesOf = (family: string): StripTarget["holeSources"] => {
-    if (!grouping) return undefined;
-    let ids: number[];
-    try {
-      ids = familyFrames(grouping, family).frames;
-    } catch {
-      return undefined;
-    }
+    const ids = (record.written ?? []).findLast((w) => w.families.includes(family))?.frames?.[
+      family
+    ];
+    if (ids === undefined) return undefined;
     const sources = ids.map((id) => {
       const f = byId.get(id);
       return f?.source !== undefined
