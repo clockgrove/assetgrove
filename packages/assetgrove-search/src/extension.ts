@@ -48,16 +48,8 @@ import { assertSupportedPlatform } from "./platform.ts";
 import { ScriptedEmbedder } from "./scripted.ts";
 import { loadSiglip2 } from "./siglip2.ts";
 import { modelIsInstalled, setupModel } from "./setup.ts";
-import type {
-  BuiltFrom,
-  EmbedderRecord,
-  FilterTerm,
-  Hit,
-  Scalar,
-  Store,
-  StoreQuery,
-} from "./store.ts";
-import { parseWhere, resolveOrdered } from "./where.ts";
+import type { BuiltFrom, EmbedderRecord, FilterTerm, Hit, Store, StoreQuery } from "./store.ts";
+import { parseWhere } from "./where.ts";
 
 const embedders = new Map<string, Promise<Embedder>>();
 const stores = new Map<string, Promise<LanceStore>>();
@@ -378,24 +370,7 @@ export async function findWith(
     );
   }
 
-  // `<` and `>` order values as versions ("2" before "10"), so each becomes an IN list of the
-  // values the rows in scope hold on the asked side.
-  const filter = await resolveOrdered(terms, async (field, others) => {
-    const values: Scalar[] = [];
-    for (const { store, tree } of scopes) {
-      const rows = await store.query({
-        filter: inScope(others, tree),
-        limit: Number.MAX_SAFE_INTEGER,
-      });
-      for (const { row } of rows) {
-        const v = (row as unknown as Record<string, unknown>)[field];
-        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean")
-          values.push(v);
-      }
-    }
-    return values;
-  });
-  const searched = scopes.map(({ store, tree }) => ({ store, filter: inScope(filter, tree) }));
+  const searched = scopes.map(({ store, tree }) => ({ store, filter: inScope(terms, tree) }));
   const ranked = await rankAcross(searched, q, vectors);
 
   const hits = bestViewPerAsset(ranked).slice(0, q.limit).map(toHit);

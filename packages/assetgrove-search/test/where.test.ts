@@ -128,4 +128,10 @@ test("the memory store matches in, and resolveOrdered orders values as versions"
     { field: "kind", op: "=", value: "k" },
     { field: "bible", op: "in", value: ["1", "2", "9"] },
   ]);
+  // Only bible compares as versions; `<` and `>` on other fields are left to the store.
+  const plain: Parameters<typeof resolveOrdered>[0] = [{ field: "path", op: "<", value: "10" }];
+  assert.deepEqual(
+    await resolveOrdered(plain, async () => assert.fail("no values read for path")),
+    plain,
+  );
 });

@@ -121,19 +121,26 @@ export function compareVersions(a: string, b: string): number {
   return a.localeCompare(b, "en", { numeric: true });
 }
 
+/** The fields whose `<` and `>` compare as versions: only `bible` (other fields compare as strings). */
+export const VERSION_FIELDS: ReadonlySet<string> = new Set(["bible"]);
+
 /**
- * Replaces each `<` and `>` term with `field IN (...)`: of the values `valuesOf` finds for that
- * field, those before (`<`) or after (`>`) the term's value by `compareVersions`. SQL and
- * JavaScript compare strings character by character, which puts "10" before "9".
+ * Replaces each `bible<` and `bible>` term with `bible IN (...)`: of the values `valuesOf` finds
+ * for it, those before (`<`) or after (`>`) the term's value by `compareVersions`. SQL and
+ * JavaScript compare strings character by character, which puts "10" before "9". Terms on other
+ * fields are returned unchanged.
  */
 export async function resolveOrdered(
   terms: FilterTerm[],
   valuesOf: (field: string, others: FilterTerm[]) => Promise<Scalar[]>,
 ): Promise<FilterTerm[]> {
-  const others = terms.filter((t) => t.op !== "<" && t.op !== ">");
+  const ordered = (t: FilterTerm): boolean =>
+    (t.op === "<" || t.op === ">") && VERSION_FIELDS.has(t.field);
+  if (!terms.some(ordered)) return terms;
+  const others = terms.filter((t) => !ordered(t));
   const out: FilterTerm[] = [];
   for (const t of terms) {
-    if (t.op !== "<" && t.op !== ">") {
+    if (!ordered(t)) {
       out.push(t);
       continue;
     }
