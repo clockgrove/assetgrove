@@ -1,6 +1,7 @@
 /** `library adopt` (issue #251): a hand edit becomes the next version with credentials naming its original. */
 import { resetSettings, stateDir, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,16 +39,15 @@ const provenance: Provenance = {
   calls: [],
 };
 
-async function handedOff(ownProvenance = false) {
+const OWN_PROVENANCE = "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.png.provenance.json";
+
+async function handedOff(provenanceLayout?: string) {
   const targetDir = await mkdtemp(join(tmpdir(), "assetgrove-adopt-"));
   const profile = syntheticProfile({
     handoff: [{ preset: "atlas-json", options: { shape: "array" } }] as never,
   });
   delete profile.validator;
-  if (ownProvenance) {
-    profile.layout.provenance =
-      "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.png.provenance.json";
-  }
+  if (provenanceLayout !== undefined) profile.layout.provenance = provenanceLayout;
   await writeToTarget({
     profile,
     spec: shelterSpec,
@@ -127,13 +127,41 @@ test("adopting refuses a wrong original and an unedited file with exit 2", async
 });
 
 test("an asset with a provenance file of its own gets it rewritten with the adopt step", async () => {
-  const { media, options } = await handedOff(true);
+  const { media, options } = await handedOff(OWN_PROVENANCE);
   await edit(media);
   await adoptHandEdit(options);
   const own = JSON.parse(await readFile(`${media}.provenance.json`, "utf8"));
   assert.equal(own.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
   assert.equal(own.steps.at(-1).op, "adopt-hand-edit");
   assert.ok(own.contentCredentials);
+});
+
+test("a provenance file of another name keeps its card source and gets the adopt step", async () => {
+  const { targetDir, media, options } = await handedOff(
+    "assets/source/{{spec.assetId}}/{{spec.animationFamily}}.provenance.json",
+  );
+  const provenancePath = join(targetDir, "assets/source/fern/shelter.provenance.json");
+  await edit(media);
+  const result = await adoptHandEdit(options);
+  assert.ok(result.files.includes("assets/source/fern/shelter.provenance.json"), result.files.join());
+  const own = JSON.parse(await readFile(provenancePath, "utf8"));
+  assert.equal(own.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
+  assert.equal(own.steps.at(-1).op, "adopt-hand-edit");
+  assert.equal(
+    own.contentCredentials.certificateSha256,
+    result.contentCredentials.certificateSha256,
+  );
+  const card = await readFile(join(targetDir, "assets/source/fern/fern-shelter.md"), "utf8");
+  assert.match(card, /id: provenance/);
+  assert.match(card, /shelter\.provenance\.json/);
+  const review = parseReview(
+    await readFile(join(targetDir, "assets/source/fern/fern-shelter.review.json"), "utf8"),
+    "review",
+  );
+  assert.equal(
+    review.versions.at(-1)!.provenanceSha256,
+    createHash("sha256").update(await readFile(provenancePath)).digest("hex"),
+  );
 });
 
 test("library adopt asks a person first: attended with no TTY it exits 8 and writes nothing; after confirm <id> the version records the confirmation", async (t) => {

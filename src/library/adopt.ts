@@ -4,7 +4,7 @@
  * edit with the AI-made original (the version the card locks) as the `parentOf` ingredient.
  */
 import { readFile } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import {
   canCarryCredentials,
   credentialProblem,
@@ -194,10 +194,12 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
     (s: unknown) => (s as { id?: unknown } | null)?.id === "provenance",
   ) as { resource?: unknown } | undefined;
   let provenancePath: string | undefined;
+  // The card's provenance source: a provenance file of any name, or a manifest that embeds it.
+  let document: Record<string, unknown> | undefined;
   let old: Provenance | undefined;
   if (typeof source?.resource === "string") {
     provenancePath = libraryPath(config.root, found.dir, source.resource, cardPath);
-    const document = JSON.parse(await readFile(provenancePath, "utf8")) as Record<string, unknown>;
+    document = JSON.parse(await readFile(provenancePath, "utf8")) as Record<string, unknown>;
     old = findProvenance(document) as unknown as Provenance | undefined;
     if (old === undefined) throw new InputError(`${provenancePath} holds no provenance record`);
   } else {
@@ -213,10 +215,6 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
       ),
     } as unknown as Provenance;
   }
-  const ownFile =
-    provenancePath !== undefined &&
-    basename(provenancePath) === `${found.resource}.provenance.json`;
-
   const type = DIGITAL_SOURCE_TYPES.composite;
   const marked = embedDigitalSourceType(edited, mediaType, type, { models: old.models });
   const signer = await resolveSigner(options.settings);
@@ -257,7 +255,7 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
 
     let provenanceBytes: string | undefined;
     const written = [mediaPath];
-    if (ownFile && provenancePath !== undefined) {
+    if (provenancePath !== undefined && document !== undefined) {
       const hash = pixelHash(decodeImage(bytes));
       const step: TransformStep = {
         op: "adopt-hand-edit",
@@ -266,15 +264,17 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
         inputs: [pixelHash(decodeImage(original))],
         outputs: [hash],
       };
-      const updated = {
-        ...old,
+      // The record is updated where it lives: the whole file, or the object a manifest embeds.
+      Object.assign(old, {
         digitalSourceType: type,
         contentCredentials: signer.record,
         steps: [...(old.steps ?? []), step],
-      };
-      provenanceBytes = `${JSON.stringify(updated, null, 2)}\n`;
-      await writeAtomic(provenancePath, provenanceBytes);
+      });
+      const text = `${JSON.stringify(document, null, 2)}\n`;
+      await writeAtomic(provenancePath, text);
       written.push(provenancePath);
+      // A version's provenanceSha256 hashes a provenance file of its own, not a manifest.
+      if (old === (document as unknown)) provenanceBytes = text;
     }
 
     const plan: LibraryPlan = {
@@ -284,7 +284,7 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
       mediaPath,
       cardPath,
       reviewPath: join(found.dir, `${assetId}.review.json`),
-      ...(ownFile && provenancePath !== undefined && { provenanceSource: provenancePath }),
+      ...(provenancePath !== undefined && { provenanceSource: provenancePath }),
       cards: scanCards(config.root),
     };
     const library = await commitLibraryWrite(plan, {
