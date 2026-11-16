@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
+import { ProviderError } from "../src/errors.ts";
 import { applyPlan, createPlan } from "../src/planning.ts";
 import { IDENTITY_CHECK_OPERATION, defaultRoutes } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
@@ -63,7 +64,7 @@ async function fixture(withLock = true) {
  * Candidate n gets the n-th answer, on the 0..4 rubric; a number below 0 makes the call fail. The
  * cast question always answers "den", on-model 0.6.
  */
-function scripted(answers: number[]) {
+function scripted(answers: number[], checkFails = false) {
   const image = createRaster(4, 4);
   setPixel(image, 1, 1, [120, 90, 80, 255]);
   return new ScriptedProvider({
@@ -71,7 +72,9 @@ function scripted(answers: number[]) {
     vision: (request) => ({
       // Enforce mode first checks the record against its references (#92); this one agrees.
       text: request.prompt.includes("For each written claim")
-        ? JSON.stringify({ consistent: true, conflicts: [] })
+        ? checkFails
+          ? "not json"
+          : JSON.stringify({ consistent: true, conflicts: [] })
         : request.prompt.includes('"onModel": p')
           ? JSON.stringify({ choice: "den", onModel: 0.6, reason: "on-model enough" })
           : JSON.stringify({ styleScore: 1, passed: true, reason: "constitution matches" }),
@@ -91,10 +94,11 @@ async function run(
     withLock?: boolean;
     identityMode?: string;
     routes?: Routes;
+    provider?: ScriptedProvider;
   } = {},
 ) {
   const f = await fixture(options.withLock ?? true);
-  const provider = scripted(answers);
+  const provider = options.provider ?? scripted(answers);
   const specPath = join(f.root, "spec.json");
   const runOptionsPath = join(f.root, "run-options.json");
   const profilePath = join(f.root, "profile.json");
@@ -256,13 +260,27 @@ test("decision images are upscaled to at least 384 px on the short side", async 
   }
 });
 
-test("a failing decision filters in enforce mode and does not in shadow mode", async () => {
+test("a failing decision keeps the candidate unscored in enforce mode and in shadow mode", async () => {
   const enforce = await run([-1], { profile: { identity: { mode: "enforce" } } });
-  assert.equal(enforce.run.candidates.length, 0);
-  assert.equal(enforce.run.filtered, 1);
-  assert.match(enforce.run.rejections![0]!.reasons[0]!.reason, /failed: .*offline/);
+  assert.equal(enforce.run.candidates.length, 1);
+  assert.equal(enforce.run.filtered, 0);
+  const reason = enforce.run.candidates[0]!.reasons.at(-1)!;
+  assert.equal(reason.passed, false);
+  assert.equal(reason.shadow, true);
+  assert.match(reason.reason, /failed: .*offline.*kept unscored/);
   const shadow = await run([-1]);
   assert.equal(shadow.run.candidates.length, 1);
   assert.equal(shadow.run.candidates[0]!.reasons.at(-1)?.passed, false);
   assert.equal(shadow.run.candidates[0]!.reasons.at(-1)?.shadow, true);
+});
+
+test("an enforce record check that cannot run stops the run before any image is generated", async () => {
+  const provider = scripted([3.6, 3.6], true);
+  await assert.rejects(
+    run([3.6, 3.6], { profile: { identity: { mode: "enforce" } }, provider }),
+    (error: unknown) =>
+      error instanceof ProviderError && /identity record check could not run/.test(error.message),
+  );
+  assert.equal(provider.calls.filter((c) => c.kind === "image").length, 0);
+  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 0);
 });

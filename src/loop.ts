@@ -24,7 +24,7 @@ import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import { checkLayout, checkWrites, safeFileName, safeSegment } from "./paths.ts";
-import type { IdentityAgreement } from "./identity.ts";
+import type { IdentityAgreement, IdentityRecordCheck } from "./identity.ts";
 import { applyStability, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
@@ -239,6 +239,8 @@ export interface RunRecord {
     agreement: IdentityAgreement;
     /** How many candidates were scored. */
     scores: number;
+    /** Enforce mode: the record's own check, run once before the first paid generation. */
+    recordCheck?: IdentityRecordCheck;
   };
   /**
    * Whether each model-backed check filtered: `filtering` only where it is measured stable on the

@@ -1272,6 +1272,30 @@ export async function applyPlan(
     promptPolicy,
   };
   try {
+    // Enforce mode checks the record against its references once, before any paid generation.
+    if (check?.mode === "enforce" && loadedIdentity) {
+      const checkCaller = new Caller({
+        provider: options.provider,
+        ...(options.providerName !== undefined && { providerName: options.providerName }),
+        budget,
+        routes: callRoutes,
+        ...(options.log && { log: options.log }),
+      });
+      recordCheck = await checkIdentityRecord({
+        caller: checkCaller,
+        record: loadedIdentity.record,
+        references: loadedIdentity.references,
+        edges: resolveStyle(
+          {
+            ...prepared.profile.style,
+            color: { rule: prepared.postprocess.colorRule, palette: prepared.postprocess.palette },
+          },
+          prepared.postprocess.palette,
+        ).edges,
+      });
+      if (!recordCheck.checked)
+        throw new ProviderError(`the identity record check could not run: ${recordCheck.reason}`);
+    }
     for (let index = 0; index < prepared.runOptions.candidates; index++) {
       const caller = new Caller({
         provider: options.provider,
@@ -1378,14 +1402,6 @@ export async function applyPlan(
         score < prepared.runOptions.strictness ||
         score > 1
       );
-      // Enforce mode checks the record against its references once per run, before the first score.
-      if (check?.mode === "enforce" && loadedIdentity && !recordCheck)
-        recordCheck = await checkIdentityRecord({
-          caller,
-          record: loadedIdentity.record,
-          references: loadedIdentity.references,
-          edges: style.edges,
-        });
       const identity =
         check && loadedIdentity
           ? await scoreIdentity({
@@ -1532,6 +1548,7 @@ export async function applyPlan(
         threshold: check.threshold,
         agreement: agreement(pairs),
         scores: pairs.length,
+        ...(recordCheck && { recordCheck }),
       };
     run.spentUsd = budget.spentUsd;
     const contact = await writeContact(
