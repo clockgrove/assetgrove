@@ -89,13 +89,17 @@ export class Budget {
     return { amountUsd, settled: false, ...(ledgerId !== undefined && { ledgerId }) };
   }
 
-  /** Releases the reservation and records what was actually spent. */
-  settle(reservation: Reservation, actualUsd: number): void {
+  /**
+   * Releases the reservation and records what was actually spent, with the provider's request ID
+   * for the call when it gave one.
+   */
+  settle(reservation: Reservation, actualUsd: number, requestId?: string): void {
     if (reservation.settled) throw new Error("reservation already settled");
     reservation.settled = true;
     this.reserved -= reservation.amountUsd;
     this.spent += actualUsd;
-    if (reservation.ledgerId !== undefined) this.ledger?.settle(reservation.ledgerId, actualUsd);
+    if (reservation.ledgerId !== undefined)
+      this.ledger?.settle(reservation.ledgerId, actualUsd, requestId);
   }
 
   /** Counts spend made before this run, already in any ledger, against the run's cap. */

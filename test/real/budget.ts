@@ -46,6 +46,18 @@ export function ledgerDirOf(env: Env = process.env, leg: Leg = legOf(env)): stri
   return env[LEDGER_ENV] || join(stateHome(env), "assetgrove", "real-checks", leg);
 }
 
+/**
+ * When this run started: this module loads once per `pnpm test:real` invocation, before any check
+ * calls a provider. Ledger entries reserved before it are earlier runs' (test/real/reconcile.ts).
+ */
+export const RUN_STARTED_AT = new Date();
+
+/**
+ * The reconcile margin of the real-check settings: the gateway's reported cost may round
+ * differently from the cost its response carried, so a gap below a hundredth of a cent agrees.
+ */
+export const RECONCILE_MARGIN_USD = 0.0001;
+
 /** Work-item spend in each ledger directory when this process (one run) first opened it. */
 const runStarts = new Map<string, number>();
 
@@ -111,6 +123,7 @@ export function realBudget(options: RealBudgetOptions = {}): RealBudget {
     caps: { runUsd: RUN_USD, dailyUsd: shareUsd, workItemUsd: shareUsd },
     // The person who runs a real check confirms its spend by running it (design section 7).
     headless: { operator: `real-checks:${leg}` },
+    reconcile: { marginUsd: RECONCILE_MARGIN_USD },
     providers: {
       "vercel-ai-gateway": { limit },
       tripo: { limit },

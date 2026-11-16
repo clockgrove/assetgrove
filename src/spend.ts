@@ -111,7 +111,7 @@ type Entry =
       workItem?: string;
       amountUsd: number;
     } & ReserveMeta)
-  | { op: "settle"; id: string; at: string; costUsd: number };
+  | { op: "settle"; id: string; at: string; costUsd: number; requestId?: string };
 
 /** What a reservation names beside its route: the provider, the run and the call (design section 3). */
 export interface ReserveMeta {
@@ -131,6 +131,27 @@ export interface LedgerCall {
   callKey?: string;
   /** The settled cost, or the reservation's estimate while unsettled. */
   costUsd: number;
+}
+
+/** One reservation of the ledger with its settlement, as `entries()` lists it. */
+export interface LedgerEntry {
+  /** The reservation's ledger id. */
+  id: string;
+  /** When the reservation was made. */
+  at: string;
+  route: string;
+  provider?: string;
+  runId?: string;
+  callKey?: string;
+  workItem?: string;
+  /** The reserved estimate. */
+  amountUsd: number;
+  /** The settled cost, absent while unsettled. */
+  costUsd?: number;
+  /** When it was settled. */
+  settledAt?: string;
+  /** The provider's own request ID for the call, when the settlement records one. */
+  requestId?: string;
 }
 
 /** A cap as the settings set it, and the profile's lower value when it has one. */
@@ -262,9 +283,46 @@ export class SpendLedger {
     return calls;
   }
 
-  /** Records what a reserved call actually cost. */
-  settle(id: string, costUsd: number): void {
-    this.append({ op: "settle", id, at: this.now().toISOString(), costUsd });
+  /**
+   * Every reservation in the ledger, in order, each with its settlement (the last one, when a
+   * reservation was settled more than once). Spends nothing.
+   */
+  entries(): LedgerEntry[] {
+    const entries = this.read();
+    const settles = new Map<string, Extract<Entry, { op: "settle" }>>();
+    for (const e of entries) if (e.op === "settle") settles.set(e.id, e);
+    const out: LedgerEntry[] = [];
+    for (const e of entries) {
+      if (e.op !== "reserve") continue;
+      const settle = settles.get(e.id);
+      out.push({
+        id: e.id,
+        at: e.at,
+        route: e.route,
+        ...(e.provider !== undefined && { provider: e.provider }),
+        ...(e.runId !== undefined && { runId: e.runId }),
+        ...(e.callKey !== undefined && { callKey: e.callKey }),
+        ...(e.workItem !== undefined && { workItem: e.workItem }),
+        amountUsd: e.amountUsd,
+        ...(settle !== undefined && { costUsd: settle.costUsd, settledAt: settle.at }),
+        ...(typeof settle?.requestId === "string" && { requestId: settle.requestId }),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Records what a reserved call actually cost, and the provider's own request ID for the call
+   * when it gave one (reconcile looks the call up by it).
+   */
+  settle(id: string, costUsd: number, requestId?: string): void {
+    this.append({
+      op: "settle",
+      id,
+      at: this.now().toISOString(),
+      costUsd,
+      ...(requestId !== undefined && { requestId }),
+    });
   }
 
   private assertFits(limits: SpendLimitStatus[], amountUsd: number, what: string): void {
