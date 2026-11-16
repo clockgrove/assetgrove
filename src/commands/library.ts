@@ -3,6 +3,7 @@
  * sections 1.4 and 4): the library's records against their projections, reports computed from the
  * cards, and a person's hand edit handed off as a new version.
  */
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { EXIT, InputError } from "../errors.ts";
 import { BIBLE_PATH, PROFILE_PATH } from "../init.ts";
@@ -287,7 +288,7 @@ async function prepareJudge(args: JudgeStaleArgs, ctx: RunContext) {
   const work = await buildWorkPlan(libraryJudgeStaleCommand, args, {
     inputs: [],
     hashes: {
-      bible: sha256Hex(canonicalJson({ version: bible, path: biblePath })),
+      bible: sha256Hex(readFileSync(biblePath)),
       pending: sha256Hex(canonicalJson(pending.map((s) => [s.asset, s.sha256, s.from, s.media]))),
     },
     jobs,
