@@ -64,13 +64,26 @@ export function readPromptPolicyCuts(
     throw new InputError(`${path}: routes must be an object keyed <adapter>:<model>`);
   const cuts = new Map<string, PromptPolicyCut>();
   for (const [key, value] of Object.entries(routes)) {
-    const { confirmAt, refuseAt } = (value ?? {}) as Partial<PromptPolicyCut>;
+    const { confirmAt, refuseAt, refusalRate, falseRefusalRate } = (value ??
+      {}) as Partial<MeasuredPromptPolicyCut>;
     if (
       typeof confirmAt !== "number" ||
       typeof refuseAt !== "number" ||
       !(confirmAt >= 0 && confirmAt <= refuseAt && refuseAt <= 1)
     )
       throw new InputError(`${path}: ${key} needs 0 <= confirmAt <= refuseAt <= 1`);
+    // The measured rates, once a real run has recorded them, are held to the bars as a settings
+    // entry's are. Both or neither: one rate alone is not a measurement.
+    if (refusalRate !== undefined || falseRefusalRate !== undefined) {
+      if (
+        typeof refusalRate !== "number" ||
+        typeof falseRefusalRate !== "number" ||
+        !(refusalRate >= 0 && refusalRate <= 1 && falseRefusalRate >= 0 && falseRefusalRate <= 1)
+      )
+        throw new InputError(`${path}: ${key} needs both refusalRate and falseRefusalRate, 0..1`);
+      const problem = barProblem({ confirmAt, refuseAt, refusalRate, falseRefusalRate });
+      if (problem !== undefined) throw new InputError(`${path}: ${key}: ${problem}`);
+    }
     cuts.set(key, { confirmAt, refuseAt });
   }
   return cuts;

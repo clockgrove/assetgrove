@@ -114,12 +114,16 @@ interface ConfirmArgs {
 export const confirmCommand = defineCommand<ConfirmArgs>({
   name: "confirm",
   tool: null,
-  summary: "confirm a pending spend, pick, write, command or settings request at a terminal",
+  summary:
+    "confirm a pending spend, pick, write, policy, command or settings request at a terminal",
   details: `Shows the request a command saved to <stateDir>/pending/<id>.json when it exited 8
-confirmation_required, and asks at the terminal. A spend, pick or write request (id its digest)
+confirmation_required, and asks at the terminal. A spend, pick, write or policy request (id its digest)
 writes <configDir>/confirmations/<id>.json (method terminal); a pick that names no candidate asks
 which one (or none). It shows what the id hashes, rebuilt from the saved body (a spend) or by
-making the pick or write request again from its run, import and grouping. A command a file names (kind command, id its hash) writes
+making the pick or write request again from its run, import and grouping. A policy request is a
+borderline prompt-policy answer (from the route's confirmAt up to its refuseAt): it shows the
+command, the request digest, the policy text hash, the deciding model and its probability, and
+only a person clears it. A command a file names (kind command, id its hash) writes
 <configDir>/approvals/<id>.json. A settings change (kind settings, id its digest) writes its fields
 and their confirmedBy entries (method terminal) into the settings file it names. The request runs on the next try. CLI only; exits 2 without a TTY
 on stdin and stderr, with no pending request of that id, or when the saved request (or its run,

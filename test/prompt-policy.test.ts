@@ -583,10 +583,11 @@ test("a spec's asset id is not prompt text: not refused at the plan step, not in
   assert.equal(JSON.stringify(saved.prompts).includes(id), false);
 });
 
-test("a key pose path holding a blocklisted name passes the plan step and the final-prompt check", async () => {
+test("a key pose path holding a blocklisted name, with an unlisted extension, passes the plan step and apply's final-prompt check", async () => {
   const dir = await tempDir("assetgrove-policy-keypose-");
   const files = await planFiles(dir, "");
-  const pose = `${FIRST}-${LAST}.png`;
+  // An extension the old list did not hold: the path was matched as prompt text before.
+  const pose = `${FIRST}-${LAST}.psd`;
   await writeFile(
     join(dir, pose),
     Buffer.from(
@@ -609,6 +610,17 @@ test("a key pose path holding a blocklisted name passes the plan step and the fi
     "--json",
   ]);
   assert.equal(run.code, 0, run.stdout + run.stderr);
+  const saved = JSON.parse(await readFile(files.plan, "utf8")) as SavedPlan;
+  const stem = `${FIRST}-${LAST}`;
+  assert.equal(JSON.stringify(saved.prompts).includes(stem), false, "no path in the prompts");
+  // Apply runs every image call through the ProviderSet's final-prompt check.
+  const script = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+  approve(script);
+  const applied = await cli([
+    ...["apply", files.plan, "--out", join(dir, "runs")],
+    ...["--provider-script", script, "--json"],
+  ]);
+  assert.equal(applied.code, 0, applied.stdout + applied.stderr);
 });
 
 test("a sheet brief honours the settings allow terms", () => {

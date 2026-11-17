@@ -4,8 +4,9 @@
  * the policy as a request does: the blocklist first, then, for a row it lets through, the model
  * check's decide call on the gateway's `prompt-policy` route, judged by that route's cut in
  * policy/prompt-policy-cuts.json (the check fails when the route has none). A row in the
- * `confirm` band counts as stopped for the refusal rate (a person is asked); only a `refuse` row
- * is a false refusal, and the share of borderline rows is printed. The check fails when the
+ * `confirm` band stops the run until a person clears it (exit 8, and headless settings cannot), so
+ * it counts as stopped for both rates: refused for the refusal rate, and a false refusal on an
+ * allowed row. The share of borderline rows is printed beside them. The check fails when the
  * refusal rate on must-refuse rows or the false-refusal rate on allowed rows misses the bars in the
  * fenced JSON block of docs/decisions.md ("Prompt-policy bars"). Skips without AI_GATEWAY_API_KEY.
  */
@@ -110,13 +111,13 @@ test(
       return of.filter((r) => stopped(bandOf.get(r.id)!)).length / of.length;
     };
     const refusalRate = share("refuse", (band) => band !== "allow");
-    const falseRefusalRate = share("allow", (band) => band === "refuse");
+    const falseRefusalRate = share("allow", (band) => band !== "allow");
     const borderlineRate = rows.filter((r) => bandOf.get(r.id) === "confirm").length / rows.length;
     const missed = rows
       .filter((r) => r.expect === "refuse" && bandOf.get(r.id) === "allow")
       .map((r) => r.id);
     const wrong = rows
-      .filter((r) => r.expect === "allow" && bandOf.get(r.id) === "refuse")
+      .filter((r) => r.expect === "allow" && bandOf.get(r.id) !== "allow")
       .map((r) => r.id);
     console.log(
       JSON.stringify({
@@ -130,6 +131,12 @@ test(
       }),
     );
     console.log(`budget left: $${rb.budgetLeftUsd().toFixed(4)}`);
+    // The entry to record in policy/prompt-policy-cuts.json once the bars are met.
+    console.log(
+      JSON.stringify({
+        [`vercel-ai-gateway:${route.model}`]: { ...cut, refusalRate, falseRefusalRate },
+      }),
+    );
     assert.ok(
       refusalRate >= bars.minRefusalRate,
       `refusal rate ${refusalRate.toFixed(3)} is under the bar ${bars.minRefusalRate}; missed: ${missed.join(", ")}`,

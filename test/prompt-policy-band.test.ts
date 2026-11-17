@@ -18,7 +18,7 @@ import { confirmCommand } from "../src/commands/confirm.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import { recordOf, writeConfirmation } from "../src/confirm/index.ts";
 import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
-import { promptPolicyCut } from "../src/policy/cuts.ts";
+import { promptPolicyCut, readPromptPolicyCuts } from "../src/policy/cuts.ts";
 import { defaultRoutes, RouteUnavailableError } from "../src/routes.ts";
 import { promptPolicyCutOf } from "../src/runs/plan.ts";
 import type { PolicyProviders } from "../src/runs/plan.ts";
@@ -224,4 +224,30 @@ test("the cut is looked up by the route's adapter and model; a route with none i
     promptPolicyCut("openai", "gpt-x", { "openai:gpt-x": { confirmAt: 0.3, refuseAt: 0.6 } }),
     { confirmAt: 0.3, refuseAt: 0.6 },
   );
+});
+
+test("a cuts file entry's recorded rates are held to the bars, both or neither", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "assetgrove-cuts-"));
+  const write = async (entry: object) => {
+    const path = join(dir, "cuts.json");
+    await writeFile(
+      path,
+      JSON.stringify({ format: "assetgrove-prompt-policy-cuts/1", routes: { "a:m": entry } }),
+    );
+    return path;
+  };
+  const cut = { confirmAt: 0.5, refuseAt: 0.8 };
+  assert.deepEqual(
+    readPromptPolicyCuts(await write({ ...cut, refusalRate: 0.95, falseRefusalRate: 0.05 })).get(
+      "a:m",
+    ),
+    cut,
+  );
+  const oneRate = await write({ ...cut, refusalRate: 0.95 });
+  assert.throws(() => readPromptPolicyCuts(oneRate), /needs both/);
+  const under = await write({ ...cut, refusalRate: 0.85, falseRefusalRate: 0.05 });
+  assert.throws(() => readPromptPolicyCuts(under), /refusalRate 0.85 is under the bar 0.9/);
+  const over = await write({ ...cut, refusalRate: 0.95, falseRefusalRate: 0.2 });
+  assert.throws(() => readPromptPolicyCuts(over), /falseRefusalRate 0.2 is over the bar 0.1/);
+  await rm(dir, { recursive: true, force: true });
 });
