@@ -24,7 +24,7 @@ import { loopPreview, onionSkinSheet, PREVIEW_MEDIA_TYPES } from "./preview.ts";
 import { animationQa } from "./qa.ts";
 import { measureThreshold, splitStrip } from "./strip.ts";
 import { templatesFor, thresholdsFor } from "./templates.ts";
-import { knownTemplate, templateWithoutCall } from "./template-choice.ts";
+import { recordedTemplate, templateWithoutCall } from "./template-choice.ts";
 import type { TemplateChoice } from "./template-choice.ts";
 import type { AnimationReport, FlickerDecision, HoleDecision } from "./types.ts";
 
@@ -47,11 +47,16 @@ export function choiceLoops(choice: TemplateChoice): boolean {
 }
 
 /**
- * Whether the family's cycle may loop, for a forecast made before any decision: the declared or
- * named template's say, else a loop (an upper bound until a decision says).
+ * Whether the family's cycle may loop, for a forecast made before any new decision: the declared,
+ * named or recorded (`judged`) template's say, else a loop (an upper bound until a decision says).
  */
-export function familyMayLoop(family: string, profile: TargetProfile, declared?: string): boolean {
-  const known = knownTemplate(family, templatesFor(profile), declared);
+export function familyMayLoop(
+  family: string,
+  profile: TargetProfile,
+  declared?: string,
+  judged?: string,
+): boolean {
+  const known = recordedTemplate(family, templatesFor(profile), declared, judged);
   return known ? choiceLoops(known) : true;
 }
 

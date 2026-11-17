@@ -157,7 +157,9 @@ export function flaggedFrames(reasons: ContactCandidate["reasons"]): number[] {
 /**
  * The 0-based frames animation QA's deterministic checks flag on a staged strip, under the run's
  * profile: the frames a person must see on the contact sheet. None when the checks cannot run
- * (no profile, or a profile whose animation thresholds are invalid).
+ * (no profile, or a profile whose animation thresholds are invalid). When the family's template
+ * is undecided (no call is made here), its contact, footprint and loop-seam checks are pending, so
+ * no frame they would flag can be ruled out: every frame is flagged, and the sheet shows them all.
  */
 export function stripQaFlags(
   frames: Raster[],
@@ -185,6 +187,7 @@ export function stripQaFlags(
       // QA measures alpha only, so the palette rule plays no part.
       resolveStyle(profile.style && { ...profile.style, color: { rule: "full" } }),
     );
+    if (report.pending?.length) return frames.map((_, i) => i);
     return flaggedFrames(report.reasons);
   } catch {
     return [];

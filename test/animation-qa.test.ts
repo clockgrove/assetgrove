@@ -615,8 +615,12 @@ test("the contact sheet's QA flags judge a family by the spec's declared templat
   const spec = (family: string, template?: string) =>
     ({ assetId: "a", anchor, animationFamily: family, ...(template && { template }) }) as AssetSpec;
   assert.ok(stripQaFlags(frames, spec("walk"), profile).includes(3));
-  // walk-right names no template and is undecided here: its contact checks are not run.
-  assert.ok(!stripQaFlags(frames, spec("walk-right"), profile).includes(3));
+  // walk-right names no template and is undecided here: its contact checks are pending, so no
+  // frame can be ruled out and the sheet shows every frame, the floating one included.
+  assert.deepEqual(
+    stripQaFlags(frames, spec("walk-right"), profile),
+    frames.map((_, i) => i),
+  );
   // Declared as walk, the floating frame is flagged as it is for walk itself.
   assert.ok(stripQaFlags(frames, spec("walk-right", "walk"), profile).includes(3));
 });

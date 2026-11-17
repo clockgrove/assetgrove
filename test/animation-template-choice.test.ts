@@ -216,6 +216,18 @@ test("the plan forecasts one motion-template call per undecided family at the ro
   assert.equal(plan.estimateUsd, 0.001);
 });
 
+test("the flicker forecast reads a recorded decision: no seam pair for a family decided as none", async () => {
+  const undecided = await strip("fly", {}, "fly");
+  const none = { ...(await strip("fly-none", {}, "fly")), judgedTemplate: "none" };
+  const walk = { ...(await strip("fly-walk", {}, "fly")), judgedTemplate: "walk" };
+  const plan = await planAnimationQa([undecided, none, walk], defaultRoutes, 5, true, false);
+  // 8 frames: 7 consecutive pairs, plus the last-to-first pair only while the strip may loop.
+  assert.deepEqual(
+    plan.perFamily.map((f) => f.flickerCalls),
+    [8, 7, 8],
+  );
+});
+
 test("each motion-template decision is logged with its call to motion-template.jsonl, apart from the flicker log", async () => {
   const jump = await strip("jump", { motion: "walk" }, "jump", { subject: "fox" });
   const run = await qaRun([jump], { answer: () => "none", costUsd: 0.001 }, false);

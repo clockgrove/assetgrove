@@ -276,7 +276,7 @@ export async function planAnimationQa(
         : [];
     if (template.length > 0) asked.add(key);
     const flicker = vision
-      ? planFlicker(count, familyMayLoop(t.family, t.profile, t.template), routes)
+      ? planFlicker(count, familyMayLoop(t.family, t.profile, t.template, t.judgedTemplate), routes)
       : { calls: 0, estimatedCostUsd: 0 };
     const holes = vision
       ? planHoles(
