@@ -1,9 +1,26 @@
 import assert from "node:assert/strict";
-import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { KINDS, readEntries, runGate, type GateEntry, type Runner } from "../scripts/gate.ts";
+import {
+  gateSkills,
+  KINDS,
+  readEntries,
+  requiredJobs,
+  runGate,
+  type GateEntry,
+  type Runner,
+} from "../scripts/gate.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const COMMIT = "0".repeat(40);
@@ -89,7 +106,7 @@ function passingWith(world: BenchWorld = {}): Runner {
     }
     const path = argv[0] === "gh" ? (argv[2] ?? "") : "";
     if (path.includes("/jobs")) {
-      const names = readEntries().flatMap((entry) => entry.jobs ?? []);
+      const names = readEntries().flatMap((entry) => requiredJobs(root, entry));
       return {
         status: 0,
         stdout: JSON.stringify({ jobs: names.map((name) => ({ name, conclusion: "success" })) }),
@@ -290,8 +307,13 @@ test("the gate lists every Phase 2 entry, and each non-automated entry names the
   });
   for (const entry of report.entries) assert.ok(entry.evidence, `${entry.id} reports its evidence`);
   const ci = entries.find((e) => e.id === "ci-main")!;
+  // No pack is named in the entries: every pack's legs come from the list (scripts/packs.ts).
+  assert.ok(!JSON.stringify(entries).includes("packages/"));
   for (const os of ["ubuntu-26.04", "macos-26", "windows-2025"])
-    assert.ok(ci.jobs?.includes(`search (${os})`), `ci-main requires search (${os})`);
+    assert.ok(
+      requiredJobs(root, ci).includes(`pack (assetgrove-search, ${os})`),
+      `ci-main requires pack (assetgrove-search, ${os})`,
+    );
 });
 
 const bench = () => readEntries().find((e) => e.id === "search-bars")!;
@@ -388,10 +410,9 @@ test("the search bars entry reads the newest run with a bench report and fails o
 test("the skills step installs assetgrove and assetgrove-search from the repository into a temporary folder", () => {
   const skills = readEntries().find((e) => e.check === "skill-install")!;
   const calls: { argv: string[]; cwd: string }[] = [];
-  const sources: Record<string, string> = {
-    assetgrove: join(root, "skills/assetgrove"),
-    "assetgrove-search": join(root, "packages/assetgrove-search/skills/assetgrove-search"),
-  };
+  const sources = Object.fromEntries(
+    gateSkills(root).map((skill) => [skill.name, join(root, skill.dir)]),
+  );
   // Stands in for `npx skills add`: copies the named skill where Claude Code's skills live.
   const installing =
     (only?: string): Runner =>
@@ -417,4 +438,82 @@ test("the skills step installs assetgrove and assetgrove-search from the reposit
   const half = runGate({ entries: [skills], run: installing("assetgrove"), commit: COMMIT });
   assert.equal(half.entries[0]!.status, "fail");
   assert.match(half.entries[0]!.detail, /assetgrove-search: missing or changed after install/);
+});
+
+const temporary: string[] = [];
+after(() => {
+  for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
+});
+
+/** A repository with core's skill and two packs, each with its own skill, at the release version. */
+function twoPackTree(): string {
+  const tree = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-gate-packs-")));
+  temporary.push(tree);
+  cpSync(join(root, "skills/assetgrove"), join(tree, "skills/assetgrove"), { recursive: true });
+  writeFileSync(
+    join(tree, "package.json"),
+    JSON.stringify({
+      name: "@clockgrove/assetgrove",
+      version: "0.2.0",
+      files: ["skills", "dist", "policy"],
+    }),
+  );
+  for (const [dir, skill] of [
+    ["fixture-tiles", "fixture-tiles-skill"],
+    ["fixture-voice", "fixture-voice-skill"],
+  ] as const) {
+    mkdirSync(join(tree, "packages", dir, "skills", skill), { recursive: true });
+    writeFileSync(
+      join(tree, "packages", dir, "package.json"),
+      JSON.stringify({
+        name: `@clockgrove/${dir}`,
+        version: "0.2.0",
+        files: ["dist", "skills"],
+        assetgrove: { api: 2, entry: "./dist/extension.js" },
+      }),
+    );
+    writeFileSync(
+      join(tree, "packages", dir, "skills", skill, "SKILL.md"),
+      `---\nname: ${skill}\ndescription: Load for the ${dir} fixture pack.\n---\n# ${skill}\n`,
+    );
+  }
+  return tree;
+}
+
+test("a second pack's skill is in the gate's list, read from its package, with no gate edit", () => {
+  const tree = twoPackTree();
+  assert.deepEqual(gateSkills(tree), [
+    { name: "assetgrove", dir: "skills/assetgrove" },
+    { name: "fixture-tiles-skill", dir: "packages/fixture-tiles/skills/fixture-tiles-skill" },
+    { name: "fixture-voice-skill", dir: "packages/fixture-voice/skills/fixture-voice-skill" },
+  ]);
+
+  const installed: string[] = [];
+  const installing: Runner = (argv, cwd) => {
+    if (argv[0] !== "npx") return { status: 0, stdout: "", stderr: "" };
+    const name = argv[argv.indexOf("--skill") + 1]!;
+    installed.push(name);
+    const source = gateSkills(tree).find((skill) => skill.name === name)!;
+    cpSync(join(tree, source.dir), join(cwd, ".claude/skills", name), { recursive: true });
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  const entries = readEntries().filter((e) => e.check === "skill-install" || e.check === "package");
+  const report = runGate({ entries, root: tree, run: installing, commit: COMMIT });
+  for (const entry of report.entries) assert.equal(entry.status, "pass", entry.detail);
+  assert.deepEqual(installed, ["assetgrove", "fixture-tiles-skill", "fixture-voice-skill"]);
+  assert.match(
+    report.entries.find((e) => e.id === "package")!.detail,
+    /@clockgrove\/fixture-voice 0.2.0/,
+  );
+
+  const ci = readEntries().find((e) => e.check === "ci-main")!;
+  const legs = requiredJobs(tree, ci).filter((job) => job.startsWith("pack ("));
+  assert.deepEqual(legs, [
+    "pack (fixture-tiles, ubuntu-26.04)",
+    "pack (fixture-tiles, macos-26)",
+    "pack (fixture-tiles, windows-2025)",
+    "pack (fixture-voice, ubuntu-26.04)",
+    "pack (fixture-voice, macos-26)",
+    "pack (fixture-voice, windows-2025)",
+  ]);
 });
