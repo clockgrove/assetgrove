@@ -23,7 +23,12 @@ import { CONTACT_SHEET_FILE } from "../contact.ts";
 import type { Outcome, RunContext } from "../commands/types.ts";
 import { createProviders } from "../providers/adapter.ts";
 import { loadScript } from "../providers/script.ts";
-import { finishRunReconcile, recordReconcile, startRunReconcile } from "../reconcile.ts";
+import {
+  finishRunReconcile,
+  recordReconcile,
+  runReconcileOf,
+  startRunReconcile,
+} from "../reconcile.ts";
 import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcile.ts";
 import { Budget } from "../budget.ts";
 import { Caller } from "../calls.ts";
@@ -272,18 +277,21 @@ export async function executeRun(options: {
   let spendHold: SpendHoldError | undefined;
   if (plan.paid) {
     reconcileCtx = await reconcileContext(ctx, options.providerScript);
+    const run = {
+      runId: runIdOfDir(plan.runDir),
+      runDir: plan.runDir,
+      providers: plan.jobs.map((j) => j.provider),
+    };
     try {
-      reconcile = await startRunReconcile(reconcileCtx, {
-        runId: runIdOfDir(plan.runDir),
-        runDir: plan.runDir,
-        providers: plan.jobs.map((j) => j.provider),
-      });
+      reconcile = await startRunReconcile(reconcileCtx, run);
     } catch (error) {
       if (!(error instanceof SpendHoldError)) throw error;
       const journal = new Journal(plan.runDir, runIdOfDir(plan.runDir));
       if (!journal.openJobs().some((job) => job.handle !== undefined))
         return refused("spend_hold", error.message, 3);
       spendHold = error;
+      // The jobs it collects settle in the ledger, and its end compares them with the provider.
+      reconcile = runReconcileOf(reconcileCtx, run);
     }
   }
   await openRunDir(plan);

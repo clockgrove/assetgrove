@@ -188,7 +188,10 @@ export class Journal {
     rmSync(this.jobPath(key), { force: true });
   }
 
-  /** Every job record whose reservation is still open: submitted or about to be, not failed. */
+  /**
+   * Every job record whose reservation is still open: submitted or about to be, not failed, and
+   * its call not yet answered (a crash between the answer and the record's removal leaves both).
+   */
   openJobs(): JobEntry[] {
     let names: string[];
     try {
@@ -198,7 +201,10 @@ export class Journal {
     }
     return names
       .map((name) => this.readJob(name.slice(0, 64)))
-      .filter((e): e is JobEntry => e !== undefined && e.failed !== true);
+      .filter(
+        (e): e is JobEntry =>
+          e !== undefined && e.failed !== true && !existsSync(join(this.dir, `${e.callKey}.json`)),
+      );
   }
 
   private jobPath(key: string): string {

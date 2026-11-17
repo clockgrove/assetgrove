@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Budget, Reservation } from "./budget.ts";
 import { ConfirmationError } from "./approvals.ts";
-import { ProviderError } from "./errors.ts";
+import { JobStoppedError, ProviderError } from "./errors.ts";
 import { BudgetExceededError } from "./budget.ts";
 import { assertLimitDeclared, billingOf } from "./limits.ts";
 import type {
@@ -14,6 +14,7 @@ import type {
   GenerationProvider,
   ImageInput,
   JobProvider,
+  JobStatus,
   ModelResult,
   ProviderResult,
 } from "./gateway/provider.ts";
@@ -130,7 +131,9 @@ export class Caller {
     });
     const journaled = callKey === undefined ? undefined : journal?.read(callKey);
     if (journaled !== undefined) {
-      // Answered before in this run: nothing is reserved or paid again.
+      // Answered before in this run: nothing is reserved or paid again. A job record a crash left
+      // beside the answer has served its purpose.
+      journal?.removeJob(callKey!);
       this.budget.addPrior(journaled.record.costUsd, `the journaled ${operation} call`);
       this.records.push(journaled.record);
       scope?.onCall?.({ operation, reused: true });
@@ -270,13 +273,30 @@ export class Caller {
       try {
         handle = await jobs.submit(request, { key });
       } catch (error) {
-        // Refused or lost on the way: it may still have been billed, so it keeps the estimate,
-        // and the next attempt has a new key.
-        this.budget.settle(reserved, call.estimateUsd);
-        save({ ...intent, failed: true });
-        throw providerError(operation, error);
+        if (refusedSubmit(error)) {
+          // The provider answered and refused it: no job was made. It may still bill a refusal,
+          // so it keeps the estimate, and the next attempt has a new key.
+          this.budget.settle(reserved, call.estimateUsd);
+          save({ ...intent, failed: true });
+          throw providerError(operation, error);
+        }
+        // Lost on the way (no answer, no task id, a server error): the provider may hold the job.
+        // The intent stays journaled with its reservation open, like a crash before the handle.
+        throw lostSubmit(key, error);
       }
       return [save({ ...intent, handle, submittedAt: this.now().toISOString() }), reserved];
+    };
+    const lostSubmit = (key: string, cause?: unknown): JobStoppedError => {
+      const detail = cause instanceof Error ? `: ${cause.message}` : "";
+      if (jobs.find === undefined && jobs.dedupesByKey !== true)
+        return new JobStoppedError(
+          `stopped: the ${operation} call's job (key ${key}) may have reached provider "${call.provider}" with no handle journaled${detail}, and the provider can neither find a job by its key nor deduplicate one, so submitting again could pay twice. A person checks the provider's own jobs, then deletes the job record${where} to submit it again`,
+          { cause },
+        );
+      return new JobStoppedError(
+        `stopped: the ${operation} call's job (key ${key}) may have reached provider "${call.provider}" with no handle journaled${detail}; it stays journaled with its reservation: repeat the request to find it by its key or submit it again under the same key`,
+        { cause },
+      );
     };
 
     let entry = journaling ? journal.readJob(callKey) : undefined;
@@ -285,16 +305,23 @@ export class Caller {
       // An earlier attempt of this run reserved and journaled this job: adopt both.
       const { key } = entry;
       if (entry.handle === undefined && jobs.find === undefined && jobs.dedupesByKey !== true)
-        throw new ProviderError(
-          `stopped: the ${operation} call's job (key ${key}) may have reached provider "${call.provider}" before the run stopped, and the provider can neither find a job by its key nor deduplicate one, so submitting again could pay twice. A person checks the provider's own jobs, then deletes the job record${where} to submit it again`,
-        );
+        throw lostSubmit(key);
       reservation = this.budget.adopt(entry.reservedUsd, entry.reservationId);
       if (entry.handle === undefined) {
-        let handle = await guarded(operation, () => jobs.find?.(key));
+        let handle: string | undefined;
+        try {
+          handle = await jobs.find?.(key);
+        } catch (error) {
+          throw lostSubmit(key, error);
+        }
         if (handle === undefined) {
           if (call.spendHold !== undefined) throw call.spendHold;
           // Never accepted (find names none), or accepted and deduplicated by its key.
-          handle = await guarded(operation, () => jobs.submit(request, { key }));
+          try {
+            handle = await jobs.submit(request, { key });
+          } catch (error) {
+            throw lostSubmit(key, error);
+          }
         }
         entry = save({ ...entry, handle, submittedAt: this.now().toISOString() });
       }
@@ -305,8 +332,11 @@ export class Caller {
       const handle = entry.handle as string;
       const status = await this.poll(jobs, handle, operation, where);
       if (status === "done") {
-        const result = await guarded(operation, () => jobs.result(handle, request));
-        return { result, reservation };
+        try {
+          return { result: await jobs.result(handle, request), reservation };
+        } catch (error) {
+          throw collectStop(operation, handle, where, error);
+        }
       }
       // A failed job may still have been billed: its reservation keeps the estimate.
       this.budget.settle(reservation, call.estimateUsd);
@@ -333,10 +363,15 @@ export class Caller {
     let waited = 0;
     let delay = firstMs;
     for (;;) {
-      const status = await guarded(operation, () => jobs.status(handle));
+      let status: JobStatus;
+      try {
+        status = await jobs.status(handle);
+      } catch (error) {
+        throw collectStop(operation, handle, where, error);
+      }
       if (status === "done" || status === "failed") return status;
       if (status === "unknown")
-        throw new ProviderError(
+        throw new JobStoppedError(
           `stopped: the provider reports the ${operation} call's job ${handle} in an unknown state. A person checks it with the provider; repeating the request collects it once the provider knows it, and deleting the job record${where} submits it again`,
         );
       if (status !== "queued" && status !== "running")
@@ -344,7 +379,7 @@ export class Caller {
           `the ${operation} call's job ${handle} reported status ${String(status)}`,
         );
       if (waited >= deadlineMs)
-        throw new ProviderError(
+        throw new JobStoppedError(
           `the ${operation} call's job ${handle} is still ${status} after ${Math.round(waited / 1000)} s; it stays journaled with its reservation: repeat the request to collect it without paying again`,
         );
       const wait = Math.min(delay, deadlineMs - waited);
@@ -654,20 +689,35 @@ export interface JobPolling {
 /** How many times one call's job is submitted in one process before the call fails. */
 const JOB_ATTEMPTS = 3;
 
-/** A provider failure as `ProviderError`; a budget refusal passes through. */
-function providerError(operation: string, error: unknown): Error {
-  if (error instanceof ProviderError || error instanceof BudgetExceededError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  return new ProviderError(`the ${operation} call failed: ${message}`, { cause: error });
+/**
+ * A submit the provider answered and refused (an HTTP 4xx other than a timeout): no job was made.
+ * Anything else (no answer, a server error, no task id) may have left a job at the provider.
+ */
+function refusedSubmit(error: unknown): boolean {
+  const status = error instanceof ProviderError ? error.status : undefined;
+  return status !== undefined && status >= 400 && status < 500 && status !== 408;
 }
 
-/** Runs one job request; whatever it throws becomes a `ProviderError`. */
-function guarded<T>(operation: string, body: () => Promise<T> | T): Promise<T> {
-  return Promise.resolve()
-    .then(body)
-    .catch((error: unknown) => {
-      throw providerError(operation, error);
-    });
+/** A submitted job whose status or result could not be read: it stays journaled to collect. */
+function collectStop(operation: string, handle: string, where: string, error: unknown): Error {
+  if (error instanceof JobStoppedError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new JobStoppedError(
+    `stopped: the ${operation} call's job ${handle} could not be collected: ${message}. It stays journaled with its reservation: repeat the request to collect it without paying again, or delete the job record${where} to submit it again`,
+    { cause: error },
+  );
+}
+
+/** A provider failure as `ProviderError`; a budget refusal or a stopped job passes through. */
+function providerError(operation: string, error: unknown): Error {
+  if (
+    error instanceof ProviderError ||
+    error instanceof BudgetExceededError ||
+    error instanceof JobStoppedError
+  )
+    return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new ProviderError(`the ${operation} call failed: ${message}`, { cause: error });
 }
 
 function decisionLog(

@@ -2,13 +2,13 @@ import "./fixtures/env.ts";
 import { stateDir } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
-import { ProviderError } from "../src/errors.ts";
+import { JobStoppedError, ProviderError } from "../src/errors.ts";
 import type {
   Billing,
   GenerationProvider,
@@ -313,7 +313,7 @@ test("a kill between submit and journal: a provider with neither stops for a per
   const [open] = new Journal(dir, RUN_ID).openJobs();
   const resumed = call(dir, provider);
   await assert.rejects(resumed.result, (error: Error) => {
-    assert.ok(error instanceof ProviderError);
+    assert.ok(error instanceof JobStoppedError);
     assert.match(error.message, /model3d call's job/);
     assert.ok(error.message.includes(open!.key), error.message);
     assert.ok(error.message.includes(`${open!.callKey}.job.json`), error.message);
@@ -328,7 +328,11 @@ test("unknown stops for a person and keeps the job journaled", async () => {
   const dir = await runDir();
   const provider = new JobScript();
   provider.script = ["running", "unknown"];
-  await assert.rejects(call(dir, provider).result, /job-1 in an unknown state/);
+  await assert.rejects(call(dir, provider).result, (error: Error) => {
+    assert.ok(error instanceof JobStoppedError, "a stop, not one failed candidate");
+    assert.match(error.message, /job-1 in an unknown state/);
+    return true;
+  });
   assert.equal(new Journal(dir, RUN_ID).openJobs()[0]?.handle, "job-1");
   assert.equal(reservations(dir)[0]?.costUsd, undefined);
 });
@@ -337,10 +341,11 @@ test("passing the deadline exits resumable; the resume collects the same job", a
   const dir = await runDir();
   const provider = new JobScript();
   provider.script = ["running"];
-  await assert.rejects(
-    call(dir, provider, { deadlineMs: 3 }).result,
-    /job-1 is still running .*repeat the request to collect it/,
-  );
+  await assert.rejects(call(dir, provider, { deadlineMs: 3 }).result, (error: Error) => {
+    assert.ok(error instanceof JobStoppedError, "a stop, not one failed candidate");
+    assert.match(error.message, /job-1 is still running .*repeat the request to collect it/);
+    return true;
+  });
   assert.equal(new Journal(dir, RUN_ID).openJobs()[0]?.handle, "job-1");
   provider.statuses.set("job-1", ["done"]);
   const model = await call(dir, provider).result;
@@ -456,6 +461,10 @@ test("a run held by a spend hold still collects a submitted job, and spends noth
     assert.equal(mine.length, 1, "nothing new was reserved");
     assert.equal(mine[0]?.costUsd, COST);
     assert.deepEqual(calls, ["a lantern", "a kettle"]);
+    const record = JSON.parse(await readFile(join(dir, "run.json"), "utf8")) as {
+      reconcile?: unknown;
+    };
+    assert.ok(Array.isArray(record.reconcile), "the held run's end reconciles what it settled");
 
     // With nothing left to collect, the hold refuses the run before it starts.
     calls.length = 0;
@@ -466,4 +475,88 @@ test("a run held by a spend hold still collects a submitted job, and spends noth
     rmSync(join(stateDir, HOLDS_FILE), { force: true });
   }
   assert.equal(existsSync(join(stateDir, HOLDS_FILE)), false);
+});
+
+/** A provider whose submit throws: lost on the way (no status), or refused with an HTTP status. */
+function failingSubmit(provider: JobScript, status?: number): void {
+  const model = provider.jobs!.model!;
+  const submit = model.submit.bind(model);
+  let first = true;
+  model.submit = async (request, options) => {
+    if (!first) return submit(request, options);
+    first = false;
+    provider.submitted.push(options.key);
+    throw new ProviderError("tripo model: request failed", {
+      ...(status !== undefined && { status }),
+    });
+  };
+}
+
+test("a submit lost on the way keeps the intent and its reservation, and stops for a person on a provider with neither", async () => {
+  const dir = await runDir();
+  const provider = new JobScript();
+  failingSubmit(provider);
+  await assert.rejects(call(dir, provider).result, (error: Error) => {
+    assert.ok(error instanceof JobStoppedError, error.message);
+    assert.match(error.message, /neither find a job by its key nor deduplicate one/);
+    return true;
+  });
+  const [open] = new Journal(dir, RUN_ID).openJobs();
+  assert.equal(open?.handle, undefined, "an intent with no handle, not a failed job");
+  assert.equal(open?.attempt, 1);
+  assert.equal(reservations(dir)[0]?.costUsd, undefined, "the reservation stays open");
+  // The resume treats it as a kill between submit and journal: no second submit.
+  await assert.rejects(call(dir, provider).result, JobStoppedError);
+  assert.equal(provider.submitted.length, 1, "no second submit, no new attempt key");
+  assert.equal(reservations(dir).length, 1);
+});
+
+test("a submit lost on the way is submitted again with the same key where the provider dedupes", async () => {
+  const dir = await runDir();
+  const provider = new JobScript({ dedupesByKey: true });
+  failingSubmit(provider);
+  await assert.rejects(call(dir, provider).result, JobStoppedError);
+  const model = await call(dir, provider, { cap: ESTIMATE }).result;
+  assert.equal(model.handle, "job-1");
+  const [first, second] = provider.submitted;
+  assert.equal(second, first, "the same key, not a new attempt's");
+  assert.equal(reservations(dir).length, 1, "no second reservation");
+  assert.equal(reservations(dir)[0]?.costUsd, COST);
+});
+
+test("a submit the provider refused is a failed attempt, retried under a new key", async () => {
+  const dir = await runDir();
+  const provider = new JobScript();
+  failingSubmit(provider, 400);
+  await assert.rejects(call(dir, provider).result, ProviderError);
+  assert.deepEqual(new Journal(dir, RUN_ID).openJobs(), [], "no open job");
+  assert.equal(reservations(dir)[0]?.costUsd, ESTIMATE);
+  const model = await call(dir, provider).result;
+  assert.equal(model.handle, "job-1");
+  assert.notEqual(provider.submitted[1], provider.submitted[0], "attempt 2 has its own key");
+});
+
+test("a job record left beside its journaled answer is no open job, and the journal hit removes it", async () => {
+  const dir = await runDir();
+  const provider = new JobScript();
+  await call(dir, provider).result;
+  const [entry] = reservations(dir);
+  // A crash between journaling the answer and removing the job record leaves both.
+  const journal = new Journal(dir, RUN_ID);
+  journal.writeJob({
+    callKey: entry!.callKey!,
+    operation: "model3d",
+    provider: "jobs",
+    attempt: 1,
+    key: jobKey(RUN_ID, entry!.callKey!, 1),
+    handle: "job-1",
+    reservationId: entry!.id,
+    reservedUsd: ESTIMATE,
+  });
+  assert.deepEqual(journal.openJobs(), [], "the answered call's record holds no reservation");
+  const resumed = call(dir, provider);
+  const model = await resumed.result;
+  assert.equal(model.handle, "job-1");
+  assert.equal(provider.submitted.length, 1);
+  assert.deepEqual(await jobRecords(dir), [], "the journal hit removed the leftover record");
 });

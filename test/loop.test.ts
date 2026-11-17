@@ -7,8 +7,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { BudgetExceededError } from "../src/budget.ts";
-import { InputError, ProviderError } from "../src/errors.ts";
-import type { GenerationProvider, ImageRequest } from "../src/gateway/provider.ts";
+import { InputError, JobStoppedError, ProviderError } from "../src/errors.ts";
+import type { Billing, GenerationProvider, ImageRequest } from "../src/gateway/provider.ts";
+import { withRunScope } from "../src/runs/journal.ts";
+import type { Clearance } from "../src/runs/journal.ts";
+import { SpendHoldError } from "../src/spend.ts";
 import type { Generator } from "../src/generators/generator.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { pick } from "../src/handoff.ts";
@@ -492,4 +495,46 @@ test("a missing bible reference refuses the run as InputError and still leaves i
   assert.deepEqual(record.candidates, []);
   assert.match(record.stopped, /^refused: cannot read/);
   assert.equal(record.errors.length, 1);
+});
+
+test("a stopped job ends the run: no other candidate submits a new paid job", async () => {
+  const world = await syntheticWorld();
+  const provider = scriptedProvider();
+  const submitted: string[] = [];
+  Object.assign(provider, {
+    jobs: {
+      image: {
+        submit: (_request: ImageRequest, { key }: { key: string }) => {
+          submitted.push(key);
+          return Promise.resolve(`job-${submitted.length}`);
+        },
+        status: () => Promise.resolve("unknown"),
+        result: () => Promise.reject(new Error("never collected")),
+      },
+    },
+  });
+  await assert.rejects(stage(options(world, provider)), (error: Error) => {
+    assert.ok(error instanceof JobStoppedError, error.message);
+    assert.match(error.message, /unknown state/);
+    return true;
+  });
+  assert.equal(submitted.length, 1, "the loop stopped at the first candidate's job");
+});
+
+test("a spend hold ends the run with its refusal, not as one failed candidate", async () => {
+  const world = await syntheticWorld();
+  const provider = scriptedProvider();
+  const billing: Billing = {
+    ...provider.billing,
+    paid: true,
+    limit: { kind: "prepaid", usd: 100 },
+  };
+  Object.assign(provider, { billing });
+  const hold = new SpendHoldError([]);
+  const clearance = { digest: "d", record: {} } as unknown as Clearance;
+  await assert.rejects(
+    withRunScope({ clearance, spendHold: hold }, () => stage(options(world, provider))),
+    (error: Error) => error === hold,
+  );
+  assert.equal(provider.calls.length, 0, "no candidate was paid for");
 });
