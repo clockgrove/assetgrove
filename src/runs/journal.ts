@@ -171,9 +171,7 @@ export class Journal {
   readJob(key: string): JobEntry | undefined {
     try {
       const entry = JSON.parse(readFileSync(this.jobPath(key), "utf8")) as JobEntry;
-      return typeof entry.key === "string" && typeof entry.attempt === "number"
-        ? entry
-        : undefined;
+      return typeof entry.key === "string" && typeof entry.attempt === "number" ? entry : undefined;
     } catch {
       return undefined;
     }
