@@ -26,16 +26,16 @@ function askedOperations(): Map<string, string[]> {
   const constants = new Map<string, string>();
   for (const file of files) {
     for (const match of read(file).matchAll(/export const (\w+) = "([^"]*)";/g)) {
-      constants.set(match[1], match[2]);
+      constants.set(match[1] as string, match[2] as string);
     }
   }
   const asked = new Map<string, string[]>();
   for (const file of files) {
     const relative = path.relative(root, file).split(path.sep).join("/");
     for (const match of read(file).matchAll(/\.decide\(\s*([^,\s)]+)/g)) {
-      const arg = match[1];
+      const arg = match[1] as string;
       const literal = /^(["'`])([^"'`$]*)\1$/.exec(arg);
-      const operation = literal ? literal[2] : constants.get(arg);
+      const operation = literal ? (literal[2] as string) : constants.get(arg);
       assert.ok(
         operation !== undefined,
         `${relative} passes ${arg} to decide, which is neither a string literal nor an exported string constant in src`,
@@ -56,8 +56,9 @@ function tableRows(): Map<string, string> {
     const cells = line.split("|").map((cell) => cell.trim());
     const id = /^`([^`]+)`$/.exec(cells[1] ?? "");
     if (!id) continue;
-    assert.ok(!rows.has(id[1]), `decision table lists ${id[1]} twice`);
-    rows.set(id[1], cells[2] ?? "");
+    const operation = id[1] as string;
+    assert.ok(!rows.has(operation), `decision table lists ${operation} twice`);
+    rows.set(operation, cells[2] ?? "");
   }
   return rows;
 }
@@ -84,7 +85,7 @@ test("every row in the decision table names an operation core still asks", () =>
 
 test("every row's question is score, boolean or choice", () => {
   for (const [operation, question] of tableRows()) {
-    const words = [...question.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    const words = [...question.matchAll(/`([^`]+)`/g)].map((match) => match[1] as string);
     assert.ok(words.length > 0, `${operation}: Question names none of score, boolean, choice`);
     for (const word of words) {
       assert.ok(
