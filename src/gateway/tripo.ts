@@ -13,6 +13,8 @@ import type {
   ModelRequest,
   ModelResult,
   RigRequest,
+  JobStatus,
+  ProviderJobs,
 } from "./provider.ts";
 
 /** Tripo's fixed endpoint; settings never move it. */
@@ -139,7 +141,48 @@ export class TripoProvider implements GenerationProvider {
     return this.#usdPerCredit === undefined ? null : credits * this.#usdPerCredit;
   }
 
+  /**
+   * Tripo's calls as jobs: submit a task, read its status, fetch its result. Tripo takes no
+   * idempotency key and cannot look a task up by one, and a task cannot be cancelled, so none of
+   * those are declared.
+   */
+  readonly jobs: ProviderJobs = {
+    model: {
+      // The key is unused: Tripo has nowhere to put it.
+      submit: async (request) => this.#create(await this.#modelBody(request)),
+      status: (handle) => this.#status(handle),
+      result: async (handle, request) =>
+        this.#modelResult(await this.#successful("model", handle), request),
+    },
+    rig: {
+      submit: (request) => this.#create(this.#rigBody(request)),
+      status: (handle) => this.#status(handle),
+      result: async (handle) => this.#rigResult(await this.#successful("rig", handle)),
+    },
+    animate: {
+      submit: (request) => this.#create(this.#animateBody(request)),
+      status: (handle) => this.#status(handle),
+      result: async (handle, request) =>
+        this.#animateResult(await this.#successful("animate", handle), request),
+    },
+  };
+
   async generateModel(request: ModelRequest): Promise<ModelResult> {
+    const task = await this.#await(await this.#create(await this.#modelBody(request)), "model");
+    return this.#modelResult(task, request);
+  }
+
+  async rigModel(request: RigRequest): Promise<ModelResult> {
+    const task = await this.#await(await this.#create(this.#rigBody(request)), "rig");
+    return this.#rigResult(task);
+  }
+
+  async animateModel(request: AnimateRequest): Promise<ModelResult> {
+    const task = await this.#await(await this.#create(this.#animateBody(request)), "animate");
+    return this.#animateResult(task, request);
+  }
+
+  async #modelBody(request: ModelRequest): Promise<Json> {
     const opts = tripoOptions(request.providerOptions);
     const byView = new Map<string, ImageInput>();
     for (const v of request.views) if (!byView.has(v.view)) byView.set(v.view, v);
@@ -153,20 +196,44 @@ export class TripoProvider implements GenerationProvider {
       // Tripo's faces are triangles unless `quad` is set; without a limit it returns ~400K.
       ...(request.maxTriangles !== undefined && { face_limit: request.maxTriangles }),
     };
-    let body: Json;
     if (multi) {
       const files: Json[] = [];
       for (const name of ["front", "left", "back", "right"]) {
         const image = byView.get(name);
         files.push(image === undefined ? {} : await this.#file(image));
       }
-      body = { type: "multiview_to_model", files, ...common };
-    } else {
-      const image = front ?? request.views[0];
-      if (image === undefined) throw new ProviderError("tripo: no reference views given");
-      body = { type: "image_to_model", file: await this.#file(image), ...common };
+      return { type: "multiview_to_model", files, ...common };
     }
-    const { credits, ...result } = await this.#run(body);
+    const image = front ?? request.views[0];
+    if (image === undefined) throw new ProviderError("tripo: no reference views given");
+    return { type: "image_to_model", file: await this.#file(image), ...common };
+  }
+
+  #rigBody(request: RigRequest): Json {
+    const opts = tripoOptions(request.providerOptions);
+    return {
+      type: "animate_rig",
+      original_model_task_id: request.source,
+      out_format: "glb",
+      rig_type: request.rigType,
+      ...(opts["spec"] !== undefined && { spec: opts["spec"] }),
+      ...(opts["modelVersion"] !== undefined && { model_version: opts["modelVersion"] }),
+    };
+  }
+
+  #animateBody(request: AnimateRequest): Json {
+    return {
+      type: "animate_retarget",
+      original_model_task_id: request.source,
+      out_format: "glb",
+      animations: request.clips,
+      bake_animation: true,
+      export_with_geometry: true,
+    };
+  }
+
+  async #modelResult(task: Json, request: ModelRequest): Promise<ModelResult> {
+    const { credits, ...result } = await this.#finish("model", task);
     return {
       ...result,
       ...(request.seed !== undefined && { seed: request.seed }),
@@ -174,28 +241,13 @@ export class TripoProvider implements GenerationProvider {
     };
   }
 
-  async rigModel(request: RigRequest): Promise<ModelResult> {
-    const opts = tripoOptions(request.providerOptions);
-    const { credits, ...result } = await this.#run({
-      type: "animate_rig",
-      original_model_task_id: request.source,
-      out_format: "glb",
-      rig_type: request.rigType,
-      ...(opts["spec"] !== undefined && { spec: opts["spec"] }),
-      ...(opts["modelVersion"] !== undefined && { model_version: opts["modelVersion"] }),
-    });
+  async #rigResult(task: Json): Promise<ModelResult> {
+    const { credits, ...result } = await this.#finish("rig", task);
     return { ...result, ...this.#cost(credits) };
   }
 
-  async animateModel(request: AnimateRequest): Promise<ModelResult> {
-    const { credits, ...result } = await this.#run({
-      type: "animate_retarget",
-      original_model_task_id: request.source,
-      out_format: "glb",
-      animations: request.clips,
-      bake_animation: true,
-      export_with_geometry: true,
-    });
+  async #animateResult(task: Json, request: AnimateRequest): Promise<ModelResult> {
+    const { credits, ...result } = await this.#finish("animate", task);
     const tied = request.clips.length === 1 ? tieClip(request.clips[0]!, result.glb) : undefined;
     return { ...result, ...(tied && { animations: tied }), ...this.#cost(credits) };
   }
@@ -259,36 +311,60 @@ export class TripoProvider implements GenerationProvider {
     return isRecord(json["data"]) ? json["data"] : {};
   }
 
-  async #run(body: Json): Promise<ModelResult & { credits?: number }> {
+  /** Creates a task and returns its ID. */
+  async #create(body: Json): Promise<string> {
     const type = String(body["type"]);
     const created = await this.#call(type, "POST", "/task", body);
     const taskId = created["task_id"];
     if (typeof taskId !== "string") throw new ProviderError(`tripo ${type}: no task id returned`);
+    return taskId;
+  }
 
+  #readTask(taskId: string): Promise<Json> {
+    return this.#call("task", "GET", `/task/${encodeURIComponent(taskId)}`);
+  }
+
+  async #status(taskId: string): Promise<JobStatus> {
+    return jobStatus((await this.#readTask(taskId))["status"]);
+  }
+
+  /** The task, read once, when it succeeded; any other state is an error. */
+  async #successful(label: string, taskId: string): Promise<Json> {
+    const task = await this.#readTask(taskId);
+    if (task["status"] !== "success")
+      throw new ProviderError(
+        `tripo ${label}: task ${taskId} is ${String(task["status"])}, not success`,
+      );
+    return { ...task, task_id: taskId };
+  }
+
+  /** Polls a task until it succeeds, for direct callers; the job path polls through the core. */
+  async #await(taskId: string, label: string): Promise<Json> {
     let waited = 0;
     for (;;) {
-      const task = await this.#call(type, "GET", `/task/${encodeURIComponent(taskId)}`);
-      const status = task["status"];
-      if (status === "success") return this.#finish(type, taskId, task);
-      if (status !== "queued" && status !== "running" && status !== "unknown") {
+      const task = await this.#readTask(taskId);
+      const status = jobStatus(task["status"]);
+      if (status === "done") return { ...task, task_id: taskId };
+      if (status === "failed") {
         const code = task["error_code"];
         throw new ProviderError(
-          `tripo ${type}: task ${taskId} ${String(status)}${code !== undefined ? ` (error_code ${String(code)})` : ""}`,
+          `tripo ${label}: task ${taskId} ${String(task["status"])}${code !== undefined ? ` (error_code ${String(code)})` : ""}`,
         );
       }
+      if (status === "unknown")
+        throw new ProviderError(
+          `tripo ${label}: task ${taskId} is in an unknown state; a person must check it`,
+        );
       if (waited >= this.#timeoutMs) {
-        throw new ProviderError(`tripo ${type}: task ${taskId} timed out after ${waited} ms`);
+        throw new ProviderError(`tripo ${label}: task ${taskId} timed out after ${waited} ms`);
       }
       await this.#sleep(this.#pollIntervalMs);
       waited += this.#pollIntervalMs;
     }
   }
 
-  async #finish(
-    type: string,
-    taskId: string,
-    task: Json,
-  ): Promise<ModelResult & { credits?: number }> {
+  async #finish(type: string, task: Json): Promise<ModelResult & { credits?: number }> {
+    const taskId = String(task["task_id"]);
     const output = isRecord(task["output"]) ? task["output"] : {};
     const url = ["model", "pbr_model", "base_model"]
       .map((k) => output[k])
@@ -317,6 +393,14 @@ export class TripoProvider implements GenerationProvider {
       ...(typeof credits === "number" && { credits }),
     };
   }
+}
+
+/** Tripo's task status as a job status: anything but queued, running, success or unknown ended badly. */
+function jobStatus(status: unknown): JobStatus {
+  if (status === "queued" || status === "running") return status;
+  if (status === "success") return "done";
+  if (status === "unknown") return "unknown";
+  return "failed";
 }
 
 /**

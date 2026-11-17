@@ -14,12 +14,12 @@ import type { DigitalSourceType } from "./metadata.ts";
 import { decodeImage } from "./image/raster.ts";
 import { pixelHash } from "./transform/run.ts";
 import { Budget, BudgetExceededError } from "./budget.ts";
-import { ledgerFor } from "./spend.ts";
+import { SpendHoldError, ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
 import { Caller } from "./calls.ts";
 import { currentRunScope } from "./runs/journal.ts";
 import { referenceLicenses } from "./bible.ts";
-import { InputError } from "./errors.ts";
+import { InputError, JobStoppedError } from "./errors.ts";
 import { extensionOf, unavailableId } from "./extensions/errors.ts";
 import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
@@ -486,9 +486,16 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       // Bad input, or a provider with no declared limit, fails every candidate the same way:
       // refuse the run rather than go on, but leave its record so the runs directory never holds
       // a run without one.
-      if (error instanceof InputError || error instanceof ProviderLimitError) {
+      // So does a stopped job or a spend hold: the journaled job waits to be collected, and a
+      // held run may spend nothing new, so no other candidate is paid for.
+      if (
+        error instanceof InputError ||
+        error instanceof ProviderLimitError ||
+        error instanceof JobStoppedError ||
+        error instanceof SpendHoldError
+      ) {
         run.errors.push(`candidate ${index + 1}: ${message}`);
-        run.stopped = `refused: ${message}`;
+        run.stopped = /^(refused|stopped):/.test(message) ? message : `refused: ${message}`;
         run.spentUsd = budget.spentUsd;
         await writeRun(runDir, run);
         throw error;

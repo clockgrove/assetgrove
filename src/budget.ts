@@ -72,7 +72,9 @@ export class Budget {
     const run = currentRunScope();
     // The executor's own journaled calls are not answered from the journal by this budget's calls.
     const journaled = Math.max(0, (run?.journal?.spentUsd() ?? 0) - (run?.priorSpentUsd ?? 0));
-    this.ledger?.check(Math.max(0, amountUsd - journaled), what);
+    // A job an earlier attempt reserved is adopted, not reserved again: it is in the ledger already.
+    const adopted = (run?.journal?.openJobs() ?? []).reduce((sum, j) => sum + j.reservedUsd, 0);
+    this.ledger?.check(Math.max(0, amountUsd - journaled - adopted), what);
   }
 
   /**
@@ -85,6 +87,16 @@ export class Budget {
     this.fitCap(amountUsd, what);
     const ledgerId =
       route === undefined ? undefined : this.ledger?.reserve(amountUsd, what, route, meta);
+    this.reserved += amountUsd;
+    return { amountUsd, settled: false, ...(ledgerId !== undefined && { ledgerId }) };
+  }
+
+  /**
+   * Takes over the open reservation an earlier attempt of the run made for a job it submitted
+   * (src/runs/journal.ts `JobEntry`). Nothing is added to the ledger, and no cap or limit is
+   * checked: the money was committed when it was reserved, and collecting the job spends no more.
+   */
+  adopt(amountUsd: number, ledgerId?: string): Reservation {
     this.reserved += amountUsd;
     return { amountUsd, settled: false, ...(ledgerId !== undefined && { ledgerId }) };
   }
@@ -120,12 +132,15 @@ export class Budget {
 /**
  * The ledger's spend for the journal's run beyond what the journal answers: per call key, every
  * reservation's cost less the journaled call's recorded cost. A journal hit counts its own cost
- * when it is answered (`Budget.addPrior`), so only failed and interrupted attempts remain.
+ * when it is answered (`Budget.addPrior`), so only failed and interrupted attempts remain. An open
+ * job's reservation is left out too: its call adopts it (`Budget.adopt`) when it is collected.
  */
 function unansweredSpend(ledger: SpendLedger, journal: Journal): number {
   const byKey = new Map<string, number>();
+  const adopted = new Set(journal.openJobs().map((j) => j.reservationId));
   let total = 0;
   for (const call of ledger.runCalls(journal.runId)) {
+    if (adopted.has(call.id)) continue;
     if (call.callKey === undefined) total += call.costUsd;
     else byKey.set(call.callKey, (byKey.get(call.callKey) ?? 0) + call.costUsd);
   }

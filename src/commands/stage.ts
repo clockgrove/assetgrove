@@ -4,14 +4,15 @@ import { InputError } from "../errors.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
 import { DEFAULT_CANDIDATES, planStage, stage } from "../loop.ts";
+import type { RunRecord } from "../loop.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { rigReads } from "../model3d/rig/template.ts";
-import type { AssetSpec } from "../types.ts";
+import type { AssetSpec, StyleBible } from "../types.ts";
 import { sharedTexts, subjectOf, withSharedText } from "../request.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
-import type { RunContext, WorkPlan } from "./types.ts";
+import type { Outcome, RunContext, WorkPlan } from "./types.ts";
 import {
   DRY_RUN_PROPERTY,
   NOTE_PROPERTY,
@@ -210,18 +211,26 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
       log: ctx.log,
       ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
     });
-    const fields = withSharedText({ runDir, ...run }, sharedTexts(bible.value));
-    const human = formatRun(run, runDir);
-    if (run.candidates.length > 0) return { exitCode: 0, fields, human };
-    if (run.stopped) return refusal("cap_refused", run.stopped, fields, human);
-    if (run.errors.length > 0 && run.errors.length === run.filtered) {
-      return refusal(
-        "provider_error",
-        `every candidate failed to generate: ${run.errors[0]}`,
-        fields,
-        human,
-      );
-    }
-    return refusal("qa_found_nothing", "no candidate passed QA", fields, human);
+    return stageOutcome(run, runDir, bible.value);
   },
 });
+
+/**
+ * The outcome of a stage loop that returned: its candidates, or why it has none. A loop that
+ * throws (a spend hold, a stopped job, bad input) is the runner's error outcome instead.
+ */
+export function stageOutcome(run: RunRecord, runDir: string, bible: StyleBible): Outcome {
+  const fields = withSharedText({ runDir, ...run }, sharedTexts(bible));
+  const human = formatRun(run, runDir);
+  if (run.candidates.length > 0) return { exitCode: 0, fields, human };
+  if (run.stopped) return refusal("cap_refused", run.stopped, fields, human);
+  if (run.errors.length > 0 && run.errors.length === run.filtered) {
+    return refusal(
+      "provider_error",
+      `every candidate failed to generate: ${run.errors[0]}`,
+      fields,
+      human,
+    );
+  }
+  return refusal("qa_found_nothing", "no candidate passed QA", fields, human);
+}

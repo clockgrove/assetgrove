@@ -353,3 +353,118 @@ test("the tripo adapter keeps callCost through its billing", () => {
   assert.equal(configured.provider.billing.reconcile, "per-call-cost");
   assert.equal(typeof configured.provider.billing.callCost, "function");
 });
+
+const modelRequest = { model: "tripo", views: [png("front")] };
+
+test("jobs.model, jobs.rig and jobs.animate each submit one task and return its id as the handle", async () => {
+  const requests = [
+    ["model", modelRequest, "image_to_model"],
+    ["rig", { model: "tripo", source: "task-0", rigType: "biped" }, "animate_rig"],
+    ["animate", { model: "tripo", source: "task-0", clips: ["preset:walk"] }, "animate_retarget"],
+  ] as const;
+  for (const [kind, request, type] of requests) {
+    const f = fake({});
+    const job = provider(f).jobs[kind] as {
+      submit(request: unknown, options: { key: string }): Promise<string>;
+    };
+    assert.equal(await job.submit(request, { key: "k" }), "task-1");
+    const posts = f.calls.filter((c) => c.url.endsWith("/task") && c.method === "POST");
+    assert.equal(posts.length, 1);
+    assert.equal((posts[0]?.body as { type: string }).type, type);
+    assert.equal(
+      f.calls.filter((c) => c.url.includes("/task/task-1")).length,
+      0,
+      "submit does not poll",
+    );
+  }
+});
+
+test("a submit with no task id is a provider error", async () => {
+  const f = fake({ createReply: { code: 0, data: {} } });
+  await assert.rejects(
+    provider(f).jobs.rig!.submit({ model: "tripo", source: "t", rigType: "biped" }, { key: "k" }),
+    /no task id returned/,
+  );
+});
+
+test("job status maps Tripo's states", async () => {
+  const expected: Record<string, string> = {
+    queued: "queued",
+    running: "running",
+    success: "done",
+    failed: "failed",
+    cancelled: "failed",
+    banned: "failed",
+    expired: "failed",
+    unknown: "unknown",
+  };
+  for (const [tripo, job] of Object.entries(expected))
+    for (const kind of ["model", "rig", "animate"] as const)
+      assert.equal(await provider(fake({ statuses: [tripo] })).jobs[kind]!.status("task-1"), job);
+});
+
+test("job result downloads the glb, prices the credits, and carries the seed", async () => {
+  const f = fake({});
+  const result = await provider(f, [], undefined, { usdPerCredit: 0.01 }).jobs.model!.result(
+    "task-1",
+    { ...modelRequest, seed: 9 },
+  );
+  assert.deepEqual(result.glb, GLB);
+  assert.equal(result.handle, "task-1");
+  assert.equal(result.requestId, "task-1");
+  assert.equal(result.seed, 9);
+  assert.ok(Math.abs((result.costUsd ?? 0) - 0.3) < 1e-9);
+  const rig = await provider(fake({}), [], undefined, { usdPerCredit: 0.01 }).jobs.rig!.result(
+    "task-1",
+    { model: "tripo", source: "t", rigType: "biped" },
+  );
+  assert.deepEqual(rig.glb, GLB);
+  assert.equal("seed" in rig, false);
+});
+
+test("job result ties a one-clip animate and refuses a task that did not succeed", async () => {
+  const glb = syntheticCharacter({
+    joints: 3,
+    clips: [
+      { name: "Armature|Take 001", durationS: 1, loopClosed: true, still: true },
+      { name: "Animation_0", durationS: 1, loopClosed: true },
+    ],
+  });
+  const one = await provider(fake({ glb })).jobs.animate!.result("task-1", {
+    model: "tripo",
+    source: "task-0",
+    clips: ["preset:quadruped:walk"],
+  });
+  assert.deepEqual(one.animations, { "preset:quadruped:walk": 1 });
+  await assert.rejects(
+    provider(fake({ statuses: ["running"] })).jobs.animate!.result("task-1", {
+      model: "tripo",
+      source: "task-0",
+      clips: ["preset:walk"],
+    }),
+    ProviderError,
+  );
+});
+
+test("tripo's jobs declare no idempotency key, lookup or cancel", () => {
+  const { jobs } = provider(fake({}));
+  for (const kind of ["model", "rig", "animate"] as const) {
+    const job = jobs[kind]!;
+    assert.equal(job.dedupesByKey, undefined);
+    assert.equal(job.find, undefined);
+    assert.equal(job.cancel, undefined);
+  }
+});
+
+test("a direct call stops polling on an unknown task and names it", async () => {
+  const sleeps: number[] = [];
+  await assert.rejects(
+    provider(fake({ statuses: ["running", "unknown"] }), sleeps).rigModel({
+      model: "tripo",
+      source: "t",
+      rigType: "biped",
+    }),
+    /task task-1 is in an unknown state; a person must check it/,
+  );
+  assert.deepEqual(sleeps, [10]);
+});

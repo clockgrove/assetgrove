@@ -23,7 +23,12 @@ import { CONTACT_SHEET_FILE } from "../contact.ts";
 import type { Outcome, RunContext } from "../commands/types.ts";
 import { createProviders } from "../providers/adapter.ts";
 import { loadScript } from "../providers/script.ts";
-import { finishRunReconcile, recordReconcile, startRunReconcile } from "../reconcile.ts";
+import {
+  finishRunReconcile,
+  recordReconcile,
+  runReconcileOf,
+  startRunReconcile,
+} from "../reconcile.ts";
 import type { ReconcileContext, ReconcileEntry, RunReconcile } from "../reconcile.ts";
 import { Budget } from "../budget.ts";
 import { Caller } from "../calls.ts";
@@ -265,20 +270,28 @@ export async function executeRun(options: {
       3,
     );
   // A paid run first retries pending reconcile lookups, then is refused while a spend hold is not
-  // acknowledged (src/reconcile.ts).
+  // acknowledged (src/reconcile.ts), unless it had submitted jobs: it collects those, which spends
+  // nothing new, and its first new spend ends it with the same refusal (src/calls.ts).
   let reconcileCtx: ReconcileContext | undefined;
   let reconcile: RunReconcile | undefined;
+  let spendHold: SpendHoldError | undefined;
   if (plan.paid) {
     reconcileCtx = await reconcileContext(ctx, options.providerScript);
+    const run = {
+      runId: runIdOfDir(plan.runDir),
+      runDir: plan.runDir,
+      providers: plan.jobs.map((j) => j.provider),
+    };
     try {
-      reconcile = await startRunReconcile(reconcileCtx, {
-        runId: runIdOfDir(plan.runDir),
-        runDir: plan.runDir,
-        providers: plan.jobs.map((j) => j.provider),
-      });
+      reconcile = await startRunReconcile(reconcileCtx, run);
     } catch (error) {
-      if (error instanceof SpendHoldError) return refused("spend_hold", error.message, 3);
-      throw error;
+      if (!(error instanceof SpendHoldError)) throw error;
+      const journal = new Journal(plan.runDir, runIdOfDir(plan.runDir));
+      if (!journal.openJobs().some((job) => job.handle !== undefined))
+        return refused("spend_hold", error.message, 3);
+      spendHold = error;
+      // The jobs it collects settle in the ledger, and its end compares them with the provider.
+      reconcile = runReconcileOf(reconcileCtx, run);
     }
   }
   await openRunDir(plan);
@@ -339,6 +352,7 @@ export async function executeRun(options: {
       journal,
       onCall: progress.onCall,
       ...(confirmation && { clearance: { digest: plan.digest, record: confirmation } }),
+      ...(spendHold && { spendHold }),
     };
     let promptPolicy = plan.promptPolicy;
     let outcome: Outcome;

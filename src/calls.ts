@@ -1,20 +1,26 @@
-import type { Budget } from "./budget.ts";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import type { Budget, Reservation } from "./budget.ts";
 import { ConfirmationError } from "./approvals.ts";
-import { ProviderError } from "./errors.ts";
+import { JobStoppedError, ProviderError } from "./errors.ts";
 import { BudgetExceededError } from "./budget.ts";
 import { assertLimitDeclared, billingOf } from "./limits.ts";
 import type {
   CallKind,
+  CallTypes,
   DecisionQuestion,
   DecisionResult,
   EmbedResult,
   GenerationProvider,
   ImageInput,
+  JobProvider,
+  JobStatus,
   ModelResult,
   ProviderResult,
 } from "./gateway/provider.ts";
 import { ProviderSet } from "./providers/set.ts";
-import { currentRunScope } from "./runs/journal.ts";
+import { currentRunScope, jobKey } from "./runs/journal.ts";
+import type { JobEntry, Journal } from "./runs/journal.ts";
 import { RouteUnavailableError } from "./routes.ts";
 import type { Route, Routes } from "./routes.ts";
 import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
@@ -30,6 +36,9 @@ import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
  *
  * A paid call (its adapter's `billing.paid`) that is not a journal hit needs the run's clearance,
  * which only the executor builds from a verified confirmation; without one it exits 8.
+ *
+ * A call its provider serves as a queued job (`GenerationProvider.jobs`) is journaled before it is
+ * submitted and again with its handle, so a resumed run collects the same job (see `job`).
  */
 export class Caller {
   readonly records: CallRecord[] = [];
@@ -40,6 +49,7 @@ export class Caller {
   private readonly now: () => Date;
   private readonly log: (message: string) => void;
   private readonly index: number | undefined;
+  private readonly polling: Required<JobPolling>;
 
   constructor(options: {
     /** A `ProviderSet` serves each call on its route's provider; any other provider serves all. */
@@ -53,6 +63,8 @@ export class Caller {
     log?: (message: string) => void;
     /** The candidate or frame index these calls are for, part of each call's journal key. */
     index?: number;
+    /** How a queued job is polled; tests shorten it. */
+    jobPolling?: JobPolling;
   }) {
     this.provider = options.provider;
     this.providerName = options.providerName;
@@ -61,6 +73,13 @@ export class Caller {
     this.now = options.now ?? (() => new Date());
     this.log = options.log ?? (() => {});
     this.index = options.index;
+    this.polling = {
+      firstMs: 3000,
+      maxMs: 30_000,
+      deadlineMs: 15 * 60 * 1000,
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      ...options.jobPolling,
+    };
   }
 
   route(operation: string): Route {
@@ -80,15 +99,17 @@ export class Caller {
     return { provider: this.provider, id: this.providerName ?? route.provider ?? "provider" };
   }
 
-  private async record<T extends ProviderResult>(
-    kind: CallKind,
+  private async record<K extends CallKind>(
+    kind: K,
     operation: string,
     prompt: string,
     references: LoadedReference[],
     parameters: Record<string, unknown>,
     seed: number | undefined,
-    run: (route: Route, provider: GenerationProvider) => Promise<T>,
-  ): Promise<T> {
+    request: (route: Route) => CallTypes[K][0],
+    direct: (provider: GenerationProvider, request: CallTypes[K][0]) => Promise<CallTypes[K][1]>,
+  ): Promise<CallTypes[K][1]> {
+    type Result = CallTypes[K][1];
     const route = this.route(operation);
     if ((kind === "image" || kind === "model") && this.provider instanceof ProviderSet)
       this.provider.checkPrompt(prompt, operation);
@@ -110,11 +131,13 @@ export class Caller {
     });
     const journaled = callKey === undefined ? undefined : journal?.read(callKey);
     if (journaled !== undefined) {
-      // Answered before in this run: nothing is reserved or paid again.
+      // Answered before in this run: nothing is reserved or paid again. A job record a crash left
+      // beside the answer has served its purpose.
+      journal?.removeJob(callKey!);
       this.budget.addPrior(journaled.record.costUsd, `the journaled ${operation} call`);
       this.records.push(journaled.record);
       scope?.onCall?.({ operation, reused: true });
-      return journaled.result as T;
+      return journaled.result as Result;
     }
     // Paid-ness is the adapter's: only a paid call needs a declared limit and reaches the ledger.
     const billing = billingOf(served.provider, kind);
@@ -125,26 +148,43 @@ export class Caller {
         "confirmation_required",
         `refused: the paid ${operation} call has no confirmed spend; run it through its command, which asks a person or reads their confirmation`,
       );
-    const reservation = this.budget.reserve(
-      route.estimatedCostUsd,
-      `the ${operation} call`,
-      billing.paid ? name : undefined,
-      {
-        provider: served.id,
-        ...(journal !== undefined && { runId: journal.runId }),
-        ...(callKey !== undefined && { callKey }),
-      },
-    );
+    const reserve = (): Reservation => {
+      // A run let in past a spend hold only collects the jobs it had submitted.
+      if (billing.paid && scope?.spendHold !== undefined) throw scope.spendHold;
+      return this.budget.reserve(
+        route.estimatedCostUsd,
+        `the ${operation} call`,
+        billing.paid ? name : undefined,
+        {
+          provider: served.id,
+          ...(journal !== undefined && { runId: journal.runId }),
+          ...(callKey !== undefined && { callKey }),
+        },
+      );
+    };
+    const jobs = served.provider.jobs?.[kind] as JobProvider<CallTypes[K][0], Result> | undefined;
     const startedAt = this.now().toISOString();
-    let result: T;
-    try {
-      result = await run(route, served.provider);
-    } catch (error) {
-      // A failed call may still have been billed; count the estimate so the cap stays safe.
-      this.budget.settle(reservation, route.estimatedCostUsd);
-      if (error instanceof ProviderError || error instanceof BudgetExceededError) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      throw new ProviderError(`the ${operation} call failed: ${message}`, { cause: error });
+    let result: Result;
+    let reservation: Reservation;
+    if (jobs !== undefined) {
+      ({ result, reservation } = await this.job(jobs, request(route), {
+        operation,
+        provider: served.id,
+        estimateUsd: route.estimatedCostUsd,
+        reserve,
+        ...(callKey !== undefined && { callKey }),
+        ...(journal !== undefined && { journal }),
+        ...(scope?.spendHold !== undefined && billing.paid && { spendHold: scope.spendHold }),
+      }));
+    } else {
+      reservation = reserve();
+      try {
+        result = await direct(served.provider, request(route));
+      } catch (error) {
+        // A failed call may still have been billed; count the estimate so the cap stays safe.
+        this.budget.settle(reservation, route.estimatedCostUsd);
+        throw providerError(operation, error);
+      }
     }
     const costUsd = result.costUsd ?? route.estimatedCostUsd;
     // The provider's own request ID ties the ledger entry to the provider's usage (reconcile).
@@ -181,11 +221,173 @@ export class Caller {
         record,
         result,
       });
+      // The answer is journaled: the job's record has served its purpose.
+      if (jobs !== undefined) journal.removeJob(callKey);
       scope?.onCall?.({ operation, reused: false });
     }
     return result;
   }
 
+  /**
+   * A call served as a queued job (design section 9): reserve, journal the intent (key, ledger
+   * reservation, attempt), submit, journal the handle, poll with backoff up to the deadline, and
+   * return the result with the reservation for the caller to settle. A resumed run adopts the
+   * journaled job and its reservation; a failed job is retried with a new attempt key. Stopping
+   * (a kill, the deadline, `unknown`) leaves the job journaled and its reservation open.
+   */
+  private async job<Request, Result extends ProviderResult>(
+    jobs: JobProvider<Request, Result>,
+    request: Request,
+    call: {
+      operation: string;
+      provider: string;
+      estimateUsd: number;
+      reserve: () => Reservation;
+      callKey?: string;
+      journal?: Journal;
+      spendHold?: Error;
+    },
+  ): Promise<{ result: Result; reservation: Reservation }> {
+    const { operation, journal, callKey } = call;
+    const journaling = journal !== undefined && callKey !== undefined;
+    const runId = journal?.runId ?? `unjournaled-${randomUUID()}`;
+    const save = (entry: JobEntry): JobEntry => {
+      if (journaling) journal.writeJob(entry);
+      return entry;
+    };
+    const where = journaling ? ` (${join(journal.dir, `${callKey}.job.json`)})` : "";
+    // Reserve, journal the intent, submit, journal the handle.
+    const submit = async (attempt: number): Promise<[JobEntry, Reservation]> => {
+      const reserved = call.reserve();
+      const key = jobKey(runId, callKey ?? operation, attempt);
+      const intent = save({
+        callKey: callKey ?? "",
+        operation,
+        provider: call.provider,
+        attempt,
+        key,
+        ...(reserved.ledgerId !== undefined && { reservationId: reserved.ledgerId }),
+        reservedUsd: reserved.amountUsd,
+      });
+      let handle: string;
+      try {
+        handle = await jobs.submit(request, { key });
+      } catch (error) {
+        if (refusedSubmit(error)) {
+          // The provider answered and refused it: no job was made. It may still bill a refusal,
+          // so it keeps the estimate, and the next attempt has a new key.
+          this.budget.settle(reserved, call.estimateUsd);
+          save({ ...intent, failed: true });
+          throw providerError(operation, error);
+        }
+        // Lost on the way (no answer, no task id, a server error): the provider may hold the job.
+        // The intent stays journaled with its reservation open, like a crash before the handle.
+        throw lostSubmit(key, error);
+      }
+      return [save({ ...intent, handle, submittedAt: this.now().toISOString() }), reserved];
+    };
+    const lostSubmit = (key: string, cause?: unknown): JobStoppedError => {
+      const detail = cause instanceof Error ? `: ${cause.message}` : "";
+      if (jobs.find === undefined && jobs.dedupesByKey !== true)
+        return new JobStoppedError(
+          `stopped: the ${operation} call's job (key ${key}) may have reached provider "${call.provider}" with no handle journaled${detail}, and the provider can neither find a job by its key nor deduplicate one, so submitting again could pay twice. A person checks the provider's own jobs, then deletes the job record${where} to submit it again`,
+          { cause },
+        );
+      return new JobStoppedError(
+        `stopped: the ${operation} call's job (key ${key}) may have reached provider "${call.provider}" with no handle journaled${detail}; it stays journaled with its reservation: repeat the request to find it by its key or submit it again under the same key`,
+        { cause },
+      );
+    };
+
+    let entry = journaling ? journal.readJob(callKey) : undefined;
+    let reservation: Reservation;
+    if (entry !== undefined && entry.failed !== true) {
+      // An earlier attempt of this run reserved and journaled this job: adopt both.
+      const { key } = entry;
+      if (entry.handle === undefined && jobs.find === undefined && jobs.dedupesByKey !== true)
+        throw lostSubmit(key);
+      reservation = this.budget.adopt(entry.reservedUsd, entry.reservationId);
+      if (entry.handle === undefined) {
+        let handle: string | undefined;
+        try {
+          handle = await jobs.find?.(key);
+        } catch (error) {
+          throw lostSubmit(key, error);
+        }
+        if (handle === undefined) {
+          if (call.spendHold !== undefined) throw call.spendHold;
+          // Never accepted (find names none), or accepted and deduplicated by its key.
+          try {
+            handle = await jobs.submit(request, { key });
+          } catch (error) {
+            throw lostSubmit(key, error);
+          }
+        }
+        entry = save({ ...entry, handle, submittedAt: this.now().toISOString() });
+      }
+    } else {
+      [entry, reservation] = await submit((entry?.attempt ?? 0) + 1);
+    }
+    for (;;) {
+      const handle = entry.handle as string;
+      const status = await this.poll(jobs, handle, operation, where);
+      if (status === "done") {
+        try {
+          return { result: await jobs.result(handle, request), reservation };
+        } catch (error) {
+          throw collectStop(operation, handle, where, error);
+        }
+      }
+      // A failed job may still have been billed: its reservation keeps the estimate.
+      this.budget.settle(reservation, call.estimateUsd);
+      entry = save({ ...entry, failed: true });
+      if (entry.attempt >= JOB_ATTEMPTS)
+        throw new ProviderError(
+          `the ${operation} call's job failed ${entry.attempt} times (last ${handle}); repeating the request submits it again`,
+        );
+      [entry, reservation] = await submit(entry.attempt + 1);
+    }
+  }
+
+  /**
+   * Polls a job until it is done or failed, waiting longer between checks up to the deadline.
+   * `unknown` stops for a person and the deadline stops resumable; both leave the job journaled.
+   */
+  private async poll<Request, Result>(
+    jobs: JobProvider<Request, Result>,
+    handle: string,
+    operation: string,
+    where: string,
+  ): Promise<"done" | "failed"> {
+    const { firstMs, maxMs, deadlineMs, sleep } = this.polling;
+    let waited = 0;
+    let delay = firstMs;
+    for (;;) {
+      let status: JobStatus;
+      try {
+        status = await jobs.status(handle);
+      } catch (error) {
+        throw collectStop(operation, handle, where, error);
+      }
+      if (status === "done" || status === "failed") return status;
+      if (status === "unknown")
+        throw new JobStoppedError(
+          `stopped: the provider reports the ${operation} call's job ${handle} in an unknown state. A person checks it with the provider; repeating the request collects it once the provider knows it, and deleting the job record${where} submits it again`,
+        );
+      if (status !== "queued" && status !== "running")
+        throw new ProviderError(
+          `the ${operation} call's job ${handle} reported status ${String(status)}`,
+        );
+      if (waited >= deadlineMs)
+        throw new JobStoppedError(
+          `the ${operation} call's job ${handle} is still ${status} after ${Math.round(waited / 1000)} s; it stays journaled with its reservation: repeat the request to collect it without paying again`,
+        );
+      const wait = Math.min(delay, deadlineMs - waited);
+      await sleep(wait);
+      waited += wait;
+      delay = Math.min(maxMs, delay * 1.5);
+    }
+  }
   /** An image generation or reference-guided edit; references are sent in order. */
   async image(
     operation: string,
@@ -212,16 +414,16 @@ export class Caller {
       mask === undefined ? references : [...references, mask],
       parameters,
       sendSeed,
-      (r, provider) =>
-        provider.generateImage({
-          model: r.model,
-          prompt,
-          references: references.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
-          ...(mask !== undefined && { mask: { mediaType: mask.mediaType, bytes: mask.bytes } }),
-          ...(r.size !== undefined && { size: r.size }),
-          ...(sendSeed !== undefined && { seed: sendSeed }),
-          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-        }),
+      (r) => ({
+        model: r.model,
+        prompt,
+        references: references.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
+        ...(mask !== undefined && { mask: { mediaType: mask.mediaType, bytes: mask.bytes } }),
+        ...(r.size !== undefined && { size: r.size }),
+        ...(sendSeed !== undefined && { seed: sendSeed }),
+        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+      }),
+      (provider, request) => provider.generateImage(request),
     );
     const image = result.images[0];
     if (!image) throw new ProviderError(`the ${operation} call returned no image`);
@@ -247,18 +449,27 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       views: views.map((r) => ({ view: r.view, role: r.role, path: r.path, sha256: r.sha256 })),
     };
-    return this.record("model", operation, prompt, views, parameters, sendSeed, (r, provider) => {
-      const generate = provider.generateModel?.bind(provider);
-      if (!generate) throw new ProviderError(`the provider cannot make 3D models (${operation})`);
-      return generate({
+    return this.record(
+      "model",
+      operation,
+      prompt,
+      views,
+      parameters,
+      sendSeed,
+      (r) => ({
         model: r.model,
         prompt,
         views: views.map((v) => ({ view: v.view, mediaType: v.mediaType, bytes: v.bytes })),
         ...(sendSeed !== undefined && { seed: sendSeed }),
         ...(maxTriangles !== undefined && { maxTriangles }),
         ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-      });
-    });
+      }),
+      (provider, request) => {
+        const generate = provider.generateModel?.bind(provider);
+        if (!generate) throw new ProviderError(`the provider cannot make 3D models (${operation})`);
+        return generate(request);
+      },
+    );
   }
 
   /** Rigs a model the provider made (by its handle) with the given rig type. */
@@ -276,15 +487,16 @@ export class Caller {
       [],
       parameters,
       undefined,
-      (r, provider) => {
+      (r) => ({
+        model: r.model,
+        source,
+        rigType,
+        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+      }),
+      (provider, request) => {
         const rig = provider.rigModel?.bind(provider);
         if (!rig) throw new ProviderError(`the provider cannot rig 3D models (${operation})`);
-        return rig({
-          model: r.model,
-          source,
-          rigType,
-          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-        });
+        return rig(request);
       },
     );
   }
@@ -304,16 +516,17 @@ export class Caller {
       [],
       parameters,
       undefined,
-      (r, provider) => {
+      (r) => ({
+        model: r.model,
+        source,
+        clips,
+        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+      }),
+      (provider, request) => {
         const animate = provider.animateModel?.bind(provider);
         if (!animate)
           throw new ProviderError(`the provider cannot animate 3D models (${operation})`);
-        return animate({
-          model: r.model,
-          source,
-          clips,
-          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-        });
+        return animate(request);
       },
     );
   }
@@ -344,18 +557,19 @@ export class Caller {
       images,
       parameters,
       undefined,
-      (r, provider) => {
+      (r) => ({
+        model: r.model,
+        input:
+          "image" in input
+            ? { image: { mediaType: input.image.mediaType, bytes: input.image.bytes } }
+            : { text: input.text },
+        dimensions,
+        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+      }),
+      (provider, request) => {
         const embed = provider.embed?.bind(provider);
         if (!embed) throw new ProviderError(`the provider cannot embed (${operation})`);
-        return embed({
-          model: r.model,
-          input:
-            "image" in input
-              ? { image: { mediaType: input.image.mediaType, bytes: input.image.bytes } }
-              : { text: input.text },
-          dimensions,
-          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-        });
+        return embed(request);
       },
     );
     if (result.vector.length !== dimensions)
@@ -379,13 +593,13 @@ export class Caller {
       images,
       parameters,
       undefined,
-      (r, provider) =>
-        provider.analyzeImages({
-          model: r.model,
-          prompt,
-          images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
-          ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
-        }),
+      (r) => ({
+        model: r.model,
+        prompt,
+        images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
+        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+      }),
+      (provider, request) => provider.analyzeImages(request),
     );
     return result.text;
   }
@@ -414,17 +628,18 @@ export class Caller {
         images,
         parameters,
         undefined,
-        (r, provider) => {
+        (r) => ({
+          model: r.model,
+          prompt,
+          images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
+          question,
+          operation,
+        }),
+        (provider, request) => {
           const decide = provider.decide?.bind(provider);
           if (!decide)
             throw new ProviderError(`the provider cannot make typed decisions (${operation})`);
-          return decide({
-            model: r.model,
-            prompt,
-            images: images.map((ref) => ({ mediaType: ref.mediaType, bytes: ref.bytes })),
-            question,
-            operation,
-          });
+          return decide(request);
         },
       );
     } catch (error) {
@@ -461,6 +676,48 @@ export class Caller {
     );
     return { result, record };
   }
+}
+
+/** How a queued job is polled: the first wait, the longest, and the deadline per call. */
+export interface JobPolling {
+  firstMs?: number;
+  maxMs?: number;
+  deadlineMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** How many times one call's job is submitted in one process before the call fails. */
+const JOB_ATTEMPTS = 3;
+
+/**
+ * A submit the provider answered and refused (an HTTP 4xx other than a timeout): no job was made.
+ * Anything else (no answer, a server error, no task id) may have left a job at the provider.
+ */
+function refusedSubmit(error: unknown): boolean {
+  const status = error instanceof ProviderError ? error.status : undefined;
+  return status !== undefined && status >= 400 && status < 500 && status !== 408;
+}
+
+/** A submitted job whose status or result could not be read: it stays journaled to collect. */
+function collectStop(operation: string, handle: string, where: string, error: unknown): Error {
+  if (error instanceof JobStoppedError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new JobStoppedError(
+    `stopped: the ${operation} call's job ${handle} could not be collected: ${message}. It stays journaled with its reservation: repeat the request to collect it without paying again, or delete the job record${where} to submit it again`,
+    { cause: error },
+  );
+}
+
+/** A provider failure as `ProviderError`; a budget refusal or a stopped job passes through. */
+function providerError(operation: string, error: unknown): Error {
+  if (
+    error instanceof ProviderError ||
+    error instanceof BudgetExceededError ||
+    error instanceof JobStoppedError
+  )
+    return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new ProviderError(`the ${operation} call failed: ${message}`, { cause: error });
 }
 
 function decisionLog(

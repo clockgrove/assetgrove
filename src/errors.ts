@@ -94,3 +94,17 @@ export class ProviderError extends Error {
     this.providerCode = options?.providerCode;
   }
 }
+
+/**
+ * A queued job's call stopped with the job journaled and its reservation open (design section 9):
+ * the deadline, an `unknown` status, a submit that may have reached the provider, or a person must
+ * look. Exit 4 `provider_error`. It is not a `ProviderError`, so a loop that goes on past one failed
+ * candidate stops on it rather than pay for new work while the journaled job waits to be collected.
+ */
+export class JobStoppedError extends Error {
+  readonly code = "provider_error";
+  constructor(message: string, options?: ErrorOptions) {
+    super(redact(message), options);
+    this.name = "JobStoppedError";
+  }
+}

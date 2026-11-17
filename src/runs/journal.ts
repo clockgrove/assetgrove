@@ -15,6 +15,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -47,6 +48,35 @@ export interface JournalEntry {
   record: CallRecord;
   /** The provider result, each byte array replaced by `{ "$media": "<sha256>" }`. */
   result: unknown;
+}
+
+/**
+ * A paid call served as a queued job, journaled before it is submitted (`calls/<callKey>.job.json`):
+ * the attempt's key, the ledger reservation it holds and, once submitted, the provider's handle.
+ * It is removed once the call's answer is journaled.
+ */
+export interface JobEntry {
+  callKey: string;
+  operation: string;
+  provider: string;
+  /** 1 for the first submission; a failed job is retried with the next. */
+  attempt: number;
+  /** `jobKey(runId, callKey, attempt)`: what the provider is given to tell attempts apart. */
+  key: string;
+  /** The ledger id of the attempt's open reservation; absent when the budget has no ledger. */
+  reservationId?: string;
+  /** The reserved estimate. */
+  reservedUsd: number;
+  /** The provider's handle, once `submit` returned it. */
+  handle?: string;
+  submittedAt?: string;
+  /** True when this attempt's job failed and its reservation was settled; the next attempt is new. */
+  failed?: boolean;
+}
+
+/** The key a job attempt is submitted with: sha256 hex of the run id, the call key and the attempt. */
+export function jobKey(runId: string, callKey: string, attempt: number): string {
+  return sha256Hex(canonicalJson({ runId, callKey, attempt }));
 }
 
 /** What a run tells its progress sink as calls are answered. */
@@ -135,6 +165,50 @@ export class Journal {
       join(this.dir, `${entry.callKey}.json`),
       `${JSON.stringify({ ...entry, result }, null, 2)}\n`,
     );
+  }
+
+  /** The job record of a call, or undefined when it has none (or it cannot be read). */
+  readJob(key: string): JobEntry | undefined {
+    try {
+      const entry = JSON.parse(readFileSync(this.jobPath(key), "utf8")) as JobEntry;
+      return typeof entry.key === "string" && typeof entry.attempt === "number" ? entry : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Writes a call's job record whole. */
+  writeJob(entry: JobEntry): void {
+    mkdirSync(this.dir, { recursive: true });
+    writeAtomic(this.jobPath(entry.callKey), `${JSON.stringify(entry, null, 2)}\n`);
+  }
+
+  /** Removes a call's job record once its answer is journaled. */
+  removeJob(key: string): void {
+    rmSync(this.jobPath(key), { force: true });
+  }
+
+  /**
+   * Every job record whose reservation is still open: submitted or about to be, not failed, and
+   * its call not yet answered (a crash between the answer and the record's removal leaves both).
+   */
+  openJobs(): JobEntry[] {
+    let names: string[];
+    try {
+      names = readdirSync(this.dir).filter((name) => /^[0-9a-f]{64}\.job\.json$/.test(name));
+    } catch {
+      return [];
+    }
+    return names
+      .map((name) => this.readJob(name.slice(0, 64)))
+      .filter(
+        (e): e is JobEntry =>
+          e !== undefined && e.failed !== true && !existsSync(join(this.dir, `${e.callKey}.json`)),
+      );
+  }
+
+  private jobPath(key: string): string {
+    return join(this.dir, `${key}.job.json`);
   }
 
   /**
@@ -238,6 +312,11 @@ export interface RunScope {
    * every `Budget` made in the run counts it against the run's one cap.
    */
   priorSpentUsd?: number;
+  /**
+   * The unacknowledged spend hold (`SpendHoldError`) of a run let in only to collect the jobs it
+   * had submitted: `Caller` collects those and throws this before any new spend.
+   */
+  spendHold?: Error;
 }
 
 const scope = new AsyncLocalStorage<RunScope>();

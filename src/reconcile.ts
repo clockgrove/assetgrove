@@ -192,6 +192,17 @@ export async function startRunReconcile(
 ): Promise<RunReconcile> {
   await retryPending(ctx);
   assertNoOpenHold(ctx.settings);
+  return runReconcileOf(ctx, run);
+}
+
+/**
+ * The reconcile of a paid run, with no hold check: a run let in past a spend hold to collect its
+ * submitted jobs still compares what it settled with the provider when it ends.
+ */
+export function runReconcileOf(
+  ctx: ReconcileContext,
+  run: { runId: string; runDir: string; providers: readonly string[] },
+): RunReconcile {
   const providers = [...new Set(run.providers)].filter(
     (id) => id !== "" && billingOfId(ctx, id)?.paid === true,
   );
