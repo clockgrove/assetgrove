@@ -583,6 +583,49 @@ test("a spec's asset id is not prompt text: not refused at the plan step, not in
   assert.equal(JSON.stringify(saved.prompts).includes(id), false);
 });
 
+test("stage, generate-sheet and look-dev name a subject-less spec's asset id in their prompts, so a blocklisted id exits 9 at the plan step, before confirmation or any call", async () => {
+  const dir = await tempDir("assetgrove-policy-subject-id-");
+  const watch = await recorder(dir);
+  const ledgerBefore = await ledgerContent();
+  const id = `npc-${FIRST}-${LAST}-baker`;
+  const stage = await stageFiles("");
+  const withId = async (path: string) => {
+    const spec = JSON.parse(await readFile(path, "utf8")) as Doc;
+    delete spec["subject"];
+    await writeFile(path, JSON.stringify({ ...spec, assetId: id }));
+  };
+  await withId(stage.spec);
+  const lookDev = await lookDevFiles(await tempDir("assetgrove-policy-subject-ld-"), "");
+  await withId(lookDev.spec);
+  const stageArgs = ["--spec", stage.spec, "--bible", stage.bible, "--profile", stage.profile];
+  const cases: Array<[string, string[]]> = [
+    ["stage", stageArgs],
+    ["generate-sheet", stageArgs],
+    [
+      "look-dev",
+      [
+        ...["--model", lookDev.model, "--provenance", lookDev.provenance],
+        ...["--spec", lookDev.spec, "--bible", lookDev.bible, "--profile", lookDev.profile],
+      ],
+    ],
+  ];
+  for (const [name, args] of cases) {
+    for (const mode of [[], ["--dry-run"]]) {
+      const run = await cli([
+        name,
+        ...args,
+        ...["--runs", join(dir, "runs"), "--provider-script", watch.script, ...mode, "--json"],
+      ]);
+      assert.equal(run.code, 9, `${name} ${mode.join("")}: ${run.stdout}${run.stderr}`);
+      assert.equal(doc(run).error.code, "prompt_refused", name);
+      assert.equal(doc(run).error.policy.match.term, TERM, name);
+    }
+  }
+  assert.equal(existsSync(join(dir, "runs")), false, "no run directory");
+  assert.equal(existsSync(watch.events), false, "no provider call");
+  assert.equal(await ledgerContent(), ledgerBefore, "no ledger entry");
+});
+
 test("a key pose path holding a blocklisted name, with an unlisted extension, passes the plan step and apply's final-prompt check", async () => {
   const dir = await tempDir("assetgrove-policy-keypose-");
   const files = await planFiles(dir, "");

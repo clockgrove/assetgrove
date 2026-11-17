@@ -9,7 +9,7 @@ import { approve, approveProfile, confirmationsDir, writeSettings } from "./fixt
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -108,10 +108,20 @@ async function stageArgs(script: string): Promise<{ args: string[]; runs: string
 test("0.6 is borderline: exit 8 kind policy before any other call, even under headless settings; a person's confirmation lets the rerun go on without a second policy call", async () => {
   writeSettings({});
   const { script, events } = await recorder(0.6);
-  const { args } = await stageArgs(script);
+  const { args, runs } = await stageArgs(script);
 
   const asked = await cli(args);
   assert.equal(asked.code, 8, asked.stderr);
+  // The stopped run's record keeps the deciding answer, as the refusal path's does.
+  const records = (await readdir(runs, { recursive: true })).filter(
+    (f) => f.endsWith("run.json") || f === "run.json",
+  );
+  assert.equal(records.length, 1, `one run record: ${records.join(", ")}`);
+  const stopped = JSON.parse(await readFile(join(runs, records[0]!), "utf8")) as Doc;
+  assert.equal(stopped["promptPolicy"].borderline, true);
+  assert.equal(stopped["promptPolicy"].probability, 0.6);
+  assert.equal(typeof stopped["promptPolicy"].model, "string");
+  assert.deepEqual(stopped["promptPolicy"].cut, { confirmAt: 0.5, refuseAt: 0.8 });
   const error = doc(asked)["error"];
   assert.equal(error.code, "confirmation_required");
   assert.equal(error.confirmation.kind, "policy");

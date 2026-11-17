@@ -12,7 +12,7 @@ import { InputError } from "../errors.ts";
 import { knownTemplate } from "../animation/template-choice.ts";
 import { SliceError } from "../sheet/slice.ts";
 import type { AssetSpec } from "../types.ts";
-import { sharedTexts, withSharedText } from "../request.ts";
+import { sharedTexts, subjectOf, withSharedText } from "../request.ts";
 import { formatImport } from "./import.ts";
 import { dryRunOutcome, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -119,7 +119,10 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
       // The recorded threshold decides which candidates enforce mode drops.
       ...(lock?.recordPath !== undefined && { "lockBible/identity-thresholds": lock.recordPath }),
     },
+    // The sheet prompt names the subject (the asset id when the spec has no subject), so the plan
+    // step checks it, free, before the spend is confirmed.
     promptText: [
+      subjectOf(spec.value),
       ...motionTemplates.flatMap((t) => motionLines(t, undefined)),
       ...(args.note !== undefined ? [args.note] : []),
     ],

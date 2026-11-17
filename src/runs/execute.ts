@@ -359,6 +359,9 @@ export async function executeRun(options: {
             if (refusedRecord !== undefined) promptPolicy = refusedRecord;
             throw error;
           }
+          // The record is the run's before a person is asked, so a run stopped for confirmation
+          // (exit 8) keeps the deciding answer's model, probability, cut and `borderline`.
+          promptPolicy = scope.promptPolicy;
           if (scope.promptPolicy?.borderline)
             scope.promptPolicy = await clearBorderline(ctx, plan, command, scope.promptPolicy);
           promptPolicy = scope.promptPolicy;
