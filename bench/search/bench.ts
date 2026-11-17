@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promise
 import { availableParallelism, arch, cpus, platform, totalmem, tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { performance } from "node:perf_hooks";
-import type { SearchQuery } from "../../packages/assetgrove-search/src/contract.ts";
+import type { SearchQuery } from "../../src/extension/api.ts";
 import { normalize, type Embedder } from "../../packages/assetgrove-search/src/embedder.ts";
 import { findWith } from "../../packages/assetgrove-search/src/extension.ts";
 import { rankingQueries, SearchIndex } from "../../packages/assetgrove-search/src/find.ts";
