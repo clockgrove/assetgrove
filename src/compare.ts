@@ -18,7 +18,11 @@ import type { Region } from "./regions.ts";
 import type { Reason } from "./types.ts";
 
 export const COMPARE_SHEET_FILE = "compare.png";
-/** The share of pixels changed outside the regions above which the advisory reason is added. */
+/**
+ * The share of the figure's pixels changed outside the regions above which the advisory reason is
+ * added. The figure is every pixel not fully transparent in either image, so a small figure on a
+ * large transparent canvas is measured against itself (#376).
+ */
 export const OUTSIDE_CHANGE_LIMIT = 0.05;
 /** A pixel counts as changed when a channel differs by more than this (of 255). */
 export const CHANGE_TOLERANCE = 8;
@@ -201,7 +205,11 @@ export interface Comparison {
   identical: boolean;
   /** The share of all pixels that changed. */
   changed: number;
-  /** The share of all pixels that changed outside every region (every change when none are given). */
+  /**
+   * The share of the figure's pixels (those not fully transparent in either image; every pixel of
+   * an opaque image) that changed outside every region (every change when none are given). A pixel
+   * fully transparent in both images is not part of the figure, whatever colour it keeps.
+   */
   outsideChange: number;
   /** The advisory reason `changed_outside_region`, when regions are given and above the limit. */
   reasons: Reason[];
@@ -222,6 +230,7 @@ export async function compareRasters(
   let different = 0;
   let changed = 0;
   let outside = 0;
+  let figure = 0;
   for (let y = 0; y < before.height; y++)
     for (let x = 0; x < before.width; x++) {
       const i = (y * before.width + x) * 4;
@@ -231,13 +240,15 @@ export async function compareRasters(
       const grey = Math.min(255, max * 4);
       difference.data.set([grey, grey, grey, 255], i);
       if (max > 0) different++;
+      const shown = (before.data[i + 3] ?? 0) > 0 || (candidate.data[i + 3] ?? 0) > 0;
+      if (shown) figure++;
       if (max > CHANGE_TOLERANCE) {
         changed++;
-        if (!placed.some((p) => p.inside(x, y))) outside++;
+        if (shown && !placed.some((p) => p.inside(x, y))) outside++;
       }
     }
   const total = Math.max(1, before.width * before.height);
-  const outsideChange = outside / total;
+  const outsideChange = outside / Math.max(1, figure);
   return {
     before,
     candidate,
@@ -252,7 +263,7 @@ export async function compareRasters(
             {
               check: "changed_outside_region",
               passed: false,
-              reason: `${(outsideChange * 100).toFixed(1)}% of the pixels changed outside the regions`,
+              reason: `${(outsideChange * 100).toFixed(1)}% of the figure's pixels changed outside the regions`,
               source: "deterministic",
               shadow: true,
             },

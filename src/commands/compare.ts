@@ -21,8 +21,9 @@ export const compareCommand = defineCommand<CompareArgs>({
   summary: "write a numbers-only compare sheet of a candidate against the version before",
   details: `Writes <out>/compare.png: one row with the version before, the candidate and a difference
 map (black where the pixels are equal), region outlines drawn on all three, and numbers only.
-Reports identical, changed and outsideChange: the share of pixels changed outside every
---region (above 0.05 it adds the advisory reason changed_outside_region). A strip compares the
+Reports identical, changed (the share of all pixels) and outsideChange: the share of the figure's
+pixels (those not fully transparent in either image) changed outside every --region (above 0.05
+it adds the advisory reason changed_outside_region). A strip compares the
 frame named by --frame (1-based; --frame-width when frames are not square), a 3D asset (its .glb,
 or the directory of its turntable renders) the view named by --view.
 A region is "<x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]... : <note>", a box in pixels or, with

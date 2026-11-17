@@ -130,6 +130,31 @@ test("a change inside the box has outsideChange 0; a change outside raises the a
   assert.ok(same.difference.data.every((v, i) => i % 4 === 3 || v === 0));
 });
 
+test("outsideChange is a share of the figure: a small figure repainted outside the region is reported", async () => {
+  // A 100 x 100 transparent render whose figure (20 x 20 = 4% of the canvas) is repainted whole,
+  // outside the region: over the canvas that is 4%, below the 0.05 limit, and was never reported.
+  const before = createRaster(100, 100);
+  for (let y = 40; y < 60; y++)
+    for (let x = 40; x < 60; x++) setPixel(before, x, y, [90, 120, 160, 255]);
+  const candidate = paint(before, 40, 40, 20, 20);
+  const region = parseRegion("0,0,10,10 : x", { requireNote: true, base: process.cwd() });
+  const result = await compareRasters(before, candidate, [region]);
+  assert.equal(result.changed, 0.04);
+  assert.equal(result.outsideChange, 1);
+  assert.equal(result.reasons[0]?.check, "changed_outside_region");
+  assert.match(result.reasons[0]?.reason ?? "", /100\.0% of the figure's pixels/);
+  // Colour kept under alpha 0 changing is not a visible change: those pixels are not the figure.
+  const hidden = { ...before, data: new Uint8Array(before.data) };
+  for (let y = 0; y < 30; y++) for (let x = 0; x < 100; x++) setPixel(hidden, x, y, [255, 0, 0, 0]);
+  const quiet = await compareRasters(before, hidden, [region]);
+  assert.equal(quiet.outsideChange, 0);
+  assert.deepEqual(quiet.reasons, []);
+  // An opaque image's figure is the whole canvas, as before.
+  const opaque = flat(40, 40);
+  const small = await compareRasters(opaque, paint(opaque, 30, 30, 2, 2), [region]);
+  assert.equal(small.outsideChange, 4 / 1600);
+});
+
 test("compare writes a sheet, names a strip frame, and refuses bad regions with exit 2", async () => {
   const dir = await tempDir("assetgrove-compare-");
   const before = flat(24, 12);
