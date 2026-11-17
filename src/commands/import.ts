@@ -120,7 +120,7 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   );
   // The blobs slicing cannot tell by area are each judged by one decision; a clean sheet has none.
   // A sheet that does not decode is refused by the import itself, naming why.
-  let blobCalls = 0;
+  let blobCalls: number;
   try {
     blobCalls = plannedBlobDecisions(decodeImage(sheet), slice);
   } catch {
@@ -194,11 +194,14 @@ export const importCommand = defineCommand<ImportArgs>({
 generation"), removes the background to the profile's style, and has a vision model propose
 families in <import>/grouping.json with status "proposed" (--no-propose skips the grouping
 model; it needs no key unless --lock-bible names a locked subject, whose identity score is a
-model call in shadow and enforce modes: add --identity-mode off to skip it). A human reviews the proposal against contact.png, edits it and sets its status
+model call in shadow and enforce modes: add --identity-mode off to skip it, or the sheet holds
+blobs slicing cannot tell by area, such as number labels or a detached part, each judged by one
+sheet-blob decision; a clean sheet makes none). A human reviews the proposal against contact.png, edits it and sets its status
 to "confirmed" before write-families. See docs/sheet-import.md.
 
 With --frames, the sheet must hold exactly that many figures: slicing another number is refused
-(exit 2) before any model call, naming the cells or figures behind the difference.
+(exit 2) before any model call but the sheet-blob decisions, whose answers it counts after,
+naming the cells or figures behind the difference.
 
 With --lock-bible, a subject with an identity lock in that art bible has its contact sheet scored
 against the lock by the identity decision model. --identity-mode overrides the profile's

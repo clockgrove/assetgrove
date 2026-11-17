@@ -503,7 +503,10 @@ test("sheet generation: one request for the whole cycle within the cap, then the
   ]);
   assert.match(provenance.prompt, /contact sheet/);
   assert.equal(provenance.calls.length, 8);
-  assert.equal(provenance.calls.filter((c: { operation: string }) => c.operation === "sheet-blob").length, 6);
+  assert.equal(
+    provenance.calls.filter((c: { operation: string }) => c.operation === "sheet-blob").length,
+    6,
+  );
   assert.equal(record.slice.blobs?.length, 6);
   assert.ok(record.slice.blobs?.every((b) => b.kind === "label"));
   assert.equal(provenance.costUsd, 0.22);
