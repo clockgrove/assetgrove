@@ -263,7 +263,8 @@ test("generate-sheet --dry-run forecasts the sheet and grouping calls without a 
   assert.equal(d.command, "generate-sheet");
   assert.deepEqual(
     d.plan.perCall.map((c: { operation: string }) => c.operation),
-    ["sheet", "vision"],
+    // Up to 24 sheet-blob decisions on blobs slicing cannot tell by area (#364): an upper bound.
+    ["sheet", ...Array<string>(24).fill("sheet-blob"), "vision"],
   );
   assert.equal((await readdir(world.dir)).includes("imports"), false);
   const over = await cli([

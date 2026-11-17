@@ -308,14 +308,17 @@ test("import --no-propose --bible makes the one prompt-policy call, and without 
   ];
 
   const bare = doc(await cli([...base, "--dry-run"]));
-  assert.deepEqual(bare["jobs"], [], "no prompt text, no check");
-  assert.equal(bare["paid"], false);
+  // No prompt text, no check; the sheet's 16 number labels are each one sheet-blob decision (#364).
+  assert.deepEqual(
+    (bare["jobs"] as PlanJob[]).map((j) => [j.operation, j.count]),
+    [["sheet-blob", 16]],
+  );
 
   const withBible = [...base, "--bible", bible];
   const dry = doc(await cli([...withBible, "--dry-run"]));
   assert.deepEqual(
     (dry["jobs"] as PlanJob[]).map((j) => j.operation),
-    ["prompt-policy"],
+    ["prompt-policy", "sheet-blob"],
   );
   assert.equal(dry["paid"], true);
   const run = await cli(withBible);
