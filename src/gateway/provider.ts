@@ -101,9 +101,51 @@ export interface Billing {
   callCost?: (requestId: string) => Promise<number | null | undefined>;
 }
 
+/** A queued job's state as its provider reports it. */
+export type JobStatus = "queued" | "running" | "done" | "failed" | "unknown";
+
+/**
+ * A call a provider serves as a queued job (design section 9). Core journals the job's key before
+ * `submit` and its handle right after, polls `status` and collects `result`, so a run that dies
+ * while the job runs adopts the same job when it resumes instead of paying for another.
+ */
+export interface JobProvider<Request, Result> {
+  /**
+   * True when submitting a key the provider already has returns that key's job rather than a new
+   * one: a resumed run whose journal lost the handle submits again with the same key.
+   */
+  readonly dedupesByKey?: boolean;
+  /** Submits the job and returns its handle. `key` names the attempt (run, call and attempt). */
+  submit(request: Request, options: { key: string }): Promise<string>;
+  /** The job's state; spends nothing. */
+  status(handle: string): Promise<JobStatus>;
+  /** A finished job's result. Core passes the request the job was submitted with. */
+  result(handle: string, request: Request): Promise<Result>;
+  /** Cancels a job. Core does not call it: a stopped run leaves its job running and journaled. */
+  cancel?(handle: string): Promise<void>;
+  /** The handle of the job submitted with `key`, or undefined when the provider has none. */
+  find?(key: string): Promise<string | undefined>;
+}
+
+/** Each call kind's request and result. */
+export interface CallTypes {
+  image: [ImageRequest, ImageResult];
+  vision: [VisionRequest, VisionResult];
+  decide: [DecisionRequest, DecisionResult];
+  embed: [EmbedRequest, EmbedResult];
+  model: [ModelRequest, ModelResult];
+  rig: [RigRequest, ModelResult];
+  animate: [AnimateRequest, ModelResult];
+}
+
+/** The call kinds a provider serves as jobs. */
+export type ProviderJobs = { [K in CallKind]?: JobProvider<CallTypes[K][0], CallTypes[K][1]> };
+
 export interface GenerationProvider {
   /** What its calls cost and where they go, from its adapter. */
   readonly billing: Billing;
+  /** The kinds of call served as queued jobs; a kind not listed is one direct call. */
+  readonly jobs?: ProviderJobs;
   /** The billing of one kind of call, for a provider made of several adapters. */
   billingFor?(kind: CallKind): Billing;
   generateImage(request: ImageRequest): Promise<ImageResult>;
