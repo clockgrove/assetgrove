@@ -60,6 +60,16 @@ export const SHEET_BLOB_OPERATION = "sheet-blob";
  * decision per candidate, shown the candidate and the references.
  */
 export const STYLE_VERDICT_OPERATION = "style-verdict";
+/**
+ * Which allowed mood (or enumerated adjustment value) is closest to the one a brief requested
+ * (#378): a typed choice, at most once per field per plan, only when the request is out of bounds.
+ */
+export const BRIEF_CLAMP_OPERATION = "brief-clamp";
+/**
+ * Whether an asset is part of the game's user interface (#378): one Boolean decision per plan,
+ * asked only when DESIGN.md has colours and the brief does not declare `ui`.
+ */
+export const UI_ASSET_OPERATION = "ui-asset";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -373,6 +383,31 @@ export const defaultRoutes: Routes = {
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
     providerTermsAsOf: "2026-11-16",
   },
+  // Plan-time brief decisions (#378), on the same typed decision model and upper bound as identity.
+  [BRIEF_CLAMP_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
+    providerTermsAsOf: "2026-11-16",
+  },
+  [UI_ASSET_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
+    providerTermsAsOf: "2026-11-16",
+  },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
     model: "openai/gpt-6.1-terra",
@@ -606,6 +641,8 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [CUTOUT_OPERATION]: "decisions",
   [SHEET_BLOB_OPERATION]: "decisions",
   [STYLE_VERDICT_OPERATION]: "decisions",
+  [BRIEF_CLAMP_OPERATION]: "decisions",
+  [UI_ASSET_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

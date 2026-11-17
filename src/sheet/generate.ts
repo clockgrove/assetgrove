@@ -94,6 +94,7 @@ const BRIEF_FIELDS = new Set([
   "mood",
   "context",
   "adjustments",
+  "ui",
 ]);
 
 /** A brief file's value, checked as `plan` checks it: known fields, strings where strings belong, original wording. */
@@ -109,6 +110,8 @@ export function sheetBrief(value: unknown, allow: readonly string[] = []): Gener
   for (const key of ["purpose", "appearsIn", "mood", "context"])
     if (brief[key] !== undefined && typeof brief[key] !== "string")
       throw new InputError(`brief ${key} must be a string`);
+  if (brief["ui"] !== undefined && typeof brief["ui"] !== "boolean")
+    throw new InputError("brief ui must be a boolean");
   const neighbours = brief["neighbouringAssets"];
   if (
     neighbours !== undefined &&
