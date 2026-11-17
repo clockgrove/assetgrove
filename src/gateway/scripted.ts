@@ -20,6 +20,7 @@ import {
   BRIEF_POLICY_OPERATION,
   CUTOUT_OPERATION,
   SHEET_BLOB_OPERATION,
+  MAP_FLICKER_OPERATION,
   LOOKDEV_MARKING_OPERATION,
   MODEL3D_FACING_OPERATION,
   PROMPT_POLICY_OPERATION,
@@ -123,6 +124,14 @@ export interface Script {
   sheetBlob?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers whether a material map flickers between two frames (the `map-flicker` choice decision:
+   * same, follows-pose or flickers). A script without it answers flickers, the pixel rule's fail;
+   * its calls do not count toward `decide`'s index.
+   */
+  mapFlicker?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -180,6 +189,7 @@ export class ScriptedProvider implements GenerationProvider {
   private templateCount = 0;
   private cutoutCount = 0;
   private sheetBlobCount = 0;
+  private mapFlickerCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -288,6 +298,13 @@ export class ScriptedProvider implements GenerationProvider {
         ? this.script.sheetBlob(request)
         : { answer: { type: "choice" as const, choice: "label" }, costUsd: 0 };
       return { requestId: `scripted-sheet-blob-${index}`, ...answer };
+    }
+    if (request.operation === MAP_FLICKER_OPERATION) {
+      const index = this.mapFlickerCount++;
+      const answer = this.script.mapFlicker
+        ? this.script.mapFlicker(request)
+        : { answer: { type: "choice" as const, choice: "flickers" }, costUsd: 0 };
+      return { requestId: `scripted-map-flicker-${index}`, ...answer };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

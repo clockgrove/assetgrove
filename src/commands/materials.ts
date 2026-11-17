@@ -114,6 +114,10 @@ async function prepare(args: MaterialsArgs, ctx: RunContext) {
       throw new InputError(`missing declared method/version for ${channel}`);
     return input.method === "model-assisted-painting" ? [`material-${channel}`] : [];
   });
+  // At most one map-flicker decision per channel and frame pair the pixel comparison cannot clear.
+  const frameCount = spec.value.frames?.count ?? 1;
+  const flickerPairs = frameCount > 1 ? frameCount : 0;
+  for (let i = 0; i < config.channels.length * flickerPairs; i++) operations.push("map-flicker");
   operations.push("material-qa");
   const perCall = operations.map((operation) => {
     const route = routes[operation];
@@ -142,7 +146,8 @@ export const materialsCommand = defineCommand<MaterialsArgs>({
   name: "materials",
   tool: "materials",
   summary: "derive and check material maps, native renditions and target lit previews",
-  details: `Derives the channels requested by style.materials, checks alignment and temporal stability,
+  details: `Derives the channels requested by style.materials, checks alignment and temporal stability
+(a map-flicker decision on each frame pair whose map pixels cannot clear it),
 writes native-resolution renditions, runs target compression and dusk-rain/night previews,
 and judges the flat and lit images with vision QA. Rejected materials exit 5 and remain
 unapproved. Model calls reserve against --cap. See docs/materials.md.`,
