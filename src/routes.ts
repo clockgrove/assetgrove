@@ -70,6 +70,11 @@ export const BRIEF_CLAMP_OPERATION = "brief-clamp";
  * asked only when DESIGN.md has colours and the brief does not declare `ui`.
  */
 export const UI_ASSET_OPERATION = "ui-asset";
+/**
+ * Whether a material map flickers between two frames (#364): one choice decision (same, follows
+ * the pose, flickers) per channel and frame pair whose map the pixel comparison could not clear.
+ */
+export const MAP_FLICKER_OPERATION = "map-flicker";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -409,6 +414,20 @@ export const defaultRoutes: Routes = {
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
     providerTermsAsOf: "2026-11-16",
   },
+  // Whether a material map flickers between two frames (#364): one choice decision per channel and
+  // frame pair still over the flicker bound where the albedo is unchanged, same model and bound.
+  [MAP_FLICKER_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-17)",
+    providerTermsAsOf: "2026-11-17",
+  },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
     model: "openai/gpt-6.1-terra",
@@ -658,6 +677,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [STYLE_VERDICT_OPERATION]: "decisions",
   [BRIEF_CLAMP_OPERATION]: "decisions",
   [UI_ASSET_OPERATION]: "decisions",
+  [MAP_FLICKER_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

@@ -18,7 +18,7 @@ import { sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import type { TargetProfile } from "../src/types.ts";
 import { runMaterials } from "../src/material/pipeline.ts";
-import { MATERIAL_LIT_CHECKS } from "../src/qa/stability.ts";
+import { MATERIAL_FLICKER_CHECK, MATERIAL_LIT_CHECKS } from "../src/qa/stability.ts";
 import type { OutputGrant } from "../src/types.ts";
 import type { MaterialDerivation, MaterialProfile } from "../src/material/pipeline.ts";
 
@@ -28,6 +28,10 @@ async function setup(
     compression?: boolean;
     model?: boolean;
     qaGrant?: OutputGrant;
+    /** Paints a still spot of the height map differently in frame 1 and answers map-flicker so. */
+    flicker?: "same" | "follows-pose" | "flickers";
+    /** Re-lights frame 1's albedo on every pixel but one, so too few pixels have unchanged albedo. */
+    relit?: boolean;
   } = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-material-pipeline-"));
@@ -40,6 +44,12 @@ async function setup(
       setPixel(height, x, y, [128, 128, 128, 255]);
       setPixel(zero, x, y, [0, 0, 0, 255]);
     }
+  // Frame 1's height changes on pixels whose albedo (flat) did not change: over any bound.
+  if (options.flicker) setPixel(height, 5, 1, [200, 200, 200, 255]);
+  if (options.relit)
+    for (let y = 0; y < 4; y++)
+      for (let x = 4; x < 8; x++)
+        if (x !== 4 || y !== 0) setPixel(albedo, x, y, [140, 160, 180, 255]);
   await writeFile(
     join(dir, "albedo.png"),
     embedDigitalSourceType(encodePng(albedo), "image/png", DIGITAL_SOURCE_TYPES.human),
@@ -123,6 +133,12 @@ async function setup(
     },
   };
   const provider = new ScriptedProvider({
+    ...(options.flicker && {
+      mapFlicker: () => ({
+        answer: { type: "choice" as const, choice: options.flicker as string },
+        costUsd: 0.001,
+      }),
+    }),
     image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(height) }], costUsd: 0.1 }),
     vision: () => ({
       text: JSON.stringify({
@@ -172,6 +188,20 @@ async function setup(
     },
   };
 }
+
+const FLICKER_ENTRY = {
+  checkId: MATERIAL_FLICKER_CHECK.id,
+  version: MATERIAL_FLICKER_CHECK.version,
+  model: defaultRoutes["map-flicker"]!.model,
+  cases: 30,
+  passCases: 15,
+  failCases: 15,
+  falsePasses: 0,
+  falseFails: 0,
+  repeats: 3,
+  agreement: 0.95,
+  measuredAt: "2026-11-17T00:00:00.000Z",
+};
 
 test("material pipeline emits aligned native 1x/2x maps, provenance and lit review", async () => {
   const f = await setup();
@@ -378,7 +408,9 @@ test("native 4x renditions retain exact geometry and temporal QA gates changed m
   assert.deepEqual(getPixel(normal, 12, 4), [128, 128, 255, 255]);
   setPixel(flat, 12, 4, [255, 255, 255, 255]);
   await writeFile(join(f.dir, "height.png"), encodePng(flat));
-  const rejected = await runMaterials(f.options);
+  // The changed pixel is over the bound where the albedo is unchanged; the decision (scripted:
+  // flickers) fails the channel once the map-flicker model is measured.
+  const rejected = await runMaterials({ ...f.options, stability: [FLICKER_ENTRY] });
   assert.equal(rejected.passed, false);
   assert.deepEqual(rejected.outputs, []);
   assert.ok(rejected.qa.reasons.some((r) => !r.passed && /height: frame/.test(r.reason)));
@@ -482,4 +514,111 @@ test("material sidecars declare the licence the routes' output grants allow", as
   const report = JSON.parse(await readFile(result.reportPath, "utf8"));
   assert.equal(report.license, "CC-BY-4.0");
   assert.equal(report.outputGrant.plan, "free");
+});
+
+test("map flicker: a pair over the bound where the albedo is unchanged is judged by one map-flicker decision per channel and pair, counted against the run's spend", async () => {
+  const f = await setup({ flicker: "follows-pose" });
+  const result = await runMaterials({ ...f.options, stability: [FLICKER_ENTRY] });
+  assert.equal(result.passed, true, "follows the pose: the channel passes");
+  const asked = f.provider.calls.filter(
+    (c) => c.kind === "decide" && c.request.operation === "map-flicker",
+  );
+  // height, its derived normal and roughness (painted from height.png) change; each has 2 pairs.
+  assert.equal(asked.length, 6);
+  for (const c of asked) {
+    if (c.kind !== "decide") continue;
+    assert.equal(c.request.images.length, 4, "both frames' albedo and map");
+    assert.equal(c.request.model, "perplexity/pplx-decider-v1.2");
+    assert.equal(c.request.question.type, "choice");
+    if (c.request.question.type === "choice")
+      assert.deepEqual(Object.keys(c.request.question.options), [
+        "same",
+        "follows-pose",
+        "flickers",
+      ]);
+  }
+  const records = f.call.records.filter((r) => r.operation === "map-flicker");
+  assert.equal(records.length, 6);
+  assert.ok(records.every((r) => r.decision?.label === "follows-pose" && r.costUsd === 0.001));
+  const report = JSON.parse(await readFile(result.reportPath, "utf8"));
+  assert.ok(Math.abs(report.costUsd - (0.1 + 6 * 0.001)) < 1e-9, "the decisions are spent");
+  const judged = result.qa.reasons.filter(
+    (r) => r.check === "material-flicker" && r.source === "decision",
+  );
+  assert.equal(judged.length, 6);
+  assert.ok(judged.every((r) => r.passed && /judged follows the pose/.test(r.reason)));
+  // The still channels (emissive, wind) are cleared by pixels, with no call.
+  assert.ok(
+    result.qa.reasons.some(
+      (r) => r.check === "material-flicker" && r.source === "deterministic" && r.passed,
+    ),
+  );
+});
+
+test("map flicker: a pair with too small a share of unchanged albedo is judged by a decision told the measured share", async () => {
+  const f = await setup({ flicker: "same", relit: true });
+  const result = await runMaterials({ ...f.options, stability: [FLICKER_ENTRY] });
+  assert.equal(result.passed, true, "judged the same: the channel passes");
+  const asked = f.provider.calls.filter(
+    (c) => c.kind === "decide" && c.request.operation === "map-flicker",
+  );
+  assert.ok(asked.length > 0);
+  for (const c of asked) {
+    if (c.kind !== "decide") continue;
+    assert.match(
+      c.request.prompt,
+      /found only 1 of 16 pose-corresponding pixels with unchanged albedo, under the 0\.25 share/,
+    );
+    assert.doesNotMatch(c.request.prompt, /no pixel with unchanged albedo/);
+  }
+  const judged = result.qa.reasons.filter(
+    (r) => r.check === "material-flicker" && r.source === "decision",
+  );
+  assert.equal(judged.length, asked.length);
+  assert.ok(
+    judged.every((r) =>
+      /frame \d: only 1 of 16 pose-corresponding pixels with unchanged albedo, under the 0\.25 share needed to compare by pixels; judged same$/.test(
+        r.reason,
+      ),
+    ),
+  );
+});
+
+test("map flicker: only flickers fails the channel, with a qualifying stability entry; without one it is advisory", async () => {
+  const f = await setup({ flicker: "flickers" });
+  const failed = await runMaterials({ ...f.options, stability: [FLICKER_ENTRY] });
+  assert.equal(failed.passed, false);
+  assert.equal(failed.outputs.length, 0, "the maps are rejected before any rendition");
+  const reason = failed.qa.reasons.find(
+    (r) => r.check === "material-flicker" && r.source === "decision" && !r.passed,
+  );
+  assert.match(reason?.reason ?? "", /^height: frame \d: residual .* > bound 0 .*judged flickers$/);
+  assert.equal(reason?.shadow, undefined);
+  assert.deepEqual(
+    failed.filtering?.find((s) => s.check === "material-flicker"),
+    { check: "material-flicker", state: "filtering" },
+  );
+  const advisory = await runMaterials(f.options);
+  assert.equal(advisory.passed, true);
+  const shadowed = advisory.qa.reasons.find(
+    (r) => r.check === "material-flicker" && r.source === "decision",
+  );
+  assert.equal(shadowed?.passed, false);
+  assert.equal(shadowed?.shadow, true);
+  assert.deepEqual(
+    advisory.filtering?.find((s) => s.check === "material-flicker"),
+    { check: "material-flicker", state: "advisory", cause: "no-entry" },
+  );
+  const same = await setup({ flicker: "same" });
+  assert.equal((await runMaterials({ ...same.options, stability: [FLICKER_ENTRY] })).passed, true);
+});
+
+test("map flicker: still maps make no decision", async () => {
+  const f = await setup();
+  await runMaterials({ ...f.options, stability: [FLICKER_ENTRY] });
+  assert.equal(
+    f.provider.calls.filter((c) => c.kind === "decide").length,
+    0,
+    "a still map is cleared by pixels",
+  );
 });
