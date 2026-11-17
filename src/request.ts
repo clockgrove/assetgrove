@@ -150,6 +150,11 @@ export async function loadBibleInputs(
   if (refs.length === 0) {
     throw new InputError(`the style bible has no reference images for subject "${subject}"`);
   }
+  if (bible.perspective === undefined) {
+    throw new InputError(
+      "the style bible names no perspective sample: set `perspective` to the path of an image that shows the camera angle",
+    );
+  }
   return {
     subject: await Promise.all(refs.map((r) => loadReference(r.path, r.role, bibleDir))),
     perspective: await loadReference(bible.perspective, "perspective", bibleDir),

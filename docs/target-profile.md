@@ -67,6 +67,8 @@ The shared files carry a `format` line as their first field, `assetgrove-<kind>/
 }
 ```
 
+`version` and `palette` (at least one six-digit hex colour) are required; a bible without either, or with a field of the wrong type, is refused when it loads (exit 2 `invalid_input`, naming the field). `references` may be left out and means none: a request for a subject with no references is then refused, naming the subject. `perspective` may be left out too: a request that sends the perspective sample is then refused, naming the field. Fields the bible does not define are kept as they are.
+
 A bible that lists references requires `referenceLicense`, the terms they were provided under: an SPDX identifier, a `LicenseRef-*` or `NOASSERTION`. It is checked as non-empty text and not parsed. Each reference may set its own `license`. In `BIBLE.md` the same rule covers the anchors and the identity-lock turnarounds and references.
 
 A reference may set `view`, which says what it shows of its subject: `front`, `left`, `right`, `back`, `three-quarter`, `sheet` (several views on one sheet) or `detail` (not a full-body view). `left` and `right` are the character's own sides, not the viewer's. A value outside this list is refused when the bible loads (exit 2). `role` stays free text and is never read for the view. A 3D character request ([characters-3d.md](characters-3d.md#what-a-candidate-is)) uses `view`; when it is not set, a model judges the view, and the answer is cached by the image's hash. A request whose references show no `front` view is refused before the first expensive call; a `sheet` does not count as a front view.
