@@ -1,6 +1,9 @@
 import type { Box, Point, Rgb, Size } from "./types.ts";
 import { createRaster, getPixel, opaqueBox, parseHex, setPixel, toHex } from "./image/raster.ts";
 import type { Raster } from "./image/raster.ts";
+import { matteFigure } from "./sheet/matte.ts";
+import { wholeImageFigure } from "./sheet/slice.ts";
+import type { ResolvedStyle } from "./style.ts";
 
 export interface PostprocessOptions {
   frame: Size;
@@ -8,7 +11,10 @@ export interface PostprocessOptions {
   anchor: Point;
   /** "#rrggbb" bible palette. */
   palette: string[];
-  /** RGB euclidean distance within which a pixel counts as background. Default 48. */
+  /**
+   * RGB distance from the border's colour within which a pixel of an image that is not already cut
+   * out can be background (the matte's slice tolerance). Default 48.
+   */
   backgroundTolerance?: number;
   /** Pixels kept free around the subject inside the frame. Default 1. */
   margin?: number;
@@ -29,70 +35,111 @@ function distance(a: readonly number[], b: readonly number[]): number {
   );
 }
 
-/** Returns a copy whose alpha is strictly 0 or 255. */
-function toTrueAlpha(src: Raster, tolerance: number): Raster {
-  const out = createRaster(src.width, src.height);
-  out.data.set(src.data);
+/** Share of a frame's border pixels that must be transparent for it to count as already cut out. */
+const STRAY_BORDER = 0.02;
+
+/** The style stage mattes at: binary alpha at 128, full colour (the palette is snapped after). */
+const STAGE_MATTE_STYLE: ResolvedStyle = {
+  alpha: { mode: "binary", threshold: 128 },
+  color: { rule: "full", palette: [] },
+  edges: "crisp",
+};
+
+/**
+ * Whether an image is already cut out: its border holds real transparency, more than a stray
+ * pixel's worth (over 2% of its border pixels, and at least two, below alpha 128). A subject that
+ * covers part of the border, even most of it, still counts; a stray semi-transparent pixel in or on
+ * the edge of an opaque image does not.
+ */
+export function isCutOut(src: Raster): boolean {
   const { width, height } = src;
-  let hasAlpha = false;
-  for (let i = 3; i < out.data.length; i += 4) {
-    if ((out.data[i] ?? 255) < 255) {
-      hasAlpha = true;
-      break;
-    }
-  }
-  if (hasAlpha) {
-    for (let i = 3; i < out.data.length; i += 4) out.data[i] = (out.data[i] ?? 0) < 128 ? 0 : 255;
-    return out;
-  }
-
-  const corners = [
-    getPixel(src, 0, 0),
-    getPixel(src, width - 1, 0),
-    getPixel(src, 0, height - 1),
-    getPixel(src, width - 1, height - 1),
-  ];
-  let bg = corners[0] ?? [0, 0, 0, 255];
-  let best = 0;
-  for (const c of corners) {
-    const count = corners.filter((o) => o[0] === c[0] && o[1] === c[1] && o[2] === c[2]).length;
-    if (count > best) {
-      best = count;
-      bg = c;
-    }
-  }
-
-  const seen = new Uint8Array(width * height);
-  const stack: number[] = [];
-  const visit = (x: number, y: number): void => {
-    if (x < 0 || y < 0 || x >= width || y >= height) return;
-    const idx = y * width + x;
-    if (seen[idx]) return;
-    if (distance(getPixel(src, x, y), bg) > tolerance) return;
-    seen[idx] = 1;
-    stack.push(idx);
+  let border = 0;
+  let clear = 0;
+  const visit = (x: number, y: number) => {
+    border++;
+    if ((src.data[(y * width + x) * 4 + 3] ?? 255) < 128) clear++;
   };
   for (let x = 0; x < width; x++) {
     visit(x, 0);
-    visit(x, height - 1);
+    if (height > 1) visit(x, height - 1);
   }
-  for (let y = 0; y < height; y++) {
+  for (let y = 1; y < height - 1; y++) {
     visit(0, y);
-    visit(width - 1, y);
+    if (width > 1) visit(width - 1, y);
   }
-  while (stack.length > 0) {
-    const idx = stack.pop() as number;
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    visit(x + 1, y);
-    visit(x - 1, y);
-    visit(x, y + 1);
-    visit(x, y - 1);
+  return clear >= 2 && clear > STRAY_BORDER * border;
+}
+
+/**
+ * A copy whose alpha is strictly 0 or 255. An image already cut out keeps its own alpha,
+ * thresholded at 128, so its transparent pixels stay background whatever colour hides under them;
+ * only an image whose border is opaque has its alpha ignored, and it is matted as opaque by the sheet path's matte
+ * (`wholeImageFigure` then `matteFigure`): background is what is connected to the border and is the
+ * border's colour, so a pale part of the subject next to a light background stays the subject's.
+ */
+function toTrueAlpha(src: Raster, tolerance: number): Raster {
+  const out = createRaster(src.width, src.height);
+  out.data.set(src.data);
+  if (isCutOut(src)) {
+    for (let i = 3; i < out.data.length; i += 4) out.data[i] = (out.data[i] ?? 0) < 128 ? 0 : 255;
+    return out;
   }
-  for (let idx = 0; idx < seen.length; idx++) {
-    out.data[idx * 4 + 3] = seen[idx] ? 0 : 255;
+  for (let i = 3; i < out.data.length; i += 4) out.data[i] = 255;
+  return matteFigure(wholeImageFigure(out, tolerance), STAGE_MATTE_STYLE).image;
+}
+
+/** Frames side by side on a transparent canvas, top-aligned: a strip's source as one image. */
+export function sideBySide(frames: readonly Raster[]): Raster {
+  const width = frames.reduce((w, f) => w + f.width, 0);
+  const height = Math.max(1, ...frames.map((f) => f.height));
+  const out = createRaster(Math.max(1, width), height);
+  let ox = 0;
+  for (const f of frames) {
+    for (let y = 0; y < f.height; y++) {
+      const row = f.data.subarray(y * f.width * 4, (y + 1) * f.width * 4);
+      out.data.set(row, (y * out.width + ox) * 4);
+    }
+    ox += f.width;
   }
   return out;
+}
+
+/** Colours a cut-out is shown over: the one farthest from every colour it shows is used. */
+const CONTRAST_COLOURS = ["#000000", "#ffffff", "#ff00ff", "#00ff00", "#00ffff", "#0000ff"];
+
+/**
+ * The cut-out composited over a contrasting colour (the one of CONTRAST_COLOURS farthest from every
+ * colour it shows), so missing parts and attached background both show.
+ */
+export function overContrast(cutout: Raster): { image: Raster; colour: string } {
+  const shown = new Set<number>();
+  for (let i = 0; i < cutout.data.length; i += 4) {
+    if ((cutout.data[i + 3] ?? 0) === 0) continue;
+    shown.add(
+      ((cutout.data[i] ?? 0) << 16) | ((cutout.data[i + 1] ?? 0) << 8) | (cutout.data[i + 2] ?? 0),
+    );
+  }
+  const colours = [...shown].map((n): Rgb => [(n >> 16) & 255, (n >> 8) & 255, n & 255]);
+  let colour = CONTRAST_COLOURS[0] as string;
+  let best = -1;
+  for (const hex of CONTRAST_COLOURS) {
+    const c = parseHex(hex);
+    const nearest = Math.min(Infinity, ...colours.map((o) => distance(o, c)));
+    if (nearest > best) {
+      best = nearest;
+      colour = hex;
+    }
+  }
+  const bg = parseHex(colour);
+  const image = createRaster(cutout.width, cutout.height);
+  for (let i = 0; i < cutout.data.length; i += 4) {
+    const a = (cutout.data[i + 3] ?? 0) / 255;
+    for (let k = 0; k < 3; k++) {
+      image.data[i + k] = Math.round((cutout.data[i + k] ?? 0) * a + (bg[k] ?? 0) * (1 - a));
+    }
+    image.data[i + 3] = 255;
+  }
+  return { image, colour };
 }
 
 /** Resamples the box to dw x dh: area averaging when shrinking, nearest neighbour when growing. */

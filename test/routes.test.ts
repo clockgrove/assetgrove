@@ -215,6 +215,7 @@ test("a stage call record shows <providerId>:<operation>:<model>", async () => {
   const run = JSON.parse(r.stdout) as { candidates: Array<{ provenance: Provenance }> };
   const routes = new Set(run.candidates[0]!.provenance.calls.map((c) => c.route));
   assert.deepEqual([...routes].sort(), [
+    `mine:cutout:${defaultRoutes.cutout!.model}`,
     `mine:edit:${defaultRoutes.edit.model}`,
     `mine:vision:${defaultRoutes.vision.model}`,
   ]);

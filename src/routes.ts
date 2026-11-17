@@ -44,6 +44,12 @@ export const MOTION_TEMPLATE_OPERATION = "motion-template";
  * (src/search/style-outliers.ts).
  */
 export const STYLE_OUTLIER_OPERATION = "style-outlier";
+/**
+ * Whether stage's background removal cut part of the subject away or left background attached
+ * (#364): one Boolean decision per still or sprite-strip candidate, shown the source image and the
+ * cut-out over a contrasting colour.
+ */
+export const CUTOUT_OPERATION = "cutout";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -315,6 +321,20 @@ export const defaultRoutes: Routes = {
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
     providerTermsAsOf: "2026-11-16",
   },
+  // Whether stage's cut-out lost part of the subject or kept background (#364): one Boolean
+  // decision per still or sprite-strip candidate, on the same typed decision model and bound.
+  [CUTOUT_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-17)",
+    providerTermsAsOf: "2026-11-17",
+  },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
     model: "openai/gpt-6.1-terra",
@@ -545,6 +565,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [STALENESS_OPERATION]: "decisions",
   [MOTION_TEMPLATE_OPERATION]: "decisions",
   [STYLE_OUTLIER_OPERATION]: "decisions",
+  [CUTOUT_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

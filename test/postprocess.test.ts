@@ -9,7 +9,7 @@ import {
   toHex,
 } from "../src/image/raster.ts";
 import type { Raster } from "../src/image/raster.ts";
-import { postprocessFrames } from "../src/postprocess.ts";
+import { isCutOut, overContrast, postprocessFrames, sideBySide } from "../src/postprocess.ts";
 
 const palette = ["#202020", "#d03030", "#30a040", "#f0f0f0"];
 const frame = { width: 16, height: 16 };
@@ -101,4 +101,98 @@ test("a fractional anchor row is rounded, so each frame lands whole in its own c
 
 test("wrong frame count throws", () => {
   assert.throws(() => postprocessFrames([blobFrame(true)], options), /frames/);
+});
+
+/** A dark body with a pale belly along its bottom edge, on a light background the belly is near. */
+function paleBellyFrame(): Raster {
+  const r = createRaster(40, 40);
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) setPixel(r, x, y, [230, 230, 230, 255]);
+  for (let y = 10; y < 27; y++) {
+    for (let x = 6; x < 35; x++) {
+      const belly = y >= 22 && x >= 10 && x < 31;
+      setPixel(r, x, y, belly ? [205, 205, 215, 255] : [90, 60, 40, 255]);
+    }
+  }
+  return r;
+}
+
+test("a pale belly next to a light background stays the subject's", () => {
+  const bellyPalette = ["#5a3c28", "#cdcdd7"];
+  const out = postprocessFrames([paleBellyFrame()], {
+    frame: { width: 48, height: 48 },
+    frameCount: 1,
+    anchor: { x: 24, y: 46 },
+    palette: bellyPalette,
+  });
+  assert.deepEqual(out.palette, bellyPalette, "the belly's colour reaches the frame");
+  const box = opaqueBox(out.strip);
+  assert.ok(box);
+  // The body is 29 x 17 with its belly; without it, 29 x 12.
+  assert.ok(Math.abs(box.height / box.width - 17 / 29) < 0.05, `${box.width} x ${box.height}`);
+});
+
+test("one stray semi-transparent pixel does not make an opaque image count as cut out", () => {
+  const stray = (offset: number) => {
+    const r = blobFrame(true, offset);
+    setPixel(r, 20, 36, [255, 255, 255, 200]);
+    return r;
+  };
+  assert.equal(isCutOut(stray(0)), false);
+  assert.equal(isCutOut(blobFrame(false)), true);
+  const out = postprocessFrames([stray(0), stray(2)], options);
+  assert.equal(getPixel(out.strip, 0, 0)[3], 0, "the background was removed");
+  const box = opaqueBox(out.strip, { x: 0, y: 0, ...frame });
+  assert.ok(box && box.width < frame.width - 2, "the figure is the blob, not the whole image");
+});
+
+/** A cut-out subject 24 px wide standing on the bottom edge (15% of the border) over clear `under`. */
+function standingCutOut(body: [number, number, number], under: [number, number, number]): Raster {
+  const r = createRaster(40, 40);
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) setPixel(r, x, y, [...under, 0]);
+  for (let y = 10; y < 40; y++) {
+    for (let x = 8; x < 32; x++) setPixel(r, x, y, y < 14 ? [200, 50, 50, 255] : [...body, 255]);
+  }
+  return r;
+}
+
+test("a cut-out whose subject covers part of the border keeps its own transparency", () => {
+  for (const [body, under] of [
+    [
+      [12, 12, 12],
+      [0, 0, 0],
+    ],
+    [
+      [245, 245, 240],
+      [255, 255, 255],
+    ],
+  ] as [number, number, number][][]) {
+    const image = standingCutOut(
+      body as [number, number, number],
+      under as [number, number, number],
+    );
+    assert.equal(isCutOut(image), true);
+    const out = postprocessFrames([image], {
+      frame: { width: 48, height: 48 },
+      frameCount: 1,
+      anchor: { x: 24, y: 46 },
+      palette: [toHex(body as [number, number, number]), "#c83232"],
+    });
+    const box = opaqueBox(out.strip);
+    assert.ok(box);
+    // The whole subject (24 x 30) survives, not only its marking.
+    assert.ok(Math.abs(box.height / box.width - 30 / 24) < 0.1, `${box.width} x ${box.height}`);
+  }
+});
+
+test("a cut-out is shown over the colour farthest from its own", () => {
+  const cut = createRaster(2, 1);
+  setPixel(cut, 0, 0, [250, 250, 250, 255]);
+  setPixel(cut, 1, 0, [0, 0, 0, 0]);
+  const shown = overContrast(cut);
+  assert.notEqual(shown.colour, "#ffffff");
+  assert.deepEqual(getPixel(shown.image, 0, 0), [250, 250, 250, 255]);
+  assert.deepEqual(getPixel(shown.image, 1, 0), [...parseHex(shown.colour), 255]);
+  const strip = sideBySide([cut, cut]);
+  assert.equal(strip.width, 4);
+  assert.deepEqual(getPixel(strip, 2, 0), [250, 250, 250, 255]);
 });

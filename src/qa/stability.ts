@@ -112,6 +112,18 @@ export const ANIMATION_VISION_CHECKS: readonly QaCheck[] = [
 ];
 
 /**
+ * Stage's cut-out (src/generators/image.ts, #364): a typed Boolean decision on whether background
+ * removal cut part of the subject away or left background attached.
+ */
+export const CUTOUT_CHECK: QaCheck = {
+  id: "cutout",
+  version: "1",
+  modelBacked: true,
+  source: "decision",
+  operation: "cutout",
+};
+
+/**
  * Look-dev markings (src/model3d/lookdev/markings.ts): a typed decision judges each marking kept,
  * drifted or missing on the reference crop and the render crop (version 2, #365; version 1
  * measured pixels in boxes a vision model drew).
@@ -151,6 +163,7 @@ export const MATERIAL_LIT_CHECKS: readonly QaCheck[] = [
 export const QA_CHECKS: readonly QaCheck[] = [
   ...IMAGE_QA_CHECKS,
   ...ANIMATION_VISION_CHECKS,
+  CUTOUT_CHECK,
   LOOKDEV_MARKINGS_CHECK,
   STYLE_SCORE_CHECK,
   ...MATERIAL_LIT_CHECKS,
