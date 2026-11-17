@@ -304,19 +304,19 @@ export const defaultRoutes: Routes = {
       "OpenAI Services Agreement and Usage Policies, via Vercel AI Gateway (as of 2026-11-11)",
     providerTermsAsOf: "2026-11-11",
   },
-  // Identity-flicker judgement between consecutive animation frames.
+  // Identity flicker (#376): one typed Boolean decision per consecutive frame pair and the loop
+  // seam, on the typed decision model and its upper bound.
   flicker: {
-    model: "google/gemini-3-flash",
-    estimatedCostUsd: 0.02,
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
     outputGrant: {
-      license: "LicenseRef-google-api",
+      license: "LicenseRef-perplexity-api",
       plan: "api",
       commercial: true,
       relabel: true,
     },
-    providerTerms:
-      "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)",
-    providerTermsAsOf: "2026-11-07",
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+    providerTermsAsOf: "2026-11-15",
   },
   // Image-to-3D on Tripo: multiview (or single-image) to a textured PBR model, 30 credits with
   // texture and PBR (#72's probe); the estimate is an upper bound. Its models face +x: measured
@@ -434,15 +434,19 @@ export const defaultRoutes: Routes = {
       "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-12)",
     providerTermsAsOf: "2026-11-12",
   },
-  // Holes: one enlarged frame with its enclosed see-through areas marked. $0.003 to $0.008 a call
-  // (#51's proof); the estimate is an upper bound.
+  // Holes (#376): one typed Boolean decision per frame (the frame before and after background
+  // removal, or its enclosed see-through areas marked), on the typed decision model.
   holes: {
-    model: "google/gemini-3-flash",
-    estimatedCostUsd: 0.01,
-    outputGrant: googleGrant,
-    providerTerms:
-      "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-09)",
-    providerTermsAsOf: "2026-11-09",
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+    providerTermsAsOf: "2026-11-15",
   },
   // Prompt compilation for plan (the planning role) and material QA: the vision model.
   compiler: {
@@ -485,8 +489,6 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [LOOKDEV_OPERATION]: "edit",
   fix: "edit",
   vision: "vision",
-  flicker: "vision",
-  holes: "vision",
   [LOOKDEV_LOCATE_OPERATION]: "vision",
   [LOOKDEV_GROOM_OPERATION]: "vision",
   [LOOKDEV_MARKINGS_OPERATION]: "vision",
@@ -494,6 +496,8 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [IDENTITY_CHECK_OPERATION]: "vision",
   "material-qa": "vision",
   identity: "decisions",
+  flicker: "decisions",
+  holes: "decisions",
   [PROMPT_POLICY_OPERATION]: "decisions",
   [BRIEF_POLICY_OPERATION]: "decisions",
   [REFERENCE_VIEW_OPERATION]: "decisions",

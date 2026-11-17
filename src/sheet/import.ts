@@ -116,6 +116,11 @@ export interface ImportedFrame {
   id: number;
   /** The cleaned figure at sheet resolution, inside the import directory. */
   file: string;
+  /**
+   * The same crop of the sheet before background removal, inside the import directory: the holes
+   * check shows it beside the cleaned figure. Absent on an import written before #376.
+   */
+  source?: string;
   cell: FrameProvenance["cell"];
   /** The crop's box on the sheet. */
   box: Box;
@@ -168,7 +173,17 @@ export interface ImportRecord {
   calls: CallRecord[];
   /** The transformation steps (slice, matte) that made the frames from the sheet. */
   steps?: TransformStep[];
-  written?: Array<{ at: string; target: string; families: string[]; files: string[] }>;
+  written?: Array<{
+    at: string;
+    target: string;
+    families: string[];
+    files: string[];
+    /**
+     * Per family written, the imported frame ids its strip was made from, in strip order (a
+     * mirrored family's are its source's). Absent on a write before #376.
+     */
+    frames?: Record<string, number[]>;
+  }>;
   /**
    * The common scale fitted on the first write, reused by every later write of this import so all
    * of an asset's families stay one size whatever grouping each write uses.
@@ -307,6 +322,20 @@ function frameFile(id: number): string {
   return `frames/f${String(id).padStart(3, "0")}.png`;
 }
 
+function sourceFile(id: number): string {
+  return `frames/f${String(id).padStart(3, "0")}.source.png`;
+}
+
+/** The sheet's pixels inside `box`, as they were before background removal. */
+function cropSheet(sheet: Raster, box: Box): Raster {
+  const out = createRaster(box.width, box.height);
+  for (let y = 0; y < box.height; y++) {
+    const from = ((box.y + y) * sheet.width + box.x) * 4;
+    out.data.set(sheet.data.subarray(from, from + box.width * 4), y * box.width * 4);
+  }
+  return out;
+}
+
 function defaultAnchor(frame: Size): Point {
   return { x: Math.floor(frame.width / 2), y: frame.height - 1 };
 }
@@ -392,10 +421,20 @@ export async function importSheet(
       join(importDir, file),
       embedDigitalSourceType(encodePng(item.raster), "image/png", digitalSourceType),
     );
+    const source = sourceFile(meta.frame);
+    await writeFile(
+      join(importDir, source),
+      embedDigitalSourceType(
+        encodePng(cropSheet(raster, meta.box)),
+        "image/png",
+        digitalSourceType,
+      ),
+    );
     cleaned.push(item);
     frames.push({
       id: meta.frame,
       file,
+      source,
       cell: meta.cell,
       box: meta.box,
       background: meta.background,
@@ -1007,6 +1046,7 @@ export async function writeFamilies(
       target: resolve(options.targetDir),
       families: written.map((w) => w.name),
       files: written.flatMap((w) => w.result.files),
+      frames: Object.fromEntries(written.map((w) => [w.name, w.frames])),
     },
   ];
   await writeImport(options.importDir, record);

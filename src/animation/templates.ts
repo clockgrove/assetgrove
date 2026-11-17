@@ -13,10 +13,10 @@ export const DEFAULT_THRESHOLDS: AnimationThresholds = {
   footprintDrift: 0.03,
   loopSeamRatio: 1.5,
   loopSeamFloor: 0.02,
-  flickerCutoff: 0.7,
+  flickerCutoff: 0.5,
   edgeHaloShare: 0.22,
-  holeMinPx: 3,
-  holeCutoff: 0.7,
+  holeMinShare: 0.0001,
+  holeCutoff: 0.5,
 };
 
 export const BUILTIN_TEMPLATES: readonly MotionTemplate[] = [
@@ -328,6 +328,7 @@ const REMOVED_THRESHOLDS: Record<string, string> = {
   groundTolerancePx: "ground contact is now groundTolerance, a fraction of the figure's height",
   anchorDriftPx: "drift is now footprintDrift, a fraction of the figure's height",
   footprintDriftPx: "it is now footprintDrift, a fraction of the figure's height",
+  holeMinPx: "the smallest judged area is now holeMinShare, a share of the frame's figure area",
 };
 
 /** The defaults with the profile's thresholds over them, validated. */
@@ -351,6 +352,7 @@ export function thresholdsFor(profile?: Pick<TargetProfile, "animation">): Anima
     if (
       (key === "flickerCutoff" ||
         key === "holeCutoff" ||
+        key === "holeMinShare" ||
         key === "edgeHaloShare" ||
         key === "groundTolerance" ||
         key === "footprintDrift") &&

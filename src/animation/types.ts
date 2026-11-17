@@ -87,7 +87,10 @@ export interface AnimationThresholds {
    * moves (an idle hold) is not failed for a seam step of noise. Default 0.02.
    */
   loopSeamFloor: number;
-  /** A flicker label at or above this confidence fails the pair. Default 0.7. */
+  /**
+   * The identity-flicker decision's probability at or above which the pair fails. Default 0.5:
+   * the Boolean's own answer, until a cut is chosen per model from the logged decisions.
+   */
   flickerCutoff: number;
   /**
    * The share of a frame's soft edge pixels (0 < alpha < 255) whose colour is far from every
@@ -95,9 +98,13 @@ export interface AnimationThresholds {
    * transparent pixels that keep a colour are not counted: they are a passing note.
    */
   edgeHaloShare: number;
-  /** The smallest see-through area inside the figure's outline, in px, that the holes check judges. Default 3. */
-  holeMinPx: number;
-  /** A "hole" verdict at or above this confidence fails the frame. Default 0.7. */
+  /**
+   * Where no image before background removal exists: the smallest see-through area inside the
+   * figure's outline that the holes check judges, as a share of the frame's figure area (pixels
+   * at or above the alpha cut), and at least 1 px. Default 0.0001.
+   */
+  holeMinShare: number;
+  /** The holes decision's probability at or above which the frame fails. Default 0.5. */
   holeCutoff: number;
 }
 
@@ -165,36 +172,43 @@ export interface AnimationReason extends Reason {
   frames?: number[];
 }
 
-/** One logged identity-flicker decision (one vision call). */
+/** One logged identity-flicker decision (one typed Boolean decision on a pair). */
 export interface FlickerDecision {
   /** 1-based frames compared, in order. */
   pair: [number, number];
   model: string;
   requestId: string;
-  /** `texture`: only painterly texture differs, the identity holds (a pass). */
-  label: "same" | "texture" | "flicker" | "unreadable";
-  confidence: number;
+  /** The decision's answer: `flicker` when the identity changes (probability at least 0.5). */
+  label: "same" | "flicker";
+  /** The decision's probability that the identity changes, 0..1. */
+  probability: number;
   cutoff: number;
-  /** True when the pair fails: label flicker at or above the cutoff, or unreadable. */
+  /** True when the pair fails: probability at or above the cutoff. */
   flagged: boolean;
   reason: string;
   costUsd: number;
   at: string;
 }
 
-/** One logged holes decision (one vision call on a frame with enclosed see-through areas). */
+/** One logged holes decision (one typed Boolean decision on one frame). */
 export interface HoleDecision {
   /** The 1-based frame judged. */
   frame: number;
-  /** The see-through areas inside its outline that were marked for the model. */
+  /**
+   * `before-after`: the frame before and after background removal was shown; `enclosed`: only the
+   * removed frame, its see-through areas inside the outline marked.
+   */
+  view: "before-after" | "enclosed";
+  /** The see-through areas inside its outline that were marked for the model (`enclosed` only). */
   areas: Array<{ area: number; x: number; y: number; width: number; height: number }>;
   model: string;
   requestId: string;
-  /** `holes`: at least one area is a hole in the figure; `openings`: every area is a natural gap. */
-  label: "holes" | "openings" | "unreadable";
-  confidence: number;
+  /** The decision's answer: `holes` when part of the character is missing (probability at least 0.5). */
+  label: "holes" | "none";
+  /** The decision's probability that part of the character is missing, 0..1. */
+  probability: number;
   cutoff: number;
-  /** True when the frame fails: holes at or above the cutoff, or unreadable. */
+  /** True when the frame fails: probability at or above the cutoff. */
   flagged: boolean;
   reason: string;
   costUsd: number;

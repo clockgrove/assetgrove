@@ -227,14 +227,21 @@ test("coverage: removing a check from the list while it has no entry fails", asy
   const without = advisoryList(copy);
   assert.ok(!without.includes("holes"));
   assert.deepEqual(coverageGaps(without, { entries: [] }), ["holes"]);
-  // A qualifying entry on the core default vision model covers it instead.
+  // A qualifying entry for the check's version (2, the typed decision, #376) on the core default
+  // vision model covers it instead.
+  const holes = { checkId: "holes", version: "2" };
   assert.deepEqual(
-    coverageGaps(without, { entries: [entry({ checkId: "holes", model: DEFAULT_VISION_MODEL })] }),
+    coverageGaps(without, { entries: [entry({ ...holes, model: DEFAULT_VISION_MODEL })] }),
     [],
   );
-  // An entry on another model does not.
+  // An entry on another model does not, nor one measured on version 1 (the text reply).
+  assert.deepEqual(coverageGaps(without, { entries: [entry({ ...holes, model: OTHER_MODEL })] }), [
+    "holes",
+  ]);
   assert.deepEqual(
-    coverageGaps(without, { entries: [entry({ checkId: "holes", model: OTHER_MODEL })] }),
+    coverageGaps(without, {
+      entries: [entry({ checkId: "holes", version: "1", model: DEFAULT_VISION_MODEL })],
+    }),
     ["holes"],
   );
 });
