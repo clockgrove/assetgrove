@@ -65,7 +65,9 @@ function settings(extensions: string[], withEcho = false): void {
     extensions,
     providers: {
       scripted: { limit: { ...SCRIPTED_LIMIT } },
-      ...(withEcho && { echo: { adapter: "fixture:echo" } }),
+      ...(withEcho && {
+        echo: { adapter: "fixture:echo", baseURL: "http://127.0.0.1:9/", free: true },
+      }),
     },
   });
 }

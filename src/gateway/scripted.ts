@@ -1,6 +1,8 @@
 import type {
   AnimateRequest,
   Billing,
+  CallKind,
+  CallTypes,
   LimitReading,
   ModelRequest,
   ModelResult,
@@ -188,8 +190,12 @@ export interface Script {
   capabilities?: string[];
   /** Test only: the provider's limit reading, as a real adapter reads its balance. */
   limitReading?(): LimitReading | Promise<LimitReading>;
-  /** Test only: how the provider's usage is reconciled, as a real adapter declares it. */
+  /** Test only: where a call's cost comes from when it settles, as a real adapter declares it. */
+  settle?: Billing["settle"];
+  /** Test only: whether a call's cost can be looked up later, as a real adapter declares it. */
   reconcile?: Billing["reconcile"];
+  /** Test only: the provider's own estimate of a call (`GenerationProvider.estimate`). */
+  estimate?(request: CallTypes[CallKind][0], kind: CallKind): number | Promise<number>;
   /**
    * Test only: the provider's own cost of a call by its request ID, as the gateway reports it;
    * undefined while it is not reported yet.
@@ -223,6 +229,8 @@ function checkDecideAnswer(request: DecisionRequest, answer: DecisionAnswer | un
 
 export class ScriptedProvider implements GenerationProvider {
   readonly billing: Billing;
+  /** The script's own `estimate`, when it has one. */
+  readonly estimate?: (request: CallTypes[CallKind][0], kind: CallKind) => Promise<number>;
   readonly calls: Array<
     | { kind: "image"; request: ImageRequest }
     | { kind: "vision"; request: VisionRequest }
@@ -264,13 +272,17 @@ export class ScriptedProvider implements GenerationProvider {
       adapter: "scripted",
       providerId: "scripted",
       hosts: [],
+      settle: "reported",
       reconcile: "unavailable",
       ...billing,
       paid: script.paid === true,
+      ...(script.settle !== undefined && { settle: script.settle }),
       ...(script.reconcile !== undefined && { reconcile: script.reconcile }),
       ...(read !== undefined && { readLimit: async () => read() }),
       ...(cost !== undefined && { callCost: async (requestId: string) => cost(requestId) }),
     };
+    const estimate = script.estimate?.bind(script);
+    if (estimate !== undefined) this.estimate = async (request, kind) => estimate(request, kind);
   }
 
   declares(capability: string): boolean {

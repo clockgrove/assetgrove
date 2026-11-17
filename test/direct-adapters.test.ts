@@ -114,6 +114,7 @@ test("anthropic and openai are paid, declared only, on their fixed host even wit
       assert.deepEqual(keyed.provider.billing.hosts, [host]);
       assert.equal(keyed.provider.billing.paid, true);
       assert.equal(keyed.provider.billing.adapter, id);
+      assert.equal(keyed.provider.billing.settle, "declared");
       assert.equal(keyed.provider.billing.reconcile, "unavailable");
       assert.equal(keyed.provider.billing.readLimit, undefined, "declared only");
 

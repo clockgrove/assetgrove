@@ -11,7 +11,7 @@ Assetgrove is a public repository. These rules apply to every contributor, human
 ## Scope
 
 - Assetgrove is generic. Anything specific to one game — its style bible, its manifest format, its validator — lives in that game's repository and reaches Assetgrove as data (a target profile), never as code here.
-- Model providers sit behind adapters (`src/providers/adapter.ts`) that decide what costs money; provider SDK types never leak past them.
+- Model providers sit behind adapters (`src/providers/adapter.ts`) that declare how their calls are billed; core decides what is paid. Provider SDK types never leak past them.
 - Every generated file carries provenance: model, route, prompt, parameters, seed where supported, request ID, time and cost.
 - Spend is bounded: every run reserves against a cost cap before calling a provider, and refuses when it would exceed it. Every paid call also reserves against the cross-run ledger `<stateDir>/spend.jsonl`, whose caps come from the developer settings (`src/spend.ts`, docs/settings.md).
 - Approval is human. Assetgrove filters and presents candidates; it never marks an asset approved.

@@ -52,7 +52,8 @@ export const settingsCommand = defineCommand<SettingsArgs>({
   show   the settings with every default filled; per provider the key variable's name and
          whether it is set, never a key
   check  per provider: key present, limit declared and verified against the provider's reading,
-         how spend is reconciled (or unavailable); and the environment variables refused (when
+         where a call's cost comes from (settle: reported or declared), whether it can be looked
+         up later (reconcile: lookup or unavailable); and the environment variables refused (when
          any is, no reading is taken)
 Read-only: never writes the settings; settings change proposes a change for a person to confirm.`,
   input: {
@@ -131,6 +132,7 @@ Read-only: never writes the settings; settings change proposes a change for a pe
           reading: limit.reading,
           ...(limit.note !== undefined && { note: limit.note }),
         },
+        settle: billing.settle,
         reconcile: billing.reconcile,
       });
     }
@@ -141,7 +143,7 @@ Read-only: never writes the settings; settings change proposes a change for a pe
         (c) =>
           `  ${c.provider} (${c.adapter}, ${c.paid ? "paid" : "free"}): key ${c.keyEnv ?? "none"} ` +
           `${c.keyPresent ? "set" : "not set"}; limit ${c.limit.declared ? "declared" : "not declared"}` +
-          `${c.limit.verified ? ", verified" : ""}; reconcile ${c.reconcile}`,
+          `${c.limit.verified ? ", verified" : ""}; settle ${c.settle}; reconcile ${c.reconcile}`,
       ),
       refused.length > 0 ? `  refused environment: ${refused.join(", ")}` : "  environment: ok",
     ].join("\n");

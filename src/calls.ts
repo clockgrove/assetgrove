@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Budget, Reservation } from "./budget.ts";
 import { ConfirmationError } from "./approvals.ts";
 import { JobStoppedError, ProviderError } from "./errors.ts";
-import { BudgetExceededError } from "./budget.ts";
+import { BudgetExceededError, EstimateAboveCeilingError } from "./budget.ts";
 import { assertLimitDeclared, billingOf } from "./limits.ts";
 import type {
   CallKind,
@@ -26,9 +26,11 @@ import type { Route, Routes } from "./routes.ts";
 import type { CallRecord, DecisionLog, LoadedReference } from "./types.ts";
 
 /**
- * Budgeted, recorded provider calls. Each call reserves its route's estimate against the run's cap
- * (and the budget's cross-run spend ledger, src/spend.ts) before it reaches the provider, then settles with the provider's reported cost (or the estimate)
- * and appends a provenance record.
+ * Budgeted, recorded provider calls. Each call reserves its route's estimate (the ceiling), or the
+ * provider's lower `estimate`, against the run's cap (and the budget's cross-run spend ledger,
+ * src/spend.ts) before it reaches the provider, then settles as its billing declares (`reported`:
+ * the provider's cost; `declared`: what was reserved) and appends a provenance record. A paid call
+ * settled above its route's estimate appends a spend hold.
  *
  * Inside a paid command's run (src/runs/execute.ts) each call first checks the run's journal
  * (`calls/<callKey>.json`): a hit reserves nothing, counts its recorded cost against the run's
@@ -148,17 +150,43 @@ export class Caller {
         "confirmation_required",
         `refused: the paid ${operation} call has no confirmed spend; run it through its command, which asks a person or reads their confirmation`,
       );
-    const reserve = (): Reservation => {
+    // The route's estimate is the ceiling: the most one call may cost.
+    const ceilingUsd = route.estimatedCostUsd;
+    const sent = request(route);
+    let estimated: number | undefined;
+    // After confirmation and before reserving: the provider's own estimate may only lower it.
+    const amount = async (): Promise<number> => {
+      const estimate = served.provider.estimate?.bind(served.provider);
+      if (estimate === undefined) return ceilingUsd;
+      if (estimated === undefined) {
+        let value: number;
+        try {
+          value = await estimate(sent, kind);
+        } catch (error) {
+          throw providerError(operation, error);
+        }
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+          throw new ProviderError(
+            `provider "${served.id}" estimated the ${operation} call at ${String(value)}, not a cost in USD`,
+          );
+        if (value > ceilingUsd + 1e-9)
+          throw new EstimateAboveCeilingError(name, operation, value, ceilingUsd);
+        estimated = value;
+      }
+      return Math.min(estimated, ceilingUsd);
+    };
+    const reserve = async (): Promise<Reservation> => {
       // A run let in past a spend hold only collects the jobs it had submitted.
       if (billing.paid && scope?.spendHold !== undefined) throw scope.spendHold;
       return this.budget.reserve(
-        route.estimatedCostUsd,
+        await amount(),
         `the ${operation} call`,
         billing.paid ? name : undefined,
         {
           provider: served.id,
           ...(journal !== undefined && { runId: journal.runId }),
           ...(callKey !== undefined && { callKey }),
+          ceilingUsd,
         },
       );
     };
@@ -167,29 +195,40 @@ export class Caller {
     let result: Result;
     let reservation: Reservation;
     if (jobs !== undefined) {
-      ({ result, reservation } = await this.job(jobs, request(route), {
+      ({ result, reservation } = await this.job(jobs, sent, {
         operation,
         provider: served.id,
-        estimateUsd: route.estimatedCostUsd,
         reserve,
         ...(callKey !== undefined && { callKey }),
         ...(journal !== undefined && { journal }),
         ...(scope?.spendHold !== undefined && billing.paid && { spendHold: scope.spendHold }),
       }));
     } else {
-      reservation = reserve();
+      reservation = await reserve();
       try {
-        result = await direct(served.provider, request(route));
+        result = await direct(served.provider, sent);
       } catch (error) {
-        // A failed call may still have been billed; count the estimate so the cap stays safe.
-        this.budget.settle(reservation, route.estimatedCostUsd);
+        // A failed call may still have been billed; count what was reserved so the cap stays safe.
+        this.budget.settle(reservation, reservation.amountUsd);
         throw providerError(operation, error);
       }
     }
-    const costUsd = result.costUsd ?? route.estimatedCostUsd;
+    // `reported` settles at the cost in the result, `declared` (or none reported) at the reservation.
+    const reported = billing.settle === "reported" ? result.costUsd : undefined;
+    const costUsd = reported ?? reservation.amountUsd;
     // The provider's own request ID ties the ledger entry to the provider's usage (reconcile).
     const providerId = result.requestIdSource === "local" ? undefined : result.requestId;
-    this.budget.settle(reservation, costUsd, providerId);
+    // A paid call settled above its route's estimate holds every later paid run for a person.
+    const hold = this.budget.settle(
+      reservation,
+      costUsd,
+      providerId,
+      billing.paid ? { ceilingUsd, provider: served.id, route: name } : undefined,
+    );
+    if (hold !== undefined)
+      this.log(
+        `spend hold ${hold.id}: the ${operation} call settled at $${costUsd.toFixed(4)}, above route ${name}'s $${ceilingUsd.toFixed(4)} estimate; paid runs are refused until it is acknowledged`,
+      );
     const usedSeed = result.seed ?? seed;
     const record: CallRecord = {
       operation,
@@ -204,7 +243,7 @@ export class Caller {
       startedAt,
       finishedAt: this.now().toISOString(),
       costUsd,
-      costSource: result.costUsd === undefined ? "estimate" : "provider",
+      costSource: reported === undefined ? "estimate" : "provider",
       ...(route.providerTerms !== undefined && { providerTerms: route.providerTerms }),
       ...(route.providerTermsAsOf !== undefined && {
         providerTermsAsOf: route.providerTermsAsOf,
@@ -241,8 +280,7 @@ export class Caller {
     call: {
       operation: string;
       provider: string;
-      estimateUsd: number;
-      reserve: () => Reservation;
+      reserve: () => Promise<Reservation>;
       callKey?: string;
       journal?: Journal;
       spendHold?: Error;
@@ -258,7 +296,7 @@ export class Caller {
     const where = journaling ? ` (${join(journal.dir, `${callKey}.job.json`)})` : "";
     // Reserve, journal the intent, submit, journal the handle.
     const submit = async (attempt: number): Promise<[JobEntry, Reservation]> => {
-      const reserved = call.reserve();
+      const reserved = await call.reserve();
       const key = jobKey(runId, callKey ?? operation, attempt);
       const intent = save({
         callKey: callKey ?? "",
@@ -275,8 +313,8 @@ export class Caller {
       } catch (error) {
         if (refusedSubmit(error)) {
           // The provider answered and refused it: no job was made. It may still bill a refusal,
-          // so it keeps the estimate, and the next attempt has a new key.
-          this.budget.settle(reserved, call.estimateUsd);
+          // so it keeps what was reserved, and the next attempt has a new key.
+          this.budget.settle(reserved, reserved.amountUsd);
           save({ ...intent, failed: true });
           throw providerError(operation, error);
         }
@@ -338,8 +376,8 @@ export class Caller {
           throw collectStop(operation, handle, where, error);
         }
       }
-      // A failed job may still have been billed: its reservation keeps the estimate.
-      this.budget.settle(reservation, call.estimateUsd);
+      // A failed job may still have been billed: it keeps what was reserved.
+      this.budget.settle(reservation, reservation.amountUsd);
       entry = save({ ...entry, failed: true });
       if (entry.attempt >= JOB_ATTEMPTS)
         throw new ProviderError(

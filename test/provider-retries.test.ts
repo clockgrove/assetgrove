@@ -20,6 +20,7 @@ const billing = (adapter: string): Omit<Billing, "hosts" | "readLimit"> => ({
   adapter,
   providerId: adapter,
   paid: true,
+  settle: "declared",
   reconcile: "unavailable",
   limit: { kind: "prepaid", usd: 20 },
 });

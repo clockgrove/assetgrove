@@ -1,6 +1,7 @@
 /**
  * Provider adapters (design section 11): each makes provider instances from a settings entry and
- * decides what they cost (`billing`). Core registers `vercel-ai-gateway`, `anthropic`, `openai`,
+ * declares how their calls are billed (`billing`: where a cost comes from, whether it can be looked
+ * up); whether they are paid is core's decision (`corePaid`). Core registers `vercel-ai-gateway`, `anthropic`, `openai`,
  * `openai-compatible`, `tripo` and `scripted`. Each lists the operations it serves by default
  * (`defaultRoutes`, src/routes.ts).
  * An adapter reads its key from the entry's `keyEnv` or its default variable and passes `apiKey`
@@ -9,7 +10,7 @@
 import type { Env } from "../env.ts";
 import { keyValue, SettingsError } from "../env.ts";
 import { extensionOf, unavailableId } from "../extensions/errors.ts";
-import type { Billing, GenerationProvider } from "../gateway/provider.ts";
+import type { Billing, CallKind, GenerationProvider } from "../gateway/provider.ts";
 import { ANTHROPIC_BASE_URL, AnthropicProvider } from "../gateway/anthropic.ts";
 import { OPENAI_BASE_URL, OpenAIProvider } from "../gateway/openai.ts";
 import { OpenAICompatibleProvider } from "../gateway/openai-compatible.ts";
@@ -25,6 +26,7 @@ import {
   TRIPO_DEFAULT_ROUTES,
 } from "../routes.ts";
 import type { Route } from "../routes.ts";
+import { isLoopback } from "../settings.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
 /**
@@ -93,7 +95,8 @@ export const gatewayAdapter: ProviderAdapter = {
       billing: {
         adapter: "vercel-ai-gateway",
         paid: true,
-        reconcile: "per-call-cost",
+        settle: "reported",
+        reconcile: "lookup",
         ...billingFrom(c),
       },
     }),
@@ -114,7 +117,13 @@ export const anthropicAdapter: ProviderAdapter = {
     new AnthropicProvider({
       apiKey: c.apiKey,
       ...(c.keyEnv !== undefined && { keyEnv: c.keyEnv }),
-      billing: { adapter: "anthropic", paid: true, reconcile: "unavailable", ...billingFrom(c) },
+      billing: {
+        adapter: "anthropic",
+        paid: true,
+        settle: "declared",
+        reconcile: "unavailable",
+        ...billingFrom(c),
+      },
     }),
 };
 
@@ -133,7 +142,13 @@ export const openaiAdapter: ProviderAdapter = {
     new OpenAIProvider({
       apiKey: c.apiKey,
       ...(c.keyEnv !== undefined && { keyEnv: c.keyEnv }),
-      billing: { adapter: "openai", paid: true, reconcile: "unavailable", ...billingFrom(c) },
+      billing: {
+        adapter: "openai",
+        paid: true,
+        settle: "declared",
+        reconcile: "unavailable",
+        ...billingFrom(c),
+      },
     }),
 };
 
@@ -152,7 +167,8 @@ export const tripoAdapter: ProviderAdapter = {
       billing: {
         adapter: "tripo",
         paid: true,
-        reconcile: "per-call-cost",
+        settle: "reported",
+        reconcile: "lookup",
         ...billingFrom(c),
       },
     }),
@@ -181,6 +197,7 @@ export const openaiCompatibleAdapter: ProviderAdapter = {
       billing: {
         adapter: "openai-compatible",
         paid: c.settings.free !== true,
+        settle: "declared",
         reconcile: "unavailable",
         ...billingFrom(c),
       },
@@ -206,6 +223,7 @@ export const scriptedAdapter: ProviderAdapter = {
   defaultRoutes,
   create: (c) =>
     new ScriptedProvider(c.script ?? NO_SCRIPT, {
+      settle: "reported",
       reconcile: "unavailable",
       ...billingFrom(c),
     }),
@@ -243,6 +261,44 @@ export function adapterOf(
 }
 
 /**
+ * Whether a provider's calls are paid, decided by core and never by its adapter: paid unless the
+ * settings entry says `free` and its `baseURL` passes core's own loopback check (`isLoopback`). A
+ * pack cannot declare itself free.
+ */
+export function corePaid(entry: ProviderSettings): boolean {
+  if (entry.free !== true || entry.baseURL === undefined) return true;
+  let host: string;
+  try {
+    host = new URL(entry.baseURL).hostname;
+  } catch {
+    return true;
+  }
+  return !isLoopback(host);
+}
+
+/**
+ * Puts core's `paid` on every billing a provider reports: `billing`, each kind's `billingFor` and
+ * the `parts` of a provider made of several adapters. Whatever the adapter set is replaced.
+ */
+function withCorePaid(provider: GenerationProvider, paid: boolean): GenerationProvider {
+  const mark = (billing: Billing): Billing => ({ ...billing, paid });
+  const define = (name: string, value: unknown): void => {
+    Object.defineProperty(provider, name, {
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
+  };
+  define("billing", mark(provider.billing));
+  const billingFor = provider.billingFor?.bind(provider);
+  if (billingFor !== undefined) define("billingFor", (kind: CallKind) => mark(billingFor(kind)));
+  const parts = (provider as { parts?: readonly Billing[] }).parts;
+  if (parts !== undefined) define("parts", parts.map(mark));
+  return provider;
+}
+
+/**
  * Makes one provider from a settings entry. Throws `SettingsError` (exit 2 `settings_invalid`)
  * for an unknown adapter, or a `baseURL` on an adapter whose endpoint is fixed. A missing key is
  * not refused here: the provider's calls fail with a provider error naming the variable.
@@ -275,7 +331,7 @@ export function createProvider(
   }
   const keyEnv = entry.keyEnv ?? adapter.defaultKeyEnv;
   const apiKey = keyEnv !== undefined ? keyValue(keyEnv, options.env) || undefined : undefined;
-  const provider = adapter.create({
+  const created = adapter.create({
     providerId: id,
     settings: entry,
     ...(apiKey !== undefined && { apiKey }),
@@ -283,6 +339,35 @@ export function createProvider(
     ...(entry.baseURL !== undefined && { baseURL: entry.baseURL }),
     ...(options.script !== undefined && { script: options.script }),
   });
+  // A billing must answer both questions: an adapter written before `settle` existed, or still
+  // naming `per-call-cost`, is refused here rather than settled at the reservation unseen.
+  const declared = (billing: Billing): void => {
+    const settle: unknown = billing.settle;
+    const reconcile: unknown = billing.reconcile;
+    if (settle === "reported" || settle === "declared") {
+      if (reconcile === "lookup" || reconcile === "unavailable") return;
+    }
+    throw new SettingsError(
+      `${where}providers.${id}: the ${adapter.id} adapter's billing declares settle ${JSON.stringify(settle) ?? "(none)"} and reconcile ${JSON.stringify(reconcile) ?? "(none)"}; billing must declare settle "reported" or "declared" and reconcile "lookup" or "unavailable" (docs/settings.md#billing).`,
+    );
+  };
+  declared(created.billing);
+  for (const part of (created as { parts?: readonly Billing[] }).parts ?? []) declared(part);
+  // Paid-ness is core's: only the scripted stand-in, which reaches no host, keeps its script's.
+  const provider = adapter === scriptedAdapter ? created : withCorePaid(created, corePaid(entry));
+  // A kind's own billing is checked when a call asks for it.
+  const perKind = provider.billingFor?.bind(provider);
+  if (perKind !== undefined)
+    Object.defineProperty(provider, "billingFor", {
+      value: (kind: CallKind): Billing => {
+        const billing = perKind(kind);
+        declared(billing);
+        return billing;
+      },
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
   return {
     id,
     adapter,

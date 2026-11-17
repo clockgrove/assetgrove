@@ -60,7 +60,7 @@ async function paidScript(
   const reader =
     usage === undefined
       ? ""
-      : `reconcile: "per-call-cost",
+      : `reconcile: "lookup",
   callCost: () => ${
     usage.flag !== undefined
       ? `existsSync(${JSON.stringify(usage.flag)}) ? Number(readFileSync(${JSON.stringify(usage.flag)}, "utf8")) : undefined`
@@ -84,7 +84,7 @@ export default {
   }
     return { ...base.image(r, i), costUsd: 0.05 };
   },
-  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.02 }),
 };`,
   );
   approve(path);
@@ -223,7 +223,7 @@ const billed = (id) => ${
     };
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   limitReading: () => ({ balanceUsd: 50 - 7.77 * images + 100, source: "scripted balance" }),
   callCost: (id) => (id.startsWith("scripted-image-") ? billed(id) : 0),
   image: (r, i) => {
@@ -287,6 +287,47 @@ test("a provider without usage records reconcile unavailable, and settings check
     JSON.parse(check.stdout) as { providers: Array<{ provider: string; reconcile: string }> }
   ).providers;
   assert.equal(providers.find((p) => p.provider === "scripted")?.reconcile, "unavailable");
+});
+
+test("a paid call settled above its route's estimate holds every later paid run", async () => {
+  const stateDir = await freshState();
+  settings(stateDir);
+  const { args, dir } = await stageArgs();
+  const path = join(dir, "dear-script.mjs");
+  await writeFile(
+    path,
+    `import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
+export default {
+  paid: true,
+  image: (r, i) => ({ ...base.image(r, i), costUsd: 0.75 }),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.02 }),
+};`,
+  );
+  approve(path);
+  const r = await cli([...args, "--provider-script", path]);
+  assert.equal(r.code, 0, r.stderr);
+  const holds = await readLines<Hold & { reason?: string; route?: string }>(
+    join(stateDir, "holds.jsonl"),
+  );
+  // One hold per image call (the strip's edit route, $0.05 each); the vision calls stay at theirs.
+  assert.ok(holds.length > 0);
+  for (const hold of holds) {
+    assert.equal(hold.reason, "settle-above-ceiling");
+    assert.equal(hold.route, "scripted:edit:bfl/flux-kontext-pro");
+    assert.equal(hold.ledgerUsd, 0.05);
+    assert.equal(hold.providerUsd, 0.75);
+  }
+
+  const other = await stageArgs(2);
+  const held = await cli([...other.args, "--provider-script", path]);
+  assert.equal(held.code, 3, held.stderr);
+  assert.equal(errorCode(held), "spend_hold");
+
+  const check = await cli(["settings", "check", "--json"]);
+  const providers = (
+    JSON.parse(check.stdout) as { providers: Array<{ provider: string; settle: string }> }
+  ).providers;
+  assert.equal(providers.find((p) => p.provider === "scripted")?.settle, "reported");
 });
 
 test("a pending lookup is retried at the next paid run's start", async () => {
@@ -427,7 +468,7 @@ async function estimateScript(dir: string, billedUsd: number): Promise<string> {
     `import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   callCost: (id) => (id.startsWith("scripted-image-") ? ${billedUsd} : 0),
   image: (r, i) => base.image(r, i),
   vision: (r, i) => base.vision(r, i),
@@ -502,13 +543,13 @@ test("a settled estimate is settled once while another call of the run is still 
 import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   callCost: (id) =>
     id.startsWith("scripted-image-") ? 0.0001
     : !id.startsWith("scripted-vision-") ? 0
-    : existsSync(${JSON.stringify(flag)}) ? 0.05 : undefined,
+    : existsSync(${JSON.stringify(flag)}) ? 0.02 : undefined,
   image: (r, i) => base.image(r, i),
-  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.02 }),
 };`,
   );
   approve(path);
@@ -549,13 +590,13 @@ test("an estimate first reported on a retry is settled once over the following r
 import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   callCost: (id) =>
     id.startsWith("scripted-image-") ? (existsSync(${JSON.stringify(images)}) ? 0.0001 : undefined)
     : !id.startsWith("scripted-vision-") ? 0
-    : existsSync(${JSON.stringify(vision)}) ? 0.05 : undefined,
+    : existsSync(${JSON.stringify(vision)}) ? 0.02 : undefined,
   image: (r, i) => base.image(r, i),
-  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.02 }),
 };`,
   );
   approve(path);

@@ -75,15 +75,20 @@ export interface DeclaredLimit {
 }
 
 /**
- * What a provider instance costs, decided by its adapter (src/providers/adapter.ts), never by a
- * provider's name: whether its calls are paid, the hosts it reaches, the limit the developer
- * declared for it and how to read the provider's own balance.
+ * What a provider instance costs, declared by its adapter (src/providers/adapter.ts), never by a
+ * provider's name: the hosts it reaches, where a call's cost comes from (`settle`), whether it can
+ * be looked up later (`reconcile`), the limit the developer declared and how to read the
+ * provider's own balance. Whether its calls are paid is core's decision (`paid`).
  */
 export interface Billing {
   /** The adapter id, for example `vercel-ai-gateway`. */
   adapter: string;
   /** The settings id of the provider instance. */
   providerId: string;
+  /**
+   * Decided by core, never by the adapter: `createProvider` replaces the adapter's value with
+   * `corePaid` (paid unless the settings entry is `free` on a loopback `baseURL`).
+   */
   paid: boolean;
   /** The hosts its calls reach. */
   hosts: string[];
@@ -91,12 +96,19 @@ export interface Billing {
   limit?: DeclaredLimit;
   /** Reads the provider's balance; spends nothing. Absent where the provider offers no reading. */
   readLimit?: () => Promise<LimitReading>;
-  /** How spend is reconciled with the provider: per-call cost, or not at all. */
-  reconcile: "per-call-cost" | "unavailable";
+  /**
+   * Where a call's cost comes from when it settles: `reported`, the cost the provider reports in
+   * the result (`ProviderResult.costUsd`; the reservation when it reports none), or `declared`,
+   * the amount reserved: the route's estimate, which is the ceiling, or the provider's lower
+   * `estimate`.
+   */
+  settle: "reported" | "declared";
+  /** Whether a call's cost can be looked up later by its request ID (`callCost`), or not at all. */
+  reconcile: "lookup" | "unavailable";
   /**
    * The provider's own cost of one call, in USD, by the request ID it returned; spends nothing.
    * Undefined while the provider has not reported it yet (the lookup stays pending); null for an ID
-   * the provider can never look up. Present only where `reconcile` is `per-call-cost`.
+   * the provider can never look up. Present only where `reconcile` is `lookup`.
    */
   callCost?: (requestId: string) => Promise<number | null | undefined>;
 }
@@ -148,6 +160,12 @@ export interface GenerationProvider {
   readonly jobs?: ProviderJobs;
   /** The billing of one kind of call, for a provider made of several adapters. */
   billingFor?(kind: CallKind): Billing;
+  /**
+   * What this call will cost, in USD; spends nothing. Core calls it after the spend is confirmed
+   * and before reserving, and reserves the lower of it and the route's estimate (the ceiling): it
+   * can only lower a reservation. An estimate above the ceiling refuses the call before any spend.
+   */
+  estimate?(request: CallTypes[CallKind][0], kind: CallKind): number | Promise<number>;
   generateImage(request: ImageRequest): Promise<ImageResult>;
   analyzeImages(request: VisionRequest): Promise<VisionResult>;
   /** A typed decision (Score, Boolean or Choice); providers without decision models leave it out. */

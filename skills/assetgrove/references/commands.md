@@ -388,7 +388,7 @@ MCP tool: `library_judge_stale`, arguments `target`, `profile`, `bible`, `asset`
 settings <path|show|check> [--json]
 ```
 
-Reads the developer settings and changes nothing. `path` gives the settings file, whether it exists, and the config and state directories. `show` gives the settings with every default filled; per provider, the key variable's name and whether it is set, never a key. `check` reports per provider whether a key is present and a limit is declared and verified against the provider's reading, how spend is reconciled, and any refused environment variable; with one refused, it reads no provider. Local: no model call, no spend.
+Reads the developer settings and changes nothing. `path` gives the settings file, whether it exists, and the config and state directories. `show` gives the settings with every default filled; per provider, the key variable's name and whether it is set, never a key. `check` reports per provider whether a key is present and a limit is declared and verified against the provider's reading, where a call's cost comes from (`settle`: `reported` or `declared`) and whether it can be looked up later (`reconcile`: `lookup` or `unavailable`), and any refused environment variable; with one refused, it reads no provider. Local: no model call, no spend.
 
 MCP tool: `settings`, argument `action`.
 

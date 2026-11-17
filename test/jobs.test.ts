@@ -44,6 +44,7 @@ class JobScript implements GenerationProvider {
     providerId: "jobs",
     paid: true,
     hosts: [],
+    settle: "reported",
     reconcile: "unavailable",
     limit: { kind: "prepaid", usd: 100 },
   };

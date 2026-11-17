@@ -74,7 +74,8 @@ export default function extension({ z }) {
         id: "fixture:echo",
         capabilities: ["image"],
         fixedHosts: [],
-        endpointFromSettings: false,
+        // Free only as core allows: settings mark it `free` on a loopback baseURL.
+        endpointFromSettings: true,
         defaultRoutes: {
           still: {
             model: "echo-1",
@@ -88,8 +89,10 @@ export default function extension({ z }) {
             billing: {
               adapter: "fixture:echo",
               providerId: c.providerId,
+              // Core replaces it: a pack cannot declare itself free.
               paid: false,
               hosts: [],
+              settle: "declared",
               reconcile: "unavailable",
             },
             async generateImage() {
