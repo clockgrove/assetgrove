@@ -143,11 +143,22 @@ test("a leg runs when its pack, core or what it reads changed, and not for anoth
   const base = git("rev-parse", "HEAD");
   const [alpha, tiles] = listPacks(root);
   assert.equal(touched(root, tiles!, base), false);
+  assert.deepEqual(
+    matrix(root, base).map((m) => m.touched),
+    [false, false],
+  );
 
   put(root, "packages/alpha-pack/src/extension.ts", "export default { changed: true };\n");
   git("commit", "-q", "-am", "alpha");
   assert.equal(touched(root, alpha!, base), true);
   assert.equal(touched(root, tiles!, base), false);
+  assert.deepEqual(
+    matrix(root, base).map((m) => [m.short, m.touched]),
+    [
+      ["alpha-pack", true],
+      ["tiles-pack", false],
+    ],
+  );
 
   const mid = git("rev-parse", "HEAD");
   put(root, "bench/tiles/helper.ts", "export const y = 3;\n");

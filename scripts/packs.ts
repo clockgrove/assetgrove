@@ -1,7 +1,8 @@
 // The one list of packs (issue #415): a pack is a directory under packages/ whose package.json has
 // an `assetgrove` field. CI, release and the gate read this list; none of them names a pack by path.
 //
-//   node scripts/packs.ts list                  the packs, one JSON line (CI's matrix)
+//   node scripts/packs.ts list [<base>]         the packs, one JSON line (CI's matrix); with <base>,
+//                                               each says whether the change since it touches the pack
 //   node scripts/packs.ts touched <dir> <base>  "true" when the change since <base> touches the pack
 //                                               or what it reads outside itself, else "false"
 //   node scripts/packs.ts release               core and every pack whose version is not yet on
@@ -264,16 +265,30 @@ export function releasePlan(root: string = ROOT, run: Runner = defaultRunner): R
   return targets;
 }
 
-/** CI's matrix: each pack's directory, short name and package name. */
-export function matrix(root: string = ROOT): Array<Pick<Pack, "dir" | "short" | "name">> {
-  return listPacks(root).map(({ dir, short, name }) => ({ dir, short, name }));
+export type MatrixEntry = Pick<Pack, "dir" | "short" | "name"> & { touched?: boolean };
+
+/**
+ * CI's matrix: each pack's directory, short name and package name; with `base`, whether the change
+ * since it touches the pack's leg (`touched`).
+ */
+export function matrix(
+  root: string = ROOT,
+  base?: string,
+  run: Runner = defaultRunner,
+): MatrixEntry[] {
+  return listPacks(root).map((pack) => ({
+    dir: pack.dir,
+    short: pack.short,
+    name: pack.name,
+    ...(base !== undefined && { touched: touched(root, pack, base, run) }),
+  }));
 }
 
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
   const out = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
-  if (command === "list") {
-    out(matrix());
+  if (command === "list" && args.length <= 1) {
+    out(matrix(ROOT, args[0]));
   } else if (command === "touched" && args.length === 2) {
     const pack = listPacks().find((p) => p.dir === args[0] || p.short === args[0]);
     if (!pack) {
@@ -284,7 +299,9 @@ if (import.meta.main) {
   } else if (command === "release") {
     out(releasePlan());
   } else {
-    process.stderr.write("usage: node scripts/packs.ts list | touched <dir> <base> | release\n");
+    process.stderr.write(
+      "usage: node scripts/packs.ts list [<base>] | touched <dir> <base> | release\n",
+    );
     process.exit(2);
   }
 }
