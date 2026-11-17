@@ -1,7 +1,7 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,7 @@ import {
   RouteUnavailableError,
 } from "../src/routes.ts";
 import { SettingsError } from "../src/env.ts";
+import { loadSettings } from "../src/settings.ts";
 import type { Settings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
 import { approve, approveProfile, writeSettings } from "./fixtures/env.ts";
@@ -382,4 +383,69 @@ test("a lone provider serves its defaults, and providers with disjoint operation
   ).routes;
   assert.equal(split.vision.provider, "gateway");
   assert.equal(split.model3d.provider, "tripo");
+});
+
+test("route providerOptions: settings validate them as plain objects, a same-pair override replaces the default's whole, and only options off the default are keyed", () => {
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), "assetgrove-routes-opts-"));
+  const load = (routes: unknown) => {
+    const path = join(dir, "settings.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        format: "assetgrove-settings/1",
+        providers: { tripo: {} },
+        routes,
+      }),
+    );
+    return loadSettings({ env: { ASSETGROVE_CONFIG: path, HOME: dir }, cwd: dir });
+  };
+  const loaded = load({
+    model3d: { provider: "tripo", model: "m", providerOptions: { tripo: { texture: false } } },
+  });
+  assert.deepEqual(loaded.routes["model3d"]!.providerOptions, { tripo: { texture: false } });
+  assert.throws(
+    () => load({ model3d: { provider: "tripo", model: "m", providerOptions: { tripo: "x" } } }),
+    (error: unknown) => error instanceof SettingsError && error.code === "settings_invalid",
+  );
+
+  const providers = { tripo: {} };
+  const def = defaultRoutes.model3d;
+  const defaultOptions = def.providerOptions!;
+  const model3d = (route?: Settings["routes"][string]) =>
+    ProviderSet.fromSettings(settingsOf(providers, route && { routes: { model3d: route } }), {
+      env: {},
+    }).routes.model3d;
+  const same = { provider: "tripo", model: def.model };
+
+  const plain = model3d();
+  assert.deepEqual(plain.providerOptions, defaultOptions);
+  assert.equal(plain.keyedProviderOptions, undefined);
+
+  const kept = model3d(same);
+  assert.deepEqual(kept.providerOptions, defaultOptions);
+  assert.equal(kept.keyedProviderOptions, undefined);
+
+  const own = { tripo: { texture: false } };
+  const replaced = model3d({ ...same, providerOptions: own });
+  assert.deepEqual(replaced.providerOptions, own);
+  assert.deepEqual(replaced.keyedProviderOptions, own);
+
+  const identical = model3d({
+    ...same,
+    providerOptions: structuredClone(defaultOptions),
+  });
+  assert.deepEqual(identical.providerOptions, defaultOptions);
+  assert.equal(identical.keyedProviderOptions, undefined);
+
+  const changed = model3d({ provider: "tripo", model: "other", estimatedCostUsd: 0.1 });
+  assert.equal(changed.providerOptions, undefined);
+  assert.equal(changed.keyedProviderOptions, undefined);
+  const changedOwn = model3d({
+    provider: "tripo",
+    model: "other",
+    estimatedCostUsd: 0.1,
+    providerOptions: own,
+  });
+  assert.deepEqual(changedOwn.providerOptions, own);
+  assert.deepEqual(changedOwn.keyedProviderOptions, own);
 });

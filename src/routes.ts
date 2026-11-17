@@ -106,6 +106,13 @@ export interface Route {
   supportsSeed?: boolean;
   providerOptions?: Record<string, Record<string, unknown>>;
   /**
+   * The route's provider options when they differ from the default route of the route's own
+   * provider for the operation (its adapter's `defaultRoutes[operation]`); absent when they match
+   * or the route has none. It enters the call key (src/runs/journal.ts) and the request digest
+   * (jobs in src/runs/plan.ts), so a route on default options keeps today's keys.
+   */
+  keyedProviderOptions?: Record<string, Record<string, unknown>>;
+  /**
    * 3D routes: the axis the provider's models face (`+z` when unset). Assetgrove turns each model
    * to the target profile's `model3d.forward`.
    */
@@ -774,6 +781,15 @@ export interface RouteProvider {
   settings?: { free?: boolean };
 }
 
+/** JSON with object keys sorted, so equal options compare equal whatever their key order. */
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v !== null && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+}
+
 /** A route or role entry of the settings. */
 type Override = Settings["routes"][string];
 
@@ -792,7 +808,10 @@ const STAND_IN_ADAPTER = "scripted";
  * override's own provider) keeps the whole default route. One that changes either belongs to
  * another (provider, model) pair, so it takes nothing from the default: it carries only its own `estimatedCostUsd`, `outputGrant` and `providerTerms`,
  * and it must set `estimatedCostUsd` unless its provider is `free` or the scripted stand-in
- * (`settings_invalid` otherwise). Throws `RouteUnavailableError` when the result names no
+ * (`settings_invalid` otherwise). `providerOptions` follow the same rule: an override of the same
+ * pair that names them replaces the default's whole, one that names none keeps the default's; a
+ * changed pair carries only the ones it names. A route whose options differ from the default of its
+ * own provider also gets them as `keyedProviderOptions`. Throws `RouteUnavailableError` when the result names no
  * configured provider whose adapter has the role's capability.
  */
 export function resolveRoute(
@@ -868,6 +887,9 @@ export function resolveRoute(
         ...(override.providerTermsAsOf !== undefined && {
           providerTermsAsOf: override.providerTermsAsOf,
         }),
+        ...(override.providerOptions !== undefined && {
+          providerOptions: structuredClone(override.providerOptions),
+        }),
       };
     } else {
       missingEstimate = override.estimatedCostUsd === undefined ? field : undefined;
@@ -882,6 +904,9 @@ export function resolveRoute(
         ...(override.providerTermsAsOf !== undefined && {
           providerTermsAsOf: override.providerTermsAsOf,
         }),
+        ...(override.providerOptions !== undefined && {
+          providerOptions: structuredClone(override.providerOptions),
+        }),
       };
     }
   } else if (fallback !== undefined) {
@@ -891,6 +916,12 @@ export function resolveRoute(
       operation,
       `route unavailable: no configured provider serves ${what}; set ${fields} in the developer settings to a configured provider${capability !== undefined ? ` whose adapter has the ${capability} capability` : ""}`,
     );
+  }
+  if (route.providerOptions !== undefined) {
+    const base = defaultOf(route.provider)?.providerOptions;
+    if (base === undefined || sortedJson(route.providerOptions) !== sortedJson(base)) {
+      route.keyedProviderOptions = structuredClone(route.providerOptions);
+    }
   }
   const provider = providers.find((p) => p.id === route.provider);
   if (provider === undefined) {

@@ -33,6 +33,8 @@ export interface PlanJob {
   count: number;
   /** The route's estimate of one call, in USD. */
   estimatedCostUsd: number;
+  /** The route's options where they differ from its provider's default route, so they enter the request digest; absent otherwise. */
+  providerOptions?: Record<string, Record<string, unknown>>;
 }
 
 /** What a paid command would do and cost, computed before anything is spent. */
@@ -166,6 +168,9 @@ export function jobOf(operation: string, route: Route, count = 1): PlanJob {
     model: route.model,
     count,
     estimatedCostUsd: route.estimatedCostUsd,
+    ...(route.keyedProviderOptions !== undefined && {
+      providerOptions: route.keyedProviderOptions,
+    }),
   };
 }
 
@@ -194,8 +199,23 @@ export function jobsOf(
       model: c.model,
       count,
       estimatedCostUsd: c.estimatedCostUsd,
+      ...optionsOf(routes, c.operation),
     })),
   );
+}
+
+function optionsOf(
+  routes: Record<string, Route>,
+  operation: string,
+): Pick<PlanJob, "providerOptions"> {
+  try {
+    const options = Object.hasOwn(routes, operation)
+      ? routes[operation]?.keyedProviderOptions
+      : undefined;
+    return options === undefined ? {} : { providerOptions: options };
+  } catch {
+    return {};
+  }
 }
 
 function providerOf(routes: Record<string, Route>, operation: string): string {
@@ -216,7 +236,8 @@ export function mergeJobs(jobs: readonly PlanJob[]): PlanJob[] {
         m.operation === job.operation &&
         m.provider === job.provider &&
         m.model === job.model &&
-        m.estimatedCostUsd === job.estimatedCostUsd,
+        m.estimatedCostUsd === job.estimatedCostUsd &&
+        canonicalJson(m.providerOptions) === canonicalJson(job.providerOptions),
     );
     if (same) same.count += job.count;
     else merged.push({ ...job });

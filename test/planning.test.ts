@@ -1074,6 +1074,14 @@ test("changing a settings route or the run cap between plan and apply exits 2 pl
       }),
     },
     "a different run cap": { routes: routesWith({ model: "a" }), runCapUsd: 3 },
+    // Issue #402: options off the default route are part of the call's identity.
+    "changed provider options": {
+      routes: routesWith({
+        model: "a",
+        providerOptions: { scripted: { quality: "high" } },
+        keyedProviderOptions: { scripted: { quality: "high" } },
+      }),
+    },
   };
   for (const [name, change] of Object.entries(forApply)) {
     const before = provider.calls.length;

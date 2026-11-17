@@ -104,6 +104,9 @@ export class Caller {
       referenceHashes: references.map((r) => r.sha256),
       ...(seed !== undefined && { seed }),
       ...(this.index !== undefined && { index: this.index }),
+      ...(route.keyedProviderOptions !== undefined && {
+        providerOptions: route.keyedProviderOptions,
+      }),
     });
     const journaled = callKey === undefined ? undefined : journal?.read(callKey);
     if (journaled !== undefined) {

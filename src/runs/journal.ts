@@ -34,6 +34,8 @@ export interface CallKeyInput {
   seed?: number;
   /** The candidate or frame index, where the command gives one. */
   index?: number;
+  /** The route's `keyedProviderOptions`; absent on default options, so the key is the one it always was. */
+  providerOptions?: Record<string, Record<string, unknown>>;
 }
 
 /** One journaled call: its key, the record the `Caller` kept and the provider's result. */
@@ -58,7 +60,10 @@ function sha256Hex(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-/** sha256 hex of the canonical JSON of the call's operation, provider, model, prompt, references, seed and index. */
+/**
+ * sha256 hex of the canonical JSON of the call's operation, provider, model, prompt, references,
+ * seed, index and, only where they differ from the default route's, its provider options.
+ */
 export function callKey(input: CallKeyInput & { occurrence?: number }): string {
   return sha256Hex(
     canonicalJson({
@@ -69,6 +74,7 @@ export function callKey(input: CallKeyInput & { occurrence?: number }): string {
       referenceHashes: input.referenceHashes,
       seed: input.seed,
       index: input.index,
+      providerOptions: input.providerOptions,
       occurrence: input.occurrence,
     }),
   );

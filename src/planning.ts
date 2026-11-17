@@ -342,7 +342,11 @@ async function fileInput(path: string, what: string): Promise<PlanInput> {
   }
 }
 
-/** What a route contributes to the resolution hash: everything that decides money or a grant. */
+/**
+ * What a route contributes to the resolution hash: everything that decides money, a grant or the
+ * call's identity. Provider options enter only where they differ from the default route's (the
+ * route's `keyedProviderOptions`), so a plan on default options keeps the hash it always had.
+ */
 function resolved(value: Route) {
   return {
     provider: value.provider ?? null,
@@ -351,6 +355,9 @@ function resolved(value: Route) {
     supportsSeed: value.supportsSeed === true,
     outputGrant: value.outputGrant ?? null,
     providerTerms: value.providerTerms ?? null,
+    ...(value.keyedProviderOptions !== undefined && {
+      providerOptions: value.keyedProviderOptions,
+    }),
   };
 }
 

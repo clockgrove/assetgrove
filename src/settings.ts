@@ -104,6 +104,8 @@ const routeSchema = z.strictObject({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   estimatedCostUsd: usd.optional(),
+  /** Per-provider call options, each a plain object; the adapter reads its own entry. */
+  providerOptions: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
 });
 
 const rate = z.number().finite().min(0).max(1);
