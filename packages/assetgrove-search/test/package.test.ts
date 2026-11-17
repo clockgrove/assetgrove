@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFileSync, existsSync, realpathSync, symlinkSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -16,8 +16,11 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
 const FIVE_MINUTES = 5 * 60 * 1000;
-/** A tarball the release workflow already packed and attested; when set, it is tested instead of a fresh pack. */
-const prebuilt = process.env["ASSETGROVE_TEST_TARBALL"];
+/**
+ * The tarball the release workflow packed and attested, which its verify job downloads into out/;
+ * when out/ holds one, it is tested instead of a fresh pack.
+ */
+const prebuilt = releasedTarball(join(pkgRoot, "out"));
 
 /** npm's CLI script under the running Node when it is there (npm is a .cmd file on Windows). */
 function npm(args: string[], cwd: string) {
@@ -132,4 +135,13 @@ async function listPrebuilt(tarball: string, temp: string): Promise<Packed> {
     .map((line) => line.slice("package/".length));
   const version = /-(\d+\.\d+\.\d+[^/]*)\.tgz$/.exec(filename)?.[1] ?? "";
   return { filename, version, files };
+}
+
+/** The one tarball in `dir`, or undefined when there is none; more than one is an error. */
+function releasedTarball(dir: string): string | undefined {
+  if (!existsSync(dir)) return undefined;
+  const tarballs = readdirSync(dir).filter((name) => name.endsWith(".tgz"));
+  if (tarballs.length > 1)
+    throw new Error(`${dir} holds more than one tarball: ${tarballs.join(", ")}`);
+  return tarballs[0] === undefined ? undefined : join(dir, tarballs[0]);
 }
