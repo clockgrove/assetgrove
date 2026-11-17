@@ -8,7 +8,8 @@ import { test } from "node:test";
 import { importTargets, planAnimationQa, runAnimationQa } from "../src/animation/commands.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import type { DecisionRequest } from "../src/gateway/provider.ts";
-import { decodePng } from "../src/image/raster.ts";
+import { holeView, viewReference } from "../src/animation/holes.ts";
+import { decodePng, getPixel } from "../src/image/raster.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { importSheet, writeFamilies } from "../src/sheet/import.ts";
 import type { Grouping } from "../src/sheet/types.ts";
@@ -98,12 +99,34 @@ test("animation-qa on an import asks the holes decision on every frame, before a
   });
   const holes = asked.filter((r) => r.operation === "holes");
   assert.equal(holes.length, 6);
+  const ids = [5, 6, 7, 8, 9, 10];
   for (const r of holes) {
     assert.equal(r.images.length, 2);
     assert.equal(
       r.question.instructions,
       "Is any part of the character missing after background removal?",
     );
+    // Image 1 is the kept crop of the sheet before removal, image 2 the cleaned figure over
+    // magenta: the frame's own files, in that order, as the model receives them.
+    const n = Number(/frame (\d+) of a "walk-right"/.exec(r.prompt)?.[1]);
+    const frame = record.frames.find((f) => f.id === ids[n - 1]);
+    assert.ok(frame?.source, `frame ${n} is imported frame ${ids[n - 1]}`);
+    const read = async (file: string) =>
+      decodePng(new Uint8Array(await readFile(join(importDir, file))));
+    const expected = [
+      viewReference(holeView(await read(frame.source), new Uint8Array(0)), "", ""),
+      viewReference(holeView(await read(frame.file), new Uint8Array(0), [255, 0, 255]), "", ""),
+    ];
+    assert.deepEqual(
+      r.images.map((i) => i.bytes),
+      expected.map((e) => e.bytes),
+    );
+    const [before, after] = r.images.map((i) => decodePng(i.bytes));
+    // The crop's corner is the sheet's background (within its noise); the cleaned one is magenta.
+    const corner = getPixel(before!, 0, 0);
+    for (let k = 0; k < 3; k++)
+      assert.ok(Math.abs((corner[k] ?? 0) - (sheet.background[k] ?? 0)) <= 3, `${corner}`);
+    assert.deepEqual(getPixel(after!, 0, 0), [255, 0, 255, 255]);
   }
   const qa = results[0]!;
   assert.deepEqual(
