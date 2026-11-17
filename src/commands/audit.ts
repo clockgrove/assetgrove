@@ -536,6 +536,11 @@ forecast, and needs no key.`,
                 `most distant by embedding: ${o.address} (distance ${o.distance.toFixed(4)}; not judged, see find --outliers)`,
             )
         : []),
+      ...(outliers && Array.isArray(outliers["unranked"]) && outliers["unranked"].length > 0
+        ? [
+            `not ranked by embedding, no indexed image (run search index): ${(outliers["unranked"] as string[]).join(", ")}`,
+          ]
+        : []),
       ...errors,
       `advisory: an audit informs a person and never rejects or approves; $${budget.spentUsd.toFixed(4)} spent; ${join(dir, AUDIT_FILE)}`,
     ].join("\n");

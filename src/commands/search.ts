@@ -353,10 +353,23 @@ export async function setOutliers(
   addresses: string[],
   target: string | undefined,
   ctx: RunContext,
-): Promise<SearchOutliersResult | undefined> {
+): Promise<(SearchOutliersResult & { unranked: string[] }) | undefined> {
   if ((ctx.extensions ?? CORE_REGISTRY).search === undefined) return undefined;
   const { slot, context } = await searchCall("audit", target, ctx);
-  return calling(() => slot.outliers(addresses, context));
+  const result = await calling(() => slot.outliers(addresses, context));
+  return { ...result, unranked: unrankedMembers(addresses, result) };
+}
+
+/**
+ * The members of a set the slot's ranking leaves out: those with no indexed image yet. The ranking
+ * reads stored vectors only, so a member added since the last `search index` is not in it.
+ */
+export function unrankedMembers(
+  addresses: readonly string[],
+  result: SearchOutliersResult,
+): string[] {
+  const ranked = new Set(result.ranking.map((m) => m.address));
+  return addresses.filter((a) => !ranked.has(a));
 }
 
 /** The query of a find call; an image file for --like is read here. */
@@ -450,6 +463,10 @@ async function prepareOutliers(args: FindArgs & { outliers: string }, ctx: RunCo
       context,
     ),
   );
+  const unranked = unrankedMembers(
+    addresses.map((m) => m.address),
+    result,
+  );
   const { judged, typical } = selectMembers(result.ranking);
   const wanted = new Set([...judged, ...typical].map((m) => m.address));
   // A member whose media cannot be resolved (a path that leaves the library root) has no image.
@@ -497,6 +514,7 @@ async function prepareOutliers(args: FindArgs & { outliers: string }, ctx: RunCo
   return {
     work,
     result,
+    unranked,
     typical: typical.map((m) => m.address),
     sheet,
     style,
@@ -511,7 +529,7 @@ async function runOutliers(
   args: FindArgs & { outliers: string },
   ctx: RunContext,
 ): Promise<Outcome> {
-  const { work, result, typical, sheet, style, pending, notJudged, providers } =
+  const { work, result, unranked, typical, sheet, style, pending, notJudged, providers } =
     await prepareOutliers(args, ctx);
   if (args.dryRun || ctx.run === undefined)
     return dryRunOutcome(work, formatWork("find", work), spendLedger(ctx, args.workItem));
@@ -544,6 +562,7 @@ async function runOutliers(
     members: result.members,
     outliers,
     ranking,
+    unranked,
     typical,
     notJudged,
     spentUsd: budget.spentUsd,
@@ -562,7 +581,10 @@ async function runOutliers(
     ...(notJudged.length > 0
       ? [`not judged, no image on this machine: ${notJudged.join(", ")}`]
       : []),
-    `${outliers.length} drawn in another style among ${result.members} members of ${args.outliers} (${answers.size} judged)`,
+    ...(unranked.length > 0
+      ? [`not ranked, no indexed image (run search index): ${unranked.join(", ")}`]
+      : []),
+    `${outliers.length} drawn in another style among ${result.members} ranked members of ${args.outliers} (${answers.size} judged${unranked.length > 0 ? `; ${unranked.length} of ${result.members + unranked.length} not ranked` : ""})`,
     ...outliers.map((o) => `  ${o.address}`),
   ].join("\n");
   return { exitCode: 0, fields, human };
@@ -599,12 +621,14 @@ view, fields, sharedText}] (card text only under sharedText), fresh, builtFrom, 
 the hits numbered by rank, which the tool also returns as image content. The index is brought up
 to date first unless another process is writing it (fresh false then). --outliers <folder> instead
 asks which members of an asset:// folder are drawn in a different style: the search index ranks
-every member by its image's mean cosine distance to the rest (free, uncut), and for the five most
-distant (at most half the set) one style-outlier decision each ($0.001 estimate on the default
+every indexed member by its image's mean cosine distance to the rest (free, uncut), and for the
+five most distant (all but the least distant in a set of six or fewer) one style-outlier decision
+each ($0.001 estimate on the default
 route) is shown the member's image, a contact sheet of up to eight typical (least distant) members
 and the style bible's text. It returns {set, members, outliers: [{address, distance,
 probability}] (the yes answers), ranking: [{address, distance, differentStyle?, probability?}]
-(every member, most distant first), typical, notJudged, spentUsd} and prints the whole ranking.
+(every ranked member, most distant first), unranked (members with no indexed image, which
+search index brings in), typical, notJudged, spentUsd} and prints the whole ranking.
 --outliers is a paid request under every embedder: plan step, forecast, one spend confirmation,
 caps and spend ledger; it embeds nothing. With the local model any other find spends nothing and
 writes only the index and the sheet under the state directory.

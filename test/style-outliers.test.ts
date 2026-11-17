@@ -262,7 +262,9 @@ writeFileSync(
     search: {
       async find() { return { hits: [], fresh: true, builtFrom: null }; },
       async outliers(addresses) {
-        const ranked = [...addresses].sort((a, b) =>
+        // Members named in STUB_UNINDEXED have no indexed image: the slot leaves them out.
+        const unindexed = (process.env.STUB_UNINDEXED ?? "").split(",").filter(Boolean);
+        const ranked = addresses.filter((a) => !unindexed.some((id) => a.endsWith(id))).sort((a, b) =>
           a.endsWith("bulk-005") ? -1 : b.endsWith("bulk-005") ? 1 : a < b ? -1 : 1);
         return { members: ranked.length, ranking: ranked.map((address, i) => ({ address, distance: 0.5 - i / 100 })) };
       },
@@ -354,8 +356,43 @@ test("find --outliers is a paid request: it forecasts, asks, judges the most dis
       /^1\. asset:\/\/\S+bulk-005 \(distance 0\.5000\): drawn in another style/m,
     );
     assert.match(human.stdout, /^8\. asset:\/\//m);
-    assert.match(human.stdout, /1 drawn in another style among 8 members/);
+    assert.match(human.stdout, /1 drawn in another style among 8 ranked members/);
+    assert.doesNotMatch(human.stdout, /not ranked/);
+    assert.deepEqual(result.unranked, []);
   } finally {
+    writeSettings({});
+  }
+});
+
+test("find --outliers names the members with no indexed image, so unindexed additions never read as a pass", async () => {
+  const set = `asset://${GAME}/by-tag/bulk/`;
+  const base = ["find", "--outliers", set, "--target", lib.dir, "--provider-script", script];
+  writeSettings({
+    providers: { scripted: { limit: { ...SCRIPTED_LIMIT } } },
+    extensions: [STUB],
+  });
+  process.env["STUB_UNINDEXED"] = "bulk-005,bulk-006";
+  try {
+    const run = await cli([...base, "--json"]);
+    assert.equal(run.code, 0, run.stdout + run.stderr);
+    const result = JSON.parse(run.stdout);
+    assert.equal(result.members, 6);
+    assert.equal(result.ranking.length, 6);
+    assert.deepEqual(result.unranked, [`asset://${GAME}/bulk-005`, `asset://${GAME}/bulk-006`]);
+    assert.deepEqual(result.outliers, [], "the warm member is unindexed, so nothing is judged yes");
+
+    const human = await cli(base);
+    assert.equal(human.code, 0, human.stderr);
+    assert.match(
+      human.stdout,
+      /^not ranked, no indexed image \(run search index\): \S+bulk-005, \S+bulk-006$/m,
+    );
+    assert.match(
+      human.stdout,
+      /0 drawn in another style among 6 ranked members of \S+ \(5 judged; 2 of 8 not ranked\)/,
+    );
+  } finally {
+    delete process.env["STUB_UNINDEXED"];
     writeSettings({});
   }
 });
