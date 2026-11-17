@@ -11,7 +11,7 @@
  * as in identity evaluation (src/identity-eval.ts). Otherwise its reasons are advisory: marked
  * `shadow` (recorded beside QA, never used to filter), and the result's `filtering` field says why.
  */
-import { defaultRoutes } from "../routes.ts";
+import { STYLE_VERDICT_OPERATION, defaultRoutes } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import type { Reason } from "../types.ts";
 import shipped from "./stability.json" with { type: "json" };
@@ -136,8 +136,18 @@ export const LOOKDEV_MARKINGS_CHECK: QaCheck = {
   operation: "lookdev-marking",
 };
 
-/** The planned run's style verdict (src/planning.ts): a vision model scores each candidate. */
-export const STYLE_SCORE_CHECK: QaCheck = vision("style-score", "planned-qa");
+/**
+ * The planned run's style verdict (src/planning.ts): a typed Boolean decision on whether each
+ * candidate violates the constitution or asset spec (version 2, #378; version 1 read a
+ * self-reported styleScore from a vision model's JSON).
+ */
+export const STYLE_SCORE_CHECK: QaCheck = {
+  id: "style-score",
+  version: "2",
+  modelBacked: true,
+  source: "decision",
+  operation: STYLE_VERDICT_OPERATION,
+};
 
 /**
  * The set-level audit's scores (src/commands/audit.ts): a vision model scores each member's style

@@ -174,7 +174,11 @@ test("shadow mode, the default, scores a below-threshold candidate without filte
   assert.equal(record.identity?.lockVersion, "7");
   assert.equal(record.identity?.agreement.identityOnlyFailed, 1);
   assert.equal(record.identity?.scores, 2);
-  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 2);
+  assert.equal(
+    provider.calls.filter((c) => c.kind === "decide" && c.request.operation !== "style-verdict")
+      .length,
+    2,
+  );
   assert.ok(logs.some((m) => m.startsWith("identity ")));
 });
 
@@ -340,7 +344,11 @@ test("a record changed between plan and apply makes the plan stale", async () =>
 test("a subject with no lock is not scored and its plan has no identity check", async () => {
   const { plan, provider, run: record } = await run([3.6], { withLock: false });
   assert.equal(modeOf(plan.plan.operations), undefined);
-  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 0);
+  assert.equal(
+    provider.calls.filter((c) => c.kind === "decide" && c.request.operation !== "style-verdict")
+      .length,
+    0,
+  );
   assert.equal(record.candidates.length, 1);
   assert.equal(record.identity, undefined);
   assert.equal(record.candidates[0]!.provenance.identity, undefined);
@@ -360,7 +368,9 @@ test("the identity forecast is part of the plan's cost", async () => {
 
 test("decision images are upscaled to at least 384 px on the short side", async () => {
   const { provider } = await run([3.6]);
-  const request = provider.calls.find((c) => c.kind === "decide")!.request as DecisionRequest;
+  const request = provider.calls.find(
+    (c) => c.kind === "decide" && c.request.operation !== "style-verdict",
+  )!.request as DecisionRequest;
   assert.ok(request.images.length >= 2);
   for (const image of request.images) {
     const raster = decodeImage(image.bytes);
@@ -395,5 +405,9 @@ test("an enforce record check that cannot run stops the run before any image is 
       error instanceof ProviderError && /identity record check could not run/.test(error.message),
   );
   assert.equal(provider.calls.filter((c) => c.kind === "image").length, 0);
-  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 0);
+  assert.equal(
+    provider.calls.filter((c) => c.kind === "decide" && c.request.operation !== "style-verdict")
+      .length,
+    0,
+  );
 });
