@@ -136,13 +136,6 @@ export interface CommandSpec<A = Record<string, unknown>> {
    */
   spendsWith?(ctx: RunContext): boolean;
   /**
-   * Whether the command's MCP tool is marked as asking a spend confirmation under these settings;
-   * `spendsWith` when absent. Find can spend under every embedder (`--outliers` asks style-outlier
-   * decisions), but with the local model only that call spends: its confirmation is asked when the
-   * call reaches it, so the tool is marked only with a hosted embedder, where every find can spend.
-   */
-  marksSpendWith?(ctx: RunContext): boolean;
-  /**
    * False when a finished run of the same digest runs again (in its run directory, the journal
    * answering every call it holds) instead of being returned as it ended. Search's index is a
    * projection that can be deleted or changed, so its finished runs are not replayed.

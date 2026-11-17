@@ -32,7 +32,9 @@ export const estimateCommand = defineCommand<EstimateArgs>({
 command's tool arguments) and returns the same document as that command's --dry-run: its jobs,
 forecast, cap, whether it is paid, input hashes, request digest and run directory, under that
 command's name. Makes no
-provider call, adds no ledger entry and writes nothing.`,
+provider call, adds no ledger entry and writes nothing. A call that spends nothing under these
+settings has no estimate and exits 2: a free or unknown command, find and search index with the
+local model, except find with --outliers, which asks paid style-outlier decisions.`,
   input: {
     type: "object",
     properties: {
