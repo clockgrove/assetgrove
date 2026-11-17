@@ -442,7 +442,18 @@ export async function importSheet(
   } catch (error) {
     // A generated sheet was paid for: keep it and how it was made, so it can be imported by hand.
     if (error instanceof SliceError && options.generation) {
-      await keepRefusedSheet(importDir, { ...options, slice }, digitalSourceType, error, now);
+      // The sheet-blob decisions made before the refusal are kept with it, as the import keeps them.
+      const blobCalls = options.blobs
+        ? options.blobs.records.slice(starts.get(options.blobs) ?? 0)
+        : [];
+      await keepRefusedSheet(
+        importDir,
+        { ...options, slice },
+        digitalSourceType,
+        error,
+        now,
+        blobCalls,
+      );
     }
     throw error;
   }
@@ -600,6 +611,7 @@ async function keepRefusedSheet(
   digitalSourceType: DigitalSourceType,
   error: SliceError,
   now: () => Date,
+  calls: CallRecord[],
 ): Promise<void> {
   const mediaType = sniffMediaType(options.sheet);
   const file = `sheet.${mediaType.split("/")[1] ?? "bin"}`;
@@ -620,6 +632,11 @@ async function keepRefusedSheet(
     },
     digitalSourceType,
     generation: options.generation,
+    calls,
+    costUsd: [...(options.generation?.calls ?? []), ...calls].reduce(
+      (sum, c) => sum + c.costUsd,
+      0,
+    ),
     slice: {
       params: options.slice ?? {},
       found: error.found,

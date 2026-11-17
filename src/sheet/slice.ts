@@ -6,7 +6,7 @@
 import { InputError } from "../errors.ts";
 import type { Raster } from "../image/raster.ts";
 import type { Box, Point, Rgb, Size, Transform } from "../types.ts";
-import type { BlobKind, SliceOptions, SliceResult, SlicedFigure } from "./types.ts";
+import type { BlobVerdict, SliceOptions, SliceResult, SlicedFigure } from "./types.ts";
 
 interface Component {
   /** Pixel indices in sheet coordinates. */
@@ -246,11 +246,11 @@ function blobId(c: Component): string {
   return `${c.box.x},${c.box.y},${c.box.width}x${c.box.height}`;
 }
 
-type Verdicts = ReadonlyMap<string, BlobKind>;
+type Verdicts = ReadonlyMap<string, BlobVerdict>;
 
 /** A component under the cutoff that a `sheet-blob` verdict made a whole figure. */
 function isFigure(c: Component, cutoff: number, verdicts: Verdicts): boolean {
-  return c.pixels.length >= cutoff || verdicts.get(blobId(c)) === "figure";
+  return c.pixels.length >= cutoff || verdicts.get(blobId(c))?.kind === "figure";
 }
 
 function nearest(figures: Component[], c: Component): Component | undefined {
@@ -268,16 +268,27 @@ function nearest(figures: Component[], c: Component): Component | undefined {
   return best;
 }
 
+function orphanMessage(c: Component, scope: "sheet" | "cell"): string {
+  return (
+    `the blob at ${blobId(c)} was judged part of a figure, but ` +
+    (scope === "cell"
+      ? "its grid cell holds no figure for it to join; the grid does not fit the sheet, so give the grid or frame count that keeps each frame's parts in its cell"
+      : "the sheet holds no figure for it to join")
+  );
+}
+
 /**
  * Splits components into figures, their merged detached bits, and dropped ones. A blob's verdict
  * decides it: a figure is one whatever its area, a part joins the nearest figure, a label or speck
  * is dropped. A blob with no verdict keeps the area rule: under the cutoff, it joins the figure
- * whose box holds it, else it is dropped.
+ * whose box holds it, else it is dropped. A part with no figure to join (none on the sheet, or
+ * none in its cell under a given grid) is refused, naming the blob, never dropped.
  */
 function assign(
   all: Component[],
   cutoff: number,
   verdicts: Verdicts,
+  scope: "sheet" | "cell" = "sheet",
 ): { figures: Component[]; merged: Map<Component, Component[]>; dropped: Component[] } {
   const figures = all.filter((c) => isFigure(c, cutoff, verdicts));
   const merged = new Map<Component, Component[]>(figures.map((f) => [f, []]));
@@ -285,12 +296,17 @@ function assign(
   for (const c of all) {
     if (isFigure(c, cutoff, verdicts)) continue;
     const verdict = verdicts.get(blobId(c));
-    const host =
-      verdict === "part"
-        ? nearest(figures, c)
-        : verdict === undefined
-          ? figures.find((f) => inside(c.box, f.box, 2))
-          : undefined;
+    let host: Component | undefined;
+    if (verdict?.kind === "part") {
+      host =
+        verdict.with !== undefined
+          ? (figures.find((f) => blobId(f) === verdict.with) ?? nearest(figures, c))
+          : nearest(figures, c);
+      // A blob judged part of a figure is never erased: with no figure to join, refuse.
+      if (!host) throw new InputError(orphanMessage(c, scope));
+    } else if (verdict === undefined) {
+      host = figures.find((f) => inside(c.box, f.box, 2));
+    }
     if (host) (merged.get(host) as Component[]).push(c);
     else dropped.push(c);
   }
@@ -578,7 +594,7 @@ function sliceGivenGrid(ctx: Context, grid: GridSpec): Sliced {
   const figures: SlicedFigure[] = [];
   const empty = new Map<string, string>();
   for (const { row, column, box, bg, parts } of cells) {
-    const { figures: big, merged } = assign(parts, cutoff, ctx.verdicts);
+    const { figures: big, merged } = assign(parts, cutoff, ctx.verdicts, "cell");
     const main = big.sort((a, b) => b.pixels.length - a.pixels.length)[0];
     if (!main) {
       const largest = Math.max(0, ...parts.map((p) => p.pixels.length));
@@ -791,7 +807,7 @@ function context(sheet: Raster, options: SliceOptions): Context {
     sheetBg,
     sheetComponents,
     cutoff: figureCutoff(sheetComponents, labelFraction),
-    verdicts: new Map((options.blobs ?? []).map((b) => [b.id, b.kind])),
+    verdicts: new Map((options.blobs ?? []).map((b) => [b.id, b])),
   };
 }
 
@@ -905,7 +921,7 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
  * each other are one blob, so the letters of one label are asked about once.
  */
 export interface AmbiguousBlob {
-  /** The ids (`x,y,WxH`) of the blob's components; a verdict applies to each. */
+  /** The ids (`x,y,WxH`) of the blob's components, largest first; a verdict applies to each. */
   ids: string[];
   /** The blob's box on the sheet. */
   box: Box;
@@ -1016,7 +1032,7 @@ export function ambiguousBlobs(sheet: Raster, options: SliceOptions = {}): Ambig
     crop = clipBox(crop, ctx.whole);
     if (crop.width === 0 || crop.height === 0) crop = box;
     return {
-      ids: members.map(blobId),
+      ids: [...members].sort((a, b) => b.pixels.length - a.pixels.length).map(blobId),
       box,
       area: members.reduce((sum, m) => sum + m.pixels.length, 0),
       crop,

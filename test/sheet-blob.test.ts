@@ -6,12 +6,14 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
+import { InputError } from "../src/errors.ts";
+import { MIN_DECISION_EDGE } from "../src/identity.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { createRaster, decodePng, encodePng } from "../src/image/raster.ts";
 import type { Raster } from "../src/image/raster.ts";
 import { defaultRoutes, OPERATION_ROLES, SHEET_BLOB_OPERATION } from "../src/routes.ts";
 import { judgeBlobs, outlinedCrop, SHEET_BLOB_LIMIT } from "../src/sheet/blobs.ts";
-import { importSheet } from "../src/sheet/import.ts";
+import { importSheet, REFUSED_SHEET_RECORD } from "../src/sheet/import.ts";
 import { ambiguousBlobs, SliceError, sliceSheet } from "../src/sheet/slice.ts";
 import type { BlobKind } from "../src/sheet/types.ts";
 import type { Box } from "../src/types.ts";
@@ -53,7 +55,7 @@ function tailSheet(): Raster {
 }
 
 function caller(answer: (prompt: string) => BlobKind, costUsd = 0.001) {
-  const asked: Array<{ prompt: string; images: number; options: string[] }> = [];
+  const asked: Array<{ prompt: string; images: number; options: string[]; edge: number }> = [];
   const provider = new ScriptedProvider({
     image: () => {
       throw new Error("no image call is expected");
@@ -65,6 +67,12 @@ function caller(answer: (prompt: string) => BlobKind, costUsd = 0.001) {
       asked.push({
         prompt: request.prompt,
         images: request.images.length,
+        edge: Math.min(
+          ...request.images.map((i) => {
+            const r = decodePng(i.bytes);
+            return Math.min(r.width, r.height);
+          }),
+        ),
         options: request.question.type === "choice" ? Object.keys(request.question.options) : [],
       });
       return { answer: { type: "choice", choice: answer(request.prompt) }, costUsd };
@@ -243,4 +251,90 @@ test("sheet-blob: import's plan forecasts one call per ambiguous blob on the she
     [0, 1, 2, 3].map((i) => ({ x: 20 + 64 * i, y: 16, width: 25, height: 40 })),
   );
   assert.doesNotMatch(await dryRun(clean), /sheet-blob/);
+});
+
+test("sheet-blob: the outlined crop is enlarged to MIN_DECISION_EDGE before it is sent", async () => {
+  const { call, asked } = caller(() => "figure");
+  await judgeBlobs(call, crouchSheet(), { count: 4 }, "fern");
+  // The cell is 64 px; some decision models reject images under about 300 px a side (#27).
+  assert.equal(asked.length, 1);
+  assert.ok(asked[0]!.edge >= MIN_DECISION_EDGE, String(asked[0]!.edge));
+});
+
+test("sheet-blob: a crouched frame drawn in two pieces, answered figure, is one figure of both pieces", async () => {
+  // Areas 1000, 950, 900, and the crouch as 200 px and 50 px, 2 px apart.
+  const sheet = sheetOf(4, [
+    { x: 20, y: 16, width: 25, height: 40 },
+    { x: 84, y: 18, width: 25, height: 38 },
+    { x: 148, y: 20, width: 25, height: 36 },
+    { x: 207, y: 46, width: 20, height: 10 },
+    { x: 229, y: 46, width: 5, height: 10 },
+  ]);
+  const blobs = ambiguousBlobs(sheet, { count: 4 });
+  assert.equal(blobs.length, 1);
+  assert.equal(blobs[0]!.ids.length, 2);
+  const { call, asked } = caller(() => "figure");
+  const judged = await judgeBlobs(call, sheet, { count: 4 }, "fern");
+  assert.equal(asked.length, 1);
+  const sliced = sliceSheet(sheet, { count: 4, blobs: judged.verdicts });
+  assert.deepEqual(
+    sliced.figures.map((f) => opaqueAreaOfMask(f.mask)),
+    [1000, 950, 900, 250],
+  );
+  // With no count, the import does not silently return five frames either.
+  assert.equal(sliceSheet(sheet, { blobs: judged.verdicts }).figures.length, 4);
+});
+
+test("sheet-blob: on a given grid, a part alone in a cell with no figure is refused, naming the blob", async () => {
+  const sheet = sheetOf(4, [
+    { x: 20, y: 16, width: 25, height: 40 },
+    { x: 84, y: 16, width: 25, height: 40 },
+    { x: 148, y: 16, width: 25, height: 40 },
+    { x: 220, y: 30, width: 6, height: 4 },
+  ]);
+  const grid = { columns: 4, rows: 1 };
+  const blobs = ambiguousBlobs(sheet, { grid });
+  assert.equal(blobs.length, 1);
+  const judged = await judgeBlobs(caller(() => "part").call, sheet, { grid }, "fern");
+  assert.throws(
+    () => sliceSheet(sheet, { grid, blobs: judged.verdicts }),
+    (e: unknown) =>
+      e instanceof InputError && /blob at 220,30,6x4 was judged part of a figure/.test(e.message),
+  );
+});
+
+test("sheet-blob: a refused generated sheet keeps the sheet-blob decisions made before the refusal, and their cost", async () => {
+  const { call } = caller(() => "part", 0.001);
+  const importsDir = join(await mkdtemp(join(tmpdir(), "assetgrove-blob-refused-")), "imports");
+  await assert.rejects(
+    importSheet({
+      sheet: encodePng(tailSheet()),
+      sheetPath: "tail.png",
+      tool: "assetgrove generate-sheet",
+      assetId: "fern",
+      profile: {
+        ...syntheticProfile(),
+        style: { alpha: { mode: "soft" }, color: { rule: "full" } },
+      },
+      importsDir,
+      importId: "refused",
+      slice: { count: 5 },
+      blobs: call,
+      generation: { prompt: "a fern sheet", parameters: {}, calls: [] },
+    }),
+    (e: unknown) => e instanceof SliceError,
+  );
+  const kept = JSON.parse(
+    await readFile(join(importsDir, "refused", REFUSED_SHEET_RECORD), "utf8"),
+  ) as {
+    calls: Array<{ operation: string; costUsd: number }>;
+    costUsd: number;
+    slice: { params: { blobs?: unknown[] } };
+  };
+  assert.deepEqual(
+    kept.calls.map((c) => c.operation),
+    [SHEET_BLOB_OPERATION],
+  );
+  assert.ok(Math.abs(kept.costUsd - 0.001) < 1e-9, String(kept.costUsd));
+  assert.equal(kept.slice.params.blobs?.length, 1);
 });

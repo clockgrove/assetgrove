@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import type { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
+import { forDecision } from "../identity.ts";
 import { encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { SHEET_BLOB_OPERATION } from "../routes.ts";
@@ -107,7 +108,10 @@ function prompt(blob: AmbiguousBlob, expected: number | undefined, subject: stri
 
 /** What the `sheet-blob` decisions answered for one sheet. */
 export interface JudgedBlobs {
-  /** The verdicts, one per component of each blob asked about, for `SliceOptions.blobs`. */
+  /**
+   * The verdicts, one per component of each blob asked about, for `SliceOptions.blobs`. A blob in
+   * several pieces answered `figure` is one figure: its largest piece, the rest parts `with` it.
+   */
   verdicts: BlobVerdict[];
   /** Each blob asked about: its box and its answer. */
   judged: Array<{ box: Box; kind: BlobKind }>;
@@ -133,13 +137,17 @@ export async function judgeBlobs(
     const image = outlinedCrop(sheet, blob.crop, blob.box);
     const bytes = encodePng(image);
     const name = `sheet-blob-${blob.box.x}-${blob.box.y}.png`;
-    const reference: LoadedReference = {
-      role: "sheet cell with the blob outlined",
-      path: name,
-      mediaType: "image/png",
-      bytes,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    };
+    // Enlarged (crisp) to MIN_DECISION_EDGE: some decision models reject small images (#27).
+    const reference: LoadedReference = forDecision(
+      {
+        role: "sheet cell with the blob outlined",
+        path: name,
+        mediaType: "image/png",
+        bytes,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+      "crisp",
+    );
     const { result } = await call.decide(
       SHEET_BLOB_OPERATION,
       prompt(blob, slice.count, subject),
@@ -158,7 +166,14 @@ export async function judgeBlobs(
     }
     const kind = choice as BlobKind;
     judged.push({ box: blob.box, kind });
-    for (const id of blob.ids) verdicts.push({ id, kind });
+    if (kind === "figure" && blob.ids.length > 1) {
+      // One figure drawn in pieces: its largest piece is the figure, the rest join it.
+      const [main, ...rest] = blob.ids;
+      verdicts.push({ id: main as string, kind });
+      for (const id of rest) verdicts.push({ id, kind: "part", with: main as string });
+    } else {
+      for (const id of blob.ids) verdicts.push({ id, kind });
+    }
   }
   return { verdicts, judged, unjudged: blobs.length - asked.length };
 }

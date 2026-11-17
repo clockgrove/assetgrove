@@ -155,6 +155,11 @@ export const OPERATIONS: OperationSpec[] = [
             properties: {
               id: { type: "string", description: "the blob's box on the sheet, x,y,WxH" },
               kind: { type: "string", enum: [...BLOB_KINDS] },
+              with: {
+                type: "string",
+                description:
+                  "for a part, the id of the figure it joins (a figure drawn in pieces); else the nearest figure",
+              },
             },
             required: ["id", "kind"],
           },

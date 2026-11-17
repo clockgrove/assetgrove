@@ -88,6 +88,8 @@ export const BLOB_KINDS: readonly BlobKind[] = ["figure", "part", "label", "spec
 export interface BlobVerdict {
   id: string;
   kind: BlobKind;
+  /** For a `part`: the id of the figure it joins, else the nearest figure. */
+  with?: string;
 }
 
 /** A figure with its background removed: straight (not premultiplied) RGBA at sheet resolution. */
