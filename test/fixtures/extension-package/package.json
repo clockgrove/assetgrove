@@ -6,10 +6,10 @@
   "license": "MIT",
   "type": "module",
   "peerDependencies": {
-    "@clockgrove/assetgrove": "*"
+    "@clockgrove/assetgrove": ">=0.2.0"
   },
   "assetgrove": {
-    "api": 1,
+    "api": 2,
     "entry": "./index.js"
   }
 }

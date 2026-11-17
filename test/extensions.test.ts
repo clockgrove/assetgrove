@@ -185,13 +185,13 @@ test("an entry an outer project's Git tracks is refused from a nested repository
 test("an api mismatch is refused before import", async () => {
   const { dir, pkg, marker } = await project();
   const manifest = JSON.parse(await readFile(join(pkg, "package.json"), "utf8"));
-  manifest.assetgrove.api = 2;
+  manifest.assetgrove.api = 3;
   await writeFile(join(pkg, "package.json"), JSON.stringify(manifest));
   settings([PACKAGE]);
   const r = await cli(["extensions", "--json"], dir);
   assert.equal(r.code, 2, r.stderr);
   assert.equal(doc(r)["error"].code, "extension_refused");
-  assert.match(doc(r)["error"].message, /api 2/);
+  assert.match(doc(r)["error"].message, /api 3.*speaks api 2/);
   assert.equal(existsSync(marker), false);
 });
 

@@ -4,6 +4,7 @@
  * `fixture:list` and the provider adapter `fixture:echo`, which answers every image call with one
  * small PNG and reaches no host. Importing it writes `imported.marker` beside it, so a test can
  * tell whether core imported it. It imports nothing from core: zod comes through the context.
+ * Its adapter sends nothing over the network, so it never needs the context's guarded fetch.
  */
 import { Buffer } from "node:buffer";
 import { writeFileSync } from "node:fs";
@@ -22,7 +23,7 @@ const PNG = new Uint8Array(
 /** @param {{ api: number, z: typeof import("zod").z }} context */
 export default function extension({ z }) {
   return {
-    api: 1,
+    api: 2,
     name: "fixture",
     kinds: [
       {

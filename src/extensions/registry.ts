@@ -2,15 +2,16 @@
  * The registry of asset kinds, hand-off presets and provider adapters (design section 11). Core
  * registers its own (src/extensions/core.ts); an extension package is loaded only when the
  * developer settings' `extensions` list names it, it resolves from the project, its declared `api`
- * matches (read from its package.json before anything is imported), and the project's Git does not
- * track its entry file. A package.json dependency or a shared file alone never loads anything.
+ * is one core speaks and its peer range on `@clockgrove/assetgrove` admits core's version (both read
+ * from its package.json before anything is imported, src/extensions/version.ts), and the project's
+ * Git does not track its entry file. A package.json dependency or a shared file alone never loads anything.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { z } from "zod";
 import { EXTENSION_API } from "../extension/api.ts";
+import { createExtensionContext } from "../extension/context.ts";
 import type {
   AssetKind,
   EnginePreset,
@@ -21,6 +22,7 @@ import type {
 } from "../extension/api.ts";
 import type { Settings } from "../settings.ts";
 import { CORE_EXTENSION_NAME, coreExtension } from "./core.ts";
+import { compatibilityProblem, CORE_PACKAGE, coreVersion } from "./version.ts";
 import { ExtensionError, extensionOf, unavailableId } from "./errors.ts";
 
 export { ExtensionError, unavailableId } from "./errors.ts";
@@ -137,20 +139,9 @@ export class ExtensionRegistry {
   }
 }
 
-function coreVersion(): string | null {
-  try {
-    const pkg = JSON.parse(
-      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-    ) as { version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : null;
-  } catch {
-    return null;
-  }
-}
-
 const CORE_ENTRY = {
   extension: coreExtension,
-  info: { package: "@clockgrove/assetgrove", version: coreVersion(), entry: null },
+  info: { package: CORE_PACKAGE, version: coreVersion(), entry: null },
 };
 
 /** Core alone, for code that runs without loaded settings (tests, library use). */
@@ -203,6 +194,7 @@ function trackedByAnyProject(paths: readonly string[]): boolean {
 
 interface Manifest {
   version?: unknown;
+  peerDependencies?: unknown;
   assetgrove?: { api?: unknown; entry?: unknown };
 }
 
@@ -250,12 +242,8 @@ async function loadOne(
       `${line}: its package.json declares no "assetgrove": {"api", "entry"}`,
     );
   }
-  if (declared.api !== EXTENSION_API) {
-    throw new ExtensionError(
-      "extension_refused",
-      `${line} declares extension api ${JSON.stringify(declared.api)}; this Assetgrove loads api ${EXTENSION_API}`,
-    );
-  }
+  const problem = compatibilityProblem(declared.api, manifest.peerDependencies, coreVersion());
+  if (problem !== undefined) throw new ExtensionError("extension_refused", `${line} ${problem}`);
   if (typeof declared.entry !== "string" || declared.entry === "") {
     throw new ExtensionError("extension_refused", `${line}: assetgrove.entry must name a file`);
   }
@@ -292,7 +280,7 @@ async function loadOne(
       { cause: error },
     );
   }
-  const context: ExtensionContext = { api: EXTENSION_API, z };
+  const context: ExtensionContext = createExtensionContext(name);
   let exported: unknown;
   try {
     exported =
@@ -351,6 +339,21 @@ function checkExtension(value: unknown, line: string): Extension {
       )
         throw refuse(
           `every id of its ${field} must be "${ext.name}:<name>", got ${JSON.stringify(id)}`,
+        );
+    }
+  }
+  for (const kind of ext.kinds ?? []) {
+    const checks = (kind as { checks?: unknown }).checks;
+    if (checks === undefined) continue;
+    if (!Array.isArray(checks)) throw refuse(`the checks of kind ${kind.kind} must be a list`);
+    for (const check of checks as Array<Record<string, unknown> | null>) {
+      if (
+        typeof check?.["name"] !== "string" ||
+        (check["mode"] !== "exact" && check["mode"] !== "judged") ||
+        typeof check["run"] !== "function"
+      )
+        throw refuse(
+          `every check of kind ${kind.kind} must have a name, a mode "exact" or "judged" and a run function`,
         );
     }
   }

@@ -2,7 +2,14 @@ import type { Caller } from "../calls.ts";
 import type { ReferenceViewCache } from "../model3d/views.ts";
 import type { ClipMapCache } from "../model3d/clip-map.ts";
 import type { Routes } from "../routes.ts";
-import type { AssetSpec, MediaOutput, QaResult, StyleBible, TargetProfile } from "../types.ts";
+import type {
+  AssetSpec,
+  MediaOutput,
+  QaResult,
+  Reason,
+  StyleBible,
+  TargetProfile,
+} from "../types.ts";
 
 /**
  * A generator turns one asset spec into one candidate: its model calls, post-processing and QA.
@@ -53,6 +60,28 @@ export interface PlannedCall {
   estimatedCostUsd: number;
 }
 
+/** What a kind's QA check reads: the candidate's media and what it was made for. */
+export interface KindCheckInput {
+  spec: AssetSpec;
+  profile: TargetProfile;
+  bible: StyleBible;
+  output: MediaOutput;
+}
+
+/**
+ * One QA check a kind declares (design section 11). Core runs a kind's checks on each candidate
+ * after `generate` and adds their reasons to its QA. An `exact` check is deterministic and free:
+ * core runs it under a `Caller` that refuses every call, and the conformance suite runs it twice
+ * and fails it when it calls or answers differently. A `judged` check may call a model through the
+ * candidate's `Caller`; its calls belong in the kind's `planCandidate`.
+ */
+export interface KindCheck {
+  /** The `check` its reasons carry. */
+  name: string;
+  mode: "exact" | "judged";
+  run(input: KindCheckInput, call: Caller): Promise<Reason[]> | Reason[];
+}
+
 export interface Generator {
   /** The `kind` of asset spec this generator handles. */
   kind: string;
@@ -72,4 +101,22 @@ export interface Generator {
     bible: StyleBible,
   ): PlannedCall[];
   generate(context: GeneratorContext): Promise<GeneratedCandidate>;
+  /** QA checks core runs on each candidate after `generate`. Absent: none. */
+  checks?: KindCheck[];
+}
+
+/**
+ * The reasons of a kind's checks on one candidate: each `exact` check under a `RefusingCaller`
+ * (`exactCaller`), each `judged` one under the candidate's `call`.
+ */
+export async function runKindChecks(
+  checks: readonly KindCheck[],
+  input: KindCheckInput,
+  call: Caller,
+  exactCaller: () => Caller,
+): Promise<Reason[]> {
+  const reasons: Reason[] = [];
+  for (const check of checks)
+    reasons.push(...(await check.run(input, check.mode === "exact" ? exactCaller() : call)));
+  return reasons;
 }

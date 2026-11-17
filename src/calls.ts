@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { Budget, Reservation } from "./budget.ts";
+import { Budget } from "./budget.ts";
+import type { Reservation } from "./budget.ts";
 import { ConfirmationError } from "./approvals.ts";
-import { JobStoppedError, ProviderError } from "./errors.ts";
+import { InputError, JobStoppedError, ProviderError } from "./errors.ts";
 import { BudgetExceededError, EstimateAboveCeilingError } from "./budget.ts";
 import { assertLimitDeclared, billingOf } from "./limits.ts";
 import type {
@@ -809,4 +810,34 @@ function decisionLog(
   throw new ProviderError(
     `the provider answered ${call}'s ${question.type} question with a ${answer.type}: a provider's decide() answers the type each question asks (docs/generation-knobs.md, provider scripts)`,
   );
+}
+
+/** A provider call asked of a `RefusingCaller`: exit 2 `invalid_input`, nothing reserved or sent. */
+export class CallRefusedError extends InputError {
+  readonly operation: string;
+  constructor(operation: string, why: string) {
+    super(`the ${operation} call was refused: ${why}`);
+    this.name = "CallRefusedError";
+    this.operation = operation;
+  }
+}
+
+/**
+ * A `Caller` that refuses every call before it reserves anything or reaches a provider, and keeps
+ * the operation of each one asked (`attempts`), so a check that catches the refusal is still seen.
+ * Core runs a kind's `exact` QA checks under one (src/loop.ts); so does the conformance suite.
+ */
+export class RefusingCaller extends Caller {
+  readonly attempts: string[] = [];
+  private readonly why: string;
+
+  constructor(why = "an exact check makes no provider call") {
+    super({ provider: {} as GenerationProvider, budget: new Budget(0), routes: {} as Routes });
+    this.why = why;
+  }
+
+  override route(operation: string): Route {
+    this.attempts.push(operation);
+    throw new CallRefusedError(operation, this.why);
+  }
 }
