@@ -79,9 +79,11 @@ test(
         version: string;
         main: string;
         assetgrove: { api: number; entry: string };
+        peerDependencies: Record<string, string>;
       };
       assert.equal(manifest.version, "0.2.0");
-      assert.deepEqual(manifest.assetgrove, { api: 1, entry: "./dist/extension.js" });
+      assert.deepEqual(manifest.assetgrove, { api: 2, entry: "./dist/extension.js" });
+      assert.equal(manifest.peerDependencies["@clockgrove/assetgrove"], "^0.2.0");
       const probe = `const e = await import(${JSON.stringify(pathToFileURL(join(unpacked, manifest.assetgrove.entry)).href)});
 const m = await import(${JSON.stringify(pathToFileURL(join(unpacked, manifest.main)).href)});
 console.log(typeof e.default, typeof m.SearchIndex);`;

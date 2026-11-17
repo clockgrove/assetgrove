@@ -1,5 +1,5 @@
 import { normalize, type Embedder } from "./embedder.ts";
-import type { SearchRouteEmbedder } from "./contract.ts";
+import type { SearchRouteEmbedder } from "@clockgrove/assetgrove/extension";
 import { SearchError } from "./errors.ts";
 
 /**

@@ -19,7 +19,7 @@
     "./package.json": "./package.json"
   },
   "assetgrove": {
-    "api": 1,
+    "api": 2,
     "entry": "./dist/extension.js"
   },
   "files": [
@@ -39,10 +39,10 @@
     "format": "prettier --write .",
     "pin-model": "node scripts/pin-model.ts",
     "prepack": "pnpm build",
-    "test": "node --test \"test/**/*.test.ts\""
+    "test": "node --conditions=assetgrove-source --test \"test/**/*.test.ts\""
   },
   "peerDependencies": {
-    "@clockgrove/assetgrove": "*"
+    "@clockgrove/assetgrove": "^0.2.0"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.2",
@@ -51,6 +51,7 @@
     "pngjs": "7.0.0"
   },
   "devDependencies": {
+    "@clockgrove/assetgrove": "link:../..",
     "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
     "@types/pngjs": "6.0.5",

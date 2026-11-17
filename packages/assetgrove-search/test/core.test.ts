@@ -1,115 +1,62 @@
 /**
  * The package through core (issue #237): listed in the developer settings and installed in a
- * fixture project, it fills core's search slot; find by words, --like and --where over the
- * fixture library returns the same JSON on core's CLI and as core's MCP tool, card text under
- * sharedText and the numbered sheet as image content. The scripted embedder keeps it offline.
+ * temporary project, it fills core's search slot; find by words, --like and --where over the
+ * library returns the same JSON on core's CLI and as core's MCP tool, card text under sharedText
+ * and the numbered sheet as image content. The scripted embedder keeps it offline.
  *
- * Core refuses an entry the project's Git tracks, so the project links a copy of the package made
- * outside every repository, holding the package's compiled dist/ as a packed copy does.
+ * Core refuses an entry the project's Git tracks, so the project installs a copy of the package
+ * made outside every repository, holding the package's compiled dist/ as a packed copy does.
  */
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { REFUSED_VARIABLES } from "../../../src/env.ts";
-import { GAME, fixtureLibrary } from "../../../test/fixtures/library.ts";
+import { tempProject } from "@clockgrove/assetgrove/testing";
+import extension from "../src/extension.ts";
+import { GAME, writeLibrary } from "./helpers/core-library.ts";
 
 const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
-const cliPath = fileURLToPath(new URL("../../../src/cli.ts", import.meta.url));
+const NAME = "@clockgrove/assetgrove-search";
 
-const lib = fixtureLibrary();
-const home = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-search-core-")));
-const clients: Client[] = [];
+const project = tempProject();
+const stage = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-search-core-")));
+const sessions: Array<{ close(): Promise<void> }> = [];
 after(async () => {
-  await Promise.all(clients.map((c) => c.close()));
-  await rm(lib.dir, { recursive: true, force: true });
-  await rm(home, { recursive: true, force: true });
+  await Promise.all(sessions.map((s) => s.close()));
+  project.close();
+  await rm(stage, { recursive: true, force: true });
 });
 
-// The package's copy, outside every repository, with its dependencies linked.
-const copy = join(home, "package");
-mkdirSync(copy);
-cpSync(join(pkgRoot, "package.json"), join(copy, "package.json"));
+writeLibrary(project.dir);
+cpSync(join(pkgRoot, "package.json"), join(stage, "package.json"));
 execFileSync(
   process.execPath,
   [
     join(pkgRoot, "node_modules", "typescript", "bin", "tsc"),
-    ...["-p", join(pkgRoot, "tsconfig.build.json"), "--outDir", join(copy, "dist")],
+    ...["-p", join(pkgRoot, "tsconfig.build.json"), "--outDir", join(stage, "dist")],
   ],
   { stdio: "inherit" },
 );
-symlinkSync(join(pkgRoot, "node_modules"), join(copy, "node_modules"), "junction");
-mkdirSync(join(lib.dir, "node_modules", "@clockgrove"), { recursive: true });
-symlinkSync(copy, join(lib.dir, "node_modules", "@clockgrove", "assetgrove-search"), "junction");
-
-const settingsFile = join(home, "config", "settings.json");
-mkdirSync(join(home, "config"));
-writeFileSync(
-  settingsFile,
-  JSON.stringify({
-    format: "assetgrove-settings/2",
-    stateDir: join(home, "state"),
-    extensions: ["@clockgrove/assetgrove-search"],
-    search: { embedder: "scripted" },
-  }),
-);
-
-/** The environment without keys or variables core refuses, its settings file named. */
-function env(): Record<string, string> {
-  const out: Record<string, string> = {};
-  const refused = new Set<string>(REFUSED_VARIABLES);
-  for (const [k, v] of Object.entries(process.env))
-    if (v !== undefined && !refused.has(k.toUpperCase()) && !k.endsWith("_API_KEY")) out[k] = v;
-  out["ASSETGROVE_CONFIG"] = settingsFile;
-  return out;
-}
-
-interface Result {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
-
-function cli(args: string[]): Promise<Result> {
-  return new Promise((done) => {
-    const child = execFile(
-      process.execPath,
-      [cliPath, ...args],
-      { cwd: lib.dir, env: env() },
-      (error, stdout, stderr) =>
-        done({ code: error ? (error.code as unknown as number) : 0, stdout, stderr }),
-    );
-    child.stdin?.end();
-  });
-}
-
-async function connect(): Promise<Client> {
-  const client = new Client({ name: "assetgrove-search-core-test", version: "0.0.0" });
-  await client.connect(
-    new StdioClientTransport({
-      command: process.execPath,
-      args: [cliPath, "mcp"],
-      cwd: lib.dir,
-      env: env(),
-      stderr: "pipe",
-    }),
-  );
-  clients.push(client);
-  return client;
-}
+const installed = project.install(stage, NAME);
+symlinkSync(join(pkgRoot, "node_modules"), join(installed, "node_modules"), "junction");
+project.writeSettings({ extensions: [NAME], search: { embedder: "scripted" } });
 
 test("the listed package fills core's slot: find returns the same JSON on the CLI and as a tool", async () => {
-  const indexed = await cli(["search", "index", "--json"]);
+  const indexed = await project.cli(["search", "index", "--json"]);
   assert.equal(indexed.code, 0, indexed.stderr + indexed.stdout);
 
-  const client = await connect();
-  const tools = (await client.listTools()).tools.map((t) => t.name);
+  // The server resolves the settings' extension list from the working directory.
+  const cwd = process.cwd();
+  process.chdir(project.dir);
+  const mcp = await project.mcp({ extensions: [extension] });
+  sessions.push(mcp);
+  after(() => process.chdir(cwd));
+  const listed = (await mcp.request("tools/list", {}))["result"] as { tools: { name: string }[] };
+  const tools = listed.tools.map((t) => t.name);
   for (const name of ["find", "search_index", "search_status", "search_setup"])
     assert.ok(tools.includes(name), name);
 
@@ -124,9 +71,9 @@ test("the listed package fills core's slot: find returns the same JSON on the CL
     },
   ];
   for (const { args, tool, first } of cases) {
-    const result = await cli([...args, "--json"]);
+    const result = await project.cli([...args, "--json"]);
     assert.equal(result.code, 0, result.stderr + result.stdout);
-    const document = JSON.parse(result.stdout) as Record<string, unknown> & {
+    const document = result.json as Record<string, unknown> & {
       hits: Array<{ address: string; fields: Record<string, unknown>; sharedText: object }>;
     };
     assert.ok(document.hits.length > 0, args.join(" "));
@@ -142,15 +89,20 @@ test("the listed package fills core's slot: find returns the same JSON on the CL
         assert.ok((hit.fields["tags"] as string[]).includes("light"));
       }
 
-    const call = await client.callTool({ name: "find", arguments: tool });
+    const answer = await mcp.request("tools/call", { name: "find", arguments: tool });
+    assert.equal(answer["error"], undefined, JSON.stringify(answer["error"]));
+    const call = answer["result"] as {
+      isError?: boolean;
+      structuredContent: unknown;
+      content: Array<{ type: string; mimeType?: string }>;
+    };
     assert.notEqual(call.isError, true, JSON.stringify(call.content));
     assert.deepEqual(call.structuredContent, document, args.join(" "));
-    const content = call.content as Array<{ type: string; mimeType?: string; data?: string }>;
-    const image = content.find((c) => c.type === "image");
+    const image = call.content.find((c) => c.type === "image");
     assert.ok(image, "the numbered sheet comes as image content");
     assert.equal(image.mimeType, "image/png");
   }
-  const words = JSON.parse((await cli(["find", "lantern", "--json"])).stdout) as {
+  const words = (await project.cli(["find", "lantern", "--json"])).json as {
     hits: Array<{ sharedText: { title?: string; text?: string } }>;
   };
   assert.match(String(words.hits[0]!.sharedText.text), /lantern/i);

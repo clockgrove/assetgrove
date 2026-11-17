@@ -8,5 +8,5 @@
     "declaration": true,
     "sourceMap": false
   },
-  "include": ["src"]
+  "include": ["src", "../../src/model3d/gltf-validator.d.ts"]
 }

@@ -101,7 +101,7 @@ describe("find over a shared store", () => {
 
   it("puts the relevant remote picks first, not rank-for-rank with unrelated local rows", async () => {
     const ctx = p.context({
-      store: { uri: pathToFileURL(remoteDir).href, options: {}, writer: true },
+      store: { uri: pathToFileURL(remoteDir).href, options: {}, credentialsEnv: {}, writer: true },
     });
     await searchSlot.index({}, ctx);
     const { hits } = await searchSlot.find({ words: "mossy rock", limit: 20 }, ctx);
@@ -154,7 +154,7 @@ describe("near matches over a shared store", () => {
     const q = { kind: "sprite", subject: "mossy rock", references: [], limit: 20 };
     const shared = await library();
     const ctx = shared.context({
-      store: { uri: pathToFileURL(remoteDir).href, options: {}, writer: true },
+      store: { uri: pathToFileURL(remoteDir).href, options: {}, credentialsEnv: {}, writer: true },
     });
     await searchSlot.index({}, ctx);
     const across = await nearMatchesWith(q, ctx, { paid: false });

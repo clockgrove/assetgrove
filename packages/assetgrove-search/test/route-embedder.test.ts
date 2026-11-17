@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import type { SearchContext, SearchRouteEmbedder } from "../src/contract.ts";
+import type { SearchContext, SearchRouteEmbedder } from "@clockgrove/assetgrove/extension";
 import { SearchError } from "../src/errors.ts";
 import { searchSlot } from "../src/extension.ts";
 import { ScriptedEmbedder } from "../src/scripted.ts";

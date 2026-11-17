@@ -52,7 +52,7 @@ describe("the slot's outliers over an indexed fixture set", () => {
 
   it("finds pick vectors in the shared store", async () => {
     const ctx = p.context({
-      store: { uri: pathToFileURL(remoteDir).href, options: {}, writer: true },
+      store: { uri: pathToFileURL(remoteDir).href, options: {}, credentialsEnv: {}, writer: true },
     });
     await searchSlot.index({}, ctx);
     const found = await searchSlot.outliers([...uniform, planted], ctx);
