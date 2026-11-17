@@ -4,6 +4,9 @@
  * It follows redirects itself and checks every hop's host before requesting it, so a URL the
  * provider steers (a download link in a result, a redirect) cannot send a request anywhere else.
  *
+ * The redirect loop is the Fetch standard's HTTP-redirect fetch, written here: a recorded exception
+ * (docs/decisions.md, "A pack's network goes through the injected fetch").
+ *
  * It guards provider-steered URLs, not pack code: a pack can still reach the global `fetch` or a
  * socket. A pack's SDK must take this `fetch` (docs/extensions.md#http).
  */
@@ -12,6 +15,16 @@ import { ProviderError } from "../errors.ts";
 /** At most this many redirects are followed for one request, as the Fetch standard allows. */
 const MAX_REDIRECTS = 20;
 const REDIRECT = new Set([301, 302, 303, 307, 308]);
+/** The Fetch standard's request-body header names, dropped when a redirect drops the body. */
+const REQUEST_BODY_HEADERS = [
+  "content-encoding",
+  "content-language",
+  "content-location",
+  "content-type",
+  "content-length",
+];
+/** The headers the Fetch standard removes when a redirect changes origin. */
+const CREDENTIAL_HEADERS = ["authorization", "proxy-authorization", "cookie"];
 
 /** The hosts one provider instance may reach: its adapter's fixed hosts and its settings endpoint. */
 export function allowedHosts(
@@ -89,14 +102,10 @@ export function guardedFetch(options: {
       ) {
         if (method !== "HEAD") method = "GET";
         body = undefined;
-        headers.delete("content-type");
-        headers.delete("content-length");
+        for (const name of REQUEST_BODY_HEADERS) headers.delete(name);
       }
-      // Credentials go no further than the host they were meant for.
-      if (next.host !== url.host) {
-        headers.delete("authorization");
-        headers.delete("cookie");
-      }
+      // Credentials go no further than the origin they were meant for.
+      if (next.origin !== url.origin) for (const name of CREDENTIAL_HEADERS) headers.delete(name);
       url = next;
     }
   };

@@ -161,3 +161,53 @@ test("guardedFetch sends through the fetch it is given", async () => {
   assert.equal(await (await f("https://api.example.test/a")).text(), "fine");
   assert.deepEqual(seen, ["https://api.example.test/a"]);
 });
+
+test("a redirect drops the body's headers with the body, and credentials when the origin changes", async () => {
+  const sent: Array<{ url: string; method: string; headers: Headers }> = [];
+  const redirects: Record<string, [number, string]> = {
+    "https://api.example.test/see-other": [303, "/done"],
+    "https://api.example.test/move": [307, "https://files.example.test/blob"],
+    "https://api.example.test/same": [307, "/done"],
+  };
+  const f = guardedFetch({
+    adapter: "pack:demo",
+    hosts: ["api.example.test", "files.example.test"],
+    base: () =>
+      (async (url: URL, init: RequestInit) => {
+        sent.push({
+          url: String(url),
+          method: init.method ?? "GET",
+          headers: new Headers(init.headers),
+        });
+        const to = redirects[String(url)];
+        return to === undefined
+          ? new Response("fine")
+          : new Response(null, { status: to[0], headers: { location: to[1] } });
+      }) as unknown as typeof fetch,
+  });
+  const credentials = {
+    authorization: "Bearer k",
+    "proxy-authorization": "Basic p",
+    cookie: "c=1",
+  };
+  await f("https://api.example.test/see-other", {
+    method: "POST",
+    body: "x",
+    headers: { "content-type": "text/plain", "content-language": "en", ...credentials },
+  });
+  const after303 = sent[1]!;
+  assert.equal(after303.method, "GET");
+  assert.equal(after303.headers.get("content-type"), null);
+  assert.equal(after303.headers.get("content-language"), null);
+  assert.equal(after303.headers.get("authorization"), "Bearer k", "same origin keeps credentials");
+
+  for (const [path, kept] of [
+    ["move", false],
+    ["same", true],
+  ] as const) {
+    sent.length = 0;
+    await f(`https://api.example.test/${path}`, { headers: credentials });
+    for (const name of Object.keys(credentials))
+      assert.equal(sent[1]!.headers.has(name), kept, `${path}: ${name}`);
+  }
+});
