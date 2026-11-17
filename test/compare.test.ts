@@ -10,7 +10,11 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
-import { compareRasters } from "../src/compare.ts";
+import { backdropOf, compareRasters } from "../src/compare.ts";
+import { parseGlb } from "../src/model3d/glb.ts";
+import { renderView } from "../src/model3d/render.ts";
+import { boundsOf, posedPrimitives } from "../src/model3d/scene.ts";
+import { syntheticCharacter } from "./fixtures/glb.ts";
 import { createRaster, decodePng, encodePng, setPixel } from "../src/image/raster.ts";
 import type { Raster } from "../src/image/raster.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
@@ -149,10 +153,48 @@ test("outsideChange is a share of the figure: a small figure repainted outside t
   const quiet = await compareRasters(before, hidden, [region]);
   assert.equal(quiet.outsideChange, 0);
   assert.deepEqual(quiet.reasons, []);
-  // An opaque image's figure is the whole canvas, as before.
-  const opaque = flat(40, 40);
-  const small = await compareRasters(opaque, paint(opaque, 30, 30, 2, 2), [region]);
+  // An opaque image with no one-colour border (a photo) has the whole canvas as its figure.
+  const photo = createRaster(40, 40);
+  for (let y = 0; y < 40; y++)
+    for (let x = 0; x < 40; x++) setPixel(photo, x, y, [x * 6, y * 6, 90, 255]);
+  const small = await compareRasters(photo, paint(photo, 30, 30, 2, 2), [region]);
   assert.equal(small.outsideChange, 4 / 1600);
+});
+
+test("outsideChange on an opaque turntable render is a share of the figure, not the backdrop", async () => {
+  // renderView fills its grey backdrop and sets every alpha to 255; the figure is what differs
+  // from that backdrop. A figure repainted whole outside the region is reported however small.
+  const glb = parseGlb(syntheticCharacter());
+  // Framed loosely, so the character fills a few percent of the canvas, as in a wide turntable.
+  const { min, max } = boundsOf(posedPrimitives(glb))!;
+  const grow = (v: number[], s: number) =>
+    v.map((c, k) => (min[k]! + max[k]!) / 2 + s * (c - (min[k]! + max[k]!) / 2)) as typeof min;
+  const framing = { min: grow(min, 5), max: grow(max, 5) };
+  const before = renderView(glb, { sizePx: 96, yawDeg: 45, framing });
+  assert.ok(
+    before.data.every((v, i) => i % 4 !== 3 || v === 255),
+    "the render is opaque",
+  );
+  assert.ok(backdropOf(before), "the render's border is its backdrop");
+  const backdrop = backdropOf(before)!;
+  const candidate = { ...before, data: new Uint8Array(before.data) };
+  let drawn = 0;
+  for (let i = 0; i < before.data.length; i += 4)
+    if ([0, 1, 2].some((c) => Math.abs(before.data[i + c]! - backdrop[c]!) > 8)) {
+      candidate.data.set([250, 10, 10, 255], i);
+      drawn++;
+    }
+  const share = drawn / (96 * 96);
+  assert.ok(share > 0 && share < 0.05, `the figure is ${share} of the canvas`);
+  const region = parseRegion("0,0,4,4 : x", { requireNote: true, base: process.cwd() });
+  const result = await compareRasters(before, candidate, [region]);
+  assert.ok(result.changed < 0.05);
+  assert.ok(result.outsideChange > 0.9, `outsideChange ${result.outsideChange}`);
+  assert.equal(result.reasons[0]?.check, "changed_outside_region");
+  // The same render with nothing changed outside the region adds no reason.
+  const quiet = await compareRasters(before, paint(before, 0, 0, 4, 4), [region]);
+  assert.equal(quiet.outsideChange, 0);
+  assert.deepEqual(quiet.reasons, []);
 });
 
 test("compare writes a sheet, names a strip frame, and refuses bad regions with exit 2", async () => {
