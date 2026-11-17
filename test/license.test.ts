@@ -92,7 +92,7 @@ test("an output made on routes that give ownership is declared under the target'
   const p = candidate.provenance;
   assert.equal(p.license, "MIT");
   assert.deepEqual(p.outputGrant, {
-    license: "LicenseRef-bfl-api AND LicenseRef-google-api",
+    license: "LicenseRef-bfl-api AND LicenseRef-google-api AND LicenseRef-perplexity-api",
     plan: "api",
     commercial: true,
     relabel: true,

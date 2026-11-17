@@ -18,6 +18,7 @@ import type {
 
 import {
   BRIEF_POLICY_OPERATION,
+  CUTOUT_OPERATION,
   LOOKDEV_MARKING_OPERATION,
   MODEL3D_FACING_OPERATION,
   PROMPT_POLICY_OPERATION,
@@ -105,6 +106,14 @@ export interface Script {
   styleOutlier?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers whether stage's cut-out lost part of the subject or kept background (the `cutout`
+   * Boolean decision). A script without it answers no (probability 0); its calls do not count
+   * toward `decide`'s index.
+   */
+  cutout?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -160,6 +169,7 @@ export class ScriptedProvider implements GenerationProvider {
   private facingCount = 0;
   private markingCount = 0;
   private templateCount = 0;
+  private cutoutCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -254,6 +264,13 @@ export class ScriptedProvider implements GenerationProvider {
           costUsd: 0,
         }),
       };
+    }
+    if (request.operation === CUTOUT_OPERATION) {
+      const index = this.cutoutCount++;
+      const answer = this.script.cutout
+        ? this.script.cutout(request)
+        : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
+      return { requestId: `scripted-cutout-${index}`, ...answer };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

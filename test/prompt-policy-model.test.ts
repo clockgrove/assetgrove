@@ -208,7 +208,8 @@ test("no decisions route exits 2 route_unavailable and no call runs", async () =
   assert.equal(r.code, 2, r.stderr);
   const error = doc(r)["error"];
   assert.equal(error.code, "route_unavailable");
-  assert.match(error.message, /prompt-policy operation \(role decisions\)/);
+  // The stage's own `cutout` decisions need the role too; whichever resolves first is named.
+  assert.match(error.message, /(prompt-policy|cutout) operation \(role decisions\)/);
   assert.deepEqual(await events(), []);
   assert.equal(existsSync(join(stateDir, "spend.jsonl")), false, "no ledger entry");
   writeSettings({});

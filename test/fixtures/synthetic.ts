@@ -160,6 +160,9 @@ export interface ScriptOptions {
   visionCostUsd?: number;
   /** Draws the image for a frame number an edit prompt asks for; drawSubject(96, frame) else. */
   drawFrame?: (frame: number) => Raster;
+  /** The `cutout` decision's probability of a fault per call (zero-based); 0 (no fault) else. */
+  cutout?: (index: number) => number;
+  cutoutCostUsd?: number;
 }
 
 /** The frame number an edit prompt asks for, so scripted frames differ. */
@@ -169,7 +172,14 @@ function frameOf(request: ImageRequest): number {
 }
 
 export function scriptedProvider(options: ScriptOptions = {}): ScriptedProvider {
+  let cutouts = 0;
   return new ScriptedProvider({
+    ...(options.cutout !== undefined && {
+      cutout: () => ({
+        answer: { type: "boolean" as const, probability: options.cutout?.(cutouts++) ?? 0 },
+        ...(options.cutoutCostUsd !== undefined && { costUsd: options.cutoutCostUsd }),
+      }),
+    }),
     image: (request) => ({
       images: [
         {

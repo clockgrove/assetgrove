@@ -168,17 +168,21 @@ test("Fern's shelter strip: 4 candidates within $5, only passing ones staged, th
   assert.deepEqual(manifest.semantic, { role: "actor", entity: "grove.fern" });
   assert.equal(manifest.source.mediaType, "image/png");
   const p = manifest.provenance.generated;
-  assert.deepEqual(p.models, [defaultRoutes.edit.model, defaultRoutes.vision.model]);
+  assert.deepEqual(p.models, [
+    defaultRoutes.edit.model,
+    defaultRoutes.cutout!.model,
+    defaultRoutes.vision.model,
+  ]);
   assert.match(p.route, /scripted:edit:bfl\/flux-kontext-pro/);
   assert.match(p.prompt, /Key pose/);
   assert.ok(p.parameters.frameCount === 6);
   assert.equal(typeof p.seed, "number");
-  assert.equal(p.requestIds.length, 7);
+  assert.equal(p.requestIds.length, 8);
   assert.equal(p.parameters.keyPose.sha256, sha256(keyPoseBytes));
   assert.ok(p.startedAt && p.finishedAt);
   assert.equal(p.bibleVersion, "synthetic-1");
   assert.equal(p.license, "MIT");
-  assert.ok(p.providerTerms.length === 2);
+  assert.ok(p.providerTerms.length === 3);
   assert.ok(Math.abs(p.costUsd - (6 * 0.04 + 0.01)) < 1e-9);
   for (const call of p.calls) {
     for (const key of [
@@ -264,7 +268,7 @@ test("without a provenance path or an embedded record, the pick writes provenanc
     join(world.targetDir, "assets/source/fern/shelter.png.provenance.json"),
   );
   const record = JSON.parse(await readFile(result.provenancePath!, "utf8"));
-  assert.equal(record.requestIds.length, 7);
+  assert.equal(record.requestIds.length, 8);
   assert.ok(record.models.length > 0 && record.costUsd > 0 && record.startedAt);
 });
 
@@ -274,6 +278,7 @@ test("a request ID the provider did not report is marked local in provenance", a
   const provider: GenerationProvider = {
     billing: base.billing,
     generateImage: (request) => base.generateImage(request),
+    decide: (request) => base.decide(request),
     analyzeImages: async (request) => ({
       ...(await base.analyzeImages(request)),
       requestId: "local-1",
@@ -417,22 +422,26 @@ test("planStage forecasts a still and a strip without spending, and flags an ove
   });
   assert.deepEqual(
     still.perCandidate.map((c) => c.operation),
-    ["still", "vision"],
+    ["still", "cutout", "vision"],
   );
-  assert.equal(still.calls, 4);
+  assert.equal(still.calls, 6);
   assert.ok(
     Math.abs(
       still.estimateUsd -
-        2 * (defaultRoutes.still.estimatedCostUsd + defaultRoutes.vision.estimatedCostUsd),
+        2 *
+          (defaultRoutes.still.estimatedCostUsd +
+            defaultRoutes.cutout!.estimatedCostUsd +
+            defaultRoutes.vision.estimatedCostUsd),
     ) < 1e-9,
   );
   assert.equal(still.withinCap, true);
 
   const strip = planStage({ ...base, spec: shelterSpec, candidates: 4, capUsd: 1 });
-  assert.equal(strip.perCandidate.length, 7);
+  assert.equal(strip.perCandidate.length, 8);
   assert.equal(strip.perCandidate[0]?.operation, "edit");
-  assert.equal(strip.perCandidate[6]?.operation, "vision");
-  assert.equal(strip.calls, 28);
+  assert.equal(strip.perCandidate[6]?.operation, "cutout");
+  assert.equal(strip.perCandidate[7]?.operation, "vision");
+  assert.equal(strip.calls, 32);
   assert.equal(strip.withinCap, false);
 
   assert.throws(() => planStage({ ...base, spec: shelterSpec, candidates: 0 }), InputError);

@@ -45,6 +45,7 @@ export default {
   paid: true,
   image: (r, i) => (wait(), answered("image"), base.image(r, i)),
   vision: (r, i) => (wait(), answered("vision"), base.vision(r, i)),
+  cutout: () => (wait(), answered("cutout"), { answer: { type: "boolean", probability: 0 } }),
 };`,
   );
   approve(script);
