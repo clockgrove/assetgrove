@@ -139,7 +139,8 @@ export class ExtensionRegistry {
   }
 }
 
-const CORE_ENTRY = {
+/** Core's own entry in a registry: its extension and package. */
+export const CORE_ENTRY = {
   extension: coreExtension,
   info: { package: CORE_PACKAGE, version: coreVersion(), entry: null },
 };
@@ -311,7 +312,7 @@ async function loadOne(
 }
 
 /** The entry's extension, refused unless its shape and every id hold. */
-function checkExtension(value: unknown, line: string): Extension {
+export function checkExtension(value: unknown, line: string): Extension {
   const refuse = (why: string) => new ExtensionError("extension_refused", `${line}: ${why}`);
   if (value === null || typeof value !== "object")
     throw refuse("its entry's default export is not an extension");

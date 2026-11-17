@@ -66,8 +66,7 @@ export function guardedFetch(options: {
     check(url, 0);
     let method = first.method;
     const headers = new Headers(first.headers);
-    let body: ArrayBuffer | undefined =
-      first.body === null ? undefined : await first.arrayBuffer();
+    let body: ArrayBuffer | undefined = first.body === null ? undefined : await first.arrayBuffer();
     for (let hop = 0; ; hop++) {
       const response = await base()(url, {
         method,
@@ -77,15 +76,17 @@ export function guardedFetch(options: {
         signal: first.signal,
       });
       const location = response.headers.get("location");
-      if (!REDIRECT.has(response.status) || location === null || mode === "manual")
-        return response;
+      if (!REDIRECT.has(response.status) || location === null || mode === "manual") return response;
       if (mode === "error") throw new TypeError(`redirect refused: ${url.href} redirects`);
       if (hop + 1 > MAX_REDIRECTS)
         throw new TypeError(`more than ${MAX_REDIRECTS} redirects from ${first.url}`);
       const next = new URL(location, url);
       check(next, hop + 1);
       await response.body?.cancel();
-      if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === "POST")) {
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) && method === "POST")
+      ) {
         if (method !== "HEAD") method = "GET";
         body = undefined;
         headers.delete("content-type");

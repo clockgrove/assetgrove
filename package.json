@@ -23,8 +23,14 @@
   "type": "module",
   "exports": {
     "./extension": {
+      "assetgrove-source": "./src/extension/api.ts",
       "types": "./dist/extension/api.d.ts",
       "default": "./dist/extension/api.js"
+    },
+    "./testing": {
+      "assetgrove-source": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     },
     "./package.json": "./package.json"
   },

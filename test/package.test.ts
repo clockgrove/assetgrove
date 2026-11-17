@@ -35,7 +35,8 @@ function npm(args: string[], options: { cwd: string }) {
 }
 
 /**
- * The package must hold what a user needs (the CLI, and the extension API with its declarations)
+ * The package must hold what a user needs (the CLI, the extension API and the pack test kit with
+ * their declarations)
  * and none of the TypeScript sources or tests.
  */
 function assertContents(paths: string[]): void {
@@ -46,6 +47,8 @@ function assertContents(paths: string[]): void {
     "dist/cli.js",
     "dist/extension/api.js",
     "dist/extension/api.d.ts",
+    "dist/testing/index.js",
+    "dist/testing/index.d.ts",
     "skills/assetgrove/SKILL.md",
     "policy/blocklist.json",
   ]) {
@@ -182,11 +185,11 @@ test(
           "--no-experimental-strip-types",
           "--input-type=module",
           "-e",
-          'const m = await import("@clockgrove/assetgrove/extension"); console.log(m.EXTENSION_API);',
+          'const m = await import("@clockgrove/assetgrove/extension"); const t = await import("@clockgrove/assetgrove/testing"); console.log(m.EXTENSION_API, typeof m.z.object, typeof t.runConformance, typeof t.tempProject);',
         ],
         { cwd: install, env },
       );
-      assert.equal(api.stdout.trim(), "1");
+      assert.equal(api.stdout.trim(), "2 function function function");
 
       const world = await syntheticWorld();
       temps.push(world.dir);
