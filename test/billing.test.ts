@@ -159,6 +159,86 @@ test("each settle and reconcile pairing settles and reconciles as declared", asy
   }
 });
 
+test("a looked-up cost above the route's estimate holds; under it, none", async () => {
+  const cases = [
+    // `declared`: the looked-up cost is the first the ledger sees of the real cost.
+    { settle: "declared", reported: 0.02 },
+    // `reported` with no cost in the result settles at the reservation, as `declared` does.
+    { settle: "reported", reported: undefined },
+  ] as const;
+  for (const c of cases) {
+    for (const looked of [0.75, 0.02]) {
+      const what = `${c.settle}/lookup at $${looked}`;
+      const w = await world();
+      const script = paidScript({
+        settle: c.settle,
+        reconcile: "lookup",
+        ...(c.reported !== undefined && { costUsd: c.reported }),
+        callCost: () => looked,
+      });
+      const { configured, record } = await still(script, w);
+      assert.equal(record.costSource, "estimate", what);
+      const [entry] = await finishRunReconcile(
+        { settings: w.settings, providers: [configured] },
+        { runId: RUN_ID, runDir: w.runDir, providers: ["scripted"] },
+      );
+      assert.equal(w.ledger.runCalls(RUN_ID)[0]?.costUsd, looked, `${what}: settled`);
+      const holds = existsSync(join(w.stateDir, HOLDS_FILE)) ? readHolds(w.stateDir) : [];
+      if (looked > CEILING) {
+        assert.equal(entry?.status, "held", what);
+        assert.equal(holds.length, 1, what);
+        assert.equal(entry?.holdId, holds[0]?.id, what);
+        assert.equal(holds[0]?.reason, "settle-above-ceiling", what);
+        assert.equal(holds[0]?.route, ROUTE, what);
+        assert.equal(holds[0]?.ledgerUsd, CEILING, what);
+        assert.equal(holds[0]?.providerUsd, looked, what);
+        assert.throws(() => assertNoOpenHold(w.settings), /spend hold/, what);
+      } else {
+        assert.equal(entry?.status, "reconciled", what);
+        assert.equal(holds.length, 0, what);
+      }
+    }
+  }
+});
+
+test("a billing that does not declare settle and reconcile is refused", () => {
+  const pack = (billing: Record<string, unknown>): ProviderAdapter => ({
+    id: "pack:old",
+    capabilities: ["image"],
+    fixedHosts: ["api.pack.example.test"],
+    endpointFromSettings: false,
+    create: (c): GenerationProvider =>
+      ({
+        billing: {
+          adapter: "pack:old",
+          providerId: c.providerId,
+          paid: true,
+          hosts: ["api.pack.example.test"],
+          ...billing,
+        },
+        generateImage: () => Promise.reject(new Error("not called")),
+        analyzeImages: () => Promise.reject(new Error("not called")),
+      }) as unknown as GenerationProvider,
+  });
+  for (const billing of [
+    { reconcile: "unavailable" },
+    { reconcile: "per-call-cost" },
+    { settle: "reported", reconcile: "per-call-cost" },
+    { settle: "provider", reconcile: "lookup" },
+  ])
+    assert.throws(
+      () => createProvider("p", { adapter: "pack:old" }, { adapters: [pack(billing)] }),
+      /pack:old adapter's billing declares settle .* billing must declare settle "reported" or "declared" and reconcile "lookup" or "unavailable"/,
+      JSON.stringify(billing),
+    );
+  const ok = createProvider(
+    "p",
+    { adapter: "pack:old" },
+    { adapters: [pack({ settle: "reported", reconcile: "unavailable" })] },
+  );
+  assert.equal(ok.provider.billing.settle, "reported");
+});
+
 test("every core adapter declares settle and reconcile", () => {
   const expected: Record<string, [Billing["settle"], Billing["reconcile"]]> = {
     "vercel-ai-gateway": ["reported", "lookup"],

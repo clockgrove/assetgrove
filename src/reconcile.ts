@@ -5,7 +5,9 @@
  * `per-call-cost`, by the request ID the journal holds: the generation ID, the Tripo task ID), so another run on the same key or a credit
  * top-up changes nothing. Other providers record `unavailable`. Only calls whose ledger cost came
  * from the provider (`costSource` "provider") are compared; a call the ledger settled at the
- * route's estimate is settled to the looked-up cost instead, and is on neither side. A gap above
+ * route's estimate is settled to the looked-up cost instead, and is on neither side; a looked-up cost
+ * above the route's estimate (the reservation's `ceilingUsd`) appends a `settle-above-ceiling` hold,
+ * as a settle above it at the call does (src/budget.ts). A gap above
  * max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger spend; both default to 0, a
  * person's policy) appends a hold (src/spend.ts), and every paid run is refused until a person
  * acknowledges it. A per-call lookup the provider cannot answer yet is recorded as pending in
@@ -84,6 +86,9 @@ interface PendingCall {
   id?: string;
   /** Where the ledger's cost came from; absent (older records) counts as the provider's. */
   costSource?: "provider" | "estimate";
+  /** The call's route and its estimate, the most it may cost; absent in older pending records. */
+  route?: string;
+  ceilingUsd?: number;
 }
 
 interface PendingRecord {
@@ -274,6 +279,8 @@ export async function finishRunReconcile(
               ledgerUsd: call.costUsd,
               id: call.id,
               costSource: journaled.costSource,
+              route: call.route,
+              ceilingUsd: call.ceilingUsd,
             });
           }
         }
@@ -321,6 +328,8 @@ async function perCall(
   const looked: PendingCall[] = [];
   // The calls this pass settled, so a retry's updated pending record carries their settled cost.
   const settledNow = new Map<PendingCall, PendingCall>();
+  // The holds of estimate-sourced calls whose looked-up cost is above their route's estimate.
+  const ceilingHolds: string[] = [];
   for (const call of lookups) {
     const cost = await billing.callCost!(call.requestId);
     if (cost === null) {
@@ -334,7 +343,27 @@ async function perCall(
       continue;
     }
     if (call.costSource === "estimate" && call.id !== undefined) {
-      if (Math.abs(call.ledgerUsd - cost) > EPSILON) ledger.settle(call.id, cost, call.requestId);
+      if (Math.abs(call.ledgerUsd - cost) > EPSILON) {
+        ledger.settle(call.id, cost, call.requestId);
+        // Settled above its route's estimate: held as a settle at the call would be (src/budget.ts).
+        const ceilingUsd = call.ceilingUsd ?? call.ledgerUsd;
+        if (cost > ceilingUsd + EPSILON)
+          ceilingHolds.push(
+            appendHold(
+              ctx.settings.stateDir,
+              {
+                provider,
+                runId,
+                ledgerUsd: ceilingUsd,
+                providerUsd: cost,
+                gapUsd: cost - ceilingUsd,
+                reason: "settle-above-ceiling",
+                ...(call.route !== undefined && { route: call.route }),
+              },
+              nowOf(ctx),
+            ).id,
+          );
+      }
       settled++;
       // The pending record keeps the settled cost, so a retry finds nothing left to settle.
       const after = { ...call, ledgerUsd: cost };
@@ -352,6 +381,8 @@ async function perCall(
     runId,
     ...(unmatched > 0 && { unmatched }),
     ...(settled > 0 && { settled }),
+    // A looked-up cost above its route's estimate held the next paid runs: the entry names the hold.
+    ...(ceilingHolds.length > 0 && { holdId: ceilingHolds[0] }),
   };
   if (waiting.length > 0) {
     const id = pendingId ?? randomBytes(8).toString("hex");
@@ -397,7 +428,11 @@ async function perCall(
       : []),
     ...(settled > 0 ? [`${settled} estimate-sourced call(s) settled to the provider's cost`] : []),
   ];
-  return compare(
+  if (ceilingHolds.length > 0)
+    notes.push(
+      `${ceilingHolds.length} call(s) cost more than their route's estimate: spend hold ${ceilingHolds.join(", ")}`,
+    );
+  const entry = compare(
     ctx,
     {
       ...base,
@@ -406,6 +441,8 @@ async function perCall(
     ledgerUsd,
     providerUsd,
   );
+  if (ceilingHolds.length === 0 || entry.status === "held") return entry;
+  return { ...entry, status: "held", holdId: ceilingHolds[0] };
 }
 
 /**

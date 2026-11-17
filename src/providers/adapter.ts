@@ -339,8 +339,35 @@ export function createProvider(
     ...(entry.baseURL !== undefined && { baseURL: entry.baseURL }),
     ...(options.script !== undefined && { script: options.script }),
   });
+  // A billing must answer both questions: an adapter written before `settle` existed, or still
+  // naming `per-call-cost`, is refused here rather than settled at the reservation unseen.
+  const declared = (billing: Billing): void => {
+    const settle: unknown = billing.settle;
+    const reconcile: unknown = billing.reconcile;
+    if (settle === "reported" || settle === "declared") {
+      if (reconcile === "lookup" || reconcile === "unavailable") return;
+    }
+    throw new SettingsError(
+      `${where}providers.${id}: the ${adapter.id} adapter's billing declares settle ${JSON.stringify(settle) ?? "(none)"} and reconcile ${JSON.stringify(reconcile) ?? "(none)"}; billing must declare settle "reported" or "declared" and reconcile "lookup" or "unavailable" (docs/settings.md#billing).`,
+    );
+  };
+  declared(created.billing);
+  for (const part of (created as { parts?: readonly Billing[] }).parts ?? []) declared(part);
   // Paid-ness is core's: only the scripted stand-in, which reaches no host, keeps its script's.
   const provider = adapter === scriptedAdapter ? created : withCorePaid(created, corePaid(entry));
+  // A kind's own billing is checked when a call asks for it.
+  const perKind = provider.billingFor?.bind(provider);
+  if (perKind !== undefined)
+    Object.defineProperty(provider, "billingFor", {
+      value: (kind: CallKind): Billing => {
+        const billing = perKind(kind);
+        declared(billing);
+        return billing;
+      },
+      configurable: true,
+      enumerable: true,
+      writable: false,
+    });
   return {
     id,
     adapter,

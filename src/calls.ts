@@ -186,6 +186,7 @@ export class Caller {
           provider: served.id,
           ...(journal !== undefined && { runId: journal.runId }),
           ...(callKey !== undefined && { callKey }),
+          ceilingUsd,
         },
       );
     };

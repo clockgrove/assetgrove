@@ -121,6 +121,8 @@ export interface ReserveMeta {
   runId?: string;
   /** The call's journal key (src/runs/journal.ts). */
   callKey?: string;
+  /** The route's estimate, the most the call may cost; reconcile holds a looked-up cost above it. */
+  ceilingUsd?: number;
 }
 
 /** One paid call of a run as the ledger counts it. */
@@ -131,6 +133,10 @@ export interface LedgerCall {
   callKey?: string;
   /** The settled cost, or the reservation's estimate while unsettled. */
   costUsd: number;
+  /** The reservation's route. */
+  route: string;
+  /** The route's estimate the reservation recorded, else the reserved amount (older entries). */
+  ceilingUsd: number;
 }
 
 /** One reservation of the ledger with its settlement, as `entries()` lists it. */
@@ -248,6 +254,7 @@ export class SpendLedger {
       ...(meta.provider !== undefined && { provider: meta.provider }),
       ...(meta.runId !== undefined && { runId: meta.runId }),
       ...(meta.callKey !== undefined && { callKey: meta.callKey }),
+      ...(meta.ceilingUsd !== undefined && { ceilingUsd: meta.ceilingUsd }),
       ...(this.workItem !== undefined && { workItem: this.workItem }),
       amountUsd,
     });
@@ -278,6 +285,8 @@ export class SpendLedger {
         provider: e.provider ?? "",
         ...(e.callKey !== undefined && { callKey: e.callKey }),
         costUsd: settled.get(e.id) ?? e.amountUsd,
+        route: e.route,
+        ceilingUsd: e.ceilingUsd ?? e.amountUsd,
       });
     }
     return calls;
