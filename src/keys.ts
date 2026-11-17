@@ -1,4 +1,5 @@
-import { CORE_ADAPTERS, type ProviderAdapter } from "./providers/adapter.ts";
+import { adapterOf, CORE_ADAPTERS, type ProviderAdapter } from "./providers/adapter.ts";
+import type { ProviderSettings } from "./settings.ts";
 
 export const HARNESSES = [
   "claude-code",
@@ -203,12 +204,34 @@ const RECIPES: Record<Harness, RecipeOf> = {
   }),
 };
 
+/**
+ * The variable an adapter reads its key from under these settings: the `keyEnv` of the first
+ * configured provider that uses it, else the adapter's default (as `createProvider` reads it).
+ */
+export function adapterKeyEnv(
+  adapter: ProviderAdapter,
+  providers: Readonly<Record<string, ProviderSettings>> = {},
+  adapters: readonly ProviderAdapter[] = CORE_ADAPTERS,
+): string | undefined {
+  for (const [id, entry] of Object.entries(providers)) {
+    if (entry.keyEnv !== undefined && adapterOf(id, entry, adapters)?.id === adapter.id)
+      return entry.keyEnv;
+  }
+  return adapter.defaultKeyEnv;
+}
+
 /** The sentence naming each pack adapter's key variable; empty when no pack adapter has one. */
-function packKeys(adapters: readonly ProviderAdapter[]): string {
+function packKeys(
+  adapters: readonly ProviderAdapter[],
+  providers: Readonly<Record<string, ProviderSettings>>,
+): string {
   const core = new Set(CORE_ADAPTERS.map((adapter) => adapter.id));
   const keys = adapters
-    .filter((adapter) => !core.has(adapter.id) && adapter.defaultKeyEnv !== undefined)
-    .map((adapter) => `${adapter.defaultKeyEnv} (${adapter.id})`);
+    .filter((adapter) => !core.has(adapter.id))
+    .flatMap((adapter) => {
+      const keyEnv = adapterKeyEnv(adapter, providers, adapters);
+      return keyEnv === undefined ? [] : [`${keyEnv} (${adapter.id})`];
+    });
   return keys.length === 0
     ? ""
     : ` Each pack adapter's key goes in the server's env the same way: ${keys.join(", ")}.`;
@@ -218,12 +241,13 @@ export function keyRecipe(
   harness: string,
   dirs: KeyDirs = {},
   adapters: readonly ProviderAdapter[] = CORE_ADAPTERS,
+  providers: Readonly<Record<string, ProviderSettings>> = {},
 ): KeyRecipe {
   if (!(HARNESSES as readonly string[]).includes(harness)) {
     throw new Error(`Unknown harness "${harness}". Use one of: ${HARNESSES.join(", ")}.`);
   }
   const recipe = RECIPES[harness as Harness](dirs, adapters);
-  const keys = packKeys(adapters);
+  const keys = packKeys(adapters, providers);
   const [first] = recipe.steps;
   if (keys !== "" && first) first.text += keys;
   return recipe;

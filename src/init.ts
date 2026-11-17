@@ -14,7 +14,7 @@ import { formatLine } from "./formats.ts";
 import { libraryConfig } from "./library/write.ts";
 import { lfsHooksInstalled, lfsSize, lfsVersion, requireWorkTree, withBlock } from "./gitlfs.ts";
 import { checkTrackedKeys, KeyTrackedError } from "./guard.ts";
-import { HARNESSES, keyRecipe, type Harness } from "./keys.ts";
+import { adapterKeyEnv, HARNESSES, keyRecipe, type Harness } from "./keys.ts";
 import { resolvePackage, SEARCH_PACKAGE, type ExtensionRegistry } from "./extensions/registry.ts";
 import { CORE_PACKAGE } from "./extensions/version.ts";
 import { CORE_ADAPTERS, type ProviderAdapter } from "./providers/adapter.ts";
@@ -128,7 +128,10 @@ export interface PackAdapter {
   package: string;
   hosts: string[];
   endpointFromSettings: boolean;
-  /** The environment variable the adapter reads its key from; null when it declares none. */
+  /**
+   * The environment variable the adapter reads its key from: a configured provider's `keyEnv`,
+   * else the adapter's default; null when neither names one.
+   */
   keyEnv: string | null;
 }
 
@@ -427,6 +430,7 @@ export async function initProject(
     harness,
     { configDir: context.settings.configDir, stateDir: context.settings.stateDir },
     adapters,
+    context.settings.providers,
   );
   const packAdapters = (context.extensions?.loaded ?? [])
     .filter((extension) => extension.package !== CORE_PACKAGE)
@@ -441,7 +445,7 @@ export async function initProject(
             package: extension.package,
             hosts: [...adapter.fixedHosts],
             endpointFromSettings: adapter.endpointFromSettings,
-            keyEnv: adapter.defaultKeyEnv ?? null,
+            keyEnv: adapterKeyEnv(adapter, context.settings.providers, adapters) ?? null,
           },
         ];
       }),

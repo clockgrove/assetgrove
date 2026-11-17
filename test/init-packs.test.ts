@@ -32,7 +32,7 @@ function cli(
   });
 }
 
-async function project(): Promise<string> {
+async function project(paint: Record<string, string> = {}): Promise<string> {
   const dir = gitTarget(await mkdtemp(join(realpathSync(tmpdir()), "assetgrove-initpack-")));
   cpSync(fixture, join(dir, "node_modules", PACKAGE), { recursive: true });
   await writeFile(
@@ -41,7 +41,7 @@ async function project(): Promise<string> {
   );
   writeSettings({
     extensions: [PACKAGE],
-    providers: { paint: { adapter: "keyed:paint" } },
+    providers: { paint: { adapter: "keyed:paint", ...paint } },
     routes: { still: { provider: "paint", model: "paint-1", estimatedCostUsd: 0.01 } },
   });
   return dir;
@@ -102,6 +102,21 @@ test("the human output lists the pack's adapter", async () => {
       `- pack adapter keyed:paint \\(${PACKAGE}\\): hosts api.keyed.example; key KEYED_API_KEY`,
     ),
   );
+});
+
+test("init names the key variable the settings give a pack adapter", async () => {
+  const dir = await project({ keyEnv: "PAINT_KEY" });
+  const result = await cli([...initArgs(dir), "--json"], dir);
+  assert.equal(result.code, 0, result.stderr);
+  const doc = JSON.parse(result.stdout);
+  assert.equal(doc.adapters[0].keyEnv, "PAINT_KEY");
+  const first = doc.steps.find((s: { id: string }) => s.id === "claude-code.user-scope");
+  assert.match(first.detail, /PAINT_KEY \(keyed:paint\)/);
+  assert.doesNotMatch(first.detail, /KEYED_API_KEY/);
+
+  const human = await cli(initArgs(dir), dir);
+  assert.equal(human.code, 0, human.stderr);
+  assert.match(human.stdout, /- pack adapter keyed:paint .*; key PAINT_KEY/);
 });
 
 test("a core-only key recipe names no pack key", () => {
