@@ -32,7 +32,7 @@ import {
   sweepThresholds,
 } from "../src/identity.ts";
 import type { CastMember, IdentityRecordCheck } from "../src/identity.ts";
-import { evaluateIdentity, rocAuc } from "../src/identity-eval.ts";
+import { IDENTITY_ENFORCE_BAR, evaluateIdentity, rocAuc } from "../src/identity-eval.ts";
 import { createRaster, decodeImage, encodePng, setPixel } from "../src/image/raster.ts";
 import { sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
@@ -430,13 +430,18 @@ test("the sweep recommends from the bar: fewest false rejects within the false-a
   );
 });
 
-test("the sweep recommends nothing when no cut meets the bar", () => {
+test("the sweep recommends nothing at the real bar when a different character scores the top level", () => {
+  // Score level 4 is 1.0; the last cut is capped at 1, so every cut still accepts this case.
   const cases = [
-    { score: 0.9, same: false },
-    { score: 0.1, same: true },
+    { score: 1, same: false },
+    { score: 1, same: true },
+    { score: 0.75, same: true },
   ];
-  const { rows, recommended } = sweepThresholds(cases, { maxFalseAcceptRate: -1 });
+  const { rows, recommended } = sweepThresholds(cases, {
+    maxFalseAcceptRate: IDENTITY_ENFORCE_BAR.falseAcceptRate,
+  });
   assert.ok(rows.length > 0);
+  assert.ok(rows.every((row) => row.falseAccepts === 1));
   assert.equal(recommended, undefined);
 });
 
