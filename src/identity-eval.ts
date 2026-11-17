@@ -311,6 +311,8 @@ export async function planEvaluation(options: {
   operation: string;
   /** The files the cases read (images, bibles, identity references), `cases/<path from the cases file>`. */
   reads: Record<string, string>;
+  /** The path of every bible a case is judged against. */
+  bibles: string[];
 }> {
   const set = await loadEvalSet(options);
   const files = new Set<string>();
@@ -329,6 +331,7 @@ export async function planEvaluation(options: {
     identities: set.identities.size,
     operation: set.operation,
     reads,
+    bibles: [...new Set(set.prepared.map(({ doc }) => doc.path))],
   };
 }
 
@@ -429,7 +432,23 @@ export async function evaluateIdentity(options: {
   // 2D case recommends nothing.
   const basis = trusted.filter((r) => r.medium === "2d");
   const points = basis.map((r) => ({ score: r.score!.score!, same: r.same }));
-  const { rows, recommended } = sweepThresholds(points);
+  const grouped = basis.map((r) => ({
+    score: r.score!.score!,
+    same: r.same,
+    kind: r.kind,
+    cast: r.cast,
+  }));
+  // A cut counts as within the bar only when the false-accept rate is within it in every group
+  // the bar report judges: overall, each kind and each cast.
+  const { rows, recommended } = sweepThresholds(points, {
+    maxFalseAcceptRate: IDENTITY_ENFORCE_BAR.falseAcceptRate,
+    withinBar: (threshold) => {
+      const b = breakdown(grouped, threshold);
+      return [b, ...Object.values(b.byKind), ...Object.values(b.byCast)].every(
+        (g) => g.falseAcceptRate <= IDENTITY_ENFORCE_BAR.falseAcceptRate,
+      );
+    },
+  });
   const at = (threshold: number): ThresholdRow => {
     const falseRejects = points.filter((p) => p.same && p.score < threshold).length;
     const falseAccepts = points.filter((p) => !p.same && p.score >= threshold).length;

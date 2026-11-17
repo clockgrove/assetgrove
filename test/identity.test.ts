@@ -32,7 +32,7 @@ import {
   sweepThresholds,
 } from "../src/identity.ts";
 import type { CastMember, IdentityRecordCheck } from "../src/identity.ts";
-import { evaluateIdentity, rocAuc } from "../src/identity-eval.ts";
+import { IDENTITY_ENFORCE_BAR, evaluateIdentity, rocAuc } from "../src/identity-eval.ts";
 import { createRaster, decodeImage, encodePng, setPixel } from "../src/image/raster.ts";
 import { sha256 } from "../src/request.ts";
 import { defaultRoutes } from "../src/routes.ts";
@@ -376,17 +376,20 @@ test("small images are upscaled for decision models; large ones go as they are",
 });
 
 test("the threshold sweep recommends the cut the logged scores support", () => {
-  const { rows, recommended } = sweepThresholds([
-    { score: 0.25, same: false },
-    { score: 0.5, same: false },
-    { score: 0.75, same: true },
-    { score: 1, same: true },
-    { score: 0.5, same: true },
-  ]);
+  const { rows, recommended } = sweepThresholds(
+    [
+      { score: 0.25, same: false },
+      { score: 0.5, same: false },
+      { score: 0.75, same: true },
+      { score: 1, same: true },
+      { score: 0.5, same: true },
+    ],
+    { maxFalseAcceptRate: 0.05 },
+  );
   assert.ok(rows.length >= 3);
-  assert.equal(recommended?.threshold, 0.375);
+  assert.equal(recommended?.threshold, 0.625);
   assert.equal(recommended?.correct, 4);
-  assert.equal(sweepThresholds([]).recommended, undefined);
+  assert.equal(sweepThresholds([], { maxFalseAcceptRate: 0.05 }).recommended, undefined);
   assert.deepEqual(
     agreement([
       { qa: true, identity: true },
@@ -400,6 +403,46 @@ test("the threshold sweep recommends the cut the logged scores support", () => {
       rate: 0.5,
     },
   );
+});
+
+test("the sweep recommends from the bar: fewest false rejects within the false-accept rate", () => {
+  const cases = [
+    ...[0.62, 0.64, 0.66, 0.68, 0.69].map((score) => ({ score, same: true })),
+    ...Array.from({ length: 95 }, (_, i) => ({ score: 0.8 + i * 0.0015, same: true })),
+    { score: 0.7, same: false },
+    { score: 0.7, same: false },
+    ...Array.from({ length: 8 }, (_, i) => ({ score: 0.1 + i * 0.02, same: false })),
+  ];
+  const { recommended } = sweepThresholds(cases, { maxFalseAcceptRate: 0.05 });
+  assert.ok(recommended && recommended.threshold > 0.7 && recommended.threshold < 0.8);
+  assert.equal(recommended.falseAccepts, 0);
+  assert.equal(recommended.falseRejects, 5);
+  assert.equal(
+    sweepThresholds(
+      [
+        { score: 0.9, same: false },
+        { score: 0.95, same: false },
+        { score: 0.5, same: true },
+      ],
+      { maxFalseAcceptRate: 0 },
+    ).recommended?.falseRejects,
+    1,
+  );
+});
+
+test("the sweep recommends nothing at the real bar when a different character scores the top level", () => {
+  // Score level 4 is 1.0; the last cut is capped at 1, so every cut still accepts this case.
+  const cases = [
+    { score: 1, same: false },
+    { score: 1, same: true },
+    { score: 0.75, same: true },
+  ];
+  const { rows, recommended } = sweepThresholds(cases, {
+    maxFalseAcceptRate: IDENTITY_ENFORCE_BAR.falseAcceptRate,
+  });
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every((row) => row.falseAccepts === 1));
+  assert.equal(recommended, undefined);
 });
 
 test("identity-eval scores a local labelled set, logs every call and recommends a threshold", async () => {

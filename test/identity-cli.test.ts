@@ -2,7 +2,7 @@ import "./fixtures/env.ts";
 import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { syntheticProfile } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const exec = promisify(execFile);
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -45,6 +45,29 @@ async function fixture() {
   };
   const bible = join(art, "BIBLE.md");
   await writeFile(bible, serializeBible(data, "# Synthetic\n\n## Do's and Don'ts\nDo.\n"));
+  await writeFile(
+    join(art, "identity-thresholds.json"),
+    JSON.stringify({
+      format: "assetgrove-identity-thresholds/1",
+      entries: [
+        {
+          question: "score",
+          model: "perplexity/pplx-decider-v1.2",
+          threshold: 0.68,
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          eval: {
+            casesFile: "cases.json",
+            casesSha256: "0".repeat(64),
+            cases: 4,
+            scored: 4,
+            falseAcceptRate: 0,
+            falseRejectRate: 0,
+            barMet: true,
+          },
+        },
+      ],
+    }),
+  );
   await writeFile(join(root, "sheet.png"), syntheticSheet().png);
   await writeFile(join(root, "profile.json"), JSON.stringify(syntheticProfile()));
   return { root, bible };
@@ -169,6 +192,7 @@ test("identity-eval reports accuracy per threshold, the recommendation and agree
       join(f.root, "cases.json"),
       "--log",
       log,
+      "--record",
       "--provider-script",
       SCRIPT,
       "--json",
@@ -177,10 +201,94 @@ test("identity-eval reports accuracy per threshold, the recommendation and agree
   );
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
+  const recorded = JSON.parse(
+    await readFile(join(f.bible, "..", "identity-thresholds.json"), "utf8"),
+  );
+  assert.equal(recorded.format, "assetgrove-identity-thresholds/1");
+  assert.equal(recorded.entries.length, 1);
+  assert.equal(recorded.entries[0].question, "score");
+  assert.equal(recorded.entries[0].model, report.model);
+  assert.equal(recorded.entries[0].threshold, report.recommended.threshold);
+  assert.equal(recorded.entries[0].eval.casesFile, join("..", "cases.json"));
+  assert.equal(recorded.entries[0].eval.scored, 4);
+  assert.equal(recorded.entries[0].eval.barMet, true);
   assert.equal(report.scored, 4);
   assert.equal(report.recommended.accuracy, 1);
   assert.equal(report.qaAgreement.rate, 0.75);
   assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 4);
+});
+
+test("identity-eval --record refuses before any call without --bible or with a case of another bible, and never records a cut that fails the bar", async () => {
+  const f = await fixture();
+  const thresholds = join(f.bible, "..", "identity-thresholds.json");
+  const before = await readFile(thresholds, "utf8");
+  const output = (e: unknown) => {
+    const { stdout = "", stderr = "" } = e as { stdout?: string; stderr?: string };
+    return stdout + stderr;
+  };
+  const evalArgs = (casesFile: string, log: string, bible = true) => [
+    CLI,
+    "identity-eval",
+    ...(bible ? ["--bible", f.bible] : []),
+    "--cases",
+    casesFile,
+    "--log",
+    log,
+    "--record",
+    "--provider-script",
+    SCRIPT,
+    "--json",
+  ];
+  const same = [
+    { image: "sheet.png", subject: "bram", same: true, bible: "art/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: false, bible: "art/BIBLE.md" },
+  ];
+  await writeFile(join(f.root, "named.json"), JSON.stringify(same));
+  const noBible = join(f.root, "no-bible.jsonl");
+  await assert.rejects(
+    exec(process.execPath, evalArgs(join(f.root, "named.json"), noBible, false), {
+      env: env("4,0"),
+    }),
+    (e: unknown) => /--record needs --bible/.test(output(e)),
+  );
+  await assert.rejects(readFile(noBible, "utf8"), "no case was scored");
+
+  const other = join(f.root, "other");
+  await mkdir(other, { recursive: true });
+  await writeFile(join(other, "BIBLE.md"), await readFile(f.bible, "utf8"));
+  await writeFile(
+    join(other, "bram-turnaround.png"),
+    await readFile(join(f.root, "art", "bram-turnaround.png")),
+  );
+  await writeFile(
+    join(f.root, "mixed.json"),
+    JSON.stringify([same[0], { ...same[1], bible: "other/BIBLE.md" }]),
+  );
+  const mixed = join(f.root, "mixed.jsonl");
+  await assert.rejects(
+    exec(process.execPath, evalArgs(join(f.root, "mixed.json"), mixed), { env: env("4,0") }),
+    (e: unknown) => /cases name other bibles/.test(output(e)),
+  );
+  await assert.rejects(readFile(mixed, "utf8"), "no case was scored");
+
+  // The model cannot separate the cases: the only cut within the false-accept bar rejects
+  // everything, so the bar (false rejects too) fails and nothing is recorded.
+  await writeFile(
+    join(f.root, "cases.json"),
+    JSON.stringify([
+      { image: "sheet.png", subject: "bram", same: true },
+      { image: "sheet.png", subject: "bram", same: true },
+      { image: "sheet.png", subject: "bram", same: false },
+      { image: "sheet.png", subject: "bram", same: false },
+    ]),
+  );
+  await assert.rejects(
+    exec(process.execPath, evalArgs(join(f.root, "cases.json"), join(f.root, "eval.jsonl")), {
+      env: env("2,2,2,2"),
+    }),
+    (e: unknown) => /enforce bar is not met/.test(output(e)),
+  );
+  assert.equal(await readFile(thresholds, "utf8"), before);
 });
 
 test("plan --identity-mode enforce, then apply: a strip below the threshold is filtered and the person sees why", async () => {
@@ -348,4 +456,124 @@ test("identity-eval prints the per-medium breakdown, the bar and the record chec
   );
   assert.match(result.stdout, /enforce bar: not judged on provisional 3D/);
   assert.match(result.stdout, /record check: record "bram" lock bram-3 agrees/);
+});
+
+test("identity-eval recommends only a cut within the false-accept bar in every kind and cast", async () => {
+  const f = await fixture();
+  // 20 generic negatives score 0 and one look-alike scores 0.75: a cut near 0.4 has a 4.8%
+  // overall false-accept rate but accepts every look-alike, so it is not within the bar.
+  const cases = [
+    { image: "sheet.png", subject: "bram", same: true },
+    { image: "sheet.png", subject: "bram", same: true },
+    { image: "sheet.png", subject: "bram", same: false, kind: "lookalike" },
+    ...Array.from({ length: 20 }, () => ({ image: "sheet.png", subject: "bram", same: false })),
+  ];
+  await writeFile(join(f.root, "cases.json"), JSON.stringify(cases));
+  const result = await exec(
+    process.execPath,
+    [
+      CLI,
+      "identity-eval",
+      "--bible",
+      f.bible,
+      "--cases",
+      join(f.root, "cases.json"),
+      "--provider-script",
+      SCRIPT,
+    ],
+    { env: env(["4", "4", "3", ...Array.from({ length: 20 }, () => "0")].join(",")) },
+  );
+  assert.match(result.stdout, /^recommended threshold 0\.875 /m);
+  // At a cut below the look-alike's score (the configured 0.68 here) the bar report fails it.
+  assert.match(result.stdout, /not met: kind lookalike: false accepts 100% > 5%/);
+});
+
+test("identity-eval prints that none meets the bar when a different character scores the top level", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.root, "cases.json"),
+    JSON.stringify([
+      { image: "sheet.png", subject: "bram", same: true },
+      { image: "sheet.png", subject: "bram", same: false },
+    ]),
+  );
+  const result = await exec(
+    process.execPath,
+    [
+      CLI,
+      "identity-eval",
+      "--bible",
+      f.bible,
+      "--cases",
+      join(f.root, "cases.json"),
+      "--provider-script",
+      SCRIPT,
+    ],
+    { env: env("4,4") },
+  );
+  assert.match(
+    result.stdout,
+    /no threshold recommended: none meets the bar \(false-accept rate within the enforce bar\)/,
+  );
+});
+
+test("import and generate-sheet hash the identity threshold record they filter at, so a re-recorded threshold is another request", async () => {
+  const f = await fixture();
+  const world = await syntheticWorld();
+  roots.push(world.dir);
+  const spec = join(world.dir, "spec.json");
+  const bible = join(world.bibleDir, "bible.json");
+  await writeFile(spec, JSON.stringify({ ...shelterSpec, subject: "bram" }));
+  await writeFile(bible, JSON.stringify(world.bible));
+  await writeFile(join(world.dir, "profile.json"), JSON.stringify(world.profile));
+  const lock = ["--lock-bible", f.bible, "--identity-mode", "enforce", "--dry-run", "--json"];
+  const requests = {
+    import: importArgs(f.root, "bram", lock),
+    "generate-sheet": [
+      CLI,
+      "generate-sheet",
+      ...["--spec", spec, "--bible", bible, "--profile", join(world.dir, "profile.json")],
+      ...["--provider-script", SCRIPT, ...lock],
+    ],
+  };
+  const digest = async (args: string[]) =>
+    (
+      JSON.parse((await exec(process.execPath, args, { env: env("1") })).stdout) as {
+        digest: string;
+      }
+    ).digest;
+  const first: Record<string, string> = {};
+  for (const [name, args] of Object.entries(requests)) {
+    first[name] = await digest(args);
+    assert.equal(await digest(args), first[name], name);
+  }
+  const path = join(f.bible, "..", "identity-thresholds.json");
+  const record = JSON.parse(await readFile(path, "utf8"));
+  record.entries[0].threshold = 0.9;
+  await writeFile(path, JSON.stringify(record));
+  for (const [name, args] of Object.entries(requests))
+    assert.notEqual(await digest(args), first[name], `${name}: a re-recorded threshold`);
+});
+
+test("identity-eval --record compares bibles by real path: a case reaching --bible through a link is its own", async () => {
+  const f = await fixture();
+  await symlink(join(f.root, "art"), join(f.root, "linked"), "dir");
+  const cases = [
+    { image: "sheet.png", subject: "bram", same: true, bible: "linked/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: true, bible: "linked/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: false, bible: "linked/BIBLE.md" },
+    { image: "sheet.png", subject: "bram", same: false, bible: "linked/BIBLE.md" },
+  ];
+  await writeFile(join(f.root, "cases.json"), JSON.stringify(cases));
+  const result = await exec(
+    process.execPath,
+    [
+      CLI,
+      "identity-eval",
+      ...["--bible", f.bible, "--cases", join(f.root, "cases.json"), "--record"],
+      ...["--provider-script", SCRIPT, "--json"],
+    ],
+    { env: env("4,4,0,0") },
+  );
+  assert.equal(JSON.parse(result.stdout).ok, true);
 });

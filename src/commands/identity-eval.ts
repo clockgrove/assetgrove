@@ -1,3 +1,9 @@
+import { readFile, realpath } from "node:fs/promises";
+import { relative, resolve } from "node:path";
+import { InputError } from "../errors.ts";
+import { loadBible } from "../bible.ts";
+import { recordIdentityThreshold } from "../identity.ts";
+import { sha256 } from "../request.ts";
 import { evaluateIdentity, planEvaluation } from "../identity-eval.ts";
 import type { Breakdown, MediumReport } from "../identity-eval.ts";
 import { loadProfile } from "../inputs.ts";
@@ -35,11 +41,43 @@ function formatMedium(medium: string, m: MediumReport, threshold: number): strin
   ];
 }
 
+async function record(
+  args: IdentityEvalArgs,
+  report: Awaited<ReturnType<typeof evaluateIdentity>>,
+): Promise<string> {
+  if (!report.recommended)
+    throw new InputError("nothing to record: none meets the bar, so no threshold is recommended");
+  const at = report.media["2d"]?.recommended;
+  // Enforce drops paid candidates at the recorded cut, so a cut whose eval failed the bar (a set
+  // the model cannot separate recommends the reject-everything cut) is never recorded.
+  if (!at?.bar.met)
+    throw new InputError(
+      `nothing recorded: at the recommended threshold ${report.recommended.threshold} the enforce bar is not met${at ? ` (${at.bar.failures.join("; ")})` : ""}`,
+    );
+  const doc = await loadBible(args.bible as string);
+  return recordIdentityThreshold(doc.dir, {
+    question: report.question,
+    model: report.model,
+    threshold: report.recommended.threshold,
+    recordedAt: new Date().toISOString(),
+    eval: {
+      casesFile: relative(doc.dir, resolve(args.cases)) || args.cases,
+      casesSha256: sha256(new Uint8Array(await readFile(args.cases))),
+      cases: report.cases,
+      scored: report.scored,
+      falseAcceptRate: at?.falseAcceptRate ?? 0,
+      falseRejectRate: at?.falseRejectRate ?? 0,
+      barMet: at?.bar.met ?? false,
+    },
+  });
+}
+
 interface IdentityEvalArgs {
   bible?: string;
   cases: string;
   profile?: string;
   log?: string;
+  record?: boolean;
   cap?: number;
   workItem?: string;
   providerScript?: string;
@@ -57,6 +95,18 @@ async function prepare(args: IdentityEvalArgs, ctx: RunContext) {
     casesPath: args.cases,
     profile,
   });
+  // Checked before any call: a record is the bible's own, so every case must be judged against it.
+  if (args.record) {
+    if (args.bible === undefined) throw new InputError("--record needs --bible <BIBLE.md>");
+    // Compared by real path: a case may reach the same bible through a link or another spelling.
+    const own = await realpath((await loadBible(args.bible)).path);
+    const real = await Promise.all(set.bibles.map(async (path) => [path, await realpath(path)]));
+    const others = real.filter(([, path]) => path !== own).map(([typed]) => typed as string);
+    if (others.length > 0)
+      throw new InputError(
+        `--record records a threshold for ${args.bible} alone, but cases name other bibles: ${others.join(", ")}`,
+      );
+  }
   const jobs = [
     jobOf(set.operation, provider.routes[set.operation] as Route, set.cases),
     jobOf(
@@ -90,7 +140,7 @@ every case names its bible. With identity.question "cast" each candidate is judg
 cast of its bible; every subject's record is first checked against its own references. Each call's label, confidence,
 latency and cost are logged on stderr, and one JSON line per case goes to --log. Reports accuracy
 for every threshold, the recommended threshold, accuracy at the profile's threshold and agreement
-with the cases' QA verdicts. Never filters or approves. Keep the set and the log local; they may
+with the cases' QA verdicts. The recommended threshold is the one with the fewest false rejects among those whose false-accept rate is within the enforce bar overall, per kind and per cast (the lowest on a tie); when none meets the bar, none is recommended. --record writes it to identity-thresholds.json beside --bible, keyed by question and model, which enforce mode requires. Never filters or approves. Keep the set and the log local; they may
 hold a game's private art. See docs/generation-knobs.md.`,
   input: {
     type: "object",
@@ -102,6 +152,11 @@ hold a game's private art. See docs/generation-knobs.md.`,
       },
       cases: { type: "string", description: "the labelled cases", placeholder: "<cases.json>" },
       profile: { type: "string", description: "the target profile", placeholder: "<profile.json>" },
+      record: {
+        type: "boolean",
+        description:
+          "record the recommended threshold for this bible and model in identity-thresholds.json beside the bible; refused when none meets the bar",
+      },
       log: {
         type: "string",
         description: "where one JSON line per case is written",
@@ -153,6 +208,7 @@ hold a game's private art. See docs/generation-knobs.md.`,
       log: ctx.log,
     });
     const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+    const recorded = args.record ? await record(args, report) : undefined;
     const lines = [
       `${report.scored} of ${report.cases} cases scored by ${report.model} (${report.question}), ${report.failed} failed, $${report.spentUsd.toFixed(6)} spent`,
       ...report.sweep.map(
@@ -161,7 +217,12 @@ hold a game's private art. See docs/generation-knobs.md.`,
       ),
       report.recommended
         ? `recommended threshold ${report.recommended.threshold.toFixed(3)} (${pct(report.recommended.accuracy)})`
-        : "no threshold recommended: no 2D case of a trusted record was scored",
+        : report.sweep.length > 0
+          ? "no threshold recommended: none meets the bar (false-accept rate within the enforce bar)"
+          : "no threshold recommended: no 2D case of a trusted record was scored",
+      ...(recorded
+        ? [`recorded threshold ${report.recommended?.threshold.toFixed(3)} in ${recorded}`]
+        : []),
       `configured threshold ${report.configured.threshold}: ${pct(report.configured.accuracy)}`,
       ...(report.qaAgreement
         ? [

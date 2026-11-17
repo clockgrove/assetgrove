@@ -118,7 +118,7 @@ A reference may set `view`, which says what it shows of its subject: `front`, `l
 }
 ```
 
-An optional `identity` object configures identity lock scoring: `mode` (`shadow`, the default, scores without filtering; `enforce` filters candidates below the threshold, except 3D characters, which it scores in shadow mode; `off`), `threshold` (0 to 1; when unset, 0.5 for the `cast` question and 0.68 for `score` and `boolean`, the thresholds each is measured at; see [decisions.md](decisions.md)) and `question` (`score`, `boolean`, or `cast`, which judges a candidate as a choice among every identity record in its bible and whether it is on-model for its subject). See [generation-knobs.md](generation-knobs.md#identity-lock-scoring).
+An optional `identity` object configures identity lock scoring: `mode` (`shadow`, the default, scores without filtering; `enforce` filters candidates below the threshold, except 3D characters, which it scores in shadow mode; `off`), `threshold` (0 to 1; when unset, the threshold recorded for the bible and decision model by `identity-eval --record`; `enforce` refuses a bible with no record or whose recorded eval did not meet the enforce bar, and shadow mode falls back to 0.5 for `cast` and 0.68 for `score` and `boolean`; see [decisions.md](decisions.md)) and `question` (`score`, `boolean`, or `cast`, which judges a candidate as a choice among every identity record in its bible and whether it is on-model for its subject). See [generation-knobs.md](generation-knobs.md#identity-lock-scoring).
 
 The paths are illustrative.
 

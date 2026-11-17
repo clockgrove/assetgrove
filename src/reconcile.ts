@@ -3,11 +3,15 @@
  * own usage to an ordinary key, a run's ledger spend is compared with it when the run ends. The
  * gateway and Tripo report each call's cost (`per-call-cost`, looked up by the request ID the
  * journal holds: the generation ID, the Tripo task ID), so another run on the same key or a credit
- * top-up changes nothing. Other providers record `unavailable`. A gap above max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger
- * spend) appends a hold (src/spend.ts), and every paid run is refused until a person acknowledges
- * it. A per-call lookup the provider cannot answer yet is recorded as pending in
+ * top-up changes nothing. Other providers record `unavailable`. Only calls whose ledger cost came
+ * from the provider (`costSource` "provider") are compared; a call the ledger settled at the
+ * route's estimate is settled to the looked-up cost instead, and is on neither side. A gap above
+ * max(`reconcile.marginUsd`, `reconcile.marginPct`% of the ledger spend; both default to 0, a
+ * person's policy) appends a hold (src/spend.ts), and every paid run is refused until a person
+ * acknowledges it. A per-call lookup the provider cannot answer yet is recorded as pending in
  * `<stateDir>/reconcile.jsonl` and retried at the next paid run's start and by `spend reconcile`;
- * one still unanswered a day after the run resolves as `failed`.
+ * one still unanswered `reconcile.pendingMaxAgeHours` (default 24) after the run resolves as
+ * `failed`, is marked expired, and `spend status` lists it.
  *
  * The run directory keeps `reconcile-state.json`: the ledger reservations already reconciled. An
  * attempt that stops before its end leaves its reservations unreconciled, so its resume compares
@@ -37,8 +41,9 @@ const EPSILON = 1e-9;
 export const RECONCILE_FILE = "reconcile.jsonl";
 /** In the run directory: what the run's attempts have reconciled, and the open attempt's start. */
 export const RUN_RECONCILE_STATE_FILE = "reconcile-state.json";
-/** A pending lookup still unanswered this long after its run resolves as `failed`. */
-export const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** A pending lookup still unanswered this many hours after its run resolves as `failed`, unless `reconcile.pendingMaxAgeHours` says otherwise. */
+export const DEFAULT_PENDING_MAX_AGE_HOURS = 24;
+export const PENDING_MAX_AGE_MS = DEFAULT_PENDING_MAX_AGE_HOURS * 60 * 60 * 1000;
 
 export type ReconcileStatus = "unavailable" | "reconciled" | "pending" | "held" | "failed";
 
@@ -59,6 +64,8 @@ export interface ReconcileEntry {
   pendingId?: string;
   /** Paid calls that cannot be looked up (no journaled request ID from the provider). */
   unmatched?: number;
+  /** Estimate-sourced calls settled to the provider's looked-up cost instead of compared. */
+  settled?: number;
   note?: string;
 }
 
@@ -73,6 +80,10 @@ export interface ReconcileContext {
 interface PendingCall {
   requestId: string;
   ledgerUsd: number;
+  /** The ledger reservation; absent in older pending records. */
+  id?: string;
+  /** Where the ledger's cost came from; absent (older records) counts as the provider's. */
+  costSource?: "provider" | "estimate";
 }
 
 interface PendingRecord {
@@ -91,6 +102,8 @@ interface ResolvedRecord {
   at: string;
   status: ReconcileStatus;
   holdId?: string;
+  /** The lookup went unanswered past `reconcile.pendingMaxAgeHours`. */
+  expired?: true;
 }
 
 /** What a run took at its start for reconciling at its end. */
@@ -185,18 +198,24 @@ export async function startRunReconcile(
   return { runId: run.runId, runDir: run.runDir, providers };
 }
 
-/** The request ID the journal holds for a call, when the provider gave it. */
-function journaledRequestId(runDir: string, callKey: string | undefined): string | undefined {
+/** The request ID the journal holds for a call, when the provider gave it, and its cost source. */
+function journaledCall(
+  runDir: string,
+  callKey: string | undefined,
+): { requestId: string; costSource: "provider" | "estimate" } | undefined {
   if (callKey === undefined) return undefined;
   const path = join(runDir, CALLS_DIR, `${callKey}.json`);
   if (!existsSync(path)) return undefined;
   try {
     const entry = JSON.parse(readFileSync(path, "utf8")) as {
-      record?: { requestId?: unknown; requestIdSource?: unknown };
+      record?: { requestId?: unknown; requestIdSource?: unknown; costSource?: unknown };
     };
     const id = entry.record?.requestId;
     if (typeof id !== "string" || entry.record?.requestIdSource === "local") return undefined;
-    return id;
+    return {
+      requestId: id,
+      costSource: entry.record?.costSource === "estimate" ? "estimate" : "provider",
+    };
   } catch {
     return undefined;
   }
@@ -235,11 +254,16 @@ export async function finishRunReconcile(
         // The journal holds one request ID per call key: a reservation an interrupted attempt made
         // for a call a later attempt paid again has no request ID of its own.
         for (const call of mine.toReversed()) {
-          const requestId = journaledRequestId(run.runDir, call.callKey);
-          if (requestId === undefined || seen.has(call.callKey!)) unmatched++;
+          const journaled = journaledCall(run.runDir, call.callKey);
+          if (journaled === undefined || seen.has(call.callKey!)) unmatched++;
           else {
             seen.add(call.callKey!);
-            lookups.unshift({ requestId, ledgerUsd: call.costUsd });
+            lookups.unshift({
+              requestId: journaled.requestId,
+              ledgerUsd: call.costUsd,
+              id: call.id,
+              costSource: journaled.costSource,
+            });
           }
         }
         entries.push(await perCall(ctx, provider, run.runId, billing, lookups, unmatched));
@@ -273,26 +297,41 @@ async function perCall(
   billing: Billing,
   lookups: PendingCall[],
   unmatchedBefore: number,
-  pendingId?: string,
+  pending?: PendingRecord,
 ): Promise<ReconcileEntry> {
+  const pendingId = pending?.id;
   const retry = pendingId !== undefined;
   let unmatched = unmatchedBefore;
   let ledgerUsd = 0;
   let providerUsd = 0;
+  let settled = 0;
+  const ledger = SpendLedger.fromSettings(ctx.settings, { env: {} });
   const waiting: PendingCall[] = [];
   const looked: PendingCall[] = [];
+  // The calls this pass settled, so a retry's updated pending record carries their settled cost.
+  const settledNow = new Map<PendingCall, PendingCall>();
   for (const call of lookups) {
     const cost = await billing.callCost!(call.requestId);
     if (cost === null) {
       unmatched++;
       continue;
     }
-    looked.push(call);
     if (cost === undefined) {
+      looked.push(call);
       waiting.push(call);
       if (retry) break;
       continue;
     }
+    if (call.costSource === "estimate" && call.id !== undefined) {
+      if (Math.abs(call.ledgerUsd - cost) > EPSILON) ledger.settle(call.id, cost, call.requestId);
+      settled++;
+      // The pending record keeps the settled cost, so a retry finds nothing left to settle.
+      const after = { ...call, ledgerUsd: cost };
+      if (Math.abs(call.ledgerUsd - cost) > EPSILON) settledNow.set(call, after);
+      looked.push(after);
+      continue;
+    }
+    looked.push(call);
     ledgerUsd += call.ledgerUsd;
     providerUsd += cost;
   }
@@ -301,6 +340,7 @@ async function perCall(
     method: "per-call-cost" as const,
     runId,
     ...(unmatched > 0 && { unmatched }),
+    ...(settled > 0 && { settled }),
   };
   if (waiting.length > 0) {
     const id = pendingId ?? randomBytes(8).toString("hex");
@@ -313,6 +353,14 @@ async function perCall(
         runId,
         calls: looked,
         unmatched,
+      };
+      appendJsonLine(reconcilePath(ctx.settings.stateDir), record, "reconcile record");
+    } else if (settledNow.size > 0 && pending !== undefined) {
+      // A retry that settled an estimate rewrites the lookup (same id and age), so the next retry
+      // finds that call's ledger cost equal to the provider's and settles it no second time.
+      const record: PendingRecord = {
+        ...pending,
+        calls: lookups.map((c) => settledNow.get(c) ?? c),
       };
       appendJsonLine(reconcilePath(ctx.settings.stateDir), record, "reconcile record");
     }
@@ -332,40 +380,75 @@ async function perCall(
       status: "failed",
       note: `none of the ${unmatched} paid call(s) could be looked up with the provider; nothing was compared`,
     };
+  const notes = [
+    ...(unmatched > 0
+      ? [`${unmatched} paid call(s) could not be looked up and are left out of both sides`]
+      : []),
+    ...(settled > 0 ? [`${settled} estimate-sourced call(s) settled to the provider's cost`] : []),
+  ];
   return compare(
     ctx,
     {
       ...base,
-      ...(unmatched > 0 && {
-        note: `${unmatched} paid call(s) could not be looked up and are left out of both sides`,
-      }),
+      ...(notes.length > 0 && { note: notes.join("; ") }),
     },
     ledgerUsd,
     providerUsd,
   );
 }
 
-/** The pending lookups not yet resolved, oldest first. */
+/**
+ * The pending lookups not yet resolved, oldest first. A retry that settled an estimate appends the
+ * lookup again under its id; the last record of an id is the one that holds.
+ */
 export function pendingLookups(stateDir: string): PendingRecord[] {
   const values = readJsonLines(reconcilePath(stateDir), "reconcile record") as Array<
     PendingRecord | ResolvedRecord
   >;
   const resolved = new Set(values.filter((v) => v.op === "resolved").map((v) => v.id));
-  return values.filter(
-    (v): v is PendingRecord =>
+  const latest = new Map<string, PendingRecord>();
+  for (const v of values)
+    if (
       v.op === "pending" &&
       typeof v.id === "string" &&
       typeof v.provider === "string" &&
       typeof v.runId === "string" &&
       Array.isArray(v.calls) &&
-      !resolved.has(v.id),
-  );
+      !resolved.has(v.id)
+    )
+      latest.set(v.id, v);
+  return [...latest.values()];
+}
+
+/** An expired lookup: the provider never reported its calls in time, so nothing was compared. */
+export interface ExpiredLookup {
+  id: string;
+  provider: string;
+  runId: string;
+  at: string;
+  resolvedAt: string;
+}
+
+/** The lookups that expired unanswered, oldest first. */
+export function expiredLookups(stateDir: string): ExpiredLookup[] {
+  const values = readJsonLines(reconcilePath(stateDir), "reconcile record") as Array<
+    PendingRecord | ResolvedRecord
+  >;
+  const out: ExpiredLookup[] = [];
+  for (const r of values) {
+    if (r.op !== "resolved" || r.expired !== true) continue;
+    const p = values.find((v): v is PendingRecord => v.op === "pending" && v.id === r.id);
+    if (p === undefined) continue;
+    out.push({ id: r.id, provider: p.provider, runId: p.runId, at: p.at, resolvedAt: r.at });
+  }
+  return out;
 }
 
 /**
  * Retries every pending lookup: one whose calls are all reported now is compared (and may append a
  * hold) and marked resolved; one whose provider is no longer configured or still has a call to
- * report stays pending, until a day after its run, when it resolves as `failed`.
+ * report stays pending, until `reconcile.pendingMaxAgeHours` after its run, when it resolves as
+ * `failed`.
  */
 export async function retryPending(ctx: ReconcileContext): Promise<ReconcileEntry[]> {
   const results: ReconcileEntry[] = [];
@@ -391,7 +474,7 @@ export async function retryPending(ctx: ReconcileContext): Promise<ReconcileEntr
         billing,
         pending.calls,
         typeof pending.unmatched === "number" ? pending.unmatched : 0,
-        pending.id,
+        pending,
       );
     } catch (error) {
       entry = {
@@ -404,11 +487,13 @@ export async function retryPending(ctx: ReconcileContext): Promise<ReconcileEntr
       };
     }
     const age = nowOf(ctx).getTime() - Date.parse(pending.at);
-    if (entry.status === "pending" && age > PENDING_MAX_AGE_MS)
+    const maxHours = ctx.settings.reconcile.pendingMaxAgeHours ?? DEFAULT_PENDING_MAX_AGE_HOURS;
+    const expired = entry.status === "pending" && age > maxHours * 60 * 60 * 1000;
+    if (expired)
       entry = {
         ...entry,
         status: "failed",
-        note: `the provider has not reported every call cost within a day: ${entry.note ?? ""}`.trim(),
+        note: `the provider has not reported every call cost within ${maxHours} hour(s); nothing was compared: ${entry.note ?? ""}`.trim(),
       };
     if (entry.status !== "pending") {
       const resolved: ResolvedRecord = {
@@ -417,6 +502,7 @@ export async function retryPending(ctx: ReconcileContext): Promise<ReconcileEntr
         at: nowOf(ctx).toISOString(),
         status: entry.status,
         ...(entry.holdId !== undefined && { holdId: entry.holdId }),
+        ...(expired && { expired: true as const }),
       };
       appendJsonLine(reconcilePath(ctx.settings.stateDir), resolved, "reconcile record");
       entry = { ...entry, pendingId: pending.id };

@@ -4,6 +4,8 @@
  * candidate below the target profile's threshold is filtered out with the reason. Scoring filters
  * and explains; it never approves anything.
  */
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { BibleDocument, IdentityLock } from "./bible.ts";
 import type { Caller } from "./calls.ts";
 import { InputError, ProviderError } from "./errors.ts";
@@ -81,6 +83,136 @@ export function identitySettings(
   )
     throw new InputError(`identity.threshold must be a number from 0 to 1: ${threshold}`);
   return { mode: chosen as IdentityMode, threshold, question };
+}
+
+export const IDENTITY_THRESHOLDS_FILE = "identity-thresholds.json";
+export const IDENTITY_THRESHOLDS_FORMAT = "assetgrove-identity-thresholds/1";
+
+/** The eval that produced a recorded threshold. */
+export interface IdentityThresholdEval {
+  casesFile: string;
+  casesSha256: string;
+  cases: number;
+  scored: number;
+  falseAcceptRate: number;
+  falseRejectRate: number;
+  barMet: boolean;
+}
+
+/** A threshold recorded for one question and decision model of a bible, with its eval. */
+export interface IdentityThresholdEntry {
+  question: IdentityQuestionKind;
+  model: string;
+  threshold: number;
+  recordedAt: string;
+  eval: IdentityThresholdEval;
+}
+
+async function readThresholdEntries(bibleDir: string): Promise<IdentityThresholdEntry[]> {
+  const path = join(bibleDir, IDENTITY_THRESHOLDS_FILE);
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new InputError(`cannot read ${path}`);
+  }
+  let parsed: { format?: unknown; entries?: unknown };
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new InputError(`${path} is not valid JSON`);
+  }
+  if (parsed?.format !== IDENTITY_THRESHOLDS_FORMAT || !Array.isArray(parsed.entries))
+    throw new InputError(`${path} is not an ${IDENTITY_THRESHOLDS_FORMAT} file`);
+  for (const e of parsed.entries as Array<Record<string, unknown>>)
+    if (
+      typeof e?.question !== "string" ||
+      typeof e.model !== "string" ||
+      typeof e.threshold !== "number" ||
+      !(e.threshold >= 0 && e.threshold <= 1) ||
+      typeof e.eval !== "object" ||
+      e.eval === null
+    )
+      throw new InputError(`${path} has a malformed entry`);
+  return parsed.entries as IdentityThresholdEntry[];
+}
+
+/** The threshold recorded for `question` and `model` in the bible's directory, when there is one. */
+export async function recordedIdentityThreshold(
+  bibleDir: string,
+  question: IdentityQuestionKind,
+  model: string,
+): Promise<IdentityThresholdEntry | undefined> {
+  return (await readThresholdEntries(bibleDir)).find(
+    (e) => e.question === question && e.model === model,
+  );
+}
+
+/** Records a threshold beside the bible, replacing the entry of the same question and model. */
+export async function recordIdentityThreshold(
+  bibleDir: string,
+  entry: IdentityThresholdEntry,
+): Promise<string> {
+  const entries = (await readThresholdEntries(bibleDir)).filter(
+    (e) => !(e.question === entry.question && e.model === entry.model),
+  );
+  entries.push(entry);
+  const path = join(bibleDir, IDENTITY_THRESHOLDS_FILE);
+  await writeFile(
+    path,
+    `${JSON.stringify({ format: IDENTITY_THRESHOLDS_FORMAT, entries }, null, 2)}\n`,
+  );
+  return path;
+}
+
+/**
+ * `identitySettings` for a run against a bible. Enforce mode needs a threshold recorded for this
+ * bible, question and decision model by `identity-eval --record`, whose eval met the enforce bar,
+ * and refuses without one; it uses the profile's own `identity.threshold` when set, else the
+ * recorded one. Other modes keep the profile's threshold, else the recorded one, else the defaults.
+ */
+export async function identitySettingsFor(
+  profile: Pick<TargetProfile, "identity">,
+  mode: string | undefined,
+  bible: { dir: string; path?: string },
+  routes: Record<string, { model: string }>,
+): Promise<IdentitySettings> {
+  return (await identitySettingsWithRecord(profile, mode, bible, routes)).settings;
+}
+
+/**
+ * As `identitySettingsFor`, and the path of the record file when its threshold is the one used, so
+ * a plan can hash it as an input: a record changed between plan and apply then makes the plan stale.
+ */
+export async function identitySettingsWithRecord(
+  profile: Pick<TargetProfile, "identity">,
+  mode: string | undefined,
+  bible: { dir: string; path?: string },
+  routes: Record<string, { model: string }>,
+): Promise<{ settings: IdentitySettings; recordPath?: string }> {
+  const settings = identitySettings(profile, mode);
+  if (settings.mode === "off") return { settings };
+  const operation = settings.question === "cast" ? IDENTITY_CAST_OPERATION : IDENTITY_OPERATION;
+  const model = routes[operation]?.model;
+  const recorded =
+    model === undefined
+      ? undefined
+      : await recordedIdentityThreshold(bible.dir, settings.question, model);
+  if (settings.mode === "enforce" && !recorded)
+    throw new InputError(
+      `enforce needs an identity-eval of this bible for this model: no ${settings.question} threshold is recorded for ${bible.path ?? bible.dir} and ${model ?? operation}; run identity-eval --record`,
+    );
+  if (settings.mode === "enforce" && recorded?.eval?.barMet !== true)
+    throw new InputError(
+      `enforce needs an identity-eval of this bible for this model that met the enforce bar: the ${settings.question} threshold recorded for ${bible.path ?? bible.dir} and ${model} did not; run shadow mode`,
+    );
+  if (recorded && profile.identity?.threshold === undefined)
+    return {
+      settings: { ...settings, threshold: recorded.threshold },
+      recordPath: join(bible.dir, IDENTITY_THRESHOLDS_FILE),
+    };
+  return { settings };
 }
 
 /**
@@ -774,10 +906,17 @@ export interface ThresholdRow {
 }
 
 /**
- * Sweeps every threshold that separates the logged scores differently and recommends the one with
- * the best accuracy; among ties, the middle one, so it sits furthest from both kinds of error.
+ * Sweeps every threshold that separates the logged scores differently. It recommends, among the
+ * thresholds whose false-accept rate (false accepts over the different-character cases, 0 with
+ * none) is within `maxFalseAcceptRate`, the one with the fewest false rejects; ties go to the
+ * lowest threshold. `withinBar`, when given, must also hold at a threshold for it to count as
+ * within the bar (identity-eval uses it to judge every kind and cast, not only the overall rate).
+ * When none is within the bar, nothing is recommended.
  */
-export function sweepThresholds(cases: Array<{ score: number; same: boolean }>): {
+export function sweepThresholds(
+  cases: Array<{ score: number; same: boolean }>,
+  options: { maxFalseAcceptRate: number; withinBar?: (threshold: number) => boolean },
+): {
   rows: ThresholdRow[];
   recommended?: ThresholdRow;
 } {
@@ -794,7 +933,20 @@ export function sweepThresholds(cases: Array<{ score: number; same: boolean }>):
     const correct = cases.length - falseRejects - falseAccepts;
     return { threshold, correct, accuracy: correct / cases.length, falseRejects, falseAccepts };
   });
-  const best = Math.max(...rows.map((r) => r.correct));
-  const top = rows.filter((r) => r.correct === best);
-  return { rows, recommended: top[Math.floor((top.length - 1) / 2)] };
+  const negatives = cases.filter((c) => !c.same).length;
+  const within = rows.filter(
+    (r) =>
+      (negatives === 0 ? 0 : r.falseAccepts / negatives) <= options.maxFalseAcceptRate &&
+      (options.withinBar?.(r.threshold) ?? true),
+  );
+  const recommended = within.reduce<ThresholdRow | undefined>(
+    (best, r) =>
+      best === undefined ||
+      r.falseRejects < best.falseRejects ||
+      (r.falseRejects === best.falseRejects && r.threshold < best.threshold)
+        ? r
+        : best,
+    undefined,
+  );
+  return { rows, ...(recommended && { recommended }) };
 }

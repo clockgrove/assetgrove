@@ -102,7 +102,10 @@ test("eval by kind, cast and medium: per-group breakdown, 2D-only recommendation
   assert.equal(report.model, "openai/gpt-6.1-terra");
   assert.equal(report.scored, 5);
   // Thresholds rest on the four 2D cases; the 3D miss does not move them.
-  assert.equal(report.recommended?.threshold, 0.5);
+  // The cut must keep the look-alike (0.8) out, at the cost of one false reject.
+  assert.equal(report.recommended?.threshold, 0.85);
+  assert.equal(report.recommended?.falseAccepts, 0);
+  assert.equal(report.recommended?.falseRejects, 1);
   assert.equal(report.auc, 0.75);
   assert.equal(report.recordChecks.length, 2);
   assert.ok(report.recordChecks.every((c) => c.checked && c.consistent));
