@@ -517,7 +517,7 @@ test("a frame region of a family no template names makes one motion-template dec
     for (const c of run.candidates) {
       assert.deepEqual(
         c.provenance.calls.map((call: { operation: string }) => call.operation),
-        ["motion-template", "edit"],
+        ["motion-template", "edit", "fix-scale"],
       );
       assert.ok(c.provenance.requestIds.includes(decisions[0][0].requestId));
     }

@@ -291,29 +291,34 @@ test("fix-frame on a family no template names records its motion-template decisi
     image: () => ({ images: [{ mediaType: "image/png", bytes: figureImage(false) }] }),
     vision: () => ({ text: "" }),
     motionTemplate: () => ({ answer: { type: "choice", choice: "walk" }, costUsd: 0.001 }),
+    decide: () => ({ answer: { type: "choice", choice: "area" }, costUsd: 0.001 }),
   });
   const out = join(root, "out-trot");
   const run = await runOn({ ...target, family: "trot" }, provider, out);
   const written = JSON.parse(await readFile(run.provenancePath, "utf8"));
   assert.deepEqual(
     written.calls.map((c: { operation: string }) => c.operation),
-    ["motion-template", "edit"],
+    ["motion-template", "edit", "fix-scale"],
   );
   const decision = written.calls[0];
   assert.equal(decision.model, defaultRoutes["motion-template"]!.model);
   assert.ok(written.requestIds.includes(decision.requestId));
   assert.ok(written.models.includes(decision.model));
-  assert.equal(written.costUsd, written.calls[0].costUsd + written.calls[1].costUsd);
+  assert.equal(
+    written.costUsd,
+    written.calls.reduce((sum: number, c: { costUsd: number }) => sum + c.costUsd, 0),
+  );
   assert.equal(run.qa.report.template, "walk");
   assert.equal(run.qa.report.templateSource, "judged");
 
-  // A family named like its template makes no decision, and its record has the edit only.
+  // A family named like its template makes no motion-template decision: its record has the edit
+  // and the fix-scale decision only.
   const { provider: plain } = setup();
   const named = await runOn(target, plain, join(root, "out-walk"));
   const record = JSON.parse(await readFile(named.provenancePath, "utf8"));
   assert.deepEqual(
     record.calls.map((c: { operation: string }) => c.operation),
-    ["edit"],
+    ["edit", "fix-scale"],
   );
 });
 
