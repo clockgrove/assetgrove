@@ -124,7 +124,7 @@ describe("the route embedder", () => {
       () => searchSlot.find({ words: "lantern", limit: 1 }, other),
       () => searchSlot.index({}, other),
       () => searchSlot.forecast!({ index: {} }, other),
-      // A plan step's near matches and the free outliers refuse it too (design 7.6, 7.7).
+      // A plan step's near matches and the free ranking refuse it too (design 7.6, 7.7).
       () =>
         searchSlot.nearMatch!(
           { kind: "still", subject: "lantern", references: [], limit: 3 },

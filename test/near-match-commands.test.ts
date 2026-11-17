@@ -67,7 +67,7 @@ export default function extension() {
         };
       },
       async find() { throw new Error("unused"); },
-      async outliers() { return { members: 0, outliers: [] }; },
+      async outliers() { return { members: 0, ranking: [] }; },
       async index() { return {}; },
       async status() { return {}; },
       async setup() { return {}; },

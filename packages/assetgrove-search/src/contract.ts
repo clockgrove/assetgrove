@@ -134,15 +134,14 @@ export interface NearMatchQuery {
   limit: number;
 }
 
-export interface SearchOutlier {
+export interface SearchRankedMember {
   address: string;
   distance: number;
-  z: number;
 }
 
 export interface SearchOutliersResult {
   members: number;
-  outliers: SearchOutlier[];
+  ranking: SearchRankedMember[];
 }
 
 /** What a request would embed, counted without embedding anything. */

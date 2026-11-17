@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import { after, before, describe, it } from "node:test";
 import { searchSlot } from "../src/extension.ts";
 import { cleanup, tempDir } from "./helpers/fixture.ts";
@@ -24,18 +24,30 @@ describe("the slot's outliers over an indexed fixture set", () => {
   });
   after(() => cleanup(p.root, p.stateDir, remoteDir, join(remoteDir, "..")));
 
-  it("lists the planted asset and nothing on the uniform set", async () => {
+  it("reads stored vectors only: an unindexed set ranks nothing and writes no index", async () => {
     const ctx = p.context();
+    const listing = () =>
+      readdir(join(p.stateDir, "search"), { recursive: true }).catch(() => [] as string[]);
+    const before = await listing();
+    const found = await searchSlot.outliers([...uniform, planted], ctx);
+    assert.equal(found.members, 0);
+    assert.deepEqual(found.ranking, []);
+    const added = (await listing()).filter(
+      (n) => String(n).includes(".lance") && !before.includes(n),
+    );
+    assert.deepEqual(added, [], "the ranking embedded and indexed nothing");
+  });
+
+  it("ranks every member, the planted asset first, uncut", async () => {
+    const ctx = p.context();
+    await searchSlot.index({}, ctx);
     const found = await searchSlot.outliers([...uniform, planted], ctx);
     assert.equal(found.members, 9);
-    assert.deepEqual(
-      found.outliers.map((o) => o.address),
-      [planted],
-    );
-    assert.ok(found.outliers[0]!.z > 3);
+    assert.equal(found.ranking.length, 9);
+    assert.equal(found.ranking[0]!.address, planted);
     const none = await searchSlot.outliers(uniform, ctx);
     assert.equal(none.members, 8);
-    assert.deepEqual(none.outliers, []);
+    assert.equal(none.ranking.length, 8);
   });
 
   it("finds pick vectors in the shared store", async () => {
@@ -45,9 +57,6 @@ describe("the slot's outliers over an indexed fixture set", () => {
     await searchSlot.index({}, ctx);
     const found = await searchSlot.outliers([...uniform, planted], ctx);
     assert.equal(found.members, 9);
-    assert.deepEqual(
-      found.outliers.map((o) => o.address),
-      [planted],
-    );
+    assert.equal(found.ranking[0]!.address, planted);
   });
 });

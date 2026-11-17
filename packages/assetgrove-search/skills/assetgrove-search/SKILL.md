@@ -11,7 +11,7 @@ description: Load when you need to search an Assetgrove game library by words, b
 
 - `find` ranks by words, by look (`--like`) or by fields (`--where`); hits carry the address, rank, source and fields, with card text only under `sharedText`, and a numbered sheet comes back as image content.
 - While the package is listed the asset tree also serves `find/{words}`, `like/{asset}` and `where/{filter}` under the game root: the same hits as `find`, as reads that never spend. Use them where a harness browses resources.
-- `find --outliers <folder address>` lists the members of a tree folder whose look is off the set's (z above 3), a free second check on style consistency. Nothing listed means no member stands out.
+- `find --outliers <folder address>` ranks every member of a tree folder by how far its look is from the rest (free, uncut) and asks a `style-outlier` decision, about $0.001 each, for the five most distant: is it drawn in a different art style from the typical members and the style bible? It lists the yes answers and prints the whole ranking. It is a paid request with one spend confirmation, under the local model too. A member ranked far for its subject or pose alone is not an outlier.
 
 Every command takes `--json` and prints exactly one JSON document, as core's commands do. The [command reference](references/commands.md) lists each command's flags and tool arguments.
 

@@ -23,6 +23,7 @@ import {
   PROMPT_POLICY_OPERATION,
   MOTION_TEMPLATE_OPERATION,
   REFERENCE_VIEW_OPERATION,
+  STYLE_OUTLIER_OPERATION,
 } from "../routes.ts";
 
 /**
@@ -96,6 +97,14 @@ export interface Script {
   motionTemplate?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers whether a set member is drawn in a different style (the `style-outlier` Boolean
+   * decision). A script without it answers those from `decide`, and one with neither answers
+   * "same style" (probability 0); its calls do not count toward `decide`'s index.
+   */
+  styleOutlier?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -144,6 +153,7 @@ export class ScriptedProvider implements GenerationProvider {
   private imageCount = 0;
   private visionCount = 0;
   private decideCount = 0;
+  private styleOutlierCount = 0;
   private policyCount = 0;
   private briefPolicyCount = 0;
   private viewCount = 0;
@@ -230,6 +240,19 @@ export class ScriptedProvider implements GenerationProvider {
       return {
         requestId: `scripted-motion-template-${index}`,
         ...this.script.motionTemplate(request),
+      };
+    }
+    if (
+      request.operation === STYLE_OUTLIER_OPERATION &&
+      (this.script.styleOutlier || !this.script.decide)
+    ) {
+      const index = this.styleOutlierCount++;
+      return {
+        requestId: `scripted-style-outlier-${index}`,
+        ...(this.script.styleOutlier?.(request) ?? {
+          answer: { type: "boolean" as const, probability: 0 },
+          costUsd: 0,
+        }),
       };
     }
     const index = this.decideCount++;

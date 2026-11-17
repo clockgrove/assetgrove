@@ -38,6 +38,12 @@ export const STALENESS_OPERATION = "bible-staleness";
  * family with no declared template and no template of its exact name, text only.
  */
 export const MOTION_TEMPLATE_OPERATION = "motion-template";
+/**
+ * Whether a member of a set is drawn in a different art style from the rest: one Boolean decision
+ * per member among the five most distant of the set's ranking, made only by `find --outliers`
+ * (src/search/style-outliers.ts).
+ */
+export const STYLE_OUTLIER_OPERATION = "style-outlier";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -295,6 +301,20 @@ export const defaultRoutes: Routes = {
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
     providerTermsAsOf: "2026-11-16",
   },
+  // Whether a set member is drawn in another art style (#366): one Boolean decision per member
+  // among the five most distant, shown it and a contact sheet; same model and bound as identity.
+  [STYLE_OUTLIER_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
+    providerTermsAsOf: "2026-11-16",
+  },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
     model: "openai/gpt-6.1-terra",
@@ -524,6 +544,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [LOOKDEV_MARKING_OPERATION]: "decisions",
   [STALENESS_OPERATION]: "decisions",
   [MOTION_TEMPLATE_OPERATION]: "decisions",
+  [STYLE_OUTLIER_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

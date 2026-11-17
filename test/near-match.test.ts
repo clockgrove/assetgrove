@@ -63,7 +63,7 @@ const slot: SearchSlot = {
     };
   },
   async outliers() {
-    return { members: 0, outliers: [] };
+    return { members: 0, ranking: [] };
   },
   async find() {
     throw new Error("unused");

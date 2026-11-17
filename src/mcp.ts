@@ -146,6 +146,7 @@ const HEADLESS_ANSWERS: ReadonlySet<string> = new Set(["spend", "pick", "write"]
 /**
  * The confirmation a tool asks for under these settings: its command's `confirm`, or spend for a
  * command that spends only under some settings (find and search index with a hosted embedder).
+ * Find is marked under every embedder: its `--outliers` asks style-outlier decisions under each.
  */
 function toolConfirm(spec: CommandSpec, ctx?: RunContext): string | undefined {
   if (spec.confirm !== undefined) return spec.confirm;

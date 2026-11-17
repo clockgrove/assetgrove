@@ -3,8 +3,8 @@
  * any tree folder. Each member is scored for style against the bible's look and the set's other
  * members, and for identity where its subject has a lock; the audit reports each score's spread
  * and, against the set-consistency bar docs/decisions.md records, the members beyond it. Model-backed
- * scores stay advisory until measured stable. With the search slot loaded it adds embedding
- * outliers at no cost. `audit.json` and a score-ordered sheet go in the run folder; nothing goes in
+ * scores stay advisory until measured stable. With the search slot loaded it adds the set's
+ * embedding ranking, uncut, at no cost (no style judgement: that is find --outliers). `audit.json` and a score-ordered sheet go in the run folder; nothing goes in
  * the project. The audit informs a person: it never rejects or approves.
  */
 import { existsSync } from "node:fs";
@@ -334,7 +334,8 @@ up to ${STYLE_PEERS} other members) and, where its subject has an identity lock,
 identity decision, never filtering). Reports each score's spread (standard deviation and range) and,
 against the set-consistency bar docs/decisions.md records, the members beyond it; under the bar's set
 size, or with no bar, it judges nothing. Each score is advisory until its check has a qualifying
-entry in the stability file. With the search package loaded it adds embedding outliers at no cost.
+entry in the stability file. With the search package loaded it adds the set's free embedding ranking, uncut (outliers:
+{members, ranking}); it judges no style: find --outliers does.
 Writes audit.json and audit-sheet.png (members numbered weakest first, numbers only) to the run
 directory and nothing into the project. Asks for spend once; the same request again returns the
 finished run (reused true) with no provider call. --dry-run prints the planned calls and the
@@ -526,10 +527,19 @@ forecast, and needs no key.`,
           `${check}: n ${s.n}, standard deviation ${s.stdDev.toFixed(3)}, range ${s.range.toFixed(3)} (${s.min.toFixed(2)}..${s.max.toFixed(2)})${summary.judgement[check as AuditCheck]?.judged ? (summary.judgement[check as AuditCheck]!.consistent ? ", within the bar" : ", beyond the bar") : ", not judged"}`,
       ),
       ...summary.beyond.map((b) => `beyond the bar: ${b.address} (${b.checks.join(", ")})`),
-      ...(outliers && Array.isArray(outliers["outliers"])
-        ? (outliers["outliers"] as { address: string; z: number }[]).map(
-            (o) => `embedding outlier: ${o.address} (z ${o.z.toFixed(2)})`,
-          )
+      // The free ranking, uncut; which are drawn in another style is find --outliers' judgement.
+      ...(outliers && Array.isArray(outliers["ranking"])
+        ? (outliers["ranking"] as { address: string; distance: number }[])
+            .slice(0, 5)
+            .map(
+              (o) =>
+                `most distant by embedding: ${o.address} (distance ${o.distance.toFixed(4)}; not judged, see find --outliers)`,
+            )
+        : []),
+      ...(outliers && Array.isArray(outliers["unranked"]) && outliers["unranked"].length > 0
+        ? [
+            `not ranked by embedding, no indexed image (run search index): ${(outliers["unranked"] as string[]).join(", ")}`,
+          ]
         : []),
       ...errors,
       `advisory: an audit informs a person and never rejects or approves; $${budget.spentUsd.toFixed(4)} spent; ${join(dir, AUDIT_FILE)}`,

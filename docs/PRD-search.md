@@ -13,15 +13,15 @@ It ships in Phase 2 of 1.0, asset management and search, as its own optional pac
 
 A library of a few hundred assets is easy to hold in your head. A library of a few thousand, across several games and with rejected mockups beside it, is not. Search answers the questions people actually ask of it.
 
-| Who asks  | The question                                          | How it's answered                                                                         |
-| --------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Developer | "Find mockups like this one"                          | By look: image similarity to a picked asset, a reference or any image file                |
-| Developer | "Where are the mossy rocks?"                          | By meaning: the words matched against the images themselves, not only their cards         |
-| Developer | "Which icons were made under the old style bible?"    | By fields: exact filters on the card                                                      |
-| Agent     | "Do we already have a lantern before I spend on one?" | Combined: meaning and look, filtered to picked assets, checked before any paid generation |
-| Agent     | "Which assets in this set don't match the rest?"      | By look: assets whose nearest neighbours are far from the rest of their set               |
-| Developer | "Did I make something like this in another game?"     | Across every game indexed on the machine                                                  |
-| Team      | "Show the whole studio's library"                     | The same queries against a shared index, when the team chooses one                        |
+| Who asks  | The question                                          | How it's answered                                                                                   |
+| --------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Developer | "Find mockups like this one"                          | By look: image similarity to a picked asset, a reference or any image file                          |
+| Developer | "Where are the mossy rocks?"                          | By meaning: the words matched against the images themselves, not only their cards                   |
+| Developer | "Which icons were made under the old style bible?"    | By fields: exact filters on the card                                                                |
+| Agent     | "Do we already have a lantern before I spend on one?" | Combined: meaning and look, filtered to picked assets, checked before any paid generation           |
+| Agent     | "Which assets in this set don't match the rest?"      | By look, then judged: the set ranked by look, the most distant judged by a `style-outlier` decision |
+| Developer | "Did I make something like this in another game?"     | Across every game indexed on the machine                                                            |
+| Team      | "Show the whole studio's library"                     | The same queries against a shared index, when the team chooses one                                  |
 
 ## Principles
 
@@ -143,7 +143,7 @@ One search takes any mix of three inputs: words, an image, and field filters. It
 - **The same search everywhere:** the CLI command, an MCP tool of the same name, and the search paths in the asset tree below all call one search.
 - **Results:** a numbered contact sheet with each match beside its score and card fields, plus JSON with paths, scores and cards. The contact sheet is the same kind of image the developer already uses to pick candidates.
 - **Before spending:** when the agent plans a paid generation, Assetgrove searches for near matches first and shows them with the cost forecast: "three existing lanterns look close; reuse one, or generate?" The developer can turn this off.
-- **Set outliers:** `assetgrove find --outliers <set>` lists the assets in a set whose nearest neighbours are farthest from the rest, a cheap second check on style consistency.
+- **Set outliers:** `assetgrove find --outliers <set>` ranks every asset in a set by its image's mean embedding distance to the rest, free and uncut, and asks one `style-outlier` decision (about $0.001) for each of the five most distant (all but the least distant in a set of six or fewer): shown it, a contact sheet of about eight typical members and the style bible's text, is it drawn in a different art style? It lists the yes answers and prints the whole ranking. The ranking reads the vectors already stored and embeds and indexes nothing under every embedder, so its plan step (`--dry-run`, `estimate`) writes nothing; a member not yet indexed is not ranked until `search index` indexes it, and the result lists it under `unranked` and the human output names it, so unindexed members never read as a pass. The distance alone is never the verdict: it tracks subject and pose as much as style.
 - **Scope:** one game by default, every indexed game with `--game all`.
 
 ## The asset tree
