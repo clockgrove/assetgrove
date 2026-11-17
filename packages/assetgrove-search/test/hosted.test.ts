@@ -245,18 +245,26 @@ test("reads with a hosted embedder use stored vectors only; find with words is a
     assert.equal(found.exitCode, 0, JSON.stringify(found.error));
     assert.ok((found.fields["hits"] as unknown[]).length > 0, JSON.stringify(args));
   }
-  // A plan step's near matches: by stored vectors only, with and without a reference image.
-  const walkHit = (
-    (await run("find", { where: ["subject=fox"] })).fields["hits"] as { path: string }[]
-  )[0]!;
-  const reference = join(lib.dir, walkHit.path);
-  for (const keyPose of [undefined, reference]) {
-    const outcome = await planStep(keyPose);
+  // A plan step's near matches: by stored vectors only, with and without a reference image. The
+  // library holds two sprite-strip cards of the fox, so only the reference's stored vector can
+  // rank one of them first.
+  const hitsWhere = async (where: string) =>
+    (await run("find", { where: [where] })).fields["hits"] as { address: string; path: string }[];
+  const strips = await hitsWhere("kind=sprite-strip");
+  assert.deepEqual(strips.map((h) => h.address).sort(), [
+    `asset://${GAME}/trot`,
+    `asset://${GAME}/walk`,
+  ]);
+  const unreferenced = await planStep();
+  assert.equal(unreferenced.exitCode, 0, JSON.stringify(unreferenced.error));
+  assert.equal(unreferenced.fields["searchError"], undefined);
+  assert.ok(((unreferenced.fields["nearMatches"] ?? []) as unknown[]).length > 0);
+  for (const hit of strips) {
+    const outcome = await planStep(join(lib.dir, hit.path));
     assert.equal(outcome.exitCode, 0, JSON.stringify(outcome.error));
-    assert.equal(outcome.fields["searchError"], undefined, String(keyPose));
+    assert.equal(outcome.fields["searchError"], undefined, hit.address);
     const near = (outcome.fields["nearMatches"] ?? []) as { address: string }[];
-    assert.ok(near.length > 0, String(keyPose));
-    assert.equal(near[0]!.address, `asset://${GAME}/walk`);
+    assert.equal(near[0]?.address, hit.address, "the reference's stored vector ranks it first");
   }
   assert.equal(total(), before, "no provider call from a read or a plan step");
   assert.equal(asked.length, 0);

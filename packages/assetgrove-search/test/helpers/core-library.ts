@@ -68,6 +68,15 @@ const CARDS: Card[] = [
     description: "A fox walking.",
     size: 40,
   },
+  {
+    id: "trot",
+    kind: "sprite-strip",
+    subject: "fox",
+    tags: ["character"],
+    title: "Fox trot",
+    description: "A fox trotting.",
+    size: 36,
+  },
 ];
 
 /** Writes the library into `dir`, a Git project, and commits it. */
