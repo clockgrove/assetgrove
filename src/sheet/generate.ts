@@ -213,9 +213,9 @@ export function planSheet(spec: AssetSpec, profile: TargetProfile, routes: Route
     ...planTemplateDecisions([templateRequest(spec)], templatesFor(profile), routes),
     ...["sheet", ...Array<string>(SHEET_BLOB_LIMIT).fill(SHEET_BLOB_OPERATION), "vision"].map(
       (operation) => {
-      const route = routes[operation];
-      if (!route) throw new InputError(`no model route for operation "${operation}"`);
-      return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
+        const route = routes[operation];
+        if (!route) throw new InputError(`no model route for operation "${operation}"`);
+        return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
       },
     ),
   ];
