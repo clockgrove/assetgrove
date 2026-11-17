@@ -1,17 +1,27 @@
 import "./fixtures/env.ts";
-import { approveProfile, writeSettings } from "./fixtures/env.ts";
+import { approveProfile, stateDir, writeSettings } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { BudgetExceededError } from "../src/budget.ts";
 import { InputError, JobStoppedError, ProviderError } from "../src/errors.ts";
-import type { Billing, GenerationProvider, ImageRequest } from "../src/gateway/provider.ts";
+import type {
+  Billing,
+  GenerationProvider,
+  ImageRequest,
+  JobStatus,
+} from "../src/gateway/provider.ts";
+import { errorOutcome } from "../src/commands/runner.ts";
+import { stageOutcome } from "../src/commands/stage.ts";
+import { executeRun } from "../src/runs/execute.ts";
+import type { WorkPlan } from "../src/runs/plan.ts";
+import { loadSettings } from "../src/settings.ts";
 import { withRunScope } from "../src/runs/journal.ts";
 import type { Clearance } from "../src/runs/journal.ts";
-import { SpendHoldError } from "../src/spend.ts";
+import { HOLDS_FILE, SpendHoldError, SpendLedger, appendHold } from "../src/spend.ts";
 import type { Generator } from "../src/generators/generator.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { pick } from "../src/handoff.ts";
@@ -537,4 +547,102 @@ test("a spend hold ends the run with its refusal, not as one failed candidate", 
     (error: Error) => error === hold,
   );
   assert.equal(provider.calls.length, 0, "no candidate was paid for");
+});
+
+test("stage held by a spend hold collects its submitted job, then exits 3 spend_hold, not provider_error", async () => {
+  const world = await syntheticWorld();
+  const provider = scriptedProvider();
+  const billing: Billing = {
+    ...provider.billing,
+    paid: true,
+    limit: { kind: "prepaid", usd: 100 },
+  };
+  // Candidate images run as jobs: the first attempt's job is in an unknown state, so that attempt
+  // stops with its handle journaled; on the resume the provider has finished it.
+  let status: JobStatus = "unknown";
+  const submitted: string[] = [];
+  const collected: string[] = [];
+  Object.assign(provider, {
+    billing,
+    jobs: {
+      image: {
+        submit: (_request: ImageRequest, { key }: { key: string }) => {
+          submitted.push(key);
+          return Promise.resolve(`job-${submitted.length}`);
+        },
+        status: () => Promise.resolve(status),
+        result: (handle: string, request: ImageRequest) => {
+          collected.push(handle);
+          return provider.generateImage(request);
+        },
+      },
+    },
+  });
+  const runId = "r-00000000000000c3";
+  const runDir = join(world.runsDir, runId);
+  await mkdir(runDir, { recursive: true });
+  const settings = loadSettings();
+  const ledger = SpendLedger.fromSettings(settings);
+  const spec: AssetSpec = { kind: "still", assetId: "den", animationFamily: "idle" };
+  const plan: WorkPlan = {
+    jobs: [
+      { operation: "still", provider: "scripted", model: "m", count: 2, estimatedCostUsd: 0.1 },
+    ],
+    candidates: 2,
+    forecastUsd: 0.2,
+    capUsd: 5,
+    paid: true,
+    inputs: {},
+    options: {},
+    policyTextSha256: "",
+    digest: "c".repeat(64),
+    runDir,
+  };
+  // The stage command's own path: its loop, its mapping of a returned run, the runner's mapping
+  // of a thrown error.
+  const execute = () =>
+    executeRun({
+      command: "stage",
+      plan,
+      ctx: { settings, log: () => {} },
+      toOutcome: errorOutcome,
+      run: async () => {
+        const { run } = await stage({
+          ...options(world, provider, spec),
+          candidates: 2,
+          runsDir: world.runsDir,
+          runId,
+          ledger,
+        });
+        return stageOutcome(run, runDir, world.bible);
+      },
+    });
+
+  const first = await execute();
+  assert.equal(first.error?.code, "provider_error", JSON.stringify(first.error));
+  assert.equal(submitted.length, 1, "the unknown job stopped the first attempt");
+
+  appendHold(stateDir, {
+    provider: "scripted",
+    runId: "r-00000000000000ff",
+    ledgerUsd: 1,
+    providerUsd: 2,
+    gapUsd: 1,
+  });
+  try {
+    status = "done";
+    const held = await execute();
+    assert.equal(held.exitCode, 3, JSON.stringify(held.error));
+    assert.equal(held.error?.code, "spend_hold");
+    assert.deepEqual(collected, ["job-1"], "the submitted job was collected");
+    assert.equal(submitted.length, 1, "no new job was submitted");
+    const record = JSON.parse(await readFile(join(runDir, "run.json"), "utf8")) as {
+      errors: string[];
+      stopped?: string;
+    };
+    assert.equal(record.errors.length, 1, "the hold is the run's one refusal");
+    assert.match(record.stopped ?? "", /spend hold|acknowledg/i);
+  } finally {
+    await rm(join(stateDir, HOLDS_FILE), { force: true });
+  }
 });

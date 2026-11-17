@@ -6,7 +6,8 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { Budget } from "../src/budget.ts";
+import { Budget, BudgetExceededError } from "../src/budget.ts";
+import { errorOutcome } from "../src/commands/runner.ts";
 import { Caller } from "../src/calls.ts";
 import { JobStoppedError, ProviderError } from "../src/errors.ts";
 import type {
@@ -554,6 +555,57 @@ test("a job record left beside its journaled answer is no open job, and the jour
     reservedUsd: ESTIMATE,
   });
   assert.deepEqual(journal.openJobs(), [], "the answered call's record holds no reservation");
+  // The forecast check counts the answered call once (its journaled cost), not again as an open
+  // reservation: a forecast that fits the daily limit only with the call taken off twice is refused.
+  const daily = ledgerAt(dir, COST + 0.3);
+  await withRunScope({ journal, clearance }, async () => {
+    assert.throws(() => new Budget(5, daily).check(COST + 0.5, "the run"), BudgetExceededError);
+  });
+  // A spend hold refuses the run before it starts: the leftover record is no job to collect.
+  appendHold(stateDir, {
+    provider: "jobs",
+    runId: "r-00000000000000ff",
+    ledgerUsd: 1,
+    providerUsd: 2,
+    gapUsd: 1,
+  });
+  try {
+    let ran = false;
+    const held = await executeRun({
+      command: "jobs-test",
+      plan: {
+        jobs: [
+          {
+            operation: "model3d",
+            provider: "jobs",
+            model: "m",
+            count: 1,
+            estimatedCostUsd: ESTIMATE,
+          },
+        ],
+        candidates: 1,
+        forecastUsd: ESTIMATE,
+        capUsd: 5,
+        paid: true,
+        inputs: {},
+        options: {},
+        policyTextSha256: "",
+        digest: "f".repeat(64),
+        runDir: dir,
+      },
+      ctx: { settings: loadSettings(), log: () => {} },
+      toOutcome: errorOutcome,
+      run: () => {
+        ran = true;
+        return Promise.resolve({ exitCode: 0, fields: {}, human: "" });
+      },
+    });
+    assert.equal(held.error?.code, "spend_hold", JSON.stringify(held));
+    assert.equal(held.exitCode, 3);
+    assert.equal(ran, false, "the held run never started");
+  } finally {
+    rmSync(join(stateDir, HOLDS_FILE), { force: true });
+  }
   const resumed = call(dir, provider);
   const model = await resumed.result;
   assert.equal(model.handle, "job-1");
