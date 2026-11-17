@@ -453,9 +453,11 @@ export async function fixFrame(
   if (distinct.length === 0) throw new InputError("the edited frame has no usable size");
   let chosen = distinct[0]!;
   let decision: { record: CallRecord; probability?: number } | undefined;
-  if (distinct.length > 1) {
-    const previous = index > 1 ? frames[index - 2] : undefined;
-    const next = index < count ? frames[index] : undefined;
+  // The model judges size against the surrounding frames; a strip of one frame has none to draw,
+  // so the first candidate stands without a call.
+  const previous = index > 1 ? frames[index - 2] : undefined;
+  const next = index < count ? frames[index] : undefined;
+  if (distinct.length > 1 && (previous || next)) {
     const images = distinct.map(({ name, registered }, i) => {
       const cell = onionCell((registered.items[0] as ImageItem).raster, {
         ...(previous && { previous }),
@@ -478,7 +480,13 @@ export async function fixFrame(
       "fix-scale",
       [
         `Each image shows frame ${index} of ${count} of the "${options.family}" cycle of ${options.subject} drawn at a different size,`,
-        "at full opacity over the faint previous frame (red) and next frame (blue).",
+        `at full opacity over ${
+          previous && next
+            ? "the faint previous frame (red) and next frame (blue)"
+            : previous
+              ? "the faint previous frame (red); it is the last frame, so no next frame is drawn"
+              : "the faint next frame (blue); it is the first frame, so no previous frame is drawn"
+        }.`,
         "Ignore the pose; judge only the size.",
       ].join("\n"),
       images,

@@ -766,6 +766,45 @@ test("fix-scale: candidates that register alike make no call", async () => {
   assert.equal(result.provenance.calls.length, 1);
 });
 
+test("fix-scale: a strip of one frame has no surrounding frame to show, so no call is made", async () => {
+  const bytes = encodePng(makeStrip(1));
+  const keyPose = {
+    role: "key pose (approved)",
+    path: "key.png",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  };
+  const { provider, call } = flyerSetup("height");
+  const strip = flyerFrame({ bodyHeight: 10 });
+  const result = await fixFrame({
+    ...flyerOptions(call, { from: { keyPose } }),
+    strip,
+    index: 1,
+  });
+  const scale = result.fix.scale!;
+  assert.ok(Object.keys(scale.candidates).length > 1, "the candidates differ");
+  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 0);
+  assert.equal(scale.chosen, "area");
+  assert.equal(scale.decision, undefined);
+});
+
+test("fix-scale: for frame 1 the prompt names only the next frame, the one drawn", async () => {
+  const { provider, call } = flyerSetup("height");
+  const strip = joinStrip([
+    flyerFrame({ bodyHeight: 10 }),
+    flyerFrame({ wings: true }),
+    flyerFrame(),
+    flyerFrame(),
+  ]);
+  await fixFrame({ ...flyerOptions(call, { from: { neighbour: 2 } }), strip, index: 1 });
+  const decides = provider.calls.filter((c) => c.kind === "decide");
+  assert.equal(decides.length, 1);
+  const request = decides[0]!.request as import("../src/gateway/provider.ts").DecisionRequest;
+  assert.match(request.prompt, /faint next frame \(blue\); it is the first frame/);
+  assert.doesNotMatch(request.prompt, /previous frame \(red\)/);
+});
+
 test("fix-scale: the plan forecasts the decision and a cap below both refuses", async () => {
   const edit = defaultRoutes.edit.estimatedCostUsd;
   const scale = defaultRoutes["fix-scale"].estimatedCostUsd;
