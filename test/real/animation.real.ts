@@ -120,7 +120,7 @@ test(
     const decisions = flicker.results[0]?.decisions ?? [];
     for (const d of decisions) {
       console.log(
-        `flicker ${d.pair.join("→")}: ${d.label} ${d.confidence} (${d.model}, ${d.requestId})`,
+        `flicker ${d.pair.join("→")}: ${d.label} ${d.probability} (${d.model}, ${d.requestId})`,
       );
     }
     // Fix the frame the QA flagged first, else frame 2, from its previous neighbour.

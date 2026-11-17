@@ -80,11 +80,11 @@ The person picks. `assetgrove stage` stages only QA-passing candidates with thei
 
 ## Decision models for QA
 
-Identity scoring uses a typed decision model. Other image checks do not:
+Identity scoring uses a typed decision model, and so do animation QA's identity flicker and holes (#376). The other image checks below do not:
 
-- **Strips:** a whole cycle is generated as one sheet and checked with pixel QA, one vision check for identity flicker and a budgeted per-frame fix, so per-frame checks need no decision model.
+- **Strips:** a whole cycle is generated as one sheet and checked with pixel QA, a typed Boolean decision per frame pair for identity flicker and per frame for holes, and a budgeted per-frame fix.
 - **Perspective:** perspective stays in the candidate's vision QA. That call costs a small fraction of a candidate, authors rely on its written reason, and there is no labelled perspective data to choose a decision model or cutoff from.
-- **Identity flicker:** stays a vision check until enough labelled flicker data exists to choose a decision model for it.
+- **Identity flicker and holes (#376):** typed Boolean decisions on the `decisions` role, so the number each reports is the model's probability for its answer rather than a confidence the model writes itself (which sits between 0.5 and 0.8 even on correct answers). Each flags on the answer alone (cutoff 0.5) until a per-model cut is chosen from the decisions `flicker.jsonl` and the report log.
 
 ## Identity lock scoring
 
@@ -156,7 +156,7 @@ These model-backed checks are advisory at 0.1, with no qualifying entry on the c
 ]
 ```
 
-`transparency`, `frame-count`, `identity` and `perspective` are the vision verdict's checks of a still or strip; the deterministic `transparency` and `frame-count` checks of the same names always filter. `identity-flicker` and `holes` are animation QA's vision checks. `lookdev-markings` (version 2, #365) is a decision model's verdict per marking, view and season (`kept`, `drifted` or `missing`) on crops at the boxes a vision model draws; version 1 thresholded colour and contrast measured in those boxes and named a different set of drifting markings on each run. While advisory, its reason starts by saying so, and a person judges the compare images. `style-score` is a planned run's vision verdict on each candidate (`apply`): while advisory, a candidate below the strictness is kept, its reason marked `shadow`. `flat-albedo`, `normal-orientation`, `emissive-placement`, `dusk-rain` and `night` are the material pipeline's lit checks (`materials`): while advisory, a failing lit verdict is recorded in `materials.json` but no longer fails the maps. `audit-style` and `audit-identity` are the set-level audit's style and identity scores (`audit`): they never filter or reject, and while advisory each score in `audit.json` says `advisory: true`.
+`transparency`, `frame-count`, `identity` and `perspective` are the vision verdict's checks of a still or strip; the deterministic `transparency` and `frame-count` checks of the same names always filter. `identity-flicker` and `holes` (version 2, #376) are animation QA's typed Boolean decisions; version 1 read a label and a self-reported confidence from a vision model's text. `lookdev-markings` (version 2, #365) is a decision model's verdict per marking, view and season (`kept`, `drifted` or `missing`) on crops at the boxes a vision model draws; version 1 thresholded colour and contrast measured in those boxes and named a different set of drifting markings on each run. While advisory, its reason starts by saying so, and a person judges the compare images. `style-score` is a planned run's vision verdict on each candidate (`apply`): while advisory, a candidate below the strictness is kept, its reason marked `shadow`. `flat-albedo`, `normal-orientation`, `emissive-placement`, `dusk-rain` and `night` are the material pipeline's lit checks (`materials`): while advisory, a failing lit verdict is recorded in `materials.json` but no longer fails the maps. `audit-style` and `audit-identity` are the set-level audit's style and identity scores (`audit`): they never filter or reject, and while advisory each score in `audit.json` says `advisory: true`.
 
 ## 3D identity results are provisional
 

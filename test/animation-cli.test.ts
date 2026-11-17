@@ -95,14 +95,15 @@ for (const [name, style, drawn] of STYLES) {
     assert.equal(log.length, 8);
     const line = JSON.parse(log[1] as string);
     assert.equal(line.label, "flicker");
-    assert.equal(line.confidence, 0.91);
-    assert.equal(line.cutoff, 0.7);
+    assert.equal(line.probability, 0.91);
+    assert.equal(line.cutoff, 0.5);
     assert.equal(typeof line.model, "string");
-    // Frames whose legs cross enclose a see-through area: one holes call each, judged openings.
+    // Frames whose legs cross enclose a see-through area: one holes decision each, no hole.
     assert.equal(family.holes, "checked");
     assert.ok(family.holeDecisions.length > 0);
     for (const h of family.holeDecisions) {
-      assert.equal(h.label, "openings");
+      assert.equal(h.view, "enclosed");
+      assert.equal(h.label, "none");
       assert.equal(h.flagged, false);
       assert.ok(h.areas.length > 0);
     }
@@ -153,13 +154,16 @@ test("animation-qa: --dry-run forecasts the flicker calls and refuses over the c
   assert.equal(plan.perFamily[0].flickerCalls, 8);
   assert.ok(plan.perFamily[0].holeCalls > 0, "the crossing legs enclose see-through areas");
   assert.equal(plan.calls, 8 + plan.perFamily[0].holeCalls);
-  assert.equal(plan.estimateUsd.toFixed(2), (0.16 + 0.01 * plan.perFamily[0].holeCalls).toFixed(2));
-  const over = await cli([...args, "--cap", "0.1"]);
+  assert.equal(
+    plan.estimateUsd.toFixed(3),
+    (0.001 * 8 + 0.001 * plan.perFamily[0].holeCalls).toFixed(3),
+  );
+  const over = await cli([...args, "--cap", "0.001"]);
   assert.equal(over.code, 3);
   assert.equal(doc(over).error.code, "cap_refused");
   // Without --dry-run the same cap refuses before any call, and without a key nothing is called.
   declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
-  const refused = await cli([...args.filter((a) => a !== "--dry-run"), "--cap", "0.1"]);
+  const refused = await cli([...args.filter((a) => a !== "--dry-run"), "--cap", "0.001"]);
   // A missing key fails only at the call, so the cap refuses first.
   assert.equal(refused.code, 3, refused.stderr);
   assert.equal(doc(refused).error.code, "cap_refused");

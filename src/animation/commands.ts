@@ -17,7 +17,7 @@ import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
 import type { GenerationProvider } from "../gateway/provider.ts";
 import type { PlannedCall } from "../generators/generator.ts";
-import { decodeImage, encodePng } from "../image/raster.ts";
+import { createRaster, decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import {
   embedDigitalSourceType,
@@ -37,6 +37,7 @@ import { DEFAULT_FIX_CAP_USD, fixBaseProvenance, fixFrame, planFix } from "./fix
 import type { FrameFix } from "./fix.ts";
 import { planFlicker } from "./flicker.ts";
 import { planHoles } from "./holes.ts";
+import type { HoleSource } from "./holes.ts";
 import { measureThreshold, splitStrip } from "./strip.ts";
 import { NO_TEMPLATE, registrationPin, templatesFor, thresholdsFor } from "./templates.ts";
 import { planTemplateDecisions, TemplateChooser } from "./template-choice.ts";
@@ -56,6 +57,11 @@ export interface StripTarget {
   subject: string;
   /** The subject's gait from its asset spec; the profile's `animation.gait` applies when unset. */
   gait?: string;
+  /**
+   * Per strip frame, the files of its image before background removal and the same crop after it,
+   * where they exist (a sheet import's frames); the holes decision is asked on each such frame.
+   */
+  holeSources?: Array<{ before: string; after: string } | undefined>;
   /** The motion template its spec or grouping declares for the family (`none`: no template). */
   template?: string;
   /** The template a recorded motion-template decision (generate-sheet's) chose for the family. */
@@ -96,6 +102,30 @@ async function readStrip(path: string): Promise<{ raster: Raster; origin?: Digit
   return { raster, ...(origin !== undefined && { origin }) };
 }
 
+/**
+ * Which strip frames have an image before background removal: planning needs only that, so it
+ * stands in for the image. A strip whose frame count differs from its family's frames gets none.
+ */
+function holeSourcesFor(t: StripTarget, count: number): Array<HoleSource | undefined> | undefined {
+  if (t.holeSources === undefined || t.holeSources.length !== count) return undefined;
+  const blank = createRaster(1, 1);
+  return t.holeSources.map((s) => (s === undefined ? undefined : { before: blank, after: blank }));
+}
+
+/** The images before and after background removal of a target's frames, where it has them. */
+async function readHoleSources(
+  t: StripTarget,
+  count: number,
+): Promise<Array<HoleSource | undefined> | undefined> {
+  if (t.holeSources === undefined || t.holeSources.length !== count) return undefined;
+  const read = async (path: string) => (await readStrip(path)).raster;
+  return Promise.all(
+    t.holeSources.map(async (s) =>
+      s === undefined ? undefined : { before: await read(s.before), after: await read(s.after) },
+    ),
+  );
+}
+
 /** The strips of every family an import wrote (`preview/<family>.png` in the import directory). */
 export async function importTargets(importDir: string): Promise<StripTarget[]> {
   let record;
@@ -110,6 +140,22 @@ export async function importTargets(importDir: string): Promise<StripTarget[]> {
   if (families.length === 0) {
     throw new InputError(`import ${importDir} has written no family yet; run write-families first`);
   }
+  const byId = new Map(record.frames.map((f) => [f.id, f]));
+  // The frames the family's last write made its strip from, in strip order, with the crop before
+  // removal the import kept for each (an import or write before #376 recorded neither).
+  const sourcesOf = (family: string): StripTarget["holeSources"] => {
+    const ids = (record.written ?? []).findLast((w) => w.families.includes(family))?.frames?.[
+      family
+    ];
+    if (ids === undefined) return undefined;
+    const sources = ids.map((id) => {
+      const f = byId.get(id);
+      return f?.source !== undefined
+        ? { before: join(importDir, f.source), after: join(importDir, f.file) }
+        : undefined;
+    });
+    return sources.some((x) => x !== undefined) ? sources : undefined;
+  };
   // A template the grouping declared for a family in the last write that wrote it, else the
   // spec's for its own family, as writeFamilies took it. An earlier write's declaration that the
   // last one no longer makes does not count.
@@ -140,6 +186,7 @@ export async function importTargets(importDir: string): Promise<StripTarget[]> {
     profile: record.profile,
     subject: record.subject ?? record.assetId,
     ...(record.gait !== undefined && { gait: record.gait }),
+    ...((h) => (h !== undefined ? { holeSources: h } : {}))(sourcesOf(family)),
   }));
 }
 
@@ -209,6 +256,8 @@ export async function planAnimationQa(
   for (const t of targets) {
     const { raster } = await readStrip(t.path);
     const count = Math.floor(raster.width / t.frame.width);
+    const frames = splitStrip(raster, t.frame);
+    const sources = holeSourcesFor(t, frames.length);
     const key = JSON.stringify([t.family, t.subject]);
     const template =
       decide && !asked.has(key)
@@ -231,8 +280,12 @@ export async function planAnimationQa(
       : { calls: 0, estimatedCostUsd: 0 };
     const holes = vision
       ? planHoles(
-          splitStrip(raster, t.frame),
-          { threshold: measureThreshold(t.style), minPx: thresholdsFor(t.profile).holeMinPx },
+          frames,
+          {
+            threshold: measureThreshold(t.style),
+            minShare: thresholdsFor(t.profile).holeMinShare,
+            ...(sources !== undefined && { sources }),
+          },
           routes,
         )
       : { calls: 0, estimatedCostUsd: 0 };
@@ -319,6 +372,10 @@ export async function runAnimationQa(options: {
   const logged = new Set<CallRecord>();
   for (const t of options.targets) {
     const { raster, origin } = await readStrip(t.path);
+    const holeSources =
+      call && vision
+        ? await readHoleSources(t, Math.floor(raster.width / t.frame.width))
+        : undefined;
     let chooser = choosers.get(t.profile);
     if (!chooser) {
       chooser = new TemplateChooser(templatesFor(t.profile), decide ? call : undefined);
@@ -350,6 +407,7 @@ export async function runAnimationQa(options: {
         ...(t.gait !== undefined && { gait: t.gait }),
         outDir: options.outDir,
         ...(origin !== undefined && { digitalSourceType: origin }),
+        ...(holeSources !== undefined && { holeSources }),
         ...(call &&
           vision && {
             vision: {

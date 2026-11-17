@@ -55,10 +55,11 @@ function provider({ answer = () => "none", costUsd = 0 }: Setup = {}) {
     image: () => {
       throw new Error("no image calls expected");
     },
-    vision: () => ({
-      text: JSON.stringify({ label: "same", confidence: 0.95, reason: "same figure" }),
-      costUsd: 0.01,
-    }),
+    vision: () => {
+      throw new Error("no vision calls expected");
+    },
+    // Every identity-flicker decision answers that the identity holds.
+    decide: () => ({ answer: { type: "boolean", probability: 0.03 }, costUsd: 0.01 }),
     motionTemplate: (request) => {
       asked.push(request);
       return { answer: { type: "choice", choice: answer(request) }, costUsd };
@@ -86,7 +87,7 @@ const reasonOf = (reasons: Reason[], check: string) => reasons.find((r) => r.che
 /** The frame pairs the identity-flicker calls compared, as "a>b". */
 const flickerCalls = (scripted: ScriptedProvider) =>
   scripted.calls.flatMap((c) => {
-    if (c.kind !== "vision") return [];
+    if (c.kind !== "decide" || c.request.operation !== "flicker") return [];
     const m = /Image 1 is frame (\d+) and image 2 is frame (\d+)\b/.exec(c.request.prompt);
     return m ? [`${m[1]}>${m[2]}`] : [];
   });

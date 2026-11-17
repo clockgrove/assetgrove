@@ -95,10 +95,20 @@ export const IMAGE_QA_CHECKS: readonly QaCheck[] = [
   vision("perspective", "vision"),
 ];
 
-/** Animation QA's vision checks (src/animation/flicker.ts, src/animation/holes.ts). */
+/**
+ * Animation QA's model-backed checks (src/animation/flicker.ts, src/animation/holes.ts): typed
+ * Boolean decisions (version 2, #376; version 1 read a label and a self-reported confidence from a
+ * vision model's text).
+ */
 export const ANIMATION_VISION_CHECKS: readonly QaCheck[] = [
-  vision("identity-flicker", "flicker"),
-  vision("holes", "holes"),
+  {
+    id: "identity-flicker",
+    version: "2",
+    modelBacked: true,
+    source: "decision",
+    operation: "flicker",
+  },
+  { id: "holes", version: "2", modelBacked: true, source: "decision", operation: "holes" },
 ];
 
 /**

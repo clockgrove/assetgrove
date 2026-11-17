@@ -1,6 +1,6 @@
 /**
  * Animation QA of one strip, end to end: the deterministic pixel checks against the family's
- * motion template, the optional identity-flicker and holes vision checks, and the onion-skin sheet
+ * motion template, the optional identity-flicker and holes decisions, and the onion-skin sheet
  * and looping preview the person picking looks at.
  */
 import { mkdir, writeFile } from "node:fs/promises";
@@ -19,6 +19,7 @@ import type { Point, Size, TargetProfile } from "../types.ts";
 import { appendDecisionLog, checkFlicker } from "./flicker.ts";
 import { clearTransparentColour } from "./halo.ts";
 import { checkHoles } from "./holes.ts";
+import type { HoleSource } from "./holes.ts";
 import { loopPreview, onionSkinSheet, PREVIEW_MEDIA_TYPES } from "./preview.ts";
 import { animationQa } from "./qa.ts";
 import { measureThreshold, splitStrip } from "./strip.ts";
@@ -114,8 +115,14 @@ export interface StripQaOptions {
   /** Embedded in the previews when known. */
   digitalSourceType?: DigitalSourceType;
   /**
-   * Runs the vision checks (identity flicker, and holes on frames with see-through areas inside
-   * the outline) through this caller; omitted, both are skipped.
+   * Per strip frame, its image before background removal and the same crop after it, where one
+   * exists (a sheet import's frames): the holes decision is then asked on every such frame.
+   */
+  holeSources?: ReadonlyArray<HoleSource | undefined>;
+  /**
+   * Runs the model-backed checks (identity flicker per pair, and holes on frames with an image
+   * before background removal or a see-through area inside the outline) through this caller;
+   * omitted, both are skipped.
    */
   vision?: {
     call: Caller;
@@ -202,8 +209,9 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
       family,
       subject: options.vision.subject,
       threshold: measureThreshold(style),
-      minPx: base.thresholds.holeMinPx,
+      minShare: base.thresholds.holeMinShare,
       cutoff: base.thresholds.holeCutoff,
+      ...(options.holeSources !== undefined && { sources: options.holeSources }),
       call: options.vision.call,
       ...(options.vision.now !== undefined && { now: options.vision.now }),
     });
