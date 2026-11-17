@@ -1,0 +1,12 @@
+{
+  "format": "assetgrove-prompt-policy-cuts/1",
+  "routes": {
+    "vercel-ai-gateway:perplexity/pplx-decider-v1.2": {
+      "confirmAt": 0.5,
+      "refuseAt": 0.8,
+      "measuredBy": "test/real/prompt-policy.real.ts",
+      "fixture": "test/fixtures/prompt-policy/red-team.jsonl",
+      "bars": "docs/decisions.md#prompt-policy-bars"
+    }
+  }
+}

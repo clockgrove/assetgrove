@@ -9,7 +9,7 @@ import type { KindRequest } from "../confirm/index.ts";
 import { readPending, removePending } from "../confirm/pending.ts";
 import { describeRequest } from "../confirm/prompt.ts";
 import type { ConfirmRequest } from "../confirm/prompt.ts";
-import { spendShown } from "../runs/execute.ts";
+import { policyRequest, spendShown } from "../runs/execute.ts";
 import type { WorkPlan } from "../runs/plan.ts";
 import { pickRequest } from "./pick.ts";
 import { rebuildApproveRequest } from "./review.ts";
@@ -49,6 +49,23 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
           body["options"] !== null && { options: body["options"] as Record<string, unknown> }),
       });
       return { kind: "spend", id: request.id, body, ...shown };
+    }
+    if (request.kind === "policy") {
+      const command = text(body["command"]);
+      const digest = text(body["digest"]);
+      const policyTextSha256 = text(body["policyTextSha256"]);
+      const model = text(body["model"]);
+      const probability = body["probability"];
+      if (
+        command === undefined ||
+        digest === undefined ||
+        policyTextSha256 === undefined ||
+        model === undefined ||
+        typeof probability !== "number"
+      )
+        return undefined;
+      const shown = policyRequest(command, { digest, policyTextSha256 }, { model, probability });
+      return shown.id === request.id ? shown : undefined;
     }
     let rebuilt: KindRequest;
     if (

@@ -389,7 +389,7 @@ export type ConfirmationMethod = "headless" | "tty" | "terminal" | "elicitation"
  * `<configDir>/confirmations/<hex>.json` and copied into `run.json` and the pick's provenance.
  */
 export interface ConfirmationRecord {
-  kind: "spend" | "pick" | "write";
+  kind: "spend" | "pick" | "write" | "policy";
   /** The request digest the confirmation covers; the record's file is named by it. */
   digest: string;
   method: ConfirmationMethod;

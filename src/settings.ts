@@ -10,6 +10,7 @@ import { z } from "zod";
 import { configHome, configOverride, SettingsError, stateHome, type Env } from "./env.ts";
 import { FormatError, formatLine, readFormat } from "./formats.ts";
 import { grantProblems } from "./license.ts";
+import { barProblem } from "./policy/cuts.ts";
 
 export { SettingsError } from "./env.ts";
 
@@ -105,6 +106,22 @@ const routeSchema = z.strictObject({
   estimatedCostUsd: usd.optional(),
 });
 
+const rate = z.number().finite().min(0).max(1);
+
+/** A cut the developer measured on their own decisions route (src/policy/cuts.ts). */
+const promptPolicyCutSchema = z
+  .strictObject({
+    confirmAt: rate,
+    refuseAt: rate,
+    refusalRate: rate,
+    falseRefusalRate: rate,
+  })
+  .refine((cut) => cut.confirmAt <= cut.refuseAt, "confirmAt must not be above refuseAt")
+  .superRefine((cut, ctx) => {
+    const problem = barProblem(cut);
+    if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+  });
+
 const settingsSchema = z.strictObject({
   format: z.string(),
   stateDir: z.string().refine(isAbsolute, "must be an absolute path").optional(),
@@ -139,7 +156,12 @@ const settingsSchema = z.strictObject({
       ),
     })
     .optional(),
-  promptPolicy: z.strictObject({ allow: z.array(name) }).optional(),
+  promptPolicy: z
+    .strictObject({
+      allow: z.array(name),
+      cuts: z.record(z.string().min(1), promptPolicyCutSchema).optional(),
+    })
+    .optional(),
   contentCredentials: z
     .strictObject({
       certificate: z.string().refine(isAbsolute, "must be an absolute path"),
@@ -181,7 +203,11 @@ export interface Settings {
   /** Git blob ids of files whose by-name key assignments a person has checked are not live keys. */
   keyGuard: { acknowledgedBlobs: string[] };
   commands: NonNullable<SettingsFile["commands"]>;
-  promptPolicy: { allow: string[] };
+  promptPolicy: {
+    allow: string[];
+    /** Cuts measured on the developer's own decisions routes, keyed `<adapter>:<model>`. */
+    cuts: NonNullable<NonNullable<SettingsFile["promptPolicy"]>["cuts"]>;
+  };
   /** The C2PA signing certificate chain and key files; absent, a development certificate signs. */
   contentCredentials?: NonNullable<SettingsFile["contentCredentials"]>;
   confirmedBy: NonNullable<SettingsFile["confirmedBy"]>;
@@ -399,7 +425,7 @@ function complete(
     spend: { acknowledgedHolds: file.spend?.acknowledgedHolds ?? [] },
     keyGuard: { acknowledgedBlobs: file.keyGuard?.acknowledgedBlobs ?? [] },
     commands: file.commands ?? { approved: [] },
-    promptPolicy: { allow: file.promptPolicy?.allow ?? [] },
+    promptPolicy: { allow: file.promptPolicy?.allow ?? [], cuts: file.promptPolicy?.cuts ?? {} },
     ...(file.contentCredentials && { contentCredentials: file.contentCredentials }),
     confirmedBy: file.confirmedBy ?? {},
     ...(file.search && { search: completeSearch(file.search) }),

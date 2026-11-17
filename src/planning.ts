@@ -76,6 +76,7 @@ import {
   checkPromptText,
   collectPromptParts,
   enforcePromptPolicy,
+  NON_TEXT_FIELDS,
   promptStrings,
 } from "./policy/text.ts";
 import type { PromptPart, PromptPartLabel } from "./policy/text.ts";
@@ -456,8 +457,9 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
     });
   }
   const templateBody = template.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
-  const { keyPose: _keyPose, ...promptSpec } = spec;
+  const { keyPose: _keyPose, assetId: _assetId, ...promptSpec } = spec;
   void _keyPose;
+  void _assetId;
   const templateHash = sha256(Buffer.from(template));
   const templateVersion =
     /^version:\s*["']?([^\n"']+)/m.exec(template)?.[1]?.trim() ?? templateHash;
@@ -514,7 +516,7 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
   const part = (label: PromptPartLabel) => (text: string) => ({ label, text });
   enforcePromptPolicy(
     [
-      ...promptStrings(promptSpec).map(part("spec")),
+      ...promptStrings(promptSpec, NON_TEXT_FIELDS.spec).map(part("spec")),
       ...promptStrings(originalBrief).map(part("brief")),
       ...promptStrings(axes).map(part("brief")),
       ...promptStrings(doc.data.tone).map(part("tone")),

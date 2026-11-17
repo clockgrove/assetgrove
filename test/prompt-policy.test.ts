@@ -18,6 +18,7 @@ import { packageBlocklist } from "../src/policy/blocklist.ts";
 import {
   checkPromptText,
   enforcePromptPolicy,
+  NON_TEXT_FIELDS,
   promptStrings,
   PromptRefusedError,
 } from "../src/policy/text.ts";
@@ -542,16 +543,72 @@ test("policyTextSha256 is in the WorkPlan and changes the digest with the spec t
   assert.notEqual(a.digest, b.digest);
 });
 
-test("only file names are left out of prompt text: slash- and dot-bearing words are checked", () => {
-  const strings = promptStrings({
-    description: `${FIRST}/${LAST}`,
-    mood: `${FIRST}${LAST}.art`,
-    tag: `style:${FIRST}/${LAST}`,
-    reference: "refs/fox-turnaround.png",
-    model: "models/fox.glb",
-  });
-  assert.deepEqual(strings, [`${FIRST}/${LAST}`, `${FIRST}${LAST}.art`, `style:${FIRST}/${LAST}`]);
-  for (const text of strings) assert.equal(checkPromptText(text).match?.term, TERM, text);
+test("only file and id fields are left out of prompt text, by field, whatever the extension", () => {
+  const spec = {
+    assetId: `${FIRST}-${LAST}`,
+    keyPose: `refs/${FIRST}-${LAST}.psd`,
+    fields: { description: `${FIRST}/${LAST}`, mood: `${FIRST}${LAST}.png`, ref: "refs/fox.png" },
+  };
+  const strings = promptStrings(spec, NON_TEXT_FIELDS.spec);
+  assert.deepEqual(strings, [`${FIRST}/${LAST}`, `${FIRST}${LAST}.png`, "refs/fox.png"]);
+  for (const text of strings.slice(0, 2))
+    assert.equal(checkPromptText(text).match?.term, TERM, text);
+  const bible = {
+    anchors: { positive: { a: { path: `refs/${FIRST}-${LAST}.aseprite`, note: "soft" } } },
+    identities: {
+      fox: { turnaround: `t/${FIRST}-${LAST}.png`, references: [`r/${FIRST}-${LAST}.tmx`] },
+    },
+    perspective: `p/${FIRST}-${LAST}.png`,
+    tone: "warm",
+  };
+  assert.deepEqual(promptStrings(bible, NON_TEXT_FIELDS.bible), ["soft", "warm"]);
+  assert.equal(promptStrings(bible).length, 6);
+});
+
+test("a spec's asset id is not prompt text: not refused at the plan step, not in the prompt", async () => {
+  const dir = await tempDir("assetgrove-policy-assetid-");
+  const files = await planFiles(dir, "");
+  const id = `npc-${FIRST}-${LAST}`;
+  await writeFile(
+    files.spec,
+    JSON.stringify({ kind: "still", assetId: id, fields: { description: "a round icon" } }),
+  );
+  const run = await cli([
+    ...["plan", "--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
+    ...["--run-options", files.runOptions, "--out", files.plan, "--runs", join(dir, "runs")],
+    "--json",
+  ]);
+  assert.equal(run.code, 0, run.stdout + run.stderr);
+  const saved = JSON.parse(await readFile(files.plan, "utf8")) as SavedPlan;
+  assert.equal(JSON.stringify(saved.prompts).includes(id), false);
+});
+
+test("a key pose path holding a blocklisted name passes the plan step and the final-prompt check", async () => {
+  const dir = await tempDir("assetgrove-policy-keypose-");
+  const files = await planFiles(dir, "");
+  const pose = `${FIRST}-${LAST}.png`;
+  await writeFile(
+    join(dir, pose),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  );
+  await writeFile(
+    files.spec,
+    JSON.stringify({
+      kind: "still",
+      assetId: "icon",
+      keyPose: pose,
+      fields: { description: "a round icon" },
+    }),
+  );
+  const run = await cli([
+    ...["plan", "--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
+    ...["--run-options", files.runOptions, "--out", files.plan, "--runs", join(dir, "runs")],
+    "--json",
+  ]);
+  assert.equal(run.code, 0, run.stdout + run.stderr);
 });
 
 test("a sheet brief honours the settings allow terms", () => {

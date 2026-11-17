@@ -167,16 +167,17 @@ test("forecast and digest include one prompt-policy job, and it is the first pro
   assert.deepEqual(policyCall?.record.parameters.question, PROMPT_POLICY_QUESTION);
 });
 
-test("probability 0.5 exits 9 prompt_refused and no other call runs", async () => {
+test("probability 0.9 exits 9 prompt_refused and no other call runs", async () => {
   writeSettings({});
-  const { script, events } = await recorder(`({ answer: { type: "boolean", probability: 0.5 } })`);
+  const { script, events } = await recorder(`({ answer: { type: "boolean", probability: 0.9 } })`);
   const { args } = await stageArgs(script);
   const r = await cli(args);
   assert.equal(r.code, 9, r.stderr);
   const error = doc(r)["error"];
   assert.equal(error.code, "prompt_refused");
   assert.equal(error.policy.verdict, "refused");
-  assert.equal(error.policy.probability, 0.5);
+  assert.equal(error.policy.probability, 0.9);
+  assert.match(error.message, /refused at 0\.80 or more/);
   assert.match(error.policy.model, /^scripted:prompt-policy:/);
   assert.deepEqual(await events(), ["prompt-policy"]);
 });

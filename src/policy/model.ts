@@ -3,7 +3,9 @@
  * one Choice decide call per ambiguous name a person-written part holds (the protected name, an
  * ordinary word or an unrelated name; only the first refuses), then one Boolean decide call on the `prompt-policy` operation (the decisions role) about the prompt
  * text the plan step collected, given as labelled parts with the blocklist's phrase and
- * ambiguous-name hits and the words around them. A probability of 0.5 or more refuses the request
+ * ambiguous-name hits and the words around them. The probability is cut per decisions route
+ * (src/policy/cuts.ts): under `confirmAt` the run goes on, from `confirmAt` to `refuseAt` a person
+ * confirms it (exit 8, the record is `borderline`), and `refuseAt` or more refuses the request
  * with exit 9 `prompt_refused`, unless it objects only to text the prompt compiler wrote: a second
  * call on the person's parts alone then decides, and when it allows, the run uses the template's
  * prompt and records why. The check fails closed: a call that fails or answers out of type exits 4
@@ -16,6 +18,7 @@ import { ProviderError } from "../errors.ts";
 import type { DecisionQuestion } from "../gateway/provider.ts";
 import { PROMPT_POLICY_OPERATION } from "../routes.ts";
 import type { Route } from "../routes.ts";
+import type { PromptPolicyCut } from "./cuts.ts";
 import { asParts, modelWritten, PromptRefusedError, readingTerms } from "./text.ts";
 import type {
   NameReading,
@@ -28,9 +31,6 @@ import type {
 } from "./text.ts";
 
 export { PROMPT_POLICY_OPERATION };
-
-/** The probability at or above which the model check refuses a request. */
-export const PROMPT_POLICY_THRESHOLD = 0.5;
 
 /** The Boolean question the model answers about a request's prompt text. */
 export const PROMPT_POLICY_QUESTION: DecisionQuestion = {
@@ -185,6 +185,8 @@ export interface PromptModelVerdict {
   probability: number;
   /** `<provider>:prompt-policy:<model>`. */
   model: string;
+  /** `allow` under the cut's `confirmAt`, `confirm` up to its `refuseAt`, `refuse` from it. */
+  band: "allow" | "confirm" | "refuse";
   refused: boolean;
 }
 
@@ -196,7 +198,8 @@ export async function decidePromptPolicy(
   caller: Caller,
   text: string | readonly PromptPart[],
   hits: readonly PolicyHit[] = [],
-  readings: readonly PolicyReading[] = [],
+  readings: readonly PolicyReading[],
+  cut: PromptPolicyCut,
 ): Promise<PromptModelVerdict> {
   let result;
   try {
@@ -219,11 +222,9 @@ export async function decidePromptPolicy(
   if (answer.type !== "boolean" || !Number.isFinite(answer.probability))
     throw new ProviderError("the prompt-policy check did not answer with a probability");
   const probability = Math.min(1, Math.max(0, answer.probability));
-  return {
-    probability,
-    model: result.record.route,
-    refused: probability >= PROMPT_POLICY_THRESHOLD,
-  };
+  const band =
+    probability >= cut.refuseAt ? "refuse" : probability >= cut.confirmAt ? "confirm" : "allow";
+  return { probability, model: result.record.route, band, refused: band === "refuse" };
 }
 
 /**
@@ -232,22 +233,28 @@ export async function decidePromptPolicy(
  * readings recorded, and no other call runs. Then it decides on the labelled `parts` with the
  * record's hits (minus the names read as not protected) and returns
  * the plan step's record with the model and probability added; throws `PromptRefusedError` (exit
- * 9) at 0.5 or more. When the parts hold model-written text and the check refuses, a second call
- * on the person-written parts alone decides: if it allows, the record is allowed with `fallback`
- * saying why, and the command uses the template's prompt in place of the compiler's.
+ * 9) at the cut's `refuseAt` or more. An answer from `confirmAt` up returns the record allowed
+ * with `borderline`: the run asks a person before it goes on. When the parts hold model-written
+ * text and the check does not allow, a second call on the person-written parts alone decides: if
+ * it allows or is borderline, the record carries `fallback` saying why, and the command uses the
+ * template's prompt in place of the compiler's.
  */
 export async function checkPromptModel(
   caller: Caller,
   parts: string | readonly PromptPart[],
   given: PromptPolicyRecord,
+  cut: PromptPolicyCut,
 ): Promise<PromptPolicyRecord> {
   const all = asParts(parts);
   // Each ambiguous name a person wrote is read in its sentence first; a protected reading refuses.
   const readings = await readAmbiguousNames(caller, all, given.hits);
-  const record: PromptPolicyRecord = readings.length > 0 ? { ...given, readings } : given;
+  const record: PromptPolicyRecord = {
+    ...(readings.length > 0 ? { ...given, readings } : given),
+    cut,
+  };
   if (readings.some((r) => r.reading === "protected"))
     throw new PromptRefusedError({ ...record, verdict: "refused" }, "the request's prompt text");
-  const verdict = await decidePromptPolicy(caller, all, record.hits, readings);
+  const verdict = await decidePromptPolicy(caller, all, record.hits, readings, cut);
   const first = answer("all", verdict);
   const checked = (
     decided: PromptModelVerdict,
@@ -260,19 +267,20 @@ export async function checkPromptModel(
     probability: decided.probability,
     checks,
     ...(fallback !== undefined && { fallback }),
+    ...(decided.band === "confirm" && { borderline: true as const }),
   });
-  if (!verdict.refused) return checked(verdict, [{ ...first, decided: true }]);
+  if (verdict.band === "allow") return checked(verdict, [{ ...first, decided: true }]);
   const person = all.filter((p) => !modelWritten(p));
-  if (person.length === all.length)
-    throw new PromptRefusedError(
-      checked(verdict, [{ ...first, decided: true }]),
-      "the request's prompt text",
-    );
+  if (person.length === all.length) {
+    const decided = checked(verdict, [{ ...first, decided: true }]);
+    if (verdict.refused) throw new PromptRefusedError(decided, "the request's prompt text");
+    return decided;
+  }
   // Compiler-written text is never the reason a person's request is refused: a second call, on the
   // person's parts and the bible's rules alone with the same question and cut, decides.
   const personHits = record.hits?.filter((h) => !modelWritten({ label: h.part })) ?? [];
   const second = person.some((p) => p.text.trim())
-    ? await decidePromptPolicy(caller, person, personHits, readings)
+    ? await decidePromptPolicy(caller, person, personHits, readings, cut)
     : undefined;
   if (second?.refused)
     throw new PromptRefusedError(
@@ -280,9 +288,12 @@ export async function checkPromptModel(
       "the request's prompt text",
     );
   const fallback = `the prompt-policy model check objected only to text the prompt compiler wrote (${verdict.probability.toFixed(2)} with it, ${second ? `${second.probability.toFixed(2)} on the person's text alone` : "no person-written text"}): the repository template's prompt is used in its place`;
-  return second
-    ? checked(second, [first, { ...answer("person", second), decided: true }], fallback)
-    : checked(verdict, [{ ...first, decided: true }], fallback);
+  if (second)
+    return checked(second, [first, { ...answer("person", second), decided: true }], fallback);
+  // No person wrote any of the text, so no one is asked to clear it.
+  const unasked = checked(verdict, [{ ...first, decided: true }], fallback);
+  delete unasked.borderline;
+  return unasked;
 }
 
 function answer(scope: PromptPolicyCheck["scope"], v: PromptModelVerdict): PromptPolicyCheck {

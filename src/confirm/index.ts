@@ -96,7 +96,10 @@ export function recordOf(
 /** True when a pending request's body hashes to its id. */
 export function verifiedRequest(request: ConfirmRequest): request is KindRequest {
   return (
-    (request.kind === "spend" || request.kind === "pick" || request.kind === "write") &&
+    (request.kind === "spend" ||
+      request.kind === "pick" ||
+      request.kind === "write" ||
+      request.kind === "policy") &&
     typeof request.body === "object" &&
     request.body !== null &&
     digestOf(request.body) === request.id
@@ -141,13 +144,18 @@ async function declinedPending(
 export async function requireConfirmation(
   request: KindRequest,
   gate: ConfirmGate,
-  options: { prior?: () => Promise<ConfirmationRecord | undefined>; runDir?: string } = {},
+  options: {
+    prior?: () => Promise<ConfirmationRecord | undefined>;
+    runDir?: string;
+    /** Only a person clears it: headless settings do not (a borderline policy request). */
+    person?: boolean;
+  } = {},
 ): Promise<ConfirmationRecord> {
   const { settings, prompt } = gate;
   const { runDir } = options;
   const bound = runDir !== undefined ? { runDir } : {};
   const named = typeof request.body["candidate"] === "string";
-  if (settings.mode === "headless") {
+  if (settings.mode === "headless" && options.person !== true) {
     if (request.kind === "pick" && !named)
       throw new InputError(
         "a headless pick must name its candidate: pass --candidate <id> (headless settings choose nothing)",

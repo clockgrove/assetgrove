@@ -397,7 +397,7 @@ Whether a brief tries to override the style bible is decided by reading it, not 
 
 ### Brief policy threshold
 
-`BRIEF_POLICY_THRESHOLD` is 0.5: a probability at or above it is an objection. It is the prompt policy's cut, for the same reason: a Boolean decision model's probability is its answer, and no labelled set for this question exists yet to place the cut elsewhere. Revisit it when one does.
+`BRIEF_POLICY_THRESHOLD` is 0.5: a probability at or above it is an objection. It matches the prompt policy's `confirmAt` on its default route, for the same reason: a Boolean decision model's probability is its answer, and no labelled set for this question exists yet to place the cut elsewhere. Revisit it when one does.
 
 ## Prompt-policy bars
 
@@ -406,6 +406,8 @@ A blocklist misses paraphrases, so every request also gets one model decision, a
 ```json
 { "promptPolicy": { "minRefusalRate": 0.9, "maxFalseRefusalRate": 0.1 } }
 ```
+
+The cut is recorded per route beside these bars, in `policy/prompt-policy-cuts.json` (#378): a probability is a route's own scale, and on the anthropic and openai adapters it is self-reported, so a cut measured on one route says nothing about another. Each entry, keyed `<adapter>:<model>`, has `confirmAt` (from here to `refuseAt` a person is asked, exit 8, instead of exit 9) and `refuseAt` (exit 9). The default gateway route is the only one measured: `confirmAt` stays at 0.5, the cut its bars were met at, so everything it stopped before is still stopped; `refuseAt` is 0.8, so an answer between the two reaches a person, who can clear that one request, rather than ending a confirmed run. A route with no entry is refused at the plan step (exit 2 `route_unavailable`) for any request carrying prompt text. The real check reads the route's entry, counts a borderline row as stopped for the refusal rate and only an exit-9 row as a false refusal.
 
 ## The data-dependent 1.0 bars
 

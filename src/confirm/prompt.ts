@@ -6,7 +6,7 @@
 import { createInterface } from "node:readline/promises";
 
 /** The kinds of confirmation a person gives (design section 7). */
-export type ConfirmKind = "spend" | "pick" | "write" | "command" | "settings";
+export type ConfirmKind = "spend" | "pick" | "write" | "policy" | "command" | "settings";
 
 /** What a person is asked to confirm (design section 7). */
 export interface ConfirmRequest {
