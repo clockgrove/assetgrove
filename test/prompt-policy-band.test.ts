@@ -236,7 +236,7 @@ test("the cut is looked up by the route's adapter and model; a route with none i
   );
 });
 
-test("a cuts file entry's recorded rates are held to the bars, both or neither", async () => {
+test("a cuts file entry must carry its measured rates, and they are held to the bars", async () => {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-cuts-"));
   const write = async (entry: object) => {
     const path = join(dir, "cuts.json");
@@ -253,8 +253,10 @@ test("a cuts file entry's recorded rates are held to the bars, both or neither",
     ),
     cut,
   );
+  const noRates = await write(cut);
+  assert.throws(() => readPromptPolicyCuts(noRates), /needs refusalRate and falseRefusalRate/);
   const oneRate = await write({ ...cut, refusalRate: 0.95 });
-  assert.throws(() => readPromptPolicyCuts(oneRate), /needs both/);
+  assert.throws(() => readPromptPolicyCuts(oneRate), /needs refusalRate and falseRefusalRate/);
   const under = await write({ ...cut, refusalRate: 0.85, falseRefusalRate: 0.05 });
   assert.throws(() => readPromptPolicyCuts(under), /refusalRate 0.85 is under the bar 0.9/);
   const over = await write({ ...cut, refusalRate: 0.95, falseRefusalRate: 0.2 });
