@@ -1,4 +1,4 @@
-import { CORE_ADAPTERS } from "./providers/adapter.ts";
+import { CORE_ADAPTERS, type ProviderAdapter } from "./providers/adapter.ts";
 
 export const HARNESSES = [
   "claude-code",
@@ -44,8 +44,8 @@ const CHECK_DOCS = "If a command has changed, check the harness's current docs."
 const AGENT_HOLDS_SHELL =
   "The agent holds a shell: these controls stop an over-eager or drifting agent, and text in shared files that tries to steer one, not an agent set on getting round them. The hard money limit is the provider's.";
 
-function providerHosts(): string[] {
-  return [...new Set(CORE_ADAPTERS.flatMap((adapter) => adapter.fixedHosts))];
+function providerHosts(adapters: readonly ProviderAdapter[]): string[] {
+  return [...new Set(adapters.flatMap((adapter) => adapter.fixedHosts))];
 }
 
 /** A Claude Code absolute-path rule pattern: `//` then the path with forward slashes. */
@@ -57,14 +57,14 @@ function plain(dir: string): string {
   return dir.replaceAll("\\", "/").replace(/\/+$/, "");
 }
 
-function claudeCode(dirs: KeyDirs): KeyRecipe {
+function claudeCode(dirs: KeyDirs, adapters: readonly ProviderAdapter[]): KeyRecipe {
   const configDir = dirs.configDir ?? "<configDir>";
   const stateDir = dirs.stateDir ?? "<stateDir>";
   const pattern = (dir: string, placeholder: string) =>
     dir === placeholder ? `//${placeholder}/**` : absolute(dir);
   const configPattern = pattern(configDir, "<configDir>");
   const statePattern = pattern(stateDir, "<stateDir>");
-  const hosts = providerHosts();
+  const hosts = providerHosts(adapters);
   return {
     harness: "claude-code",
     steps: [
@@ -112,7 +112,9 @@ function claudeCode(dirs: KeyDirs): KeyRecipe {
   };
 }
 
-const RECIPES: Record<Harness, (dirs: KeyDirs) => KeyRecipe> = {
+type RecipeOf = (dirs: KeyDirs, adapters: readonly ProviderAdapter[]) => KeyRecipe;
+
+const RECIPES: Record<Harness, RecipeOf> = {
   "claude-code": claudeCode,
   "claude-code-cloud": () => ({
     harness: "claude-code-cloud",
@@ -201,9 +203,28 @@ const RECIPES: Record<Harness, (dirs: KeyDirs) => KeyRecipe> = {
   }),
 };
 
-export function keyRecipe(harness: string, dirs: KeyDirs = {}): KeyRecipe {
+/** The sentence naming each pack adapter's key variable; empty when no pack adapter has one. */
+function packKeys(adapters: readonly ProviderAdapter[]): string {
+  const core = new Set(CORE_ADAPTERS.map((adapter) => adapter.id));
+  const keys = adapters
+    .filter((adapter) => !core.has(adapter.id) && adapter.defaultKeyEnv !== undefined)
+    .map((adapter) => `${adapter.defaultKeyEnv} (${adapter.id})`);
+  return keys.length === 0
+    ? ""
+    : ` Each pack adapter's key goes in the server's env the same way: ${keys.join(", ")}.`;
+}
+
+export function keyRecipe(
+  harness: string,
+  dirs: KeyDirs = {},
+  adapters: readonly ProviderAdapter[] = CORE_ADAPTERS,
+): KeyRecipe {
   if (!(HARNESSES as readonly string[]).includes(harness)) {
     throw new Error(`Unknown harness "${harness}". Use one of: ${HARNESSES.join(", ")}.`);
   }
-  return RECIPES[harness as Harness](dirs);
+  const recipe = RECIPES[harness as Harness](dirs, adapters);
+  const keys = packKeys(adapters);
+  const [first] = recipe.steps;
+  if (keys !== "" && first) first.text += keys;
+  return recipe;
 }

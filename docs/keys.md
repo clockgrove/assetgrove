@@ -8,6 +8,8 @@ The command line and `NODE_OPTIONS` cannot be defended from inside the process, 
 
 Each step has a stable id, marked `key:<id>`. [testing-hosts.md](testing-hosts.md) uses the same ids, and a test checks they agree. `src/keys.ts` (`keyRecipe`) holds the same recipes.
 
+`init` lists the adapters of every pack in the settings' `extensions` list with their declared hosts and key variable. A recipe includes them: the Claude Code recipe's provider hosts include a pack adapter's fixed hosts, and each harness's first step names the pack adapters' key variables to put in the server's env beside `AI_GATEWAY_API_KEY`.
+
 ## Claude Code
 
 - `key:claude-code.user-scope`: register at user scope with the key in the server's env:

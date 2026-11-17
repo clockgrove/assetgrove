@@ -4,7 +4,7 @@
  * terms are recorded, not a licence.
  */
 import type { Env } from "./env.ts";
-import { createProviders } from "./providers/adapter.ts";
+import { createProviders, type ProviderAdapter } from "./providers/adapter.ts";
 import {
   knownOperations,
   resolveRoute,
@@ -39,9 +39,12 @@ export function upstreamOf(adapterId: string, model: string): string | null {
  */
 export function routeDataFlows(
   settings: Pick<Settings, "providers" | "roles" | "routes" | "path">,
-  options: { env?: Env } = {},
+  options: { env?: Env; adapters?: readonly ProviderAdapter[] } = {},
 ): RouteDataFlow[] {
-  const configured = createProviders(settings, { env: options.env ?? {} });
+  const configured = createProviders(settings, {
+    env: options.env ?? {},
+    ...(options.adapters && { adapters: options.adapters }),
+  });
   const flows: RouteDataFlow[] = [];
   for (const operation of knownOperations(settings)) {
     let route;
