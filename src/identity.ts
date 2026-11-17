@@ -812,8 +812,9 @@ async function scoreOnce(options: Parameters<typeof scoreIdentity>[0]): Promise<
         // A failing candidate of the right character fails on the on-model part: name its cause.
         looksLike = `; off-model (on-model ${answer.onModel.toFixed(2)})${answer.deviations?.length ? `: ${answer.deviations.join("; ")}` : answer.reason ? `: ${answer.reason}` : ""}`;
     } else {
+      // Not a cast question here (that is the vision call above), so the operation is `identity`.
       const { record: call } = await caller.decide(
-        operation,
+        IDENTITY_OPERATION,
         prompt,
         images,
         identityQuestion(settings.question as "score" | "boolean", record.subject),
