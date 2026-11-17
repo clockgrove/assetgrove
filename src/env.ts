@@ -212,3 +212,34 @@ export function homeDir(env: Env = process.env): string {
   const home = env["HOME"] || env["USERPROFILE"];
   return home && isAbsolute(home) ? home : homedir();
 }
+
+/**
+ * Points `$ASSETGROVE_CONFIG` at `settingsPath` and unsets `$ASSETGROVE_WORK_ITEM` and every
+ * refused variable (in either spelling), so a command run in this process reads only that settings
+ * file; returns a function that puts back what each held. The test kit's temporary project
+ * (src/testing/project.ts) holds the environment so while it is open.
+ */
+export function isolateForSettings(settingsPath: string, env: Env = process.env): () => void {
+  const saved = {
+    config: env["ASSETGROVE_CONFIG"],
+    workItem: env["ASSETGROVE_WORK_ITEM"],
+    refused: new Map<string, string | undefined>(),
+  };
+  env["ASSETGROVE_CONFIG"] = settingsPath;
+  delete env["ASSETGROVE_WORK_ITEM"];
+  for (const name of REFUSED_VARIABLES)
+    for (const variant of [name, name.toLowerCase()]) {
+      if (!saved.refused.has(variant)) saved.refused.set(variant, env[variant]);
+      delete env[variant];
+    }
+  return () => {
+    if (saved.config === undefined) delete env["ASSETGROVE_CONFIG"];
+    else env["ASSETGROVE_CONFIG"] = saved.config;
+    if (saved.workItem === undefined) delete env["ASSETGROVE_WORK_ITEM"];
+    else env["ASSETGROVE_WORK_ITEM"] = saved.workItem;
+    for (const [variant, value] of saved.refused) {
+      if (value === undefined) delete env[variant];
+      else env[variant] = value;
+    }
+  };
+}

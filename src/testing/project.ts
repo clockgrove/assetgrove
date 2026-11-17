@@ -4,17 +4,17 @@
  * writes the developer's own settings, spend ledger or state. It runs core's commands on the CLI
  * (a child process), in process (with the pack's extension objects) and as an MCP server.
  */
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, type Readable, type Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { commands } from "../commands/registry.ts";
 import { runCommand } from "../commands/runner.ts";
 import type { Outcome, RunContext } from "../commands/types.ts";
 import type { ConfirmPort, ConfirmRequest } from "../confirm/prompt.ts";
-import { REFUSED_VARIABLES } from "../env.ts";
+import { isolateForSettings, withConfigOverride } from "../env.ts";
 import type { Extension, ExtensionEntry } from "../extension/api.ts";
 import { CORE_ENTRY, CORE_REGISTRY, ExtensionRegistry } from "../extensions/registry.ts";
 import { formatLine } from "../formats.ts";
@@ -36,7 +36,7 @@ export interface CliResult {
   json?: Record<string, unknown>;
 }
 
-/** An MCP server in process: JSON-RPC requests in, answers out. */
+/** An MCP server, in process or a child process: JSON-RPC requests in, answers out. */
 export interface McpSession {
   request(method: string, params?: unknown): Promise<Record<string, unknown>>;
   notify(method: string, params?: unknown): void;
@@ -78,6 +78,11 @@ export interface TempProject {
   run(command: string, args?: Record<string, unknown>, options?: RunOptions): Promise<Outcome>;
   /** Serves core's MCP server in process, with the packs given registered beside core. */
   mcp(options?: RunOptions & { providerScript?: string }): Promise<McpSession>;
+  /**
+   * Serves core's MCP server as a child process (`assetgrove mcp` in the project), so core loads
+   * the packs the settings list, as an installed pack is loaded.
+   */
+  mcpServer(options?: { env?: NodeJS.ProcessEnv }): Promise<McpSession>;
   /** Removes the project and its settings, and restores the process environment. */
   close(): void;
 }
@@ -117,21 +122,8 @@ export function tempProject(options: { settings?: Record<string, unknown> } = {}
   const configDir = join(root, "config");
   for (const d of [dir, stateDir, configDir]) mkdirSync(d, { recursive: true });
   const settingsPath = join(configDir, "settings.json");
-  const saved: Record<string, string | undefined> = {};
-  const keep = (key: string) => {
-    if (!(key in saved)) saved[key] = process.env[key];
-  };
-  keep("ASSETGROVE_CONFIG");
-  keep("ASSETGROVE_WORK_ITEM");
-  process.env["ASSETGROVE_CONFIG"] = settingsPath;
-  delete process.env["ASSETGROVE_WORK_ITEM"];
-  for (const name of REFUSED_VARIABLES)
-    for (const key of [name, name.toLowerCase()]) {
-      keep(key);
-      delete process.env[key];
-    }
-  const git = (...args: string[]) =>
-    spawnSync("git", args, { cwd: dir, encoding: "utf8", env: process.env });
+  const restore = isolateForSettings(settingsPath);
+  const git = (...args: string[]) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
   git("init", "--quiet");
   git("config", "user.email", "pack@example.test");
   git("config", "user.name", "Pack Test");
@@ -158,7 +150,7 @@ export function tempProject(options: { settings?: Record<string, unknown> } = {}
   };
   writeSettings(options.settings);
 
-  const env = (): NodeJS.ProcessEnv => ({ ...process.env, ASSETGROVE_CONFIG: settingsPath });
+  const env = (): NodeJS.ProcessEnv => withConfigOverride(settingsPath);
 
   return {
     dir,
@@ -212,19 +204,6 @@ export function tempProject(options: { settings?: Record<string, unknown> } = {}
     async mcp(opts = {}) {
       const input = new PassThrough();
       const output = new PassThrough();
-      const pending = new Map<number, (message: Record<string, unknown>) => void>();
-      let buffered = "";
-      output.on("data", (chunk: Buffer) => {
-        buffered += chunk.toString("utf8");
-        let end: number;
-        while ((end = buffered.indexOf("\n")) >= 0) {
-          const line = buffered.slice(0, end).trim();
-          buffered = buffered.slice(end + 1);
-          if (line === "") continue;
-          const message = JSON.parse(line) as { id?: number };
-          if (typeof message.id === "number") pending.get(message.id)?.(message);
-        }
-      });
       const prompt = portOf(opts);
       const ctx: RunContext = {
         settings: loadSettings({ cwd: dir }),
@@ -235,38 +214,86 @@ export function tempProject(options: { settings?: Record<string, unknown> } = {}
         ...(opts.providerScript !== undefined && { providerScript: opts.providerScript }),
       };
       const served = serveMcp(ctx, input, output, { target: dir });
-      let next = 0;
-      const session: McpSession = {
-        request: (method, params = {}) =>
-          new Promise((done) => {
-            const id = ++next;
-            pending.set(id, done);
-            input.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-          }),
-        notify: (method, params) => {
-          input.write(
-            `${JSON.stringify({ jsonrpc: "2.0", method, ...(params !== undefined && { params }) })}\n`,
-          );
-        },
-        close: async () => {
-          input.end();
-          await served;
-        },
-      };
-      await session.request("initialize", {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "assetgrove-testing", version: "0.0.0" },
+      return rpcSession(input, output, served);
+    },
+    async mcpServer(opts = {}) {
+      const child = spawn(process.execPath, [CLI, "mcp"], {
+        cwd: dir,
+        env: { ...env(), ...opts.env },
+        stdio: ["pipe", "pipe", "pipe"],
       });
-      session.notify("notifications/initialized");
-      return session;
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+      const exited = new Promise<void>((done) => child.once("close", () => done()));
+      return rpcSession(child.stdin, child.stdout, exited, () => stderr);
     },
     close() {
-      for (const [key, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
+      restore();
       rmSync(root, { recursive: true, force: true });
     },
   };
+}
+
+/**
+ * A JSON-RPC session over newline-delimited messages: requests written to `input`, answers read
+ * from `output`. It sends `initialize` and `notifications/initialized` before it is returned.
+ * `done` settles when the server has ended; a request still waiting then is answered with an error
+ * carrying `stderr()`.
+ */
+async function rpcSession(
+  input: Writable,
+  output: Readable,
+  done: Promise<unknown>,
+  stderr: () => string = () => "",
+): Promise<McpSession> {
+  const pending = new Map<number, (message: Record<string, unknown>) => void>();
+  let buffered = "";
+  output.on("data", (chunk: Buffer) => {
+    buffered += chunk.toString("utf8");
+    let end: number;
+    while ((end = buffered.indexOf("\n")) >= 0) {
+      const line = buffered.slice(0, end).trim();
+      buffered = buffered.slice(end + 1);
+      if (line === "") continue;
+      const message = JSON.parse(line) as { id?: number };
+      if (typeof message.id === "number") {
+        pending.get(message.id)?.(message);
+        pending.delete(message.id);
+      }
+    }
+  });
+  void done.then(() => {
+    for (const [id, answer] of pending)
+      answer({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32000, message: `the MCP server ended: ${stderr()}` },
+      });
+    pending.clear();
+  });
+  let next = 0;
+  const session: McpSession = {
+    request: (method, params = {}) =>
+      new Promise((answer) => {
+        const id = ++next;
+        pending.set(id, answer);
+        input.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+      }),
+    notify: (method, params) => {
+      input.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method, ...(params !== undefined && { params }) })}\n`,
+      );
+    },
+    close: async () => {
+      input.end();
+      await done;
+    },
+  };
+  await session.request("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "assetgrove-testing", version: "0.0.0" },
+  });
+  session.notify("notifications/initialized");
+  return session;
 }
