@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { defaultAnchor, profileFrame } from "../animation/run.ts";
+import { choiceLoops, defaultAnchor, profileFrame } from "../animation/run.ts";
 import { qaStyle } from "../animation/commands.ts";
 import { fixFrame } from "../animation/fix.ts";
 import { splitStrip } from "../animation/strip.ts";
@@ -231,6 +231,8 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     const frames = new Set(regions.flatMap((r) => (r.frame !== undefined ? [r.frame] : [])));
     if (kind === "frame") {
       checkFrames(frames, imageSize(bytes), profileFrame(source.profile));
+      const scaleRoute = routes["fix-scale"];
+      if (!scaleRoute) throw new InputError('no model route for operation "fix-scale"');
       // The frame fix pins the point the family's template keeps still: one motion-template
       // decision first when the spec declares no template and none is named for the family.
       jobs = [
@@ -249,6 +251,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
           routes,
         ),
         jobOf("edit", route, candidates * frames.size),
+        jobOf("fix-scale", scaleRoute, candidates * frames.size),
       ];
       job = "fix-frame";
     } else {
@@ -466,7 +469,8 @@ cost cap in USD. A region is "<x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]...
 pixels or, with % on each value, in percent; paths resolve inside the project root. The job: a
 masked edit when the edit route's adapter declares the mask capability (a mask=PATH region sends
 that file), otherwise an edit of the whole image with the notes (--keep-rest asks to keep the rest);
-frame regions take fix-frame's path, one edit per frame; view regions on a 3D asset run another
+frame regions take fix-frame's path, one edit per frame plus one fix-scale decision per frame
+when its candidate scales differ, both in the confirmed spend; view regions on a 3D asset run another
 round of the 3D kind with the note (--bible names the style bible). The asset, the version's
 sha256 and each region, note, mask and reference are in the request's digest; the notes pass the
 prompt policy before the confirmation, and the spend form shows each region and note. Each region
@@ -676,6 +680,7 @@ version is appended with answers naming the requests. The run that made the asse
                 anchor,
                 family,
                 pin,
+                loop: choiceLoops(choice),
                 groundTolerance: thresholdsFor(source.profile).groundTolerance,
                 subject: source.spec.subject ?? source.spec.assetId ?? asset.assetId,
                 index: f,

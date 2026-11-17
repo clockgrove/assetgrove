@@ -16,6 +16,9 @@ export default {
     costUsd: 0.04,
   }),
   decide: (request: { prompt: string; operation?: string }) => {
+    if (request.operation === "fix-scale") {
+      return { answer: { type: "choice", choice: "area" }, costUsd: 0.001 };
+    }
     if (request.operation === "holes") {
       return { answer: { type: "boolean", probability: 0.1 }, costUsd: 0.003 };
     }

@@ -93,16 +93,21 @@ export const fixFrameCommand = defineCommand<FixFrameArgs>({
   tool: "fix_frame",
   summary: "regenerate one bad frame of a strip by a reference-guided edit within a cost cap",
   details: `Edits frame <n> (1-based) with one reference-guided edit call, from an approved neighbour
-frame (--from) or the approved key pose (--key-pose), within the cost cap in USD. Only that
-frame changes. Writes the fixed strip, its provenance (the strip's own, with the call and a
-fixes entry added) and its QA report and previews into --out. --provenance (default
-<strip>.provenance.json when it exists) is the strip's own provenance or the record recipe or op
-wrote for it; any other file is refused (exit 2) before the call. Never writes into a target and
-never sets a review value. --spec reads the asset spec's gait, template (and subject) for that QA.
-A family whose spec declares no template and that no template is named for first costs one
-motion-template decision, which picks the registration pin and the QA's template.
+frame (--from) or the approved key pose (--key-pose), within the cost cap in USD. When the edited
+figure's candidate scales (area, height, head box) register to different pixels and the strip has
+another frame to draw beside it, one fix-scale decision call then picks the scale at which the
+character matches the surrounding frames; the edit and that decision are reserved against the cap
+together before the first call. Only that frame changes. Writes the fixed strip, its provenance
+(the strip's own, with the calls and a fixes entry added) and its QA report and previews into
+--out. --provenance (default <strip>.provenance.json when it exists) is the strip's own provenance
+or the record recipe or op wrote for it; any other file is refused (exit 2) before the call. Never
+writes into a target and never sets a review value. --spec reads the asset spec's gait, template
+(and subject) for that QA. A family whose spec declares no template and that no template is named
+for first costs one motion-template decision, which picks the registration pin and the QA's
+template.
 Give exactly one of --from and --key-pose.
---dry-run prints the planned call, the forecast and the spend left under the daily and work-item
+--dry-run prints the planned calls (the edit, the fix-scale decision and any motion-template
+decision), the forecast and the spend left under the daily and work-item
 limits, and needs no key.`,
   input: {
     type: "object",
