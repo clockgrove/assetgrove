@@ -19,9 +19,15 @@ import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256, sniffMediaType } from "../request.ts";
 import type { AssetSpec, LoadedReference, QaResult, Reason, TargetProfile } from "../types.ts";
-import { applyStability, MATERIAL_LIT_CHECKS } from "../qa/stability.ts";
+import {
+  applyStability,
+  MATERIAL_FLICKER_CHECK,
+  MATERIAL_LIT_CHECKS,
+  mergeFiltering,
+} from "../qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "../qa/stability.ts";
-import { CORE_METHODS, temporalChecks, validateMaterialMap } from "./core.ts";
+import { CORE_METHODS, temporalPairs, temporalReason, validateMaterialMap } from "./core.ts";
+import { judgeMapFlicker, needsDecision } from "./flicker.ts";
 import { checkCompressed } from "./rendition.ts";
 import type { MaterialChannel } from "./core.ts";
 
@@ -250,6 +256,24 @@ export async function runMaterials(options: {
         ? config.flickerBound
         : config.flickerBound?.[channel];
     if (bound === undefined) throw new InputError(`missing flicker bound for ${channel}`);
+    // Pixels clear each frame pair whose map holds still where the albedo is unchanged; a pair they
+    // cannot clear is judged by one map-flicker decision, and only "flickers" fails (#364).
+    const temporal: Reason[] = [];
+    for (const pair of temporalPairs(albedo, map, nativeGrid, bound)) {
+      temporal.push(
+        needsDecision(pair)
+          ? await judgeMapFlicker(call, {
+              albedo,
+              map,
+              grid: nativeGrid,
+              channel,
+              pair,
+              bound,
+              subject: spec.subject ?? spec.assetId,
+            })
+          : temporalReason(pair, bound),
+      );
+    }
     reasons.push(
       ...[
         ...validateMaterialMap(albedo, map, nativeGrid, channel, {
@@ -257,14 +281,26 @@ export async function runMaterials(options: {
           emissiveSources: sources,
           namedLightSources,
         }),
-        ...temporalChecks(albedo, map, nativeGrid, bound),
+        ...temporal,
       ].map((r) => ({ ...r, reason: `${channel}: ${r.reason}` })),
     );
   }
+  // A flicker decision filters only where the map-flicker model is measured stable; otherwise advisory.
+  const judged = applyStability(
+    reasons,
+    reasons.some((r) => r.source === "decision")
+      ? { "map-flicker": call.route("map-flicker") }
+      : {},
+    { checks: [MATERIAL_FLICKER_CHECK], ...(options.stability && { entries: options.stability }) },
+  );
+  reasons.splice(0, reasons.length, ...judged.reasons);
+  const flickerFiltering = judged.filtering;
   const outputs: MaterialOutput[] = [];
   const sidecars = new Map<string, Record<string, unknown>>();
   let litComplete = false;
-  let filtering: FilteringState[] | undefined;
+  let filtering: FilteringState[] | undefined = flickerFiltering.length
+    ? flickerFiltering
+    : undefined;
   const common = {
     startedAt,
     profileHash: sha256(Buffer.from(JSON.stringify(profile))),
@@ -341,7 +377,7 @@ export async function runMaterials(options: {
     );
     return { passed: qa.passed, reportPath, outputs, qa, ...(filtering && { filtering }) };
   };
-  if (reasons.some((r) => !r.passed)) return writeReport();
+  if (reasons.some((r) => !r.passed && !r.shadow)) return writeReport();
   try {
     for (const channel of ["albedo", ...config.channels] as const)
       for (const scale of config.scales) {
@@ -504,7 +540,7 @@ export async function runMaterials(options: {
         ...(options.stability && { entries: options.stability }),
       },
     );
-    filtering = lit.filtering;
+    filtering = mergeFiltering(flickerFiltering, lit.filtering);
     reasons.push(...lit.reasons);
     litComplete = true;
     await writeFile(

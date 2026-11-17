@@ -6,6 +6,7 @@ import {
   deriveNormals,
   extractScalarMap,
   temporalChecks,
+  temporalPairs,
   validateMaterialMap,
 } from "../src/material/core.ts";
 import type { MaterialGrid } from "../src/material/core.ts";
@@ -164,22 +165,87 @@ test("positive scalar ranges ignore transparent background and empty geometry fa
   );
 });
 
-test("albedo brightness changes cannot hide map flicker at an unchanged pose", () => {
+test("albedo brightness changes cannot hide map flicker: with no unchanged albedo the pixel rule clears nothing", () => {
   const grid = { width: 1, height: 1, count: 2 };
   const albedo = fill(grid, (x) => x * 255),
     map = fill(grid, (x) => x * 255);
   const checks = temporalChecks(albedo, map, grid, 0);
   assert.deepEqual(
     checks.map(({ passed, reason }) => ({ passed, reason })),
+    [0, 1].map((frame) => ({
+      passed: false,
+      reason: `frame ${frame}: 0 of 1 pose-corresponding pixels have unchanged albedo, under the 0.25 share; the map cannot be compared by pixels`,
+    })),
+  );
+  assert.deepEqual(
+    temporalPairs(albedo, map, grid, 0).map((p) => p.state),
+    ["no-unchanged", "no-unchanged"],
+  );
+});
+
+test("a re-lit figure with one stray unchanged-albedo pixel is not cleared by that pixel", () => {
+  // Every pixel of the figure is re-lit between frames except one saturated pixel that matches.
+  const grid = { width: 8, height: 8, count: 2 };
+  const albedo = createRaster(16, 8),
+    map = createRaster(16, 8);
+  for (let frame = 0; frame < 2; frame++)
+    for (let y = 0; y < 8; y++)
+      for (let x = 0; x < 8; x++) {
+        setPixel(albedo, frame * 8 + x, y, [frame ? 200 : 80, 90, 90, 255]);
+        setPixel(map, frame * 8 + x, y, [frame ? 250 : 10, 10, 10, 255]);
+      }
+  for (let frame = 0; frame < 2; frame++) {
+    setPixel(albedo, frame * 8, 0, [255, 255, 255, 255]);
+    setPixel(map, frame * 8, 0, [10, 10, 10, 255]);
+  }
+  const pairs = temporalPairs(albedo, map, grid, 0.03);
+  assert.deepEqual(
+    pairs.map((p) => [p.state, p.samples, p.corresponding]),
     [
-      {
-        passed: false,
-        reason: "frame 0: residual 1.000000 > bound 0; 1 pose-corresponding pixels",
-      },
-      {
-        passed: false,
-        reason: "frame 1: residual 1.000000 > bound 0; 1 pose-corresponding pixels",
-      },
+      ["no-unchanged", 1, 64],
+      ["no-unchanged", 1, 64],
     ],
+  );
+  assert.ok(temporalChecks(albedo, map, grid, 0.03).every((c) => !c.passed));
+});
+
+test("map flicker is compared only where the shifted albedo is unchanged: a swinging leg over the torso is not a change", () => {
+  // A walk-like pair: the torso holds still; the leg hangs below it in frame 0 and swings up in
+  // front of it in frame 1. After the centroid shift, leg pixels land where the torso was: their
+  // map differs (leg against torso), but so does their albedo.
+  const grid = { width: 8, height: 8, count: 2 };
+  const albedo = createRaster(16, 8),
+    map = createRaster(16, 8);
+  for (let frame = 0; frame < 2; frame++)
+    for (let y = 0; y < 5; y++)
+      for (let x = 2; x < 6; x++) {
+        setPixel(albedo, frame * 8 + x, y, [100, 100, 100, 255]);
+        setPixel(map, frame * 8 + x, y, [60, 60, 60, 255]);
+      }
+  const leg = (frame: number, x: number, y: number) => {
+    setPixel(albedo, frame * 8 + x, y, [30, 30, 30, 255]);
+    setPixel(map, frame * 8 + x, y, [250, 250, 250, 255]);
+  };
+  for (let y = 5; y < 8; y++) leg(0, 2, y);
+  for (const [x, y] of [
+    [3, 3],
+    [4, 3],
+    [3, 4],
+    [4, 4],
+  ] as const)
+    leg(1, x, y);
+  // Old rule: the leg pixel shifted onto the torso compared map 250 against 60 and failed.
+  const pairs = temporalPairs(albedo, map, grid, 0.03);
+  assert.ok(pairs.every((p) => p.corresponding > p.samples));
+  assert.deepEqual(
+    pairs.map((p) => p.state),
+    ["within", "within"],
+  );
+  assert.ok(temporalChecks(albedo, map, grid, 0.03).every((c) => c.passed));
+  // A map that changes on the still torso is still over the bound.
+  setPixel(map, 8 + 3, 1, [200, 200, 200, 255]);
+  assert.deepEqual(
+    temporalPairs(albedo, map, grid, 0.03).map((p) => p.state),
+    ["over", "over"],
   );
 });

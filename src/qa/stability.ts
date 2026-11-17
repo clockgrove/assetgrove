@@ -167,6 +167,19 @@ export const MATERIAL_LIT_CHECKS: readonly QaCheck[] = [
 ].map((id) => vision(id, "material-qa"));
 
 /**
+ * Material map flicker (src/material/flicker.ts, #364): a typed choice decision judges each frame
+ * pair the pixel comparison could not clear; only `flickers` fails. Its deterministic twin (pairs
+ * cleared by pixels, or with no corresponding pixels) is not model-backed.
+ */
+export const MATERIAL_FLICKER_CHECK: QaCheck = {
+  id: "material-flicker",
+  version: "1",
+  modelBacked: true,
+  source: "decision",
+  operation: "map-flicker",
+};
+
+/**
  * Every declared QA check that filters candidates. A check whose verdict a model decides is
  * declared here as model-backed; the coverage test reads this list.
  */
@@ -177,6 +190,7 @@ export const QA_CHECKS: readonly QaCheck[] = [
   LOOKDEV_MARKINGS_CHECK,
   STYLE_SCORE_CHECK,
   ...MATERIAL_LIT_CHECKS,
+  MATERIAL_FLICKER_CHECK,
   AUDIT_STYLE_CHECK,
   AUDIT_IDENTITY_CHECK,
 ];

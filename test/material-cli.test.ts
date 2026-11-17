@@ -181,6 +181,20 @@ test("materials dry-run forecasts defaults without provider or output writes and
   // The QA call and the prompt policy's model check on the spec's text.
   assert.equal(doc.plan.estimateUsd, 0.021);
   await assert.rejects(readFile(join(out, "materials.json")), { code: "ENOENT" });
+  // An animated albedo forecasts the map-flicker upper bound: one per channel and frame pair.
+  await writeFile(
+    spec,
+    JSON.stringify({ kind: "sprite-strip", assetId: "synthetic", frames: { count: 3 } }),
+  );
+  const animated = JSON.parse((await cli(...args)).stdout);
+  assert.equal(animated.plan.calls, 1 + 5 * 3);
+  assert.equal(
+    animated.plan.perCall.filter((c: { operation: string }) => c.operation === "map-flicker")
+      .length,
+    15,
+  );
+  assert.ok(Math.abs(animated.plan.estimateUsd - (0.021 + 15 * 0.001)) < 1e-9);
+  await writeFile(spec, JSON.stringify({ kind: "still", assetId: "synthetic" }));
   const refused = await cli(...args, "--cap", "0");
   assert.equal(refused.code, 3);
   assert.equal(JSON.parse(refused.stdout).error.code, "cap_refused");
