@@ -229,9 +229,16 @@ function centroid(raster: Raster, grid: MaterialGrid, frame: number): [number, n
 export const ALBEDO_UNCHANGED = 8;
 
 /**
+ * The least share of pose-corresponding pixels that must have unchanged albedo for the pixel rule
+ * to clear a pair. Below it (a re-lit or repainted figure with a few stray matching pixels) the
+ * comparison covers too little of the figure to say the map is stable, so the pair is uncleared.
+ */
+export const MIN_UNCHANGED_SHARE = 0.25;
+
+/**
  * One frame pair's map comparison. `within`/`over`: the residual on pixels whose shifted albedo is
- * unchanged is within or over the bound; `no-unchanged`: opaque pixels correspond but none has
- * unchanged albedo, so the rule cannot clear the pair; `unmeasured`: no opaque pixel corresponds.
+ * unchanged is within or over the bound; `no-unchanged`: opaque pixels correspond but fewer than
+ * `MIN_UNCHANGED_SHARE` of them have unchanged albedo, so the rule cannot clear the pair; `unmeasured`: no opaque pixel corresponds.
  */
 export interface TemporalPair {
   frame: number;
@@ -294,7 +301,7 @@ export function temporalPairs(
       shift: [dx, dy],
       state: !corresponding
         ? "unmeasured"
-        : !samples
+        : samples < MIN_UNCHANGED_SHARE * corresponding
           ? "no-unchanged"
           : residual <= bound
             ? "within"
@@ -321,7 +328,7 @@ export function temporalReason(pair: TemporalPair, bound: number): Reason {
       return reason(
         "material-flicker",
         false,
-        `frame ${frame}: no pose-corresponding pixel has unchanged albedo (${corresponding} pose-corresponding pixels); the map cannot be compared by pixels`,
+        `frame ${frame}: ${samples} of ${corresponding} pose-corresponding pixels have unchanged albedo, under the ${MIN_UNCHANGED_SHARE} share; the map cannot be compared by pixels`,
       );
     default:
       return reason(

@@ -174,13 +174,39 @@ test("albedo brightness changes cannot hide map flicker: with no unchanged albed
     checks.map(({ passed, reason }) => ({ passed, reason })),
     [0, 1].map((frame) => ({
       passed: false,
-      reason: `frame ${frame}: no pose-corresponding pixel has unchanged albedo (1 pose-corresponding pixels); the map cannot be compared by pixels`,
+      reason: `frame ${frame}: 0 of 1 pose-corresponding pixels have unchanged albedo, under the 0.25 share; the map cannot be compared by pixels`,
     })),
   );
   assert.deepEqual(
     temporalPairs(albedo, map, grid, 0).map((p) => p.state),
     ["no-unchanged", "no-unchanged"],
   );
+});
+
+test("a re-lit figure with one stray unchanged-albedo pixel is not cleared by that pixel", () => {
+  // Every pixel of the figure is re-lit between frames except one saturated pixel that matches.
+  const grid = { width: 8, height: 8, count: 2 };
+  const albedo = createRaster(16, 8),
+    map = createRaster(16, 8);
+  for (let frame = 0; frame < 2; frame++)
+    for (let y = 0; y < 8; y++)
+      for (let x = 0; x < 8; x++) {
+        setPixel(albedo, frame * 8 + x, y, [frame ? 200 : 80, 90, 90, 255]);
+        setPixel(map, frame * 8 + x, y, [frame ? 250 : 10, 10, 10, 255]);
+      }
+  for (let frame = 0; frame < 2; frame++) {
+    setPixel(albedo, frame * 8, 0, [255, 255, 255, 255]);
+    setPixel(map, frame * 8, 0, [10, 10, 10, 255]);
+  }
+  const pairs = temporalPairs(albedo, map, grid, 0.03);
+  assert.deepEqual(
+    pairs.map((p) => [p.state, p.samples, p.corresponding]),
+    [
+      ["no-unchanged", 1, 64],
+      ["no-unchanged", 1, 64],
+    ],
+  );
+  assert.ok(temporalChecks(albedo, map, grid, 0.03).every((c) => !c.passed));
 });
 
 test("map flicker is compared only where the shifted albedo is unchanged: a swinging leg over the torso is not a change", () => {
