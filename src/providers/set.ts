@@ -77,6 +77,8 @@ export class ProviderSet implements GenerationProvider {
       providerId: parts.map((b) => b.providerId).join("+") || "none",
       paid: parts.some((b) => b.paid),
       hosts: [...new Set(parts.flatMap((b) => b.hosts))],
+      // Each call settles and reconciles as its own part declares (`parts`, `serve`).
+      settle: "declared",
       reconcile: "unavailable",
     };
   }

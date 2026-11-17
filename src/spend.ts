@@ -325,6 +325,11 @@ export class SpendLedger {
     });
   }
 
+  /** Appends a spend hold beside this ledger (`<stateDir>/holds.jsonl`) and returns it. */
+  hold(hold: Omit<Hold, "id" | "at">): Hold {
+    return appendHold(dirname(this.path), hold, this.now());
+  }
+
   private assertFits(limits: SpendLimitStatus[], amountUsd: number, what: string): void {
     // Nothing to spend is never refused, even when actual costs have run past a limit.
     if (amountUsd <= 0) return;
@@ -455,6 +460,13 @@ export interface Hold {
   ledgerUsd: number;
   providerUsd: number;
   gapUsd: number;
+  /**
+   * `settle-above-ceiling` for a call that settled above its route's estimate (`ledgerUsd` the
+   * estimate, `providerUsd` the settled cost); absent for a reconcile mismatch.
+   */
+  reason?: "settle-above-ceiling";
+  /** The call's route (`<providerId>:<operation>:<model>`), for a settle above the ceiling. */
+  route?: string;
 }
 
 export const HOLDS_FILE = "holds.jsonl";

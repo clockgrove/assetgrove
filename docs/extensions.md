@@ -18,6 +18,8 @@ A package declares `"assetgrove": { "api": 1, "entry": "./index.js" }` in packag
 
 Every extension name matches `^[a-z][a-z0-9-]*$` and is not `core`. Each kind, preset and adapter id is `<name>:<id>`.
 
+An adapter's provider declares its billing: `settle` (`reported` or `declared`) and `reconcile` (`lookup`, with `callCost`, or `unavailable`), and may implement `estimate(request, kind)`, which can only lower a call's reservation. Its `paid` is replaced by core's: paid unless the settings entry is `free` on a loopback `baseURL` ([settings.md](settings.md#billing)).
+
 A kind's `generate` may return `artifacts`. `stage` writes them to `<run>/c<n>-<kind>/`, with the kind turned into a file-name slug: every run of characters other than lower-case letters, digits and hyphens becomes one hyphen, so `ext:tile` writes to `c1-ext-tile/`. An artifact name the path rules refuse (a character Windows cannot hold such as `:`, a trailing dot or space, a device name, or two names differing only by case) is written under a safe name instead. Only the last segment of a name is kept, split on `/` and on `\`, and each refused character becomes `-`, a device name gets a `_` prefix, and a repeat gets `-2` before its extension. The candidate's record lists each such file with the name the generator returned under `artifactNames`, so a paid candidate is never lost to its artifact names.
 
 ## Loading

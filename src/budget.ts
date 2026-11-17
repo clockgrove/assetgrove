@@ -1,6 +1,6 @@
 import { InputError } from "./errors.ts";
 import { currentRunScope, type Journal } from "./runs/journal.ts";
-import type { ReserveMeta, SpendLedger } from "./spend.ts";
+import type { Hold, ReserveMeta, SpendLedger } from "./spend.ts";
 
 /**
  * Bounded spend: every provider call reserves against the run's cap first and is refused if it
@@ -19,6 +19,31 @@ export class BudgetExceededError extends Error {
     this.capUsd = capUsd;
     this.requestedUsd = requestedUsd;
   }
+}
+
+/**
+ * An adapter's estimate of a call above its route's estimate, the most one call may cost: refused
+ * before any spend, naming the route to re-price. Exit 3 `cap_refused`.
+ */
+export class EstimateAboveCeilingError extends BudgetExceededError {
+  readonly route: string;
+  constructor(route: string, operation: string, estimateUsd: number, ceilingUsd: number) {
+    super(ceilingUsd, 0, estimateUsd, `the ${operation} call`);
+    this.name = "EstimateAboveCeilingError";
+    this.route = route;
+    const estimate = `$${estimateUsd.toFixed(4)}`;
+    this.message = `refused: the provider estimates the ${operation} call at ${estimate}, above the $${ceilingUsd.toFixed(4)} estimatedCostUsd of route ${route}, the most one call may cost; re-price the route: a person sets routes.${operation}.estimatedCostUsd in the developer settings to at least ${estimate}`;
+  }
+}
+
+/** The route estimate a paid call's settle is held against (`Budget.settle`). */
+export interface SettleCeiling {
+  /** The route's estimate: the most one call may cost. */
+  ceilingUsd: number;
+  /** The provider's settings id. */
+  provider: string;
+  /** The call's route, `<providerId>:<operation>:<model>`. */
+  route: string;
 }
 
 export interface Reservation {
@@ -103,15 +128,32 @@ export class Budget {
 
   /**
    * Releases the reservation and records what was actually spent, with the provider's request ID
-   * for the call when it gave one.
+   * for the call when it gave one. With a `ceiling`, a ledger reservation that settles above the
+   * route's estimate appends a spend hold, as a reconcile mismatch does, and returns it; a cost at
+   * or under the estimate settles with no hold.
    */
-  settle(reservation: Reservation, actualUsd: number, requestId?: string): void {
+  settle(
+    reservation: Reservation,
+    actualUsd: number,
+    requestId?: string,
+    ceiling?: SettleCeiling,
+  ): Hold | undefined {
     if (reservation.settled) throw new Error("reservation already settled");
     reservation.settled = true;
     this.reserved -= reservation.amountUsd;
     this.spent += actualUsd;
-    if (reservation.ledgerId !== undefined)
-      this.ledger?.settle(reservation.ledgerId, actualUsd, requestId);
+    if (reservation.ledgerId === undefined || this.ledger === undefined) return undefined;
+    this.ledger.settle(reservation.ledgerId, actualUsd, requestId);
+    if (ceiling === undefined || actualUsd <= ceiling.ceilingUsd + 1e-9) return undefined;
+    return this.ledger.hold({
+      provider: ceiling.provider,
+      runId: currentRunScope()?.journal?.runId ?? "",
+      ledgerUsd: ceiling.ceilingUsd,
+      providerUsd: actualUsd,
+      gapUsd: actualUsd - ceiling.ceilingUsd,
+      reason: "settle-above-ceiling",
+      route: ceiling.route,
+    });
   }
 
   /** Counts spend made before this run, already in any ledger, against the run's cap. */

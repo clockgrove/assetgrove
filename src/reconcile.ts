@@ -1,8 +1,8 @@
 /**
  * Reconcile (design section 3): the spend ledger is an estimate, so where a provider reports its
  * own usage to an ordinary key, a run's ledger spend is compared with it when the run ends. The
- * gateway and Tripo report each call's cost (`per-call-cost`, looked up by the request ID the
- * journal holds: the generation ID, the Tripo task ID), so another run on the same key or a credit
+ * gateway and Tripo can look up each call's cost (billing `reconcile: "lookup"`, method
+ * `per-call-cost`, by the request ID the journal holds: the generation ID, the Tripo task ID), so another run on the same key or a credit
  * top-up changes nothing. Other providers record `unavailable`. Only calls whose ledger cost came
  * from the provider (`costSource` "provider") are compared; a call the ledger settled at the
  * route's estimate is settled to the looked-up cost instead, and is on neither side. A gap above

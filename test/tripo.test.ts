@@ -292,7 +292,7 @@ test("callCost prices a task by its consumed credits at usdPerCredit, and spends
     [["GET", "/v2/openapi/task/task-1"]],
   );
   const billing = provider(f, [], undefined, { usdPerCredit: 0.01 }).billing;
-  assert.equal(billing.reconcile, "per-call-cost");
+  assert.equal(billing.reconcile, "lookup");
   assert.ok(billing.callCost);
 });
 
@@ -350,7 +350,7 @@ test("the tripo adapter keeps callCost through its billing", () => {
     { keyEnv: "ASSETGROVE_TEST_TRIPO_KEY", usdPerCredit: 0.01 },
     { env: { ASSETGROVE_TEST_TRIPO_KEY: KEY } },
   );
-  assert.equal(configured.provider.billing.reconcile, "per-call-cost");
+  assert.equal(configured.provider.billing.reconcile, "lookup");
   assert.equal(typeof configured.provider.billing.callCost, "function");
 });
 

@@ -60,7 +60,7 @@ async function paidScript(
   const reader =
     usage === undefined
       ? ""
-      : `reconcile: "per-call-cost",
+      : `reconcile: "lookup",
   callCost: () => ${
     usage.flag !== undefined
       ? `existsSync(${JSON.stringify(usage.flag)}) ? Number(readFileSync(${JSON.stringify(usage.flag)}, "utf8")) : undefined`
@@ -84,7 +84,7 @@ export default {
   }
     return { ...base.image(r, i), costUsd: 0.05 };
   },
-  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.02 }),
 };`,
   );
   approve(path);
@@ -223,7 +223,7 @@ const billed = (id) => ${
     };
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   limitReading: () => ({ balanceUsd: 50 - 7.77 * images + 100, source: "scripted balance" }),
   callCost: (id) => (id.startsWith("scripted-image-") ? billed(id) : 0),
   image: (r, i) => {
@@ -427,7 +427,7 @@ async function estimateScript(dir: string, billedUsd: number): Promise<string> {
     `import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   callCost: (id) => (id.startsWith("scripted-image-") ? ${billedUsd} : 0),
   image: (r, i) => base.image(r, i),
   vision: (r, i) => base.vision(r, i),
@@ -502,13 +502,13 @@ test("a settled estimate is settled once while another call of the run is still 
 import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   callCost: (id) =>
     id.startsWith("scripted-image-") ? 0.0001
     : !id.startsWith("scripted-vision-") ? 0
-    : existsSync(${JSON.stringify(flag)}) ? 0.05 : undefined,
+    : existsSync(${JSON.stringify(flag)}) ? 0.02 : undefined,
   image: (r, i) => base.image(r, i),
-  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.02 }),
 };`,
   );
   approve(path);
@@ -549,13 +549,13 @@ test("an estimate first reported on a retry is settled once over the following r
 import base from ${JSON.stringify(pathToFileURL(passingScript).href)};
 export default {
   paid: true,
-  reconcile: "per-call-cost",
+  reconcile: "lookup",
   callCost: (id) =>
     id.startsWith("scripted-image-") ? (existsSync(${JSON.stringify(images)}) ? 0.0001 : undefined)
     : !id.startsWith("scripted-vision-") ? 0
-    : existsSync(${JSON.stringify(vision)}) ? 0.05 : undefined,
+    : existsSync(${JSON.stringify(vision)}) ? 0.02 : undefined,
   image: (r, i) => base.image(r, i),
-  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.05 }),
+  vision: (r, i) => ({ ...base.vision(r, i), costUsd: 0.02 }),
 };`,
   );
   approve(path);
