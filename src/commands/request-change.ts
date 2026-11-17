@@ -231,6 +231,8 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     const frames = new Set(regions.flatMap((r) => (r.frame !== undefined ? [r.frame] : [])));
     if (kind === "frame") {
       checkFrames(frames, imageSize(bytes), profileFrame(source.profile));
+      const scaleRoute = routes["fix-scale"];
+      if (!scaleRoute) throw new InputError('no model route for operation "fix-scale"');
       // The frame fix pins the point the family's template keeps still: one motion-template
       // decision first when the spec declares no template and none is named for the family.
       jobs = [
@@ -249,6 +251,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
           routes,
         ),
         jobOf("edit", route, candidates * frames.size),
+        jobOf("fix-scale", scaleRoute, candidates * frames.size),
       ];
       job = "fix-frame";
     } else {

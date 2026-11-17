@@ -123,6 +123,7 @@ export default {
     return { images: [{ mediaType: "image/png", bytes: encodePng(image) }] };
   },
   vision: () => ({ text: "ok" }),
+  decide: () => ({ answer: { type: "choice", choice: "area" }, costUsd: 0.001 }),
   promptPolicy: () => ({ answer: { type: "boolean", probability: 0 } }),
   ${options.template !== undefined ? `motionTemplate: () => ({ answer: { type: "choice", choice: JSON.parse(readFileSync(${JSON.stringify(answer)}, "utf8")) }, costUsd: 0.001 }),` : ""}
 };`,

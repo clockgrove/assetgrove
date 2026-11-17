@@ -203,7 +203,7 @@ test("fix-frame: regenerates only that frame and records it in provenance", asyn
   ];
   const dry = await cli([...base, "--dry-run", "--json"]);
   assert.equal(dry.code, 0, dry.stderr);
-  assert.equal(doc(dry).plan.calls, 1);
+  assert.equal(doc(dry).plan.calls, 2);
   assert.equal((await cli([...base, "--dry-run", "--cap", "0.01", "--json"])).code, 3);
   declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   assert.equal((await cli([...base, "--json"])).code, 4, "no key and no script: provider error");
@@ -228,10 +228,11 @@ test("fix-frame: regenerates only that frame and records it in provenance", asyn
   });
   const provenance = JSON.parse(await readFile(d.provenancePath, "utf8"));
   assert.equal(provenance.generator, "sheet-import");
-  assert.equal(provenance.calls.length, 1);
+  assert.equal(provenance.calls.length, 2);
   assert.equal(provenance.calls[0].operation, "edit");
   assert.equal(provenance.fixes[0].frame, 3);
-  assert.equal(provenance.costUsd, 0.04);
+  assert.equal(provenance.calls[1].operation, "fix-scale");
+  assert.equal(provenance.costUsd, 0.041);
   // The fixed frame now rests on the ground line.
   const ground = d.qa.reasons.filter((x: { check: string }) => x.check === "ground-contact");
   assert.ok(

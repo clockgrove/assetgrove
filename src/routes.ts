@@ -124,6 +124,7 @@ export interface Routes {
   flicker: Route;
   /** Whether a see-through area inside an animation frame's outline is a hole or an opening. */
   holes: Route;
+  "fix-scale": Route;
   /** Image-to-3D: a textured character model from the approved turnaround. */
   model3d: Route;
   /** The provider's auto-rig for the spec's gait. */
@@ -580,6 +581,19 @@ export const defaultRoutes: Routes = {
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
     providerTermsAsOf: "2026-11-15",
   },
+  // Fix-frame's scale (#376): one typed choice among candidate sizes, on the typed decision model.
+  "fix-scale": {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-15)",
+    providerTermsAsOf: "2026-11-15",
+  },
   // Prompt compilation for plan (the planning role) and material QA: the vision model.
   compiler: {
     model: "google/gemini-3-flash",
@@ -630,6 +644,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   identity: "decisions",
   flicker: "decisions",
   holes: "decisions",
+  "fix-scale": "decisions",
   [PROMPT_POLICY_OPERATION]: "decisions",
   [BRIEF_POLICY_OPERATION]: "decisions",
   [REFERENCE_VIEW_OPERATION]: "decisions",
