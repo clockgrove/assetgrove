@@ -3,7 +3,7 @@ import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runFixFrame, stripTarget } from "../src/animation/commands.ts";
+import { planFrameFix, runFixFrame, stripTarget } from "../src/animation/commands.ts";
 import {
   DEFAULT_FIX_CAP_USD,
   buildFixPrompt,
@@ -33,6 +33,7 @@ import { syntheticProfile } from "./fixtures/synthetic.ts";
 
 const frame = { width: 24, height: 32 };
 const anchor = { x: 12, y: 30 };
+const AREA = { answer: { type: "choice" as const, choice: "area" }, costUsd: 0.001 };
 
 function rect(r: Raster, x0: number, y0: number, w: number, h: number, rgb: number[]): void {
   for (let y = y0; y < y0 + h; y++)
@@ -61,6 +62,7 @@ function setup(options: { transparent?: boolean; cap?: number } = {}) {
       images: [{ mediaType: "image/png", bytes: figureImage(!!options.transparent) }],
     }),
     vision: () => ({ text: "" }),
+    decide: () => AREA,
   });
   const call = new Caller({
     provider,
@@ -87,10 +89,12 @@ function base(call: Caller, over: Partial<FixFrameOptions> = {}): FixFrameOption
   };
 }
 
-test("plans one edit call and builds a prompt with the note", () => {
+test("plans the edit call and the fix-scale decision, and builds a prompt with the note", () => {
   const plan = planFix(defaultRoutes);
-  assert.equal(plan.length, 1);
-  assert.equal(plan[0]?.operation, "edit");
+  assert.deepEqual(
+    plan.map((c) => c.operation),
+    ["edit", "fix-scale"],
+  );
   const prompt = buildFixPrompt({
     subject: "fox",
     family: "walk",
@@ -131,7 +135,7 @@ for (const transparent of [false, true]) {
       refs.references.map((r) => sha256(r.bytes)),
       [sha256(neighbourPng), sha256(badPng)],
     );
-    assert.equal(provider.calls.length, 1);
+    assert.equal(provider.calls.length, 2);
   });
 }
 
@@ -167,7 +171,9 @@ test("provenance records the call, the fix and the frame transform", async () =>
   const record = call.records[0];
   assert.ok(record);
   const p = result.provenance;
-  assert.equal(p.calls.length, 1);
+  const scaleRecord = call.records[1];
+  assert.equal(scaleRecord?.operation, "fix-scale");
+  assert.equal(p.calls.length, 2);
   // A strip made outside Assetgrove is no longer that once the fix adds a call.
   assert.equal(p.madeOutsideAssetgrove, undefined);
   assert.equal(record.operation, "edit");
@@ -175,9 +181,11 @@ test("provenance records the call, the fix and the frame transform", async () =>
   assert.match(record.route, /edit/);
   assert.equal(record.prompt, result.fix.prompt);
   assert.ok(record.seed !== undefined);
-  assert.deepEqual(p.requestIds, ["a", record.requestId]);
-  assert.deepEqual(p.models, ["m", record.model]);
-  assert.equal(p.costUsd, 0.3 + record.costUsd);
+  assert.deepEqual(p.requestIds, ["a", record.requestId, scaleRecord?.requestId]);
+  assert.deepEqual(p.models, ["m", record.model, scaleRecord?.model]);
+  assert.equal(p.costUsd, 0.3 + record.costUsd + (scaleRecord?.costUsd ?? 0));
+  assert.equal(p.fixes?.[0]?.scale?.chosen, "area");
+  assert.equal(p.fixes?.[0]?.scale?.decision?.requestId, scaleRecord?.requestId);
   assert.equal(p.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
   assert.equal(p.fixes?.length, 1);
   assert.equal(p.fixes?.[0]?.requestId, record.requestId);
@@ -211,6 +219,39 @@ test("a key pose is sent first and a minimal provenance is made", async () => {
   assert.deepEqual(result.fix.from, { keyPose: { path: "key.png", sha256: keyPose.sha256 } });
   assert.equal(result.provenance.generator, "frame-fix");
   assert.equal(result.provenance.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
+});
+
+test("with a key pose, an empty frame beside the fixed one is passed over before the paid edit", async () => {
+  const bytes = encodePng(makeStrip(1));
+  const keyPose = {
+    role: "key pose (approved)",
+    path: "key.png",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  };
+  // Frames 1 and 2 blank: fixing frame 1 judges its size against frame 3, the nearest with a figure.
+  const blanked = makeStrip(4);
+  for (let y = 0; y < frame.height; y++)
+    for (let x = 0; x < frame.width * 2; x++) setPixel(blanked, x, y, [0, 0, 0, 0]);
+  const { provider, call } = setup();
+  const result = await fixFrame(base(call, { strip: blanked, index: 1, from: { keyPose } }));
+  assert.ok(measureFrame(result.frame, 1));
+  assert.equal(provider.calls.filter((c) => "references" in c.request).length, 1);
+
+  // Every frame blank: nothing to size against, so it refuses with nothing spent.
+  const empty = createRaster(frame.width * 4, frame.height);
+  const none = setup();
+  await assert.rejects(
+    fixFrame(base(none.call, { strip: empty, index: 1, from: { keyPose } })),
+    (e: unknown) => e instanceof InputError && /every frame of the strip is empty/.test(e.message),
+  );
+  // An empty neighbour also refuses before the edit.
+  await assert.rejects(
+    fixFrame(base(none.call, { strip: blanked, index: 3, from: { neighbour: 2 } })),
+    (e: unknown) => e instanceof InputError && /frame 2 is empty/.test(e.message),
+  );
+  assert.equal(none.provider.calls.length, 0);
 });
 
 test("invalid index or neighbour refuses before any call", async () => {
@@ -283,29 +324,34 @@ test("fix-frame on a family no template names records its motion-template decisi
     image: () => ({ images: [{ mediaType: "image/png", bytes: figureImage(false) }] }),
     vision: () => ({ text: "" }),
     motionTemplate: () => ({ answer: { type: "choice", choice: "walk" }, costUsd: 0.001 }),
+    decide: () => ({ answer: { type: "choice", choice: "area" }, costUsd: 0.001 }),
   });
   const out = join(root, "out-trot");
   const run = await runOn({ ...target, family: "trot" }, provider, out);
   const written = JSON.parse(await readFile(run.provenancePath, "utf8"));
   assert.deepEqual(
     written.calls.map((c: { operation: string }) => c.operation),
-    ["motion-template", "edit"],
+    ["motion-template", "edit", "fix-scale"],
   );
   const decision = written.calls[0];
   assert.equal(decision.model, defaultRoutes["motion-template"]!.model);
   assert.ok(written.requestIds.includes(decision.requestId));
   assert.ok(written.models.includes(decision.model));
-  assert.equal(written.costUsd, written.calls[0].costUsd + written.calls[1].costUsd);
+  assert.equal(
+    written.costUsd,
+    written.calls.reduce((sum: number, c: { costUsd: number }) => sum + c.costUsd, 0),
+  );
   assert.equal(run.qa.report.template, "walk");
   assert.equal(run.qa.report.templateSource, "judged");
 
-  // A family named like its template makes no decision, and its record has the edit only.
+  // A family named like its template makes no motion-template decision: its record has the edit
+  // and the fix-scale decision only.
   const { provider: plain } = setup();
   const named = await runOn(target, plain, join(root, "out-walk"));
   const record = JSON.parse(await readFile(named.provenancePath, "utf8"));
   assert.deepEqual(
     record.calls.map((c: { operation: string }) => c.operation),
-    ["edit"],
+    ["edit", "fix-scale"],
   );
 });
 
@@ -375,7 +421,7 @@ test("a recipe's transform record for the strip is carried forward with the fix"
   });
   const { provider } = setup();
   const run = await runOn(target, provider, join(root, "fixed"));
-  assert.equal(provider.calls.length, 1);
+  assert.equal(provider.calls.length, 2);
   const p = JSON.parse(await readFile(run.provenancePath, "utf8"));
   assert.equal(p.generator, "transform");
   assert.deepEqual(p.parameters.recipe, { name: "tidy" });
@@ -385,7 +431,7 @@ test("a recipe's transform record for the strip is carried forward with the fix"
     p.steps.slice(0, made.record.steps.length).map((s: { op: string }) => s.op),
     made.record.steps.map((s) => s.op),
   );
-  assert.equal(p.calls.length, 1);
+  assert.equal(p.calls.length, 2);
   assert.equal(p.fixes[0].frame, 3);
   assert.equal(p.license, "MIT");
 });
@@ -419,6 +465,7 @@ test("a fixed frame of a planted family is registered by its feet, so the strip 
     const provider = new ScriptedProvider({
       image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(sniffCrop(6)) }] }),
       vision: () => ({ text: "" }),
+      decide: () => AREA,
     });
     const call = new Caller({
       provider,
@@ -498,6 +545,7 @@ test("a fixed frame of a strip stage placed keeps its feet on its neighbours', s
     const provider = new ScriptedProvider({
       image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(tailedAnimal(2)) }] }),
       vision: () => ({ text: "" }),
+      decide: () => AREA,
     });
     const call = new Caller({
       provider,
@@ -572,6 +620,7 @@ test("a landing frame fixed next to an airborne beat stays on the ground line", 
     const provider = new ScriptedProvider({
       image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(hopperCrop()) }] }),
       vision: () => ({ text: "" }),
+      decide: () => AREA,
     });
     const call = new Caller({
       provider,
@@ -600,4 +649,224 @@ test("a landing frame fixed next to an airborne beat stays on the ground line", 
     ).reasons.filter((r) => !r.passed && r.check === "ground-contact");
     assert.deepEqual(failed, [], label);
   }
+});
+
+/** A plain body, or a body with wings spread across its upper rows, in a 48 x 48 frame. */
+function flyerFrame(options: { wings?: boolean; bodyHeight?: number } = {}): Raster {
+  const r = createRaster(48, 48);
+  const h = options.bodyHeight ?? 20;
+  rect(r, 19, 44 - h, 10, h, [60, 90, 140]);
+  if (options.wings) rect(r, 4, 26, 40, 6, [60, 90, 140]);
+  return r;
+}
+
+/** The edit's answer: a body twice the neighbour's size, wings folded, on a transparent canvas. */
+function foldedBody(): Uint8Array {
+  const r = createRaster(80, 80);
+  rect(r, 10, 20, 20, 40, [60, 90, 140]);
+  return encodePng(r);
+}
+
+function rowsOf(r: Raster): number {
+  let rows = 0;
+  for (let y = 0; y < r.height; y++)
+    for (let x = 0; x < r.width; x++)
+      if ((r.data[(y * r.width + x) * 4 + 3] as number) >= 128) {
+        rows++;
+        break;
+      }
+  return rows;
+}
+
+function flyerSetup(
+  answer: string,
+  edit: () => Uint8Array = foldedBody,
+  cap = DEFAULT_FIX_CAP_USD,
+) {
+  const provider = new ScriptedProvider({
+    image: () => ({ images: [{ mediaType: "image/png", bytes: edit() }] }),
+    vision: () => ({ text: "" }),
+    decide: () => ({ answer: { type: "choice", choice: answer }, costUsd: 0.001 }),
+  });
+  const call = new Caller({
+    provider,
+    providerName: "scripted",
+    budget: new Budget(cap),
+    routes: defaultRoutes,
+  });
+  return { provider, call };
+}
+
+function flyerOptions(call: Caller, over: Partial<FixFrameOptions> = {}): FixFrameOptions {
+  const strip = joinStrip([
+    flyerFrame(),
+    flyerFrame({ wings: true }),
+    flyerFrame({ bodyHeight: 10 }),
+    flyerFrame(),
+  ]);
+  return {
+    ...base(call, over),
+    strip,
+    frame: { width: 48, height: 48 },
+    anchor: { x: 24, y: 43 },
+    family: "flap",
+    ...over,
+  };
+}
+
+test("fix-scale: a wings-spread neighbour's area would oversize the body, so the size is asked", async () => {
+  const { provider, call } = flyerSetup("height");
+  const result = await fixFrame(flyerOptions(call));
+  const decides = provider.calls.filter((c) => c.kind === "decide");
+  assert.equal(decides.length, 1);
+  const request = decides[0]!.request as import("../src/gateway/provider.ts").DecisionRequest;
+  assert.equal(request.operation, "fix-scale");
+  assert.equal(request.question.type, "choice");
+  assert.equal(
+    request.question.instructions,
+    "In which image is the character the same size as in the surrounding frames?",
+  );
+  assert.ok(request.images.length >= 2);
+  assert.match(request.prompt, /frame 3 of 4 of the "flap" cycle of fox/);
+  assert.match(request.prompt, /previous frame \(red\) and next frame \(blue\)/);
+
+  const scale = result.fix.scale!;
+  assert.equal(scale.chosen, "height");
+  assert.ok(Math.abs(scale.value - 0.5) < 1e-9);
+  assert.ok(scale.candidates["area"]! > scale.candidates["height"]! * 1.3);
+  assert.equal(scale.value, scale.candidates["height"]);
+  const neighbourHeight = rowsOf(
+    splitStrip(flyerOptions(call).strip, { width: 48, height: 48 })[0]!,
+  );
+  assert.ok(Math.abs(rowsOf(result.frame) - neighbourHeight) <= 1);
+
+  const record = call.records.find((r) => r.operation === "fix-scale")!;
+  assert.ok(result.provenance.calls.some((c) => c.requestId === record.requestId));
+  assert.ok(result.provenance.requestIds.includes(record.requestId));
+  assert.equal(scale.decision?.requestId, record.requestId);
+  assert.equal(scale.decision?.costUsd, record.costUsd);
+  assert.equal(result.fix.costUsd, call.records.find((r) => r.operation === "edit")!.costUsd);
+  assert.equal(
+    result.provenance.costUsd,
+    call.records.reduce((sum, r) => sum + r.costUsd, 0),
+  );
+});
+
+test("fix-scale: in a looping cycle the last frame is drawn over the first as its next, as the onion sheet draws it", async () => {
+  const promptOf = async (loop: boolean) => {
+    const { provider, call } = flyerSetup("height");
+    await fixFrame(flyerOptions(call, { index: 4, from: { neighbour: 3 }, loop }));
+    const decides = provider.calls.filter((c) => c.kind === "decide");
+    assert.equal(decides.length, 1);
+    return decides[0]!.request as import("../src/gateway/provider.ts").DecisionRequest;
+  };
+  const looped = await promptOf(true);
+  assert.match(looped.prompt, /previous frame \(red\) and next frame \(blue\)/);
+  assert.match(looped.prompt, /the cycle loops, so frame 1 is drawn as its next/);
+  const open = await promptOf(false);
+  assert.match(open.prompt, /it is the last frame, so no next frame is drawn/);
+  // The looped images carry the first frame as the faint next one; the open ones do not.
+  assert.notDeepEqual(
+    looped.images.map((i) => Buffer.from(i.bytes).toString("base64")),
+    open.images.map((i) => Buffer.from(i.bytes).toString("base64")),
+  );
+});
+
+test("fix-scale: choosing area registers at the area-matched scale", async () => {
+  const { call } = flyerSetup("area");
+  const result = await fixFrame(flyerOptions(call));
+  assert.equal(result.fix.scale?.chosen, "area");
+  assert.ok(rowsOf(result.frame) > 25);
+});
+
+test("fix-scale: with a key pose the reference is the frame beside, not the bad frame", async () => {
+  const bytes = encodePng(makeStrip(1));
+  const keyPose = {
+    role: "key pose (approved)",
+    path: "key.png",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  };
+  const { provider, call } = flyerSetup("area");
+  const result = await fixFrame(flyerOptions(call, { from: { keyPose } }));
+  // Frame 3 is half a body; the frame beside (2) is a 20 row body with wings, the edit 40 rows.
+  const beside = flyerFrame({ wings: true });
+  const area = measureFrame(beside, 1)!.area;
+  const candidates = result.fix.scale!.candidates;
+  assert.ok(Math.abs(candidates["area"]! - Math.sqrt(area / 800)) < 1e-9);
+  assert.ok(Math.abs(candidates["height"]! - 0.5) < 1e-9, "against the bad frame it would be 0.25");
+  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 1);
+});
+
+test("fix-scale: candidates that register alike make no call", async () => {
+  const same = () => {
+    const r = createRaster(48, 48);
+    rect(r, 19, 24, 10, 20, [60, 90, 140]);
+    return encodePng(r);
+  };
+  const strip = joinStrip([
+    flyerFrame(),
+    flyerFrame(),
+    flyerFrame({ bodyHeight: 10 }),
+    flyerFrame(),
+  ]);
+  const { provider, call } = flyerSetup("area", same);
+  const result = await fixFrame({ ...flyerOptions(call), strip });
+  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 0);
+  assert.equal(result.fix.scale?.chosen, "area");
+  assert.equal(result.fix.scale?.decision, undefined);
+  assert.equal(result.provenance.calls.length, 1);
+});
+
+test("fix-scale: a strip of one frame has no surrounding frame to show, so no call is made", async () => {
+  const bytes = encodePng(makeStrip(1));
+  const keyPose = {
+    role: "key pose (approved)",
+    path: "key.png",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  };
+  const { provider, call } = flyerSetup("height");
+  const strip = flyerFrame({ bodyHeight: 10 });
+  const result = await fixFrame({
+    ...flyerOptions(call, { from: { keyPose } }),
+    strip,
+    index: 1,
+  });
+  const scale = result.fix.scale!;
+  assert.ok(Object.keys(scale.candidates).length > 1, "the candidates differ");
+  assert.equal(provider.calls.filter((c) => c.kind === "decide").length, 0);
+  assert.equal(scale.chosen, "area");
+  assert.equal(scale.decision, undefined);
+});
+
+test("fix-scale: for frame 1 the prompt names only the next frame, the one drawn", async () => {
+  const { provider, call } = flyerSetup("height");
+  const strip = joinStrip([
+    flyerFrame({ bodyHeight: 10 }),
+    flyerFrame({ wings: true }),
+    flyerFrame(),
+    flyerFrame(),
+  ]);
+  await fixFrame({ ...flyerOptions(call, { from: { neighbour: 2 } }), strip, index: 1 });
+  const decides = provider.calls.filter((c) => c.kind === "decide");
+  assert.equal(decides.length, 1);
+  const request = decides[0]!.request as import("../src/gateway/provider.ts").DecisionRequest;
+  assert.match(request.prompt, /faint next frame \(blue\); it is the first frame/);
+  assert.doesNotMatch(request.prompt, /previous frame \(red\)/);
+});
+
+test("fix-scale: the plan forecasts the decision and a cap below both refuses", async () => {
+  const edit = defaultRoutes.edit.estimatedCostUsd;
+  const scale = defaultRoutes["fix-scale"].estimatedCostUsd;
+  const plan = planFrameFix(defaultRoutes, edit + scale / 2);
+  assert.deepEqual(
+    plan.perCall.map((c) => c.operation),
+    ["edit", "fix-scale"],
+  );
+  assert.equal(plan.estimateUsd, edit + scale);
+  assert.equal(plan.withinCap, false);
+  assert.equal(planFrameFix(defaultRoutes, edit + scale).withinCap, true);
 });

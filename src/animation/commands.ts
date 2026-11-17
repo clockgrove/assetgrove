@@ -42,7 +42,7 @@ import { measureThreshold, splitStrip } from "./strip.ts";
 import { NO_TEMPLATE, registrationPin, templatesFor, thresholdsFor } from "./templates.ts";
 import { planTemplateDecisions, TemplateChooser } from "./template-choice.ts";
 import type { TemplateChoice } from "./template-choice.ts";
-import { defaultAnchor, familyMayLoop, profileFrame, qaStrip } from "./run.ts";
+import { choiceLoops, defaultAnchor, familyMayLoop, profileFrame, qaStrip } from "./run.ts";
 import type { StripQaResult } from "./run.ts";
 
 /** One strip to check: where it is and how to read it. */
@@ -617,6 +617,7 @@ export async function runFixFrame(options: {
     anchor: target.anchor,
     family: target.family,
     pin: registrationPin(choice.template, target.profile, target.gait),
+    loop: choiceLoops(choice),
     groundTolerance: thresholdsFor(target.profile).groundTolerance,
     subject: target.subject,
     index: options.index,

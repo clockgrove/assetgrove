@@ -85,6 +85,26 @@ function drawGuides(out: Raster, ox: number, oy: number, size: Size, anchor: Poi
 }
 
 /**
+ * One onion cell: `frame` at full opacity over the faint previous (red) and next (blue) frames,
+ * with the ground line and anchor, drawn as `onionSkinSheet` draws each of its cells.
+ */
+export function onionCell(
+  frame: Raster,
+  options: { previous?: Raster; next?: Raster; anchor: Point },
+): Raster {
+  const size = { width: frame.width, height: frame.height };
+  const zoom = previewZoom(size);
+  const out = createRaster(size.width * zoom + 2 * PAD, size.height * zoom + 2 * PAD);
+  for (let i = 0; i < out.data.length; i += 4) out.data.set([BACKDROP, BACKDROP, BACKDROP, 255], i);
+  if (options.previous)
+    drawFrame(out, options.previous, PAD, PAD, zoom, NEIGHBOUR_OPACITY, PREVIOUS_TINT);
+  if (options.next) drawFrame(out, options.next, PAD, PAD, zoom, NEIGHBOUR_OPACITY, NEXT_TINT);
+  drawFrame(out, frame, PAD, PAD, zoom, 1);
+  drawGuides(out, PAD, PAD, size, options.anchor, zoom);
+  return out;
+}
+
+/**
  * A grid of cells, one per frame, each showing the frame over its neighbours: the previous frame
  * tinted red and the next tinted blue, both faint. A loop wraps the neighbours, so frame 1 shows
  * the last and the last shows frame 1. A final row holds every frame overlaid, so drift shows at a

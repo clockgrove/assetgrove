@@ -3,11 +3,12 @@
  * approved neighbour or the key pose, registered like every other frame and spliced back in. Only
  * that frame changes, and provenance records the call, the source and the pixels before and after.
  */
-import { InputError } from "../errors.ts";
+import { InputError, ProviderError } from "../errors.ts";
 import type { Caller } from "../calls.ts";
 import type { PlannedCall } from "../generators/generator.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
+import { forDecision } from "../identity.ts";
 import { DIGITAL_SOURCE_TYPES, combineDigitalSourceTypes } from "../metadata.ts";
 import { sha256 } from "../request.ts";
 import type { Routes } from "../routes.ts";
@@ -26,6 +27,7 @@ import type {
   Provenance,
   Size,
 } from "../types.ts";
+import { onionCell } from "./preview.ts";
 import { joinStrip, measureThreshold, splitStrip } from "./strip.ts";
 import { DEFAULT_THRESHOLDS } from "./templates.ts";
 
@@ -46,12 +48,26 @@ export interface FrameFix {
   at: string;
   beforeHash: string;
   afterHash: string;
+  /** The size the frame was registered at: the candidates, the one chosen and who chose it. */
+  scale?: {
+    chosen: string;
+    value: number;
+    candidates: Record<string, number>;
+    /** Present when the candidates differed and the `fix-scale` decision was asked. */
+    decision?: { model: string; requestId: string; probability?: number; costUsd: number };
+  };
 }
 
+/** The edit, and the `fix-scale` decision (an upper bound: it is made only when candidates differ). */
 export function planFix(routes: Routes): PlannedCall[] {
-  const route = routes["edit"];
-  if (!route) throw new InputError('no model route for operation "edit"');
-  return [{ operation: "edit", model: route.model, estimatedCostUsd: route.estimatedCostUsd }];
+  const edit = routes["edit"];
+  if (!edit) throw new InputError('no model route for operation "edit"');
+  const scale = routes["fix-scale"];
+  if (!scale) throw new InputError('no model route for operation "fix-scale"');
+  return [
+    { operation: "edit", model: edit.model, estimatedCostUsd: edit.estimatedCostUsd },
+    { operation: "fix-scale", model: scale.model, estimatedCostUsd: scale.estimatedCostUsd },
+  ];
 }
 
 export function buildFixPrompt(input: {
@@ -98,6 +114,12 @@ export interface FixFrameOptions {
    */
   groundTolerance?: number;
   subject: string;
+  /**
+   * Whether the family's cycle loops (its motion template's `loop`). The `fix-scale` decision
+   * draws the fixed frame over its neighbours as the onion sheet does, so in a loop the first
+   * frame's previous is the last frame and the last frame's next is the first.
+   */
+  loop?: boolean;
   /** 1-based frame to fix. */
   index: number;
   from: { neighbour: number } | { keyPose: LoadedReference };
@@ -131,6 +153,24 @@ function topRow(raster: Raster, threshold: number): number {
     for (let x = 0; x < raster.width; x++)
       if ((raster.data[(y * raster.width + x) * 4 + 3] as number) >= threshold) return y;
   return raster.height;
+}
+
+/** The area of the bounding box of the figure's top quarter of rows (its head). */
+function headBoxArea(raster: Raster, threshold: number, top: number, height: number): number {
+  const last = Math.min(raster.height - 1, top + Math.ceil(height / 4) - 1);
+  let minX = raster.width;
+  let maxX = -1;
+  let minY = raster.height;
+  let maxY = -1;
+  for (let y = top; y <= last; y++)
+    for (let x = 0; x < raster.width; x++)
+      if ((raster.data[(y * raster.width + x) * 4 + 3] as number) >= threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+  return maxX < 0 ? 0 : (maxX - minX + 1) * (maxY - minY + 1);
 }
 
 function unique<T>(values: T[]): T[] {
@@ -302,6 +342,31 @@ export async function fixFrame(
     const problems = provenanceProblems(options.provenance);
     if (problems.length > 0) throw refuseProvenance("given", problems);
   }
+  // The frame the size is judged against, chosen before the paid edit so an empty one refuses
+  // with nothing spent: the neighbour; with a key pose the nearest non-empty frame beside the
+  // fixed one (the one before first); and only when no other frame has a figure (a strip of one
+  // frame, or every other frame empty) the bad frame itself.
+  const threshold = measureThreshold(style);
+  let beside: number | undefined = neighbour;
+  if (beside === undefined) {
+    for (let d = 1; d < count && beside === undefined; d++) {
+      for (const at of [index - d, index + d]) {
+        if (at >= 1 && at <= count && measureFrame(frames[at - 1] as Raster, threshold)) {
+          beside = at;
+          break;
+        }
+      }
+    }
+  }
+  const referenceFrame = beside === undefined ? bad : (frames[beside - 1] as Raster);
+  const reference = measureFrame(referenceFrame, threshold);
+  if (!reference) {
+    throw new InputError(
+      beside === undefined
+        ? "every frame of the strip is empty, so the fixed frame's size is unknown"
+        : `frame ${beside} is empty, so the fixed frame's size is unknown`,
+    );
+  }
   const seed = Number.parseInt(sha256(new TextEncoder().encode(prompt)).slice(0, 8), 16);
   const startedAt = now().toISOString();
   const returned = await call.image("edit", prompt, [first, second], seed);
@@ -336,38 +401,45 @@ export async function fixFrame(
     item = largest.item;
   }
 
-  const threshold = measureThreshold(style);
-  const neighbourFrame = neighbour === undefined ? undefined : frames[neighbour - 1];
-  const reference = measureFrame(neighbourFrame ?? bad, threshold);
   const figure = measureFrame(item.raster, threshold);
-  if (!reference) throw new InputError("the reference frame is empty, so its size is unknown");
   if (!figure) throw new InputError("the edited frame has no visible figure");
-  const scale = Math.sqrt(reference.area / figure.area);
+  const refTop = topRow(referenceFrame, threshold);
+  const figTop = topRow(item.raster, threshold);
+  const refHeight = reference.baseline - refTop + 1;
+  const figHeight = figure.baseline - figTop + 1;
+  const refHead = headBoxArea(referenceFrame, threshold, refTop, refHeight);
+  const figHead = headBoxArea(item.raster, threshold, figTop, figHeight);
+  const candidates: Record<string, number> = {};
+  for (const [name, value] of [
+    ["area", Math.sqrt(reference.area / figure.area)],
+    ["height", refHeight / figHeight],
+    ["head", Math.sqrt(refHead / figHead)],
+  ] as const) {
+    if (Number.isFinite(value) && value > 0) candidates[name] = value;
+  }
 
   // The fixed frame's pin point goes where its neighbour's is, not on the anchor: a strip stage made
   // places each frame by its box centre, so its neighbours' pin points are off the anchor, and
   // footprint-drift compares the fixed frame's feet with theirs. With a key pose, the frame next
-  // to the fixed one stands in for the neighbour; a strip of one frame keeps the anchor.
-  const beside = neighbour ?? (count > 1 ? (index > 1 ? index - 1 : index + 1) : undefined);
-  const placedBy = beside === undefined ? undefined : measureFrame(frames[beside - 1]!, threshold);
-  const register = (anchor: Point) =>
-    runOperation(
-      [item],
-      {
-        op: "register",
-        params: {
-          frame: options.frame,
-          anchor,
-          scale,
-          measureThreshold: threshold,
-          pins: [options.pin],
+  // to the fixed one stands in for the neighbour; with no other non-empty frame the anchor is kept.
+  const placedBy = beside === undefined ? undefined : reference;
+  const registerAt = (scale: number) => {
+    const register = (anchor: Point) =>
+      runOperation(
+        [item],
+        {
+          op: "register",
+          params: {
+            frame: options.frame,
+            anchor,
+            scale,
+            measureThreshold: threshold,
+            pins: [options.pin],
+          },
         },
-      },
-      { style },
-    );
-  let registered: ReturnType<typeof register>;
-  if (placedBy === undefined) registered = register(options.anchor);
-  else {
+        { style },
+      );
+    if (placedBy === undefined) return register(options.anchor);
     // The anchor is a whole pixel and the pin point is measured to the half pixel, so of the
     // anchor columns either side, keep the one that puts the pin point nearest the neighbour's.
     const target = pinX(placedBy, options.pin);
@@ -389,8 +461,85 @@ export async function fixFrame(
         m === undefined ? Number.POSITIVE_INFINITY : Math.abs(pinX(m, options.pin) - target);
       if (best === undefined || off < best.off) best = { registered: tried, off };
     }
-    registered = best?.registered ?? register(options.anchor);
+    return best?.registered ?? register(options.anchor);
+  };
+
+  // Candidates that register to the same pixels are one candidate, the first in order.
+  const distinct: { name: string; registered: ReturnType<typeof registerAt> }[] = [];
+  const seen = new Set<string>();
+  for (const [name, scale] of Object.entries(candidates)) {
+    const registered = registerAt(scale);
+    const hash = pixelHash((registered.items[0] as ImageItem).raster);
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    distinct.push({ name, registered });
   }
+  if (distinct.length === 0) throw new InputError("the edited frame has no usable size");
+  let chosen = distinct[0]!;
+  let decision: { record: CallRecord; probability?: number } | undefined;
+  // The model judges size against the surrounding frames; a strip of one frame has none to draw,
+  // so the first candidate stands without a call.
+  const loops = options.loop === true && count > 1;
+  const previous = index > 1 ? frames[index - 2] : loops ? frames[count - 1] : undefined;
+  const next = index < count ? frames[index] : loops ? frames[0] : undefined;
+  if (distinct.length > 1 && (previous || next)) {
+    const images = distinct.map(({ name, registered }, i) => {
+      const cell = onionCell((registered.items[0] as ImageItem).raster, {
+        ...(previous && { previous }),
+        ...(next && { next }),
+        anchor: options.anchor,
+      });
+      const bytes = encodePng(cell);
+      return forDecision(
+        {
+          role: `image ${i + 1}`,
+          path: `fix-scale-${name}.png`,
+          mediaType: "image/png",
+          bytes,
+          sha256: sha256(bytes),
+        },
+        "crisp",
+      );
+    });
+    const asked = await call.decide(
+      "fix-scale",
+      [
+        `Each image shows frame ${index} of ${count} of the "${options.family}" cycle of ${options.subject} drawn at a different size,`,
+        `at full opacity over ${
+          previous && next
+            ? loops && (index === 1 || index === count)
+              ? `the faint previous frame (red) and next frame (blue); the cycle loops, so frame ${
+                  index === 1 ? count : 1
+                } is drawn as its ${index === 1 ? "previous" : "next"}`
+              : "the faint previous frame (red) and next frame (blue)"
+            : previous
+              ? "the faint previous frame (red); it is the last frame, so no next frame is drawn"
+              : "the faint next frame (blue); it is the first frame, so no previous frame is drawn"
+        }.`,
+        "Ignore the pose; judge only the size.",
+      ].join("\n"),
+      images,
+      {
+        type: "choice",
+        instructions: "In which image is the character the same size as in the surrounding frames?",
+        options: Object.fromEntries(distinct.map(({ name }, i) => [name, `image ${i + 1}`])),
+      },
+    );
+    const answer = asked.result.answer;
+    if (answer.type !== "choice") throw new ProviderError("the fix-scale decision gave no choice");
+    const picked = distinct.find((d) => d.name === answer.choice);
+    if (!picked) {
+      throw new ProviderError(`the fix-scale decision chose "${answer.choice}", not an option`);
+    }
+    chosen = picked;
+    const probability = answer.probabilities?.[answer.choice];
+    decision = {
+      record: asked.record,
+      ...(probability !== undefined && { probability }),
+    };
+  }
+  const scale = candidates[chosen.name] as number;
+  const registered = chosen.registered;
   const styled = runOperation(registered.items, { op: "apply-style" }, { style });
   steps.push(registered.step, styled.step);
   const fixed = (styled.items[0] as ImageItem).raster;
@@ -420,6 +569,19 @@ export async function fixFrame(
     at,
     beforeHash: pixelHash(bad),
     afterHash: pixelHash(fixed),
+    scale: {
+      chosen: chosen.name,
+      value: scale,
+      candidates,
+      ...(decision && {
+        decision: {
+          model: decision.record.model,
+          requestId: decision.record.requestId,
+          ...(decision.probability !== undefined && { probability: decision.probability }),
+          costUsd: decision.record.costUsd,
+        },
+      }),
+    },
   };
 
   const base: FixedProvenance = options.provenance ?? {
@@ -438,8 +600,8 @@ export async function fixFrame(
     costUsd: 0,
     calls: [],
   };
-  // The decisions that shaped the fix, then its edit call.
-  const added = [...(options.decisions ?? []), record];
+  // The decisions that shaped the fix, its edit call, then the fix-scale decision.
+  const added = [...(options.decisions ?? []), record, ...(decision ? [decision.record] : [])];
   // The fix adds a call, so the strip is no longer media made outside Assetgrove.
   const { madeOutsideAssetgrove: _outside, ...extended } = base;
   void _outside;

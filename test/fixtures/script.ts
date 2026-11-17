@@ -13,6 +13,11 @@ export default {
       ],
     };
   },
+  decide: (request: { operation?: string }) => {
+    if (request.operation !== "fix-scale")
+      throw new Error("the provider script has no decide answer");
+    return { answer: { type: "choice", choice: "area" }, costUsd: 0.001 };
+  },
   vision: () => ({
     text:
       "```json\n" +

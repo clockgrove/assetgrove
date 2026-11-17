@@ -18,7 +18,13 @@ import type { Region } from "./regions.ts";
 import type { Reason } from "./types.ts";
 
 export const COMPARE_SHEET_FILE = "compare.png";
-/** The share of pixels changed outside the regions above which the advisory reason is added. */
+/**
+ * The share of the figure's pixels changed outside the regions above which the advisory reason is
+ * added. The figure is every pixel not fully transparent in either image and, when the version
+ * before has a one-colour opaque border (a turntable render's backdrop), not within the tolerance
+ * of that backdrop colour in both images. So a small figure on a large canvas, transparent or
+ * opaque, is measured against itself (#376).
+ */
 export const OUTSIDE_CHANGE_LIMIT = 0.05;
 /** A pixel counts as changed when a channel differs by more than this (of 255). */
 export const CHANGE_TOLERANCE = 8;
@@ -201,7 +207,12 @@ export interface Comparison {
   identical: boolean;
   /** The share of all pixels that changed. */
   changed: number;
-  /** The share of all pixels that changed outside every region (every change when none are given). */
+  /**
+   * The share of the figure's pixels that changed outside every region (every change when none
+   * are given). A pixel fully transparent in both images is not part of the figure, whatever
+   * colour it keeps; nor, when the version before has a one-colour opaque border, is a pixel
+   * within the tolerance of that backdrop colour in both images.
+   */
   outsideChange: number;
   /** The advisory reason `changed_outside_region`, when regions are given and above the limit. */
   reasons: Reason[];
@@ -222,6 +233,8 @@ export async function compareRasters(
   let different = 0;
   let changed = 0;
   let outside = 0;
+  let figure = 0;
+  const backdrop = backdropOf(before);
   for (let y = 0; y < before.height; y++)
     for (let x = 0; x < before.width; x++) {
       const i = (y * before.width + x) * 4;
@@ -231,13 +244,17 @@ export async function compareRasters(
       const grey = Math.min(255, max * 4);
       difference.data.set([grey, grey, grey, 255], i);
       if (max > 0) different++;
+      const shown =
+        ((before.data[i + 3] ?? 0) > 0 || (candidate.data[i + 3] ?? 0) > 0) &&
+        (!backdrop || !nearBackdrop(before, i, backdrop) || !nearBackdrop(candidate, i, backdrop));
+      if (shown) figure++;
       if (max > CHANGE_TOLERANCE) {
         changed++;
-        if (!placed.some((p) => p.inside(x, y))) outside++;
+        if (shown && !placed.some((p) => p.inside(x, y))) outside++;
       }
     }
   const total = Math.max(1, before.width * before.height);
-  const outsideChange = outside / total;
+  const outsideChange = outside / Math.max(1, figure);
   return {
     before,
     candidate,
@@ -252,13 +269,45 @@ export async function compareRasters(
             {
               check: "changed_outside_region",
               passed: false,
-              reason: `${(outsideChange * 100).toFixed(1)}% of the pixels changed outside the regions`,
+              reason: `${(outsideChange * 100).toFixed(1)}% of the figure's pixels changed outside the regions`,
               source: "deterministic",
               shadow: true,
             },
           ]
         : [],
   };
+}
+
+/** The share of border pixels that must sit within the tolerance of the border's median colour. */
+const BACKDROP_SHARE = 0.9;
+
+/**
+ * The backdrop colour of an image whose border is opaque and one colour (a turntable render's
+ * grey): the border's median colour, when at least 90% of the border pixels are opaque and within
+ * the change tolerance of it. Otherwise none, and the figure is found by alpha alone.
+ */
+export function backdropOf(image: Raster): [number, number, number] | undefined {
+  const { width, height, data } = image;
+  if (width === 0 || height === 0) return undefined;
+  const border: number[] = [];
+  for (let x = 0; x < width; x++) border.push(x, 0, x, height - 1);
+  for (let y = 1; y < height - 1; y++) border.push(0, y, width - 1, y);
+  const offsets: number[] = [];
+  for (let k = 0; k < border.length; k += 2)
+    offsets.push((border[k + 1]! * width + border[k]!) * 4);
+  const median = [0, 1, 2].map((c) => {
+    const s = offsets.map((o) => data[o + c]!).sort((a, b) => a - b);
+    return s[s.length >> 1]!;
+  }) as [number, number, number];
+  let near = 0;
+  for (const o of offsets) if (data[o + 3] === 255 && nearBackdrop(image, o, median)) near++;
+  return near >= offsets.length * BACKDROP_SHARE ? median : undefined;
+}
+
+function nearBackdrop(image: Raster, i: number, rgb: readonly number[]): boolean {
+  for (let c = 0; c < 3; c++)
+    if (Math.abs((image.data[i + c] ?? 0) - rgb[c]!) > CHANGE_TOLERANCE) return false;
+  return true;
 }
 
 function outline(cell: Raster, rect: Rect, scale: number, ox: number, oy: number): void {
