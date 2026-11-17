@@ -91,7 +91,7 @@ export interface Script {
   };
   /**
    * Answers which motion template describes an animation family (the `motion-template` choice
-   * decision). A script without it answers `none`; its calls do not count toward `decide`'s index.
+   * decision). A script without it refuses the call; its calls do not count toward `decide`'s index.
    */
   motionTemplate?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;

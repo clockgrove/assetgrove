@@ -7,6 +7,8 @@ import { createRaster, setPixel } from "../src/image/raster.ts";
 import type { ResolvedStyle } from "../src/style.ts";
 import { postprocessFrames } from "../src/postprocess.ts";
 import { splitStrip } from "../src/animation/strip.ts";
+import { stripQaFlags } from "../src/contact.ts";
+import type { AssetSpec, TargetProfile } from "../src/types.ts";
 import { quadrupedWalk, syntheticStrip } from "./fixtures/strip.ts";
 import type { StripOptions } from "./fixtures/strip.ts";
 
@@ -600,4 +602,21 @@ test("a long-tailed animal through stage's own placement passes ground-contact a
   assert.deepEqual(failed(r, "footprint-drift"), []);
   const m = r.measures[0]!;
   assert.ok(Math.abs(m.centerX - (anchor.x + 0.5)) > 3, String(m.centerX));
+});
+
+test("the contact sheet's QA flags judge a family by the spec's declared template", () => {
+  const { frames, anchor } = syntheticStrip({
+    count: 8,
+    style: "pixel",
+    motion: "walk",
+    floatFrame: 3,
+  });
+  const profile = { frames: {} } as unknown as TargetProfile;
+  const spec = (family: string, template?: string) =>
+    ({ assetId: "a", anchor, animationFamily: family, ...(template && { template }) }) as AssetSpec;
+  assert.ok(stripQaFlags(frames, spec("walk"), profile).includes(3));
+  // walk-right names no template and is undecided here: its contact checks are not run.
+  assert.ok(!stripQaFlags(frames, spec("walk-right"), profile).includes(3));
+  // Declared as walk, the floating frame is flagged as it is for walk itself.
+  assert.ok(stripQaFlags(frames, spec("walk-right", "walk"), profile).includes(3));
 });

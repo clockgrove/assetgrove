@@ -17,7 +17,13 @@ import { defaultRoutes } from "../src/routes.ts";
 import { generateSheet, motionLines, sheetBrief } from "../src/sheet/generate.ts";
 import { templateFor, templatesFor } from "../src/animation/templates.ts";
 import { SliceError } from "../src/sheet/slice.ts";
-import { GROUPING_FILE, importSheet, writeFamilies } from "../src/sheet/import.ts";
+import {
+  GROUPING_FILE,
+  importSheet,
+  readImport,
+  writeFamilies,
+  writeImport,
+} from "../src/sheet/import.ts";
 import { importTargets, runAnimationQa } from "../src/animation/commands.ts";
 import { formatReport } from "../src/animation/run.ts";
 import { jitterOf } from "../src/sheet/register.ts";
@@ -606,6 +612,13 @@ test("sheet generation decides a family no template names before the sheet, and 
   assert.equal(again.families[0]!.animation.templateSource, "declared");
   const declared = await importTargets(importDir);
   assert.equal(declared[0]!.template, "none");
+
+  // A later write whose grouping no longer declares it drops the declaration: animation-qa
+  // --import reads the last write of the family, not an earlier one's stale template.
+  const rewritten = await readImport(importDir);
+  rewritten.written!.push({ ...rewritten.written!.at(-1)!, templates: undefined });
+  await writeImport(importDir, JSON.parse(JSON.stringify(rewritten)));
+  assert.equal((await importTargets(importDir))[0]!.template, undefined);
 
   // A family named like an Object.prototype member has no recorded answer: it is written
   // undecided, not refused, and animation-qa --import reads no inherited value either.

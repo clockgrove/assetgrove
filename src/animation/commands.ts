@@ -110,13 +110,20 @@ export async function importTargets(importDir: string): Promise<StripTarget[]> {
   if (families.length === 0) {
     throw new InputError(`import ${importDir} has written no family yet; run write-families first`);
   }
-  // A template the grouping declared for a written family, else the spec's for its own family.
+  // A template the grouping declared for a family in the last write that wrote it, else the
+  // spec's for its own family, as writeFamilies took it. An earlier write's declaration that the
+  // last one no longer makes does not count.
   const declared = new Map<string, string>();
-  for (const [family, template] of Object.entries(record.templates ?? {}))
-    declared.set(family, template);
-  for (const w of record.written ?? [])
-    for (const [family, template] of Object.entries(w.templates ?? {}))
-      declared.set(family, template);
+  for (const family of families) {
+    const last = (record.written ?? []).findLast((w) => w.families.includes(family));
+    const template =
+      last?.templates !== undefined && Object.hasOwn(last.templates, family)
+        ? last.templates[family]
+        : record.templates !== undefined && Object.hasOwn(record.templates, family)
+          ? record.templates[family]
+          : undefined;
+    if (template !== undefined) declared.set(family, template);
+  }
   return families.map((family) => ({
     family,
     ...(declared.has(family) && { template: declared.get(family) as string }),

@@ -179,6 +179,7 @@ export function stripQaFlags(
           durationMs: (spec.frames?.durationMs ?? profile.frames.durationMs) as number,
         }),
         ...(spec.gait !== undefined && { gait: spec.gait }),
+        ...(spec.template !== undefined && { template: spec.template }),
       },
       profile,
       // QA measures alpha only, so the palette rule plays no part.
