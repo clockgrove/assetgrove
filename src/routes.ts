@@ -50,6 +50,11 @@ export const STYLE_OUTLIER_OPERATION = "style-outlier";
  * cut-out over a contrasting colour.
  */
 export const CUTOUT_OPERATION = "cutout";
+/**
+ * What an ambiguous blob on a contact sheet is (#364): a figure, part of the figure next to it, a
+ * label or a speck. One choice decision per blob the slicer cannot tell by area, at sheet import.
+ */
+export const SHEET_BLOB_OPERATION = "sheet-blob";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -335,6 +340,20 @@ export const defaultRoutes: Routes = {
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-17)",
     providerTermsAsOf: "2026-11-17",
   },
+  // What an ambiguous blob on a sheet is (#364): one choice decision per blob slicing cannot tell
+  // by area, at most 24 per sheet (SHEET_BLOB_LIMIT), on the same typed decision model and bound.
+  [SHEET_BLOB_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-17)",
+    providerTermsAsOf: "2026-11-17",
+  },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
     model: "openai/gpt-6.1-terra",
@@ -566,6 +585,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [MOTION_TEMPLATE_OPERATION]: "decisions",
   [STYLE_OUTLIER_OPERATION]: "decisions",
   [CUTOUT_OPERATION]: "decisions",
+  [SHEET_BLOB_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

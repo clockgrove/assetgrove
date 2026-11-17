@@ -53,6 +53,8 @@ import type {
   Transform,
 } from "../types.ts";
 import { checkConfirmed, familyFrames, proposeGrouping } from "./group.ts";
+import { judgeBlobs } from "./blobs.ts";
+import type { JudgedBlobs } from "./blobs.ts";
 import { SliceError } from "./slice.ts";
 import { animationQa } from "../animation/qa.ts";
 import { choiceLoops, DEFAULT_DURATION_MS, renderPreviews } from "../animation/run.ts";
@@ -60,7 +62,7 @@ import { templateWithoutCall, UNDECIDED } from "../animation/template-choice.ts"
 import { splitStrip } from "../animation/strip.ts";
 import { registrationPin, templatesFor, thresholdsFor } from "../animation/templates.ts";
 import type { AnimationReport } from "../animation/types.ts";
-import type { Grouping, MatteQuality, RegisterPin, SliceOptions } from "./types.ts";
+import type { BlobKind, Grouping, MatteQuality, RegisterPin, SliceOptions } from "./types.ts";
 import type { ConfirmationRecord, LoadedReference } from "../types.ts";
 import { scoreIdentity } from "../identity.ts";
 import type {
@@ -166,7 +168,18 @@ export interface ImportRecord {
   frame: Size;
   anchor: Point;
   durationMs?: number;
-  slice: { mode: "grid" | "components"; grid?: unknown; background: string };
+  slice: {
+    mode: "grid" | "components";
+    grid?: unknown;
+    background: string;
+    /**
+     * The blobs slicing could not tell by area that a `sheet-blob` decision judged (#364): each
+     * blob's box on the sheet and what it is. Absent when the sheet had none or no caller judged.
+     */
+    blobs?: Array<{ box: Box; kind: BlobKind }>;
+    /** Ambiguous blobs past the per-sheet limit, left to the area rule. */
+    unjudged?: number;
+  };
   frames: ImportedFrame[];
   /** Set when Assetgrove generated the sheet: the request that made it. */
   generation?: { prompt: string; parameters: Record<string, unknown>; calls: CallRecord[] };
@@ -246,6 +259,11 @@ export interface ImportOptions {
   frame?: Size;
   /** Defaults to the bottom centre of the frame. */
   anchor?: Point;
+  /**
+   * When given, each blob slicing cannot tell by area is judged by one `sheet-blob` decision
+   * through this caller (src/sheet/blobs.ts) before the sheet is sliced; a clean sheet makes none.
+   */
+  blobs?: Caller;
   /** When given, a vision model proposes the grouping through this caller. */
   propose?: {
     call: Caller;
@@ -407,13 +425,24 @@ export async function importSheet(
     options.importId ??
     `${now().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}`;
   const importDir = resolve(options.importsDir, importId);
+  // Each caller's records from the first call made here, so a shared caller counts once.
+  const starts = new Map<Caller, number>();
+  for (const c of [options.blobs, options.identity?.caller, options.propose?.call]) {
+    if (c && !starts.has(c)) starts.set(c, c.records.length);
+  }
+  let slice = options.slice ?? {};
+  let blobs: JudgedBlobs | undefined;
+  if (options.blobs) {
+    blobs = await judgeBlobs(options.blobs, raster, slice, options.subject ?? options.assetId);
+    if (blobs.verdicts.length > 0) slice = { ...slice, blobs: blobs.verdicts };
+  }
   let ran: ReturnType<typeof runRecipe>;
   try {
-    ran = runRecipe(sheetImportRecipe(options.slice, options.matte), [sheetItem], { style });
+    ran = runRecipe(sheetImportRecipe(slice, options.matte), [sheetItem], { style });
   } catch (error) {
     // A generated sheet was paid for: keep it and how it was made, so it can be imported by hand.
     if (error instanceof SliceError && options.generation) {
-      await keepRefusedSheet(importDir, options, digitalSourceType, error, now);
+      await keepRefusedSheet(importDir, { ...options, slice }, digitalSourceType, error, now);
     }
     throw error;
   }
@@ -501,6 +530,8 @@ export async function importSheet(
       mode: slicing.mode,
       ...(slicing.grid !== undefined && { grid: slicing.grid }),
       background: slicing.background,
+      ...(blobs && blobs.judged.length > 0 && { blobs: blobs.judged }),
+      ...(blobs && blobs.unjudged > 0 && { unjudged: blobs.unjudged }),
     },
     frames,
     steps: [
@@ -519,11 +550,6 @@ export async function importSheet(
     bytes: contact,
     sha256: sha256(contact),
   };
-  // Each caller's records from the first call made here, so a shared caller counts once.
-  const starts = new Map<Caller, number>();
-  for (const c of [options.identity?.caller, options.propose?.call]) {
-    if (c && !starts.has(c)) starts.set(c, c.records.length);
-  }
   if (options.identity && options.identity.settings.mode !== "off") {
     const { caller, record: lock, references, settings, cast, recordCheck } = options.identity;
     record.identity = await scoreIdentity({

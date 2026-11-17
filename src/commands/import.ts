@@ -17,7 +17,13 @@ import type { Grouping } from "../sheet/types.ts";
 import { ledgerFor } from "../spend.ts";
 import type { AssetSpec } from "../types.ts";
 import { IDENTITY_OPERATION } from "../identity.ts";
-import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
+import {
+  IDENTITY_CAST_OPERATION,
+  IDENTITY_CHECK_OPERATION,
+  SHEET_BLOB_OPERATION,
+} from "../routes.ts";
+import { decodeImage } from "../image/raster.ts";
+import { plannedBlobDecisions } from "../sheet/blobs.ts";
 import type { Route } from "../routes.ts";
 import {
   DRY_RUN_PROPERTY,
@@ -112,7 +118,16 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
     profile.value,
     providers.routes,
   );
+  // The blobs slicing cannot tell by area are each judged by one decision; a clean sheet has none.
+  // A sheet that does not decode is refused by the import itself, naming why.
+  let blobCalls = 0;
+  try {
+    blobCalls = plannedBlobDecisions(decodeImage(sheet), slice);
+  } catch {
+    blobCalls = 0;
+  }
   const operations = [
+    ...Array<string>(blobCalls).fill(SHEET_BLOB_OPERATION),
     ...(args.noPropose ? [] : ["vision"]),
     ...(lock && lock.settings.mode !== "off"
       ? [
@@ -159,6 +174,7 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   return {
     capUsd,
     slice,
+    blobCalls,
     profile,
     bible,
     subject,
@@ -278,6 +294,7 @@ below the threshold, off skips scoring.`,
     const {
       capUsd,
       slice,
+      blobCalls,
       profile,
       bible,
       subject,
@@ -332,6 +349,7 @@ below the threshold, off skips scoring.`,
       ...(bible && { bible: { version: bible.value.version, palette: bible.value.palette } }),
       importsDir: resolve(args.imports ?? ".assetgrove/imports"),
       slice,
+      ...(blobCalls > 0 && { blobs: await caller() }),
       ...(propose !== undefined && { propose }),
       ...(args.maxHalo !== undefined && { matte: { maxHaloFraction: args.maxHalo } }),
       ...(lock && {

@@ -69,6 +69,25 @@ export interface SliceOptions {
   labelFraction?: number;
   /** Padding in px kept around each figure's extent in the crop. Default 4. */
   padding?: number;
+  /**
+   * What each ambiguous blob is, as a `sheet-blob` decision answered (src/sheet/blobs.ts), by the
+   * blob's id from `ambiguousBlobs`. A blob with no verdict keeps the area rule.
+   */
+  blobs?: BlobVerdict[];
+}
+
+/**
+ * What a blob on a sheet is: a whole figure, part of the figure next to it (a detached tail
+ * segment, a dust puff, a thrown prop), a label, or a speck.
+ */
+export type BlobKind = "figure" | "part" | "label" | "speck";
+
+export const BLOB_KINDS: readonly BlobKind[] = ["figure", "part", "label", "speck"];
+
+/** The answer for one blob, by its id (`x,y,WxH`: its box on the sheet). */
+export interface BlobVerdict {
+  id: string;
+  kind: BlobKind;
 }
 
 /** A figure with its background removed: straight (not premultiplied) RGBA at sheet resolution. */
