@@ -6,6 +6,7 @@ import type {
   ModelResult,
   RigRequest,
   DecisionRequest,
+  DecisionAnswer,
   DecisionResult,
   EmbedRequest,
   EmbedResult,
@@ -46,7 +47,10 @@ export interface Script {
     request: VisionRequest,
     index: number,
   ): Omit<VisionResult, "requestId"> & { requestId?: string };
-  /** Answers typed decision calls; a script without it cannot answer one. */
+  /**
+   * Answers typed decision calls; a script without it cannot answer one. An answer of the wrong
+   * type, or a choice that is not one of the question's options, is refused naming the operation.
+   */
   decide?(
     request: DecisionRequest,
     index: number,
@@ -194,6 +198,28 @@ export interface Script {
 }
 
 type Scripted<T extends { requestId: string }> = Omit<T, "requestId"> & { requestId?: string };
+
+function checkDecideAnswer(request: DecisionRequest, answer: DecisionAnswer | undefined): void {
+  const { question } = request;
+  const head = `the provider script's decide() answered the ${request.operation ?? "(no operation)"} ${question.type} question`;
+  const tail = " (docs/generation-knobs.md lists every decision a provider script answers)";
+  const options = question.type === "choice" ? Object.keys(question.options).join(", ") : "";
+  if (answer?.type !== question.type) {
+    const offered = question.type === "choice" ? `; its options: ${options}` : "";
+    throw new Error(
+      `${head} with ${answer ? `a ${answer.type} answer` : "no answer"}, not a ${question.type} answer${offered}${tail}`,
+    );
+  }
+  if (
+    question.type === "choice" &&
+    answer.type === "choice" &&
+    !Object.hasOwn(question.options, answer.choice)
+  ) {
+    throw new Error(
+      `${head} with a choice "${answer.choice}", not one of its options: ${options}${tail}`,
+    );
+  }
+}
 
 export class ScriptedProvider implements GenerationProvider {
   readonly billing: Billing;
@@ -372,6 +398,7 @@ export class ScriptedProvider implements GenerationProvider {
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");
     const result = this.script.decide(request, index);
+    checkDecideAnswer(request, result.answer);
     return { requestId: `scripted-decide-${index}`, ...result };
   }
 
