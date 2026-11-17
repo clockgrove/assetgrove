@@ -34,7 +34,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p ../../tsconfig.build.json --emitDeclarationOnly && tsc -p tsconfig.build.json",
     "check": "prettier --check . && eslint . && tsc --noEmit",
     "format": "prettier --write .",
     "pin-model": "node scripts/pin-model.ts",
