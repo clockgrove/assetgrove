@@ -15,7 +15,7 @@ export const DEFAULT_THRESHOLDS: AnimationThresholds = {
   loopSeamFloor: 0.02,
   flickerCutoff: 0.5,
   edgeHaloShare: 0.22,
-  holeMinShare: 0.001,
+  holeMinShare: 0.0001,
   holeCutoff: 0.5,
 };
 

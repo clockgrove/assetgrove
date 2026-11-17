@@ -101,7 +101,7 @@ export interface AnimationThresholds {
   /**
    * Where no image before background removal exists: the smallest see-through area inside the
    * figure's outline that the holes check judges, as a share of the frame's figure area (pixels
-   * at or above the alpha cut), and at least 1 px. Default 0.001.
+   * at or above the alpha cut), and at least 1 px. Default 0.0001.
    */
   holeMinShare: number;
   /** The holes decision's probability at or above which the frame fails. Default 0.5. */

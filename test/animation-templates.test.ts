@@ -100,7 +100,7 @@ test("thresholds: defaults, profile overrides and refusals", () => {
       DEFAULT_THRESHOLDS.holeCutoff,
       DEFAULT_THRESHOLDS.holeMinShare,
     ],
-    [0.5, 0.5, 0.001],
+    [0.5, 0.5, 0.0001],
   );
   assert.throws(
     () => thresholdsFor({ animation: { thresholds: { holeMinPx: 3 } as never } }),
