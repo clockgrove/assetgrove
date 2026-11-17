@@ -1,3 +1,5 @@
+<img src="docs/img/icon.png" alt="Assetgrove logo: a palette cut from a log slice" width="96">
+
 # Assetgrove
 
 Assetgrove generates game assets — sprites, animation strips, and later video, audio and 3D — through image and video generation models, and hands them to a game's own asset pipeline with full provenance.
