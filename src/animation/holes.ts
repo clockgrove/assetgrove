@@ -15,6 +15,7 @@ import { createRaster, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256 } from "../request.ts";
 import type { Routes } from "../routes.ts";
+import { forDecision } from "../identity.ts";
 import type { LoadedReference } from "../types.ts";
 import type { AnimationReason, HoleDecision } from "./types.ts";
 
@@ -233,9 +234,14 @@ export function planHoles(
   };
 }
 
-function viewReference(view: Raster, role: string, path: string): LoadedReference {
+/**
+ * A view as the model receives it: `holeView` enlarges by the longer side, so a tall narrow crop
+ * is still enlarged (crisp edges) until its shorter side reaches `MIN_DECISION_EDGE`, as the
+ * identity call does: some decision models reject small images (#27).
+ */
+export function viewReference(view: Raster, role: string, path: string): LoadedReference {
   const bytes = encodePng(view);
-  return { role, path, mediaType: "image/png", bytes, sha256: sha256(bytes) };
+  return forDecision({ role, path, mediaType: "image/png", bytes, sha256: sha256(bytes) }, "crisp");
 }
 
 export async function checkHoles(options: {

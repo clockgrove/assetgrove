@@ -6,6 +6,7 @@ import type { DecisionQuestion } from "../gateway/provider.ts";
 import { encodePng, type Raster } from "../image/raster.ts";
 import { sha256 } from "../request.ts";
 import type { Routes } from "../routes.ts";
+import { forDecision } from "../identity.ts";
 import type { LoadedReference } from "../types.ts";
 import { flattenFrame } from "./preview.ts";
 import type { AnimationReason, FlickerDecision } from "./types.ts";
@@ -63,17 +64,22 @@ export function planFlicker(
 /**
  * The frame as the model sees it: flattened over the loop preview's neutral backdrop, so how a
  * provider treats transparent pixels (often dropping alpha and showing the colour left under a
- * matte's holes) cannot pass for a marking.
+ * matte's holes) cannot pass for a marking. A frame under `MIN_DECISION_EDGE` on a side is
+ * enlarged with crisp edges first, as the identity call does: some decision models reject small
+ * images (#27).
  */
-function frameReference(raster: Raster, n: number): LoadedReference {
+export function frameReference(raster: Raster, n: number): LoadedReference {
   const bytes = encodePng(flattenFrame(raster));
-  return {
-    role: `frame ${n}`,
-    path: `frame-${n}.png`,
-    mediaType: "image/png",
-    bytes,
-    sha256: sha256(bytes),
-  };
+  return forDecision(
+    {
+      role: `frame ${n}`,
+      path: `frame-${n}.png`,
+      mediaType: "image/png",
+      bytes,
+      sha256: sha256(bytes),
+    },
+    "crisp",
+  );
 }
 
 export async function checkFlicker(options: {

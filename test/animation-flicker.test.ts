@@ -16,6 +16,7 @@ import { Caller } from "../src/calls.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { flattenFrame } from "../src/animation/preview.ts";
 import { createRaster, decodePng, encodePng, setPixel } from "../src/image/raster.ts";
+import { MIN_DECISION_EDGE, forDecision } from "../src/identity.ts";
 import { defaultRoutes, type Routes } from "../src/routes.ts";
 
 function frames(n: number) {
@@ -187,7 +188,7 @@ test("a routes override changes the model, and the plan reports it", async () =>
   assert.ok(Math.abs(plan.estimatedCostUsd - 0.08) < 1e-9);
 });
 
-test("the images sent are the two frames as PNG, flattened over the preview backdrop", async () => {
+test("the images sent are the two frames as PNG, flattened over the preview backdrop and enlarged to the decision size", async () => {
   const { call, provider } = setup([0.1]);
   const fs = frames(2);
   await checkFlicker({ ...base, frames: fs, loop: false, call });
@@ -195,14 +196,26 @@ test("the images sent are the two frames as PNG, flattened over the preview back
   assert.ok(sent && "images" in sent);
   assert.deepEqual(
     sent.images.map((i) => i.bytes),
-    fs.map((f) => encodePng(flattenFrame(f))),
+    fs.map((f) => {
+      const bytes = encodePng(flattenFrame(f));
+      return forDecision({ role: "", path: "", mediaType: "image/png", bytes, sha256: "" }, "crisp")
+        .bytes;
+    }),
   );
+  // A 4 px frame goes as 384 px (some decision models reject small images, #27), crisp-edged.
+  for (const image of sent.images) {
+    const r = decodePng(image.bytes);
+    assert.deepEqual([r.width, r.height], [MIN_DECISION_EDGE, MIN_DECISION_EDGE]);
+  }
   // Opaque everywhere: a transparent pixel (a matte hole) shows the backdrop, not hidden colour.
   for (const image of sent.images) {
     const r = decodePng(image.bytes);
     for (let i = 3; i < r.data.length; i += 4) assert.equal(r.data[i], 255);
   }
-  assert.deepEqual([...decodePng(sent.images[0]!.bytes).data.subarray(4, 8)], [236, 236, 236, 255]);
+  const first = decodePng(sent.images[0]!.bytes);
+  // Source pixel (1, 0) is 96 px wide at 384: (100, 0) is the backdrop, (0, 0) the marked pixel.
+  assert.deepEqual([...first.data.subarray(100 * 4, 100 * 4 + 4)], [236, 236, 236, 255]);
+  assert.deepEqual([...first.data.subarray(95 * 4, 95 * 4 + 4)], [200, 0, 30, 255]);
   assert.match(sent.prompt, /image 1 is frame 1 and image 2 is frame 2/i);
   assert.match(buildFlickerPrompt({ ...base, pair: [3, 1] }), /frame 3/);
   assert.match(buildFlickerPrompt({ ...base, pair: [1, 2] }), /That is texture, not identity/);

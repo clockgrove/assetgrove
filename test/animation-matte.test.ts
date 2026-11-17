@@ -21,7 +21,8 @@ import { thresholdsFor } from "../src/animation/templates.ts";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
-import { createRaster, getPixel, setPixel } from "../src/image/raster.ts";
+import { createRaster, decodePng, encodePng, getPixel, setPixel } from "../src/image/raster.ts";
+import { MIN_DECISION_EDGE, forDecision } from "../src/identity.ts";
 import type { Raster } from "../src/image/raster.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { resolveStyle } from "../src/style.ts";
@@ -163,7 +164,13 @@ test("the holes prompts name the frame", () => {
 });
 
 function caller(probabilities: number[]) {
-  const seen: Array<{ prompt: string; images: number; question: string; operation?: string }> = [];
+  const seen: Array<{
+    prompt: string;
+    images: number;
+    bytes: Uint8Array[];
+    question: string;
+    operation?: string;
+  }> = [];
   const provider = new ScriptedProvider({
     image: () => {
       throw new Error("no image calls expected");
@@ -175,6 +182,7 @@ function caller(probabilities: number[]) {
       seen.push({
         prompt: request.prompt,
         images: request.images.length,
+        bytes: request.images.map((i) => i.bytes),
         question: request.question.instructions,
         ...(request.operation !== undefined && { operation: request.operation }),
       });
@@ -193,7 +201,13 @@ function caller(probabilities: number[]) {
   return { call, seen };
 }
 
-const base = { family: "idle", subject: "a fox", threshold: 128, minShare: 0.001, cutoff: 0.5 };
+const base = {
+  family: "idle",
+  subject: "a fox",
+  threshold: 128,
+  minShare: thresholds.holeMinShare,
+  cutoff: 0.5,
+};
 
 test("only frames with an enclosed area are judged; a hole fails that frame for holes", async () => {
   const frames = [disc(), disc({ hole: true }), disc({ hole: true })];
@@ -285,6 +299,24 @@ test("with the image before removal, a bite open to the outside is shown and ask
   assert.equal(seen.length, 2);
   assert.equal(seen[1]!.question, "Is any part of the character missing after background removal?");
   assert.equal(seen[1]!.images, 2);
+  // Image 1 is the frame before removal over green, image 2 the cleaned frame over magenta, in
+  // that order, each enlarged to the decision size: not the cleaned frame twice, nor swapped.
+  const sent = seen[1]!.bytes.map((b) => decodePng(b));
+  const expected = [
+    holeView(drawn(), new Uint8Array(0)),
+    holeView(bitten(), new Uint8Array(0), [255, 0, 255]),
+  ].map((v) => decodePng(forDecision(viewRef(v), "crisp").bytes));
+  assert.deepEqual(sent, expected);
+  assert.deepEqual(getPixel(sent[0]!, 0, 0), getPixel(holeView(drawn(), new Uint8Array(0)), 0, 0));
+  assert.notDeepEqual(getPixel(sent[0]!, 0, 0), [255, 0, 255, 255]);
+  assert.deepEqual(getPixel(sent[1]!, 0, 0), [255, 0, 255, 255]);
+  // Inside the bite: the figure's colour before, magenta after.
+  const bite = [
+    Math.floor((23 * sent[1]!.width) / 48),
+    Math.floor((40 * sent[1]!.height) / 48),
+  ] as const;
+  assert.deepEqual(getPixel(sent[1]!, ...bite), [255, 0, 255, 255]);
+  assert.notDeepEqual(getPixel(sent[0]!, ...bite), [255, 0, 255, 255]);
   assert.match(seen[1]!.prompt, /before a program removed its background/);
   assert.deepEqual(
     reasons.map((r) => [r.passed, r.source, r.frames]),
@@ -325,15 +357,40 @@ function square(size: number, side: number, hole: number): Raster {
 }
 
 test("the smallest judged area is a share of the figure's area, not a fixed pixel count", async () => {
+  assert.equal(thresholds.holeMinShare, 0.0001);
   // A 2 px eye hole in a 32 px frame is judged (the old 3 px minimum skipped it)...
   const small = square(32, 20, 2);
   assert.equal(holeMinPx(small, base), 1);
   assert.equal(planHoles([small], base, defaultRoutes).calls, 1);
-  // ...and a 3 px speck of matte noise in a 512 px frame is not (it cost a paid call before).
+  // ...and a 3 px speck of matte noise in a 512 px frame is not (it cost a paid call before)...
   const large = square(512, 400, 3);
-  assert.equal(holeMinPx(large, base), 160);
+  assert.equal(holeMinPx(large, base), 16);
   assert.equal(planHoles([large], base, defaultRoutes).calls, 0);
+  // ...while an eye-sized hole in that frame still is.
+  assert.equal(planHoles([square(512, 400, 16)], base, defaultRoutes).calls, 1);
   const { call, seen } = caller([]);
   await checkHoles({ ...base, frames: [large], call });
   assert.equal(seen.length, 0);
+});
+
+function viewRef(view: Raster) {
+  const bytes = encodePng(view);
+  return { role: "view", path: "view.png", mediaType: "image/png", bytes, sha256: "" };
+}
+
+test("every holes view sent is at least the decision size on its shorter side", async () => {
+  // A tall narrow crop: zooming by the longer side alone leaves it under 384 across.
+  const tall = createRaster(12, 160);
+  for (let y = 10; y < 150; y++)
+    for (let x = 2; x < 10; x++) setPixel(tall, x, y, [116, 88, 73, 255]);
+  const before = createRaster(12, 160);
+  for (let p = 0; p < 12 * 160; p++)
+    setPixel(before, p % 12, Math.floor(p / 12), [240, 236, 228, 255]);
+  const { call, seen } = caller([0.1]);
+  await checkHoles({ ...base, frames: [tall], sources: [{ before, after: tall }], call });
+  assert.equal(seen.length, 1);
+  for (const b of seen[0]!.bytes) {
+    const v = decodePng(b);
+    assert.ok(Math.min(v.width, v.height) >= MIN_DECISION_EDGE, `${v.width}x${v.height}`);
+  }
 });
