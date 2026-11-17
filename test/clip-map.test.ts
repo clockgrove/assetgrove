@@ -58,19 +58,16 @@ test("exact keys are planned with no decision; others are decided once per run",
     [
       ["walk", "preset:walk", true],
       ["attack", "preset:slash", false],
-      ["wave", "preset:walk", true],
     ],
   );
   assert.deepEqual(
     plan.mapped.map((m) => [m.family, m.key, m.probability]),
-    [
-      ["attack", "slash", 0.8],
-      ["wave", "walk", undefined],
-    ],
+    [["attack", "slash", 0.8]],
   );
   assert.match(plan.missing[0]!.why, /chose walk with probability 0\.20, under 0\.5/);
+  assert.match(plan.missing[1]!.why, /chose walk with no probability reported/);
   assert.match(
-    plan.missing[1]!.why,
+    plan.missing[2]!.why,
     /library has no close biped clip for "ghost"; .*answered none/,
   );
   assert.deepEqual(asked, ["attack", "dance", "wave", "ghost"]);

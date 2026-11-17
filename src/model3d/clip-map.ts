@@ -2,9 +2,9 @@
  * Which library clip a requested animation family is (#378). A family that is exactly a key of the
  * clip route's library for the gait is planned with no call. Any other family is put to one typed
  * choice decision: the family, the gait and the gait's library clips, answering which clip it is or
- * none. A clip chosen with probability of at least `CLIP_MAP_MIN_PROBABILITY` (or with none
- * reported) is planned under the requested family's name; none or a lower probability leaves the
- * family reported missing. A run decides each family once, whatever its candidate count.
+ * none. A clip chosen with a reported probability of at least `CLIP_MAP_MIN_PROBABILITY` is
+ * planned under the requested family's name; none, a lower probability or no reported probability
+ * leaves the family reported missing. A run decides each family once, whatever its candidate count.
  */
 import type { Caller } from "../calls.ts";
 import { ProviderError } from "../errors.ts";
@@ -22,7 +22,7 @@ export interface MappedClip {
   family: string;
   key: string;
   clip: string;
-  probability?: number;
+  probability: number;
   model: string;
 }
 
@@ -159,10 +159,12 @@ export async function resolveClipPlan(
     const entry = decided.choice === CLIP_MAP_NONE ? undefined : library[decided.choice];
     if (decided.choice === CLIP_MAP_NONE || !isClip(entry)) {
       missing.push({ family, why: `${why}; the ${CLIP_MAP_OPERATION} decision answered none` });
-    } else if (
-      decided.probability !== undefined &&
-      decided.probability < CLIP_MAP_MIN_PROBABILITY
-    ) {
+    } else if (decided.probability === undefined) {
+      missing.push({
+        family,
+        why: `${why}; the ${CLIP_MAP_OPERATION} decision chose ${decided.choice} with no probability reported`,
+      });
+    } else if (decided.probability < CLIP_MAP_MIN_PROBABILITY) {
       missing.push({
         family,
         why: `${why}; the ${CLIP_MAP_OPERATION} decision chose ${decided.choice} with probability ${decided.probability.toFixed(2)}, under ${CLIP_MAP_MIN_PROBABILITY}`,
@@ -173,7 +175,7 @@ export async function resolveClipPlan(
         family,
         key: decided.choice,
         clip: entry.clip,
-        ...(decided.probability !== undefined && { probability: decided.probability }),
+        probability: decided.probability,
         model: decided.model,
       });
     }

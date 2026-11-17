@@ -378,7 +378,7 @@ test("a family with no library clip is reported missing and the candidate is kep
   assert.equal(c1.provenance.calls[2].parameters.rigType, "quadruped");
 });
 
-test("a family that is not a library key is mapped by one clip-map decision per run, and a low probability keeps it missing", async () => {
+test("a family that is not a library key is mapped by one clip-map decision per run, and a low or unreported probability keeps it missing", async () => {
   const w = await world({ clips: ["attack", "sprint", "death"] });
   const dry = await cli(["stage", ...w.base, "--dry-run", "--json"]);
   assert.deepEqual(
@@ -453,11 +453,16 @@ test("a family that is not a library key is mapped by one clip-map decision per 
     ["attack", "sprint"],
   );
 
-  const low = await run({ attack: { choice: "slash", probability: 0.3 } }, `${w.runs}-low`);
+  const low = await run(
+    { attack: { choice: "slash", probability: 0.3 }, sprint: { choice: "run" } },
+    `${w.runs}-low`,
+  );
   const c = low["candidates"][0];
   assert.deepEqual(c.fields.clips, []);
   const attack = c.fields.missingClips.find((m: { family: string }) => m.family === "attack");
   assert.match(attack.why, /chose slash with probability 0\.30, under 0\.5/);
+  const sprint = c.fields.missingClips.find((m: { family: string }) => m.family === "sprint");
+  assert.match(sprint.why, /chose run with no probability reported/);
   assert.equal(c.fields.mappedClips, undefined);
 });
 

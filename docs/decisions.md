@@ -126,7 +126,7 @@ Characters are rigged real-time 3D models with an animation clip per family. Zoo
 
 ## Missing clips are reported, not faked
 
-Without a skeleton template, a character uses the provider's auto-rig and its clip library, retargeted per family. A family that is exactly a library key is planned as is; any other family is mapped by a `clip-map` decision, and `none` (or a probability under 0.5) keeps it missing. A family the library has no close clip for is reported as missing. It is never faked, and the candidate is not refused for it.
+Without a skeleton template, a character uses the provider's auto-rig and its clip library, retargeted per family. A family that is exactly a library key is planned as is; any other family is mapped by a `clip-map` decision, and `none` (or a probability under 0.5, or no reported probability) keeps it missing. A family the library has no close clip for is reported as missing. It is never faked, and the candidate is not refused for it.
 
 ## Shared rig and generated gait
 
