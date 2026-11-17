@@ -6,7 +6,8 @@
     "rootDir": "src",
     "rewriteRelativeImportExtensions": true,
     "declaration": true,
-    "sourceMap": false
+    "sourceMap": false,
+    "customConditions": []
   },
-  "include": ["src", "../../src/model3d/gltf-validator.d.ts"]
+  "include": ["src"]
 }
