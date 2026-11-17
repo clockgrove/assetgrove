@@ -342,6 +342,31 @@ export async function fixFrame(
     const problems = provenanceProblems(options.provenance);
     if (problems.length > 0) throw refuseProvenance("given", problems);
   }
+  // The frame the size is judged against, chosen before the paid edit so an empty one refuses
+  // with nothing spent: the neighbour; with a key pose the nearest non-empty frame beside the
+  // fixed one (the one before first); and only when no other frame has a figure (a strip of one
+  // frame, or every other frame empty) the bad frame itself.
+  const threshold = measureThreshold(style);
+  let beside: number | undefined = neighbour;
+  if (beside === undefined) {
+    for (let d = 1; d < count && beside === undefined; d++) {
+      for (const at of [index - d, index + d]) {
+        if (at >= 1 && at <= count && measureFrame(frames[at - 1] as Raster, threshold)) {
+          beside = at;
+          break;
+        }
+      }
+    }
+  }
+  const referenceFrame = beside === undefined ? bad : (frames[beside - 1] as Raster);
+  const reference = measureFrame(referenceFrame, threshold);
+  if (!reference) {
+    throw new InputError(
+      beside === undefined
+        ? "every frame of the strip is empty, so the fixed frame's size is unknown"
+        : `frame ${beside} is empty, so the fixed frame's size is unknown`,
+    );
+  }
   const seed = Number.parseInt(sha256(new TextEncoder().encode(prompt)).slice(0, 8), 16);
   const startedAt = now().toISOString();
   const returned = await call.image("edit", prompt, [first, second], seed);
@@ -376,14 +401,7 @@ export async function fixFrame(
     item = largest.item;
   }
 
-  const threshold = measureThreshold(style);
-  // The frame the size is judged against: the neighbour, with a key pose the frame beside the fixed
-  // one, and only for a strip of one frame the bad frame itself.
-  const beside = neighbour ?? (count > 1 ? (index > 1 ? index - 1 : index + 1) : undefined);
-  const referenceFrame = beside === undefined ? bad : (frames[beside - 1] as Raster);
-  const reference = measureFrame(referenceFrame, threshold);
   const figure = measureFrame(item.raster, threshold);
-  if (!reference) throw new InputError("the reference frame is empty, so its size is unknown");
   if (!figure) throw new InputError("the edited frame has no visible figure");
   const refTop = topRow(referenceFrame, threshold);
   const figTop = topRow(item.raster, threshold);
@@ -403,8 +421,8 @@ export async function fixFrame(
   // The fixed frame's pin point goes where its neighbour's is, not on the anchor: a strip stage made
   // places each frame by its box centre, so its neighbours' pin points are off the anchor, and
   // footprint-drift compares the fixed frame's feet with theirs. With a key pose, the frame next
-  // to the fixed one stands in for the neighbour; a strip of one frame keeps the anchor.
-  const placedBy = beside === undefined ? undefined : measureFrame(frames[beside - 1]!, threshold);
+  // to the fixed one stands in for the neighbour; with no other non-empty frame the anchor is kept.
+  const placedBy = beside === undefined ? undefined : reference;
   const registerAt = (scale: number) => {
     const register = (anchor: Point) =>
       runOperation(

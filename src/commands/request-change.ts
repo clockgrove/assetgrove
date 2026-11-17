@@ -469,7 +469,8 @@ cost cap in USD. A region is "<x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]...
 pixels or, with % on each value, in percent; paths resolve inside the project root. The job: a
 masked edit when the edit route's adapter declares the mask capability (a mask=PATH region sends
 that file), otherwise an edit of the whole image with the notes (--keep-rest asks to keep the rest);
-frame regions take fix-frame's path, one edit per frame; view regions on a 3D asset run another
+frame regions take fix-frame's path, one edit per frame plus one fix-scale decision per frame
+when its candidate scales differ, both in the confirmed spend; view regions on a 3D asset run another
 round of the 3D kind with the note (--bible names the style bible). The asset, the version's
 sha256 and each region, note, mask and reference are in the request's digest; the notes pass the
 prompt policy before the confirmation, and the spend form shows each region and note. Each region

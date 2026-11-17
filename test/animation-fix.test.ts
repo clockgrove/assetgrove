@@ -221,6 +221,39 @@ test("a key pose is sent first and a minimal provenance is made", async () => {
   assert.equal(result.provenance.digitalSourceType, DIGITAL_SOURCE_TYPES.composite);
 });
 
+test("with a key pose, an empty frame beside the fixed one is passed over before the paid edit", async () => {
+  const bytes = encodePng(makeStrip(1));
+  const keyPose = {
+    role: "key pose (approved)",
+    path: "key.png",
+    mediaType: "image/png",
+    bytes,
+    sha256: sha256(bytes),
+  };
+  // Frames 1 and 2 blank: fixing frame 1 judges its size against frame 3, the nearest with a figure.
+  const blanked = makeStrip(4);
+  for (let y = 0; y < frame.height; y++)
+    for (let x = 0; x < frame.width * 2; x++) setPixel(blanked, x, y, [0, 0, 0, 0]);
+  const { provider, call } = setup();
+  const result = await fixFrame(base(call, { strip: blanked, index: 1, from: { keyPose } }));
+  assert.ok(measureFrame(result.frame, 1));
+  assert.equal(provider.calls.filter((c) => "references" in c.request).length, 1);
+
+  // Every frame blank: nothing to size against, so it refuses with nothing spent.
+  const empty = createRaster(frame.width * 4, frame.height);
+  const none = setup();
+  await assert.rejects(
+    fixFrame(base(none.call, { strip: empty, index: 1, from: { keyPose } })),
+    (e: unknown) => e instanceof InputError && /every frame of the strip is empty/.test(e.message),
+  );
+  // An empty neighbour also refuses before the edit.
+  await assert.rejects(
+    fixFrame(base(none.call, { strip: blanked, index: 3, from: { neighbour: 2 } })),
+    (e: unknown) => e instanceof InputError && /frame 2 is empty/.test(e.message),
+  );
+  assert.equal(none.provider.calls.length, 0);
+});
+
 test("invalid index or neighbour refuses before any call", async () => {
   const { provider, call } = setup();
   for (const over of [
