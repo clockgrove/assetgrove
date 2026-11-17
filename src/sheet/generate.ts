@@ -30,10 +30,15 @@ import {
 } from "../request.ts";
 import type { BibleInputs, FrameGrid } from "../request.ts";
 import { requireInsideProject } from "../bible.ts";
-import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
+import {
+  IDENTITY_CAST_OPERATION,
+  IDENTITY_CHECK_OPERATION,
+  SHEET_BLOB_OPERATION,
+} from "../routes.ts";
 import type { Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, StyleBible, TargetProfile } from "../types.ts";
 import { importSheet } from "./import.ts";
+import { SHEET_BLOB_LIMIT } from "./blobs.ts";
 import { SliceError } from "./slice.ts";
 import type { ImportIdentity, MatteLimits } from "./import.ts";
 import type { ImportRecord } from "./import.ts";
@@ -196,7 +201,9 @@ function templateRequest(spec: AssetSpec): TemplateRequest {
 
 /**
  * The calls one generated sheet makes: the motion-template decision when the spec declares no
- * template and none is named for its family, the sheet itself, then the grouping proposal.
+ * template and none is named for its family, the sheet itself, up to SHEET_BLOB_LIMIT `sheet-blob`
+ * decisions on the blobs slicing cannot tell by area (an upper bound: the sheet is not made yet,
+ * and a clean one makes none), then the grouping proposal.
  */
 export function planSheet(spec: AssetSpec, profile: TargetProfile, routes: Routes): PlannedCall[] {
   if (!spec.animationFamily) throw new InputError("a sheet spec needs an animationFamily");
@@ -204,11 +211,13 @@ export function planSheet(spec: AssetSpec, profile: TargetProfile, routes: Route
   if (grid.count < 2) throw new InputError("a sheet spec needs frames.count of at least 2");
   return [
     ...planTemplateDecisions([templateRequest(spec)], templatesFor(profile), routes),
-    ...["sheet", "vision"].map((operation) => {
-      const route = routes[operation];
-      if (!route) throw new InputError(`no model route for operation "${operation}"`);
-      return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
-    }),
+    ...["sheet", ...Array<string>(SHEET_BLOB_LIMIT).fill(SHEET_BLOB_OPERATION), "vision"].map(
+      (operation) => {
+        const route = routes[operation];
+        if (!route) throw new InputError(`no model route for operation "${operation}"`);
+        return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
+      },
+    ),
   ];
 }
 
@@ -316,6 +325,7 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
       ...(options.importId !== undefined && { importId: options.importId }),
       // The sheet must hold exactly the frames the spec asks for, or the import is refused.
       slice: { ...options.slice, count: grid.count },
+      blobs: call,
       ...(options.matte !== undefined && { matte: options.matte }),
       ...(options.identity !== undefined && {
         identity: { ...options.identity, caller: call, ...(recordCheck && { recordCheck }) },

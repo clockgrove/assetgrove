@@ -19,6 +19,7 @@ import type {
 import {
   BRIEF_POLICY_OPERATION,
   CUTOUT_OPERATION,
+  SHEET_BLOB_OPERATION,
   LOOKDEV_MARKING_OPERATION,
   MODEL3D_FACING_OPERATION,
   PROMPT_POLICY_OPERATION,
@@ -114,6 +115,14 @@ export interface Script {
   cutout?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers what an ambiguous blob on a sheet is (the `sheet-blob` choice decision: figure, part,
+   * label or speck). A script without it answers label, the area rule's drop; its calls do not
+   * count toward `decide`'s index.
+   */
+  sheetBlob?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -170,6 +179,7 @@ export class ScriptedProvider implements GenerationProvider {
   private markingCount = 0;
   private templateCount = 0;
   private cutoutCount = 0;
+  private sheetBlobCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -271,6 +281,13 @@ export class ScriptedProvider implements GenerationProvider {
         ? this.script.cutout(request)
         : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
       return { requestId: `scripted-cutout-${index}`, ...answer };
+    }
+    if (request.operation === SHEET_BLOB_OPERATION) {
+      const index = this.sheetBlobCount++;
+      const answer = this.script.sheetBlob
+        ? this.script.sheetBlob(request)
+        : { answer: { type: "choice" as const, choice: "label" }, costUsd: 0 };
+      return { requestId: `scripted-sheet-blob-${index}`, ...answer };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

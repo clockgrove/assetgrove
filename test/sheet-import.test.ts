@@ -494,9 +494,21 @@ test("sheet generation: one request for the whole cycle within the cap, then the
   assert.equal(family.result.validator?.accepted, true, family.result.validator?.output);
   const manifest = JSON.parse(await readFile(family.result.manifestPath, "utf8"));
   const provenance = manifest.provenance.generated;
-  assert.deepEqual(provenance.models, [defaultRoutes.sheet.model, defaultRoutes.vision.model]);
+  // Each cell's frame-number label is a blob slicing cannot tell by area: one sheet-blob decision
+  // each (the scripted default answers label, so it is dropped).
+  assert.deepEqual(provenance.models, [
+    defaultRoutes.sheet.model,
+    defaultRoutes["sheet-blob"]!.model,
+    defaultRoutes.vision.model,
+  ]);
   assert.match(provenance.prompt, /contact sheet/);
-  assert.equal(provenance.calls.length, 2);
+  assert.equal(provenance.calls.length, 8);
+  assert.equal(
+    provenance.calls.filter((c: { operation: string }) => c.operation === "sheet-blob").length,
+    6,
+  );
+  assert.equal(record.slice.blobs?.length, 6);
+  assert.ok(record.slice.blobs?.every((b) => b.kind === "label"));
   assert.equal(provenance.costUsd, 0.22);
   assert.equal(provenance.frames[0].tool, defaultRoutes.sheet.model);
   // The spec's fields reach the family it asked for, not a generic default.
@@ -548,7 +560,7 @@ test("sheet generation decides a family no template names before the sheet, and 
   assert.match(asked[0]!, /"trot"/);
   assert.deepEqual(
     provider.calls.map((c) => c.kind),
-    ["decide", "image", "vision"],
+    ["decide", "image", ...Array<string>(6).fill("decide"), "vision"],
   );
   const image = provider.calls.find((c) => c.kind === "image")!.request as ImageRequest;
   assert.match(image.prompt, /Motion: a walk cycle/);
@@ -758,10 +770,10 @@ test("sheet generation refuses a sheet with another frame count and keeps it", a
       return true;
     },
   );
-  // No grouping call was made for a sheet that cannot be used.
+  // No grouping call was made for a sheet that cannot be used (its 6 labels were judged first).
   assert.deepEqual(
     provider.calls.map((c) => c.kind),
-    ["image"],
+    ["image", ...Array<string>(6).fill("decide")],
   );
   assert.ok(await exists(join(importsDir, "short", "sheet.png")));
   assert.equal(await exists(join(importsDir, "short", "import.json")), false);

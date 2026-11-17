@@ -17,7 +17,13 @@ import type { Grouping } from "../sheet/types.ts";
 import { ledgerFor } from "../spend.ts";
 import type { AssetSpec } from "../types.ts";
 import { IDENTITY_OPERATION } from "../identity.ts";
-import { IDENTITY_CAST_OPERATION, IDENTITY_CHECK_OPERATION } from "../routes.ts";
+import {
+  IDENTITY_CAST_OPERATION,
+  IDENTITY_CHECK_OPERATION,
+  SHEET_BLOB_OPERATION,
+} from "../routes.ts";
+import { decodeImage } from "../image/raster.ts";
+import { plannedBlobDecisions } from "../sheet/blobs.ts";
 import type { Route } from "../routes.ts";
 import {
   DRY_RUN_PROPERTY,
@@ -112,7 +118,16 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
     profile.value,
     providers.routes,
   );
+  // The blobs slicing cannot tell by area are each judged by one decision; a clean sheet has none.
+  // A sheet that does not decode is refused by the import itself, naming why.
+  let blobCalls: number;
+  try {
+    blobCalls = plannedBlobDecisions(decodeImage(sheet), slice);
+  } catch {
+    blobCalls = 0;
+  }
   const operations = [
+    ...Array<string>(blobCalls).fill(SHEET_BLOB_OPERATION),
     ...(args.noPropose ? [] : ["vision"]),
     ...(lock && lock.settings.mode !== "off"
       ? [
@@ -159,6 +174,7 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   return {
     capUsd,
     slice,
+    blobCalls,
     profile,
     bible,
     subject,
@@ -178,11 +194,14 @@ export const importCommand = defineCommand<ImportArgs>({
 generation"), removes the background to the profile's style, and has a vision model propose
 families in <import>/grouping.json with status "proposed" (--no-propose skips the grouping
 model; it needs no key unless --lock-bible names a locked subject, whose identity score is a
-model call in shadow and enforce modes: add --identity-mode off to skip it). A human reviews the proposal against contact.png, edits it and sets its status
+model call in shadow and enforce modes: add --identity-mode off to skip it, or the sheet holds
+blobs slicing cannot tell by area, such as number labels or a detached part, each judged by one
+sheet-blob decision; a clean sheet makes none). A human reviews the proposal against contact.png, edits it and sets its status
 to "confirmed" before write-families. See docs/sheet-import.md.
 
 With --frames, the sheet must hold exactly that many figures: slicing another number is refused
-(exit 2) before any model call, naming the cells or figures behind the difference.
+(exit 2) before any model call but the sheet-blob decisions, whose answers it counts after,
+naming the cells or figures behind the difference.
 
 With --lock-bible, a subject with an identity lock in that art bible has its contact sheet scored
 against the lock by the identity decision model. --identity-mode overrides the profile's
@@ -278,6 +297,7 @@ below the threshold, off skips scoring.`,
     const {
       capUsd,
       slice,
+      blobCalls,
       profile,
       bible,
       subject,
@@ -332,6 +352,7 @@ below the threshold, off skips scoring.`,
       ...(bible && { bible: { version: bible.value.version, palette: bible.value.palette } }),
       importsDir: resolve(args.imports ?? ".assetgrove/imports"),
       slice,
+      ...(blobCalls > 0 && { blobs: await caller() }),
       ...(propose !== undefined && { propose }),
       ...(args.maxHalo !== undefined && { matte: { maxHaloFraction: args.maxHalo } }),
       ...(lock && {

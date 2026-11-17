@@ -162,7 +162,11 @@ test("import in the default shadow mode records the score and filters nothing; u
     ).stdout,
   );
   assert.equal(unlocked.identity, undefined);
-  assert.deepEqual(unlocked.calls, []);
+  // No identity call; the sheet's number labels are each one sheet-blob decision (#364).
+  assert.deepEqual(
+    unlocked.calls.filter((c: { operation: string }) => c.operation !== "sheet-blob"),
+    [],
+  );
   await assert.rejects(
     exec(process.execPath, importArgs(f.root, "bram", ["--identity-mode", "enforce"]), {
       env: env("1"),

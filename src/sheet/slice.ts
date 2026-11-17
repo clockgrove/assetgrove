@@ -6,7 +6,7 @@
 import { InputError } from "../errors.ts";
 import type { Raster } from "../image/raster.ts";
 import type { Box, Point, Rgb, Size, Transform } from "../types.ts";
-import type { SliceOptions, SliceResult, SlicedFigure } from "./types.ts";
+import type { BlobVerdict, SliceOptions, SliceResult, SlicedFigure } from "./types.ts";
 
 interface Component {
   /** Pixel indices in sheet coordinates. */
@@ -241,17 +241,72 @@ function figureCutoff(components: Component[], labelFraction: number): number {
   return cutoff;
 }
 
-/** Splits components into figures, their merged detached bits, and dropped ones. */
+/** A blob's id: its box on the sheet, `x,y,WxH`. Stable for one sheet and one set of options. */
+function blobId(c: Component): string {
+  return `${c.box.x},${c.box.y},${c.box.width}x${c.box.height}`;
+}
+
+type Verdicts = ReadonlyMap<string, BlobVerdict>;
+
+/** A component under the cutoff that a `sheet-blob` verdict made a whole figure. */
+function isFigure(c: Component, cutoff: number, verdicts: Verdicts): boolean {
+  return c.pixels.length >= cutoff || verdicts.get(blobId(c))?.kind === "figure";
+}
+
+function nearest(figures: Component[], c: Component): Component | undefined {
+  const at = centre(c.box);
+  let best: Component | undefined;
+  let bestDistance = Infinity;
+  for (const f of figures) {
+    const fc = centre(f.box);
+    const distance = (fc.x - at.x) ** 2 + (fc.y - at.y) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = f;
+    }
+  }
+  return best;
+}
+
+function orphanMessage(c: Component, scope: "sheet" | "cell"): string {
+  return (
+    `the blob at ${blobId(c)} was judged part of a figure, but ` +
+    (scope === "cell"
+      ? "its grid cell holds no figure for it to join; the grid does not fit the sheet, so give the grid or frame count that keeps each frame's parts in its cell"
+      : "the sheet holds no figure for it to join")
+  );
+}
+
+/**
+ * Splits components into figures, their merged detached bits, and dropped ones. A blob's verdict
+ * decides it: a figure is one whatever its area, a part joins the nearest figure, a label or speck
+ * is dropped. A blob with no verdict keeps the area rule: under the cutoff, it joins the figure
+ * whose box holds it, else it is dropped. A part with no figure to join (none on the sheet, or
+ * none in its cell under a given grid) is refused, naming the blob, never dropped.
+ */
 function assign(
   all: Component[],
   cutoff: number,
+  verdicts: Verdicts,
+  scope: "sheet" | "cell" = "sheet",
 ): { figures: Component[]; merged: Map<Component, Component[]>; dropped: Component[] } {
-  const figures = all.filter((c) => c.pixels.length >= cutoff);
+  const figures = all.filter((c) => isFigure(c, cutoff, verdicts));
   const merged = new Map<Component, Component[]>(figures.map((f) => [f, []]));
   const dropped: Component[] = [];
   for (const c of all) {
-    if (c.pixels.length >= cutoff) continue;
-    const host = figures.find((f) => inside(c.box, f.box, 2));
+    if (isFigure(c, cutoff, verdicts)) continue;
+    const verdict = verdicts.get(blobId(c));
+    let host: Component | undefined;
+    if (verdict?.kind === "part") {
+      host =
+        verdict.with !== undefined
+          ? (figures.find((f) => blobId(f) === verdict.with) ?? nearest(figures, c))
+          : nearest(figures, c);
+      // A blob judged part of a figure is never erased: with no figure to join, refuse.
+      if (!host) throw new InputError(orphanMessage(c, scope));
+    } else if (verdict === undefined) {
+      host = figures.find((f) => inside(c.box, f.box, 2));
+    }
     if (host) (merged.get(host) as Component[]).push(c);
     else dropped.push(c);
   }
@@ -480,6 +535,7 @@ interface Context {
   sheetBg: Background;
   sheetComponents: Component[];
   cutoff: number;
+  verdicts: Verdicts;
 }
 
 /** A sliced sheet, plus why each grid cell without a figure has none. */
@@ -538,7 +594,7 @@ function sliceGivenGrid(ctx: Context, grid: GridSpec): Sliced {
   const figures: SlicedFigure[] = [];
   const empty = new Map<string, string>();
   for (const { row, column, box, bg, parts } of cells) {
-    const { figures: big, merged } = assign(parts, cutoff);
+    const { figures: big, merged } = assign(parts, cutoff, ctx.verdicts, "cell");
     const main = big.sort((a, b) => b.pixels.length - a.pixels.length)[0];
     if (!main) {
       const largest = Math.max(0, ...parts.map((p) => p.pixels.length));
@@ -573,7 +629,7 @@ function sliceDetectedGrid(ctx: Context, grid: GridSpec): Sliced {
       column: Math.floor((c.x - grid.origin.x) / grid.cell.width),
     };
   };
-  const { figures: big, merged, dropped } = assign(sheetComponents, cutoff);
+  const { figures: big, merged, dropped } = assign(sheetComponents, cutoff, ctx.verdicts);
   const placed = big.map((f) => {
     const { row, column } = cellOf(f.box);
     const removed = dropped.filter((d) => {
@@ -623,7 +679,7 @@ function sliceDetectedGrid(ctx: Context, grid: GridSpec): Sliced {
 function sliceComponents(ctx: Context): Sliced {
   const { sheet, whole, hasAlpha, tolerance, padding, sheetComponents, cutoff } = ctx;
   const figures: SlicedFigure[] = [];
-  const { figures: big, merged, dropped } = assign(sheetComponents, cutoff);
+  const { figures: big, merged, dropped } = assign(sheetComponents, cutoff, ctx.verdicts);
   const ownership = new Map<Component, number>(big.map((f) => [f, 0]));
   for (const d of dropped) {
     const c = centre(d.box);
@@ -729,12 +785,8 @@ function explain(sliced: Sliced, count: number): string[] {
   return problems;
 }
 
-/**
- * Slices a sheet into its figures. With `options.count`, a sheet that does not hold exactly that
- * many figures is refused with a SliceError that names the cells or figures behind the
- * difference, so a short or long strip is never returned silently.
- */
-export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResult {
+/** The sheet-wide segmentation every slicing mode starts from. */
+function context(sheet: Raster, options: SliceOptions): Context {
   const tolerance = options.tolerance ?? 40;
   const whole: Box = { x: 0, y: 0, width: sheet.width, height: sheet.height };
   const hasAlpha = sheet.data.some((_, i) => i % 4 === 3 && sheet.data[i] !== 255);
@@ -745,7 +797,7 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
     sheet.width,
   );
   const labelFraction = options.labelFraction ?? 0.04;
-  const ctx: Context = {
+  return {
     sheet,
     whole,
     hasAlpha,
@@ -755,84 +807,99 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
     sheetBg,
     sheetComponents,
     cutoff: figureCutoff(sheetComponents, labelFraction),
+    verdicts: new Map((options.blobs ?? []).map((b) => [b.id, b])),
   };
+}
 
+/** The sheet-wide figures, the judged ones included. */
+function sheetFigures(ctx: Context): Component[] {
+  return ctx.sheetComponents.filter((c) => isFigure(c, ctx.cutoff, ctx.verdicts));
+}
+
+/**
+ * The grid a caller gave, its rows and cell height filled in. How tall a cell is: given; else the
+ * sheet's height over its rows. The rows are given, or follow from the count alone (count figures
+ * in rows of `columns`), or, with neither, are the rows the figures sit in (their centres
+ * clustered by height, as detectGrid does) when the figures fill that many rows one per cell and
+ * that cut leaves them whole, else square cells when those leave them whole. Whatever the
+ * figures' centres say, a cut is judged on the cut itself (gridFit): a count whose cells hold two
+ * whole figures, or whose edges cut through most of the figures, is refused; with no count and no
+ * cut that holds, the sheet is refused and the count asked for, never cut into half-figures.
+ */
+function givenGrid(ctx: Context, options: SliceOptions & { grid: object }): GridSpec {
+  const { sheet } = ctx;
+  const { columns } = options.grid;
+  const cellWidth = options.grid.cellWidth ?? Math.floor(sheet.width / columns);
+  const origin = options.grid.origin ?? { x: 0, y: 0 };
+  const height = sheet.height - origin.y;
+  const figures = sheetFigures(ctx);
+  const cut = (rows: number): GridSpec => ({
+    columns,
+    rows,
+    cell: { width: cellWidth, height: Math.floor(height / rows) },
+    origin,
+  });
+  if (options.grid.rows !== undefined || options.grid.cellHeight !== undefined) {
+    const cellHeight = options.grid.cellHeight ?? Math.floor(height / (options.grid.rows ?? 1));
+    return {
+      columns,
+      rows: options.grid.rows ?? Math.ceil(height / cellHeight),
+      cell: { width: cellWidth, height: cellHeight },
+      origin,
+    };
+  }
+  if (options.count !== undefined) {
+    const rows = Math.max(1, Math.ceil(options.count / columns));
+    const grid = cut(rows);
+    const fit = gridFit(sheet.width, figures, grid);
+    const problems: string[] = [];
+    if (fit.crowded.length > 0)
+      problems.push(
+        `${fit.crowded.length} cell${fit.crowded.length === 1 ? "" : "s"} of ${columns} × ${rows} hold two or more whole figures (${fit.crowded.slice(0, 3).join("; ")}${fit.crowded.length > 3 ? "; …" : ""}), so the sheet holds more than ${options.count}`,
+      );
+    if (fit.slicedShare > 0.5)
+      problems.push(
+        `${options.count} figures in rows of ${columns} make cells ${grid.cell.height} px tall, whose edges cut through ${Math.round(fit.slicedShare * 100)}% of the figures' area, so the sheet holds fewer`,
+      );
+    if (problems.length > 0) {
+      const sliced = sliceGivenGrid(ctx, grid);
+      throw new SliceError(sliced.figures.length, options.count, problems);
+    }
+    return grid;
+  }
+  const clustered = figureRows(wholeFigures(figures));
+  const candidates: number[] = [];
+  if (clustered !== undefined) {
+    const whole = wholeFigures(figures).length;
+    if (whole > columns * (clustered - 1) && whole <= columns * clustered)
+      candidates.push(clustered);
+  }
+  candidates.push(Math.max(1, Math.ceil(height / Math.min(cellWidth, height))));
+  const chosen = candidates.map(cut).find((g) => {
+    const fit = gridFit(sheet.width, figures, g);
+    return fit.slicedShare <= 0.5 && fit.crowded.length === 0;
+  });
+  if (!chosen)
+    throw new InputError(
+      `a grid of ${columns} columns alone does not say how tall a cell is on this sheet: ` +
+        `neither the rows the figures sit in nor square cells hold them one whole figure per cell; ` +
+        `give the frame count (--frames) so the rows follow from it`,
+    );
+  return chosen;
+}
+
+/**
+ * Slices a sheet into its figures. With `options.count`, a sheet that does not hold exactly that
+ * many figures is refused with a SliceError that names the cells or figures behind the
+ * difference, so a short or long strip is never returned silently.
+ */
+export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResult {
+  const ctx = context(sheet, options);
   let sliced: Sliced;
   if (options.grid) {
-    const { columns } = options.grid;
-    const cellWidth = options.grid.cellWidth ?? Math.floor(sheet.width / columns);
-    const origin = options.grid.origin ?? { x: 0, y: 0 };
-    const height = sheet.height - origin.y;
-    const figures = sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff);
-    const cut = (rows: number): GridSpec => ({
-      columns,
-      rows,
-      cell: { width: cellWidth, height: Math.floor(height / rows) },
-      origin,
-    });
-    // How tall a cell is: given; else the sheet's height over its rows. The rows are given, or
-    // follow from the count alone (count figures in rows of `columns`), or, with neither, are the
-    // rows the figures sit in (their centres clustered by height, as detectGrid does) when the
-    // figures fill that many rows one per cell and that cut leaves them whole, else square cells
-    // when those leave them whole. Whatever the figures' centres say, a cut is judged on the cut
-    // itself (gridFit): a count whose cells hold two whole figures, or whose edges cut through
-    // most of the figures, is refused; with no count and no cut that holds, the sheet is refused
-    // and the count asked for, never cut into half-figures.
-    let grid: GridSpec;
-    if (options.grid.rows !== undefined || options.grid.cellHeight !== undefined) {
-      const cellHeight = options.grid.cellHeight ?? Math.floor(height / (options.grid.rows ?? 1));
-      grid = {
-        columns,
-        rows: options.grid.rows ?? Math.ceil(height / cellHeight),
-        cell: { width: cellWidth, height: cellHeight },
-        origin,
-      };
-    } else if (options.count !== undefined) {
-      const rows = Math.max(1, Math.ceil(options.count / columns));
-      grid = cut(rows);
-      const fit = gridFit(sheet.width, figures, grid);
-      const problems: string[] = [];
-      if (fit.crowded.length > 0)
-        problems.push(
-          `${fit.crowded.length} cell${fit.crowded.length === 1 ? "" : "s"} of ${columns} × ${rows} hold two or more whole figures (${fit.crowded.slice(0, 3).join("; ")}${fit.crowded.length > 3 ? "; …" : ""}), so the sheet holds more than ${options.count}`,
-        );
-      if (fit.slicedShare > 0.5)
-        problems.push(
-          `${options.count} figures in rows of ${columns} make cells ${grid.cell.height} px tall, whose edges cut through ${Math.round(fit.slicedShare * 100)}% of the figures' area, so the sheet holds fewer`,
-        );
-      if (problems.length > 0) {
-        const sliced = sliceGivenGrid(ctx, grid);
-        throw new SliceError(sliced.figures.length, options.count, problems);
-      }
-    } else {
-      const clustered = figureRows(wholeFigures(figures));
-      const candidates: number[] = [];
-      if (clustered !== undefined) {
-        const whole = wholeFigures(figures).length;
-        if (whole > columns * (clustered - 1) && whole <= columns * clustered)
-          candidates.push(clustered);
-      }
-      candidates.push(Math.max(1, Math.ceil(height / Math.min(cellWidth, height))));
-      const chosen = candidates.map(cut).find((g) => {
-        const fit = gridFit(sheet.width, figures, g);
-        return fit.slicedShare <= 0.5 && fit.crowded.length === 0;
-      });
-      if (!chosen)
-        throw new InputError(
-          `a grid of ${columns} columns alone does not say how tall a cell is on this sheet: ` +
-            `neither the rows the figures sit in nor square cells hold them one whole figure per cell; ` +
-            `give the frame count (--frames) so the rows follow from it`,
-        );
-      grid = chosen;
-    }
-    sliced = sliceGivenGrid(ctx, grid);
+    sliced = sliceGivenGrid(ctx, givenGrid(ctx, { ...options, grid: options.grid }));
   } else {
-    const grid = options.components
-      ? undefined
-      : detectGrid(
-          sheet,
-          sheetComponents.filter((c) => c.pixels.length >= ctx.cutoff),
-        );
+    const grid = options.components ? undefined : detectGrid(sheet, sheetFigures(ctx));
     sliced = grid ? sliceDetectedGrid(ctx, grid) : sliceComponents(ctx);
   }
   if (options.count !== undefined && sliced.figures.length !== options.count) {
@@ -844,6 +911,135 @@ export function sliceSheet(sheet: Raster, options: SliceOptions = {}): SliceResu
     background: sliced.background,
     figures: sliced.figures,
   };
+}
+
+/**
+ * A blob slicing cannot tell by its area: one the `sheet-blob` decision is asked about. Its
+ * components are under the figure cutoff and either at or over the label fraction of the largest
+ * component (a crouched frame, a small companion, a large label), or outside every figure's box
+ * (a tail segment, a dust puff, a thrown prop, a label, a speck). Ambiguous components close to
+ * each other are one blob, so the letters of one label are asked about once.
+ */
+export interface AmbiguousBlob {
+  /** The ids (`x,y,WxH`) of the blob's components, largest first; a verdict applies to each. */
+  ids: string[];
+  /** The blob's box on the sheet. */
+  box: Box;
+  /** Its opaque area in px. */
+  area: number;
+  /** The crop of the sheet it is shown in: its grid cell, else it and the nearest figure. */
+  crop: Box;
+  /** The largest figure's area beside it, for the question. */
+  figureArea: number;
+}
+
+function gapBetween(a: Box, b: Box): number {
+  const dx = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
+  const dy = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
+  return Math.max(dx, dy);
+}
+
+/** The parts under `cutoff` that are at least `least` px, or outside every figure's box. */
+function ambiguousIn(parts: Component[], cutoff: number, least: number): Component[] {
+  const figures = parts.filter((c) => c.pixels.length >= cutoff);
+  return parts.filter(
+    (c) =>
+      c.pixels.length < cutoff &&
+      (c.pixels.length >= least || !figures.some((f) => inside(c.box, f.box, 2))),
+  );
+}
+
+/**
+ * The blobs on a sheet that its areas leave ambiguous, largest first, with the crop each is shown
+ * in. A clean sheet (every component a figure, or a part inside a figure's box) has none. Slicing
+ * an ambiguous blob with no verdict keeps the area rule.
+ */
+export function ambiguousBlobs(sheet: Raster, options: SliceOptions = {}): AmbiguousBlob[] {
+  const ctx = context(sheet, { ...options, blobs: [] });
+  let grid: GridSpec | undefined;
+  let candidates: Component[];
+  let figures: Component[];
+  if (options.grid) {
+    try {
+      grid = givenGrid(ctx, { ...options, grid: options.grid });
+    } catch {
+      return [];
+    }
+    const cells: Component[][] = [];
+    for (let row = 0; row < grid.rows; row++) {
+      for (let column = 0; column < grid.columns; column++) {
+        const box = cellBoxOf(grid, row, column, ctx.whole);
+        if (box.width === 0 || box.height === 0) continue;
+        const bg = estimate(sheet, ctx.hasAlpha, boxBorder(sheet, box));
+        cells.push(
+          components(foreground(sheet, ctx.hasAlpha, bg, ctx.tolerance, box), box, sheet.width),
+        );
+      }
+    }
+    // As sliceGivenGrid decides: one cutoff over every cell's parts, figure boxes per cell.
+    const all = cells.flat();
+    const cutoff = figureCutoff(all, ctx.labelFraction);
+    const least = ctx.labelFraction * Math.max(0, ...all.map((p) => p.pixels.length));
+    figures = all.filter((c) => c.pixels.length >= cutoff);
+    candidates = cells.flatMap((parts) => ambiguousIn(parts, cutoff, least));
+  } else {
+    figures = sheetFigures(ctx);
+    const largest = Math.max(0, ...ctx.sheetComponents.map((p) => p.pixels.length));
+    candidates = ambiguousIn(ctx.sheetComponents, ctx.cutoff, ctx.labelFraction * largest);
+    if (!options.components) grid = detectGrid(sheet, figures);
+  }
+  if (candidates.length === 0) return [];
+
+  // Group close candidates: within 5% of the median figure's height, at least 2 px.
+  const gap = Math.max(2, Math.round(0.05 * median(figures.map((f) => f.box.height))));
+  const group = candidates.map((_, i) => i);
+  const root = (i: number): number => {
+    while (group[i] !== i) i = group[i] = group[group[i] as number] as number;
+    return i;
+  };
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      if (gapBetween((candidates[i] as Component).box, (candidates[j] as Component).box) <= gap)
+        group[root(i)] = root(j);
+    }
+  }
+  const groups = new Map<number, Component[]>();
+  candidates.forEach((c, i) => {
+    const r = root(i);
+    groups.set(r, [...(groups.get(r) ?? []), c]);
+  });
+
+  const figureHeight = median(figures.map((f) => f.box.height)) || sheet.height;
+  const blobs = [...groups.values()].map((members): AmbiguousBlob => {
+    const box = unionBox(members.map((m) => m.box));
+    const host = nearest(figures, { pixels: [], box });
+    let crop: Box;
+    if (grid) {
+      const c = centre(box);
+      const row = Math.floor((c.y - grid.origin.y) / grid.cell.height);
+      const column = Math.floor((c.x - grid.origin.x) / grid.cell.width);
+      crop = unionBox([cellBoxOf(grid, row, column, ctx.whole), box]);
+    } else {
+      const pad = Math.round(0.25 * figureHeight);
+      const span = unionBox(host ? [box, host.box] : [box]);
+      crop = {
+        x: span.x - pad,
+        y: span.y - pad,
+        width: span.width + 2 * pad,
+        height: span.height + 2 * pad,
+      };
+    }
+    crop = clipBox(crop, ctx.whole);
+    if (crop.width === 0 || crop.height === 0) crop = box;
+    return {
+      ids: [...members].sort((a, b) => b.pixels.length - a.pixels.length).map(blobId),
+      box,
+      area: members.reduce((sum, m) => sum + m.pixels.length, 0),
+      crop,
+      figureArea: Math.max(0, ...figures.map((f) => f.pixels.length)),
+    };
+  });
+  return blobs.sort((a, b) => b.area - a.area || a.box.y - b.box.y || a.box.x - b.box.x);
 }
 
 /**

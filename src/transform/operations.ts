@@ -3,6 +3,7 @@
  * implement them (see `raster-engine.ts`); recipes name them.
  */
 import { MATERIAL_OPERATIONS } from "../material/operations.ts";
+import { BLOB_KINDS } from "../sheet/types.ts";
 import type { ParamSchema } from "./schema.ts";
 import type { OperationContext, OperationSpec } from "./types.ts";
 
@@ -145,6 +146,24 @@ export const OPERATIONS: OperationSpec[] = [
           description: "components smaller than this fraction of the largest figure are labels",
         },
         padding: int("px kept around each figure", 0, { default: 4 }),
+        blobs: {
+          type: "array",
+          description:
+            "what each ambiguous blob is, by its id (x,y,WxH on the sheet), as the sheet-blob decision answered; a blob with none keeps the area rule",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "the blob's box on the sheet, x,y,WxH" },
+              kind: { type: "string", enum: [...BLOB_KINDS] },
+              with: {
+                type: "string",
+                description:
+                  "for a part, the id of the figure it joins (a figure drawn in pieces); else the nearest figure",
+              },
+            },
+            required: ["id", "kind"],
+          },
+        },
       },
     },
   },
