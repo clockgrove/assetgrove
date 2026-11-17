@@ -145,6 +145,45 @@ test("one stray semi-transparent pixel does not make an opaque image count as cu
   assert.ok(box && box.width < frame.width - 2, "the figure is the blob, not the whole image");
 });
 
+/** A cut-out subject 24 px wide standing on the bottom edge (15% of the border) over clear `under`. */
+function standingCutOut(body: [number, number, number], under: [number, number, number]): Raster {
+  const r = createRaster(40, 40);
+  for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) setPixel(r, x, y, [...under, 0]);
+  for (let y = 10; y < 40; y++) {
+    for (let x = 8; x < 32; x++) setPixel(r, x, y, y < 14 ? [200, 50, 50, 255] : [...body, 255]);
+  }
+  return r;
+}
+
+test("a cut-out whose subject covers part of the border keeps its own transparency", () => {
+  for (const [body, under] of [
+    [
+      [12, 12, 12],
+      [0, 0, 0],
+    ],
+    [
+      [245, 245, 240],
+      [255, 255, 255],
+    ],
+  ] as [number, number, number][][]) {
+    const image = standingCutOut(
+      body as [number, number, number],
+      under as [number, number, number],
+    );
+    assert.equal(isCutOut(image), true);
+    const out = postprocessFrames([image], {
+      frame: { width: 48, height: 48 },
+      frameCount: 1,
+      anchor: { x: 24, y: 46 },
+      palette: [toHex(body as [number, number, number]), "#c83232"],
+    });
+    const box = opaqueBox(out.strip);
+    assert.ok(box);
+    // The whole subject (24 x 30) survives, not only its marking.
+    assert.ok(Math.abs(box.height / box.width - 30 / 24) < 0.1, `${box.width} x ${box.height}`);
+  }
+});
+
 test("a cut-out is shown over the colour farthest from its own", () => {
   const cut = createRaster(2, 1);
   setPixel(cut, 0, 0, [250, 250, 250, 255]);

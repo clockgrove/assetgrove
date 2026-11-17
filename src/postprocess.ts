@@ -36,7 +36,7 @@ function distance(a: readonly number[], b: readonly number[]): number {
 }
 
 /** Share of a frame's border pixels that must be transparent for it to count as already cut out. */
-const CUT_OUT_BORDER = 0.9;
+const STRAY_BORDER = 0.02;
 
 /** The style stage mattes at: binary alpha at 128, full colour (the palette is snapped after). */
 const STAGE_MATTE_STYLE: ResolvedStyle = {
@@ -46,9 +46,10 @@ const STAGE_MATTE_STYLE: ResolvedStyle = {
 };
 
 /**
- * Whether an image is already cut out: its border is transparent (at least 90% of its border
- * pixels below alpha 128, so a subject touching the edge still counts). A stray semi-transparent
- * pixel inside an opaque image does not make it count.
+ * Whether an image is already cut out: its border holds real transparency, more than a stray
+ * pixel's worth (over 2% of its border pixels, and at least two, below alpha 128). A subject that
+ * covers part of the border, even most of it, still counts; a stray semi-transparent pixel in or on
+ * the edge of an opaque image does not.
  */
 export function isCutOut(src: Raster): boolean {
   const { width, height } = src;
@@ -66,12 +67,13 @@ export function isCutOut(src: Raster): boolean {
     visit(0, y);
     if (width > 1) visit(width - 1, y);
   }
-  return border > 0 && clear >= CUT_OUT_BORDER * border;
+  return clear >= 2 && clear > STRAY_BORDER * border;
 }
 
 /**
  * A copy whose alpha is strictly 0 or 255. An image already cut out keeps its own alpha,
- * thresholded at 128; any other image is matted as opaque by the sheet path's matte
+ * thresholded at 128, so its transparent pixels stay background whatever colour hides under them;
+ * only an image whose border is opaque has its alpha ignored, and it is matted as opaque by the sheet path's matte
  * (`wholeImageFigure` then `matteFigure`): background is what is connected to the border and is the
  * border's colour, so a pale part of the subject next to a light background stays the subject's.
  */
