@@ -664,11 +664,8 @@ export function doDontSection(prose: string): string {
 /** The name, and folder, of the art-direction skill init writes (src/init.ts). */
 export const ART_DIRECTION_SKILL = "art-direction";
 
-export async function loadDesignColors(
-  directory: string,
-  purpose: string,
-): Promise<unknown | undefined> {
-  if (!/\b(icon|portrait|badge|ui)\b/i.test(purpose)) return undefined;
+/** The colours of the project's DESIGN.md, or undefined when it has none. Whether an asset is UI is decided by the caller. */
+export async function loadDesignColors(directory: string): Promise<unknown | undefined> {
   let source: string;
   try {
     source = await readFile(join(directory, "DESIGN.md"), "utf8");

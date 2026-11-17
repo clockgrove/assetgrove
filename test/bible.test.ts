@@ -182,20 +182,19 @@ test("DTCG checks typed values, inherited types and aliases, duration and easing
     assert.throws(() => validateTokens(input));
 });
 
-test("DESIGN.md colors are UI context only and cannot mutate bible palette", async () => {
+test("DESIGN.md colors load whatever the asset is, are UI context only and cannot mutate bible palette", async () => {
   const directory = await mkdtemp(join(tmpdir(), "bible-design-"));
   try {
     await writeFile(
       join(directory, "DESIGN.md"),
       "---\ncolors:\n  accent: '#aabbcc'\n---\n# UI tokens\n",
     );
-    assert.deepEqual(await loadDesignColors(directory, "portrait"), { accent: "#aabbcc" });
-    assert.equal(await loadDesignColors(directory, "environment"), undefined);
+    assert.deepEqual(await loadDesignColors(directory), { accent: "#aabbcc" });
     await writeFile(
       join(directory, "DESIGN.md"),
       "# UI tokens\n\n```yaml\ncolors:\n  accent: oklch(60% 0.2 40)\n  subtle: '{colors.accent}'\ncomponents:\n  secret: ignored\n```\n",
     );
-    assert.deepEqual(await loadDesignColors(directory, "badge"), {
+    assert.deepEqual(await loadDesignColors(directory), {
       accent: "oklch(60% 0.2 40)",
       subtle: "{colors.accent}",
     });

@@ -536,7 +536,7 @@ test("plan's forecast holds the planning call and every job of the later apply",
   const job = (list: PlanJob[], operation: string) => list.find((j) => j.operation === operation);
   assert.equal(job(jobs, "compiler")?.count, 1, "the planning call");
   assert.equal(job(jobs, "still")?.count, 2, "one generation per candidate");
-  assert.equal(job(jobs, "vision")?.count, 2, "one QA call per candidate");
+  assert.equal(job(jobs, "style-verdict")?.count, 2, "one style verdict per candidate");
   const sum = jobs.reduce((total, j) => total + j.count * j.estimatedCostUsd, 0);
   assert.ok(Math.abs(forecast["forecastUsd"] - sum) < 1e-9);
   assert.equal(existsSync(events), false);

@@ -9,6 +9,7 @@ import {
   applyPlan,
   applyJobs,
   planDigest,
+  planJobs,
   savePlan,
   assertOriginalDescription,
   contactSheetReferences,
@@ -19,6 +20,11 @@ import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { failureOutcome } from "../src/commands/result.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { STYLE_SCORE_CHECK } from "../src/qa/stability.ts";
+import {
+  BRIEF_CLAMP_OPERATION,
+  STYLE_VERDICT_OPERATION,
+  UI_ASSET_OPERATION,
+} from "../src/routes.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { briefPolicyAsked } from "../src/policy/brief.ts";
@@ -28,7 +34,7 @@ import { animationQa } from "../src/animation/qa.ts";
 import { splitStrip } from "../src/animation/strip.ts";
 
 /** A qualifying style-score entry for the QA model, so its verdict filters. */
-function stableStyle(model: string = defaultRoutes.vision.model) {
+function stableStyle(model: string = defaultRoutes[STYLE_VERDICT_OPERATION]!.model) {
   return [
     {
       checkId: STYLE_SCORE_CHECK.id,
@@ -66,7 +72,14 @@ const spec = { kind: "still", assetId: "den" };
 const runOptions = { candidates: 1 };
 function scripted(
   options: {
-    score?: number;
+    /** The style verdict's violation probability; 0 (no violation) when absent. */
+    violation?: number;
+    /** Violation probabilities answered in call order, before `violation` applies. */
+    verdicts?: number[];
+    /** The allowed value the brief-clamp decision chooses; the first option when absent. */
+    clampChoice?: string;
+    /** The ui-asset probability; 0 (not UI) when absent. */
+    ui?: number;
     compiler?: string;
     failCompiler?: boolean;
     /** The brief-policy probability for a field and target; 0 when absent. */
@@ -75,6 +88,7 @@ function scripted(
     image?: ReturnType<typeof createRaster>;
   } = {},
 ) {
+  let verdictIndex = 0;
   const image = options.image ?? createRaster(4, 4);
   if (!options.image) setPixel(image, 1, 1, [120, 90, 80, 255]);
   return new ScriptedProvider({
@@ -87,6 +101,20 @@ function scripted(
         },
       };
     },
+    briefClamp: (request) => {
+      const allowed = Object.keys(
+        request.question.type === "choice" ? request.question.options : {},
+      );
+      const choice = allowed.find((a) => a === options.clampChoice) ?? allowed[0]!;
+      return { answer: { type: "choice", choice, probabilities: { [choice]: 0.83 } } };
+    },
+    uiAsset: () => ({ answer: { type: "boolean", probability: options.ui ?? 0 } }),
+    styleVerdict: () => ({
+      answer: {
+        type: "boolean",
+        probability: options.verdicts?.[verdictIndex++] ?? options.violation ?? 0,
+      },
+    }),
     image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(image) }] }),
     vision: (request) => {
       if (request.prompt.includes('"violations":[]')) {
@@ -103,13 +131,7 @@ function scripted(
             }),
         };
       }
-      return {
-        text: JSON.stringify({
-          styleScore: options.score ?? 1,
-          passed: true,
-          reason: "identity and constitution match",
-        }),
-      };
+      throw new Error("unexpected vision call");
     },
   });
 }
@@ -185,6 +207,13 @@ function redigested(plan: SavedPlan, edit: (copy: PlanDraft) => void): SavedPlan
 
 const refused = { code: "prompt_refused" };
 
+/** The typed decisions a scripted provider answered for an operation. */
+function decisions(provider: ScriptedProvider, operation: string) {
+  return provider.calls.flatMap((c) =>
+    c.kind === "decide" && c.request.operation === operation ? [c.request] : [],
+  );
+}
+
 test("presets produce distinct compiled prompts through a scripted LLM without generating", async () => {
   const prompts = [];
   for (const preset of Object.keys(BIBLE_PRESETS)) {
@@ -209,6 +238,7 @@ test("brief mood and numeric adjustments clamp to constitution and every clamp i
     f.biblePath,
     serializeBible(f.data, "## Do's and Don'ts\nDo preserve identity. Don't add text.\n"),
   );
+  const provider = scripted({ clampChoice: "calm" });
   const created = await create(
     f,
     {
@@ -221,14 +251,26 @@ test("brief mood and numeric adjustments clamp to constitution and every clamp i
         adjustments: { weatherIntensity: 1 },
       },
     },
-    { provider: scripted() },
+    { provider },
   );
   assert.deepEqual(
     created.clamps.map((c) => c.field),
     ["mood", "weatherIntensity"],
   );
+  const asked = decisions(provider, BRIEF_CLAMP_OPERATION);
+  assert.equal(asked.length, 1, "the numeric adjustment is clamped without a call");
+  assert.deepEqual(
+    Object.keys(asked[0]!.question.type === "choice" ? asked[0]!.question.options : {}),
+    ["cheerful", "calm", "curious"],
+  );
+  assert.ok(asked[0]!.prompt.includes("the den after a storm"));
+  const [moodClamp] = created.clamps;
+  assert.equal(moodClamp!.requested, "grim");
+  assert.equal(moodClamp!.applied, "calm");
+  assert.equal(moodClamp!.probability, 0.83);
+  assert.deepEqual(created.plan.choices, { clamps: { mood: "calm" } });
   const prompt = created.plan.prompts.generation;
-  assert.ok(prompt.includes('"mood":"cheerful"'));
+  assert.ok(prompt.includes('"mood":"calm"'));
   assert.ok(prompt.includes('"weatherIntensity":0.5'));
   assert.ok(prompt.includes('"audience":"young-kids"'));
   assert.ok(!prompt.includes('"mood":"grim"'));
@@ -435,9 +477,9 @@ test("apply refuses changed bible, templates, identity locks, references and tam
   }
 });
 
-test("plan reserves compiler plus candidate QA cost before calls and filters by strictness", async () => {
+test("plan reserves compiler plus candidate QA cost before calls and filters on a style violation", async () => {
   const f = await fixture();
-  const provider = scripted({ score: 0.5 });
+  const provider = scripted({ violation: 0.8 });
   await assert.rejects(
     create(f, { runOptions: { candidates: 3 } }, { provider, runCapUsd: 0.1 }),
     /refused/,
@@ -466,6 +508,64 @@ test("plan reserves compiler plus candidate QA cost before calls and filters by 
   ]);
 });
 
+test("the style verdict is one decision per candidate; only a violation filters, whatever the strictness", async () => {
+  const f = await fixture();
+  const provider = scripted({ verdicts: [0.8, 0.2] });
+  const { plan } = await create(
+    f,
+    { runOptions: { candidates: 2, strictness: 0.99 } },
+    { provider },
+  );
+  const { run } = await applyPlan(plan, {
+    provider,
+    outDir: join(f.root, "runs"),
+    stability: stableStyle(),
+  });
+  const verdicts = provider.calls.filter(
+    (c) => c.kind === "decide" && c.request.operation === STYLE_VERDICT_OPERATION,
+  );
+  assert.equal(verdicts.length, 2);
+  for (const call of verdicts) {
+    if (call.kind !== "decide") continue;
+    assert.ok(call.request.images.length >= 2, "the candidate and its references");
+    assert.equal(call.request.prompt, plan.prompts.qa);
+  }
+  assert.equal(run.filtered, 1);
+  assert.equal(run.candidates.length, 1);
+  assert.equal(run.rejections?.[0]?.candidate, 1);
+  assert.match(run.rejections![0]!.reasons[0]!.reason, /violates the constitution/);
+  assert.match(run.candidates[0]!.reasons[0]!.reason, /no constitution or spec violation/);
+  assert.equal("styleScore" in run.candidates[0]!.fields, false);
+});
+
+test("a well-fitting candidate is not failed by a strictness above any self-reported number", async () => {
+  const f = await fixture();
+  const provider = scripted({ violation: 0.1 });
+  const { plan } = await create(
+    f,
+    { runOptions: { candidates: 1, strictness: 0.9 } },
+    { provider },
+  );
+  const { run } = await applyPlan(plan, {
+    provider,
+    outDir: join(f.root, "runs"),
+    stability: stableStyle(),
+  });
+  assert.equal(run.filtered, 0);
+  assert.equal(run.candidates.length, 1);
+  assert.equal(run.candidates[0]!.reasons[0]!.passed, true);
+});
+
+test("the forecast lists a style-verdict job of one call per candidate at the route's estimate", async () => {
+  const f = await fixture();
+  const provider = scripted();
+  const { plan } = await create(f, { runOptions: { candidates: 3 } }, { provider });
+  const forecast = await applyJobs(plan, { provider });
+  const job = forecast.jobs.find((j) => j.operation === STYLE_VERDICT_OPERATION);
+  assert.equal(job?.count, 3);
+  assert.equal(job?.estimatedCostUsd, defaultRoutes[STYLE_VERDICT_OPERATION]!.estimatedCostUsd);
+});
+
 test("sprite-strip compiles and applies each exact frame prompt with approved key pose and full colour rule", async () => {
   const f = await fixture();
   const image = createRaster(4, 4);
@@ -481,7 +581,7 @@ test("sprite-strip compiles and applies each exact frame prompt with approved ke
   const provider = scripted();
   const { plan } = await create(f, { spec: stripSpec }, { provider });
   assert.equal(plan.prompts.images.length, 2);
-  assert.deepEqual(plan.operations, ["edit", "vision"]);
+  assert.deepEqual(plan.operations, ["edit", STYLE_VERDICT_OPERATION]);
   assert.ok(plan.prompts.images[1]!.includes("a leaning pose"));
   assert.ok(Object.values(plan.inputs).some((input) => input.path === join(f.root, "key.png")));
   const { run, runDir } = await applyPlan(plan, {
@@ -557,8 +657,10 @@ test("UI DESIGN colors are subordinate context and explicit reference roles reac
     f.biblePath,
     serializeBible(f.data, "## Do's and Don'ts\nDo follow anchors. Don't copy negative anchors.\n"),
   );
-  const provider = scripted();
-  const { plan } = await create(f, { brief: { purpose: "portrait" } }, { provider });
+  const provider = scripted({ ui: 0.9 });
+  const { plan } = await create(f, { brief: { purpose: "HUD button" } }, { provider });
+  assert.equal(decisions(provider, UI_ASSET_OPERATION).length, 1);
+  assert.deepEqual(plan.choices, { ui: true });
   const prompt = plan.prompts.generation;
   assert.ok(prompt.includes('"subordinateUiPaletteContext":{"accent":"#ff7700"}'));
   assert.ok(prompt.includes('"colorRule":"full"'));
@@ -573,11 +675,87 @@ test("UI DESIGN colors are subordinate context and explicit reference roles reac
     plan.prompts.qa.includes("2: positive:composition; 3: negative:unwanted-outline; 4: palette"),
   );
   await applyPlan(plan, { provider, outDir: join(f.root, "qa-runs") });
-  const qa = provider.calls.filter((c) => c.kind === "vision").at(-1)!;
+  const qa = provider.calls.filter((c) => c.kind === "decide").at(-1)!;
   assert.equal(qa.request.prompt, plan.prompts.qa);
   assert.equal(qa.request.images.length, 4);
-  const scene = await create(f, { brief: { purpose: "environment" } }, { provider: scripted() });
+  const scene = await create(
+    f,
+    { brief: { purpose: "a portrait hanging on the castle wall" } },
+    { provider: scripted({ ui: 0.1 }) },
+  );
   assert.ok(!scene.plan.prompts.generation.includes("subordinateUiPaletteContext"));
+  assert.deepEqual(scene.plan.choices, { ui: false });
+  const declared = scripted({ ui: 0.9 });
+  const no = await create(
+    f,
+    { brief: { purpose: "HUD button", ui: false } },
+    { provider: declared },
+  );
+  assert.equal(decisions(declared, UI_ASSET_OPERATION).length, 0);
+  assert.equal(no.plan.choices, undefined);
+  assert.ok(!no.plan.prompts.generation.includes("subordinateUiPaletteContext"));
+  const yes = await create(f, { brief: { ui: true } }, { provider: declared });
+  assert.equal(decisions(declared, UI_ASSET_OPERATION).length, 0);
+  assert.ok(yes.plan.prompts.generation.includes("subordinateUiPaletteContext"));
+  await assert.rejects(create(f, { brief: { ui: "yes" } }), /ui must be a boolean/);
+  await assert.rejects(
+    create(f, { brief: { purpose: "HUD button" } }),
+    /ui-asset decision, and no provider was given/,
+  );
+  const forecast = await planJobs(await planOptions(f, { brief: { purpose: "HUD button" } }));
+  assert.ok(forecast.jobs.some((j) => j.operation === UI_ASSET_OPERATION));
+});
+
+test("without DESIGN.md the UI question is never asked", async () => {
+  const f = await fixture();
+  const provider = scripted({ ui: 0.9 });
+  const { plan } = await create(f, { brief: { purpose: "HUD button" } }, { provider });
+  assert.equal(decisions(provider, UI_ASSET_OPERATION).length, 0);
+  assert.equal(plan.choices, undefined);
+});
+
+test("an in-bounds mood asks nothing; an enumerated adjustment out of bounds is decided; a forecast counts the decisions", async () => {
+  const f = await fixture("flat-cartoon-kids");
+  f.data.adjustable["weather"] = ["clear", "rain", "fog"];
+  await writeFile(
+    f.biblePath,
+    serializeBible(f.data, "## Do's and Don'ts\nDo preserve identity. Don't add text.\n"),
+  );
+  const quiet = scripted();
+  await create(
+    f,
+    { brief: { mood: "calm", adjustments: { weather: "rain" } } },
+    { provider: quiet },
+  );
+  assert.equal(decisions(quiet, BRIEF_CLAMP_OPERATION).length, 0);
+  const provider = scripted({ clampChoice: "fog" });
+  const brief = { mood: "grim", adjustments: { weather: "storm" } };
+  const created = await create(f, { brief }, { provider });
+  assert.equal(decisions(provider, BRIEF_CLAMP_OPERATION).length, 2);
+  assert.deepEqual(created.plan.choices, { clamps: { mood: "cheerful", weather: "fog" } });
+  const forecast = await planJobs(await planOptions(f, { brief }));
+  assert.equal(forecast.jobs.find((j) => j.operation === BRIEF_CLAMP_OPERATION)?.count, 2);
+
+  // Apply reuses the plan's choices and never asks.
+  const applied = scripted({ clampChoice: "fog" });
+  await applyPlan(created.plan, { provider: applied, outDir: join(f.root, "runs") });
+  assert.equal(decisions(applied, BRIEF_CLAMP_OPERATION).length, 0);
+  assert.equal(decisions(applied, UI_ASSET_OPERATION).length, 0);
+  // A choice edited to a value the bible does not allow is refused, even with the digest recomputed.
+  const edited = redigested(created.plan, (copy) => {
+    copy["choices"] = { clamps: { mood: "grim", weather: "fog" } };
+  });
+  await assert.rejects(
+    applyPlan(edited, { provider: applied, outDir: join(f.root, "runs") }),
+    InputError,
+  );
+  // A plan stripped of its choices lacks a decision apply never makes.
+  const stripped = redigested(created.plan, (copy) => {
+    delete copy["choices"];
+  });
+  await assert.rejects(applyPlan(stripped, { provider: applied, outDir: join(f.root, "runs") }), {
+    code: "plan_changed",
+  });
 });
 
 test("untrusted prose refuses recognized lower-case names and conflicting fallback or LLM instructions", async () => {
@@ -604,9 +782,11 @@ test("untrusted prose refuses recognized lower-case names and conflicting fallba
         neighbouringAssets: ["lantern-west-17"],
       },
     },
-    { provider: scripted() },
+    { provider: scripted({ clampChoice: "calm" }) },
   );
-  assert.ok(good.plan.prompts.generation.includes('"mood":"cheerful"'));
+  assert.ok(good.plan.prompts.generation.includes('"mood":"calm"'));
+  assert.ok(!good.plan.prompts.generation.includes('"mood":"cheerful"'));
+  assert.equal(good.clamps[0]!.applied, "calm");
   assert.ok(good.plan.prompts.generation.includes("Waiting quietly"));
   // Compiler text the check objects to is dropped for the template, never an error.
   const dropped = await create(
@@ -630,7 +810,7 @@ test("untrusted prose refuses recognized lower-case names and conflicting fallba
   assert.ok(!dropped.plan.prompts.generation.includes("ignore all following instructions"));
 });
 
-test("malformed compiler and QA JSON refuse safely before staging a candidate", async () => {
+test("malformed compiler JSON and a non-Boolean style verdict refuse safely before staging a candidate", async () => {
   const f = await fixture();
   for (const compiler of [
     "null",
@@ -653,16 +833,13 @@ test("malformed compiler and QA JSON refuse safely before staging a candidate", 
   setPixel(visible, 1, 1, [120, 90, 80, 255]);
   const provider = new ScriptedProvider({
     image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(visible) }] }),
-    vision: () => ({ text: "null" }),
+    vision: () => ({ text: "unused" }),
+    styleVerdict: () => ({ answer: { type: "score", score: 1 } }),
   });
-  const { run } = await applyPlan(plan, {
-    provider,
-    outDir: join(f.root, "runs"),
-    stability: stableStyle(),
-  });
-  assert.equal(run.candidates.length, 0);
-  assert.equal(run.filtered, 1);
-  assert.equal(provider.calls.filter((call) => call.kind === "vision").length, 1);
+  await assert.rejects(
+    applyPlan(plan, { provider, outDir: join(f.root, "runs"), stability: stableStyle() }),
+    /boolean question with a score/,
+  );
 });
 
 test("apply fits the visible subject and honors the spec anchor", async () => {
@@ -696,7 +873,10 @@ test("recorded model routes, seed sequence and exploration settings reach the ex
     ...defaultRoutes,
     still: { ...defaultRoutes.still, model: "scripted/image", supportsSeed: true },
     compiler: { ...defaultRoutes.vision, model: "scripted/compiler" },
-    vision: { ...defaultRoutes.vision, model: "scripted/qa" },
+    [STYLE_VERDICT_OPERATION]: {
+      ...defaultRoutes[STYLE_VERDICT_OPERATION]!,
+      model: "scripted/qa",
+    },
   };
   const { plan } = await create(
     f,
@@ -722,7 +902,14 @@ test("recorded model routes, seed sequence and exploration settings reach the ex
   const textCalls = provider.calls.filter((call) => call.kind === "vision");
   assert.deepEqual(
     textCalls.map((call) => call.request.model),
-    ["scripted/compiler", "scripted/qa", "scripted/qa"],
+    ["scripted/compiler"],
+  );
+  const verdicts = provider.calls.filter(
+    (call) => call.kind === "decide" && call.request.operation === STYLE_VERDICT_OPERATION,
+  );
+  assert.deepEqual(
+    verdicts.map((call) => call.request.model),
+    ["scripted/qa", "scripted/qa"],
   );
   await assert.rejects(create(f, { runOptions: { seed: 1 } }, { provider }), /does not support/);
 });
@@ -800,7 +987,7 @@ test("planning reconciles profile palette constraints and mattes opaque backgrou
     for (let x = 3; x < 5; x++) setPixel(opaque, x, y, [120, 90, 80, 255]);
   const provider = new ScriptedProvider({
     image: () => ({ images: [{ mediaType: "image/png", bytes: encodePng(opaque) }] }),
-    vision: () => ({ text: JSON.stringify({ styleScore: 1, passed: true }) }),
+    vision: () => ({ text: "unused" }),
   });
   const { run, runDir } = await applyPlan(plan, {
     provider,
