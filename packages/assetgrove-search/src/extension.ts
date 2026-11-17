@@ -413,8 +413,9 @@ async function outliers(addresses: string[], ctx: SearchContext): Promise<Search
     await assertSameEmbedder(remote, embedder, remoteWhere(ctx));
     stores.push({ store: remote, tree: await sharedTree(ctx) });
   }
-  // The ranking is free (design 7.5): a hosted embedder without its paid port refreshes nothing.
-  if (!(ctx.settings.embedder === "route" && !ctx.embedder?.embed)) await local.refresh();
+  // The ranking is free and a read (design 7.5): it ranks the vectors already stored and refreshes
+  // nothing, under every embedder, so a plan step or `estimate` writes no index. A member not yet
+  // indexed is not ranked; `search index` brings the index up to date.
   const members: Member[] = [];
   for (const address of new Set(addresses)) {
     for (const { store, tree } of stores) {

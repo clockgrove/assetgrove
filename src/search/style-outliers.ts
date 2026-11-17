@@ -29,15 +29,16 @@ export const TYPICAL = 8;
 const MIN_RANKED = 3;
 
 /**
- * The members asked about and the typical members shown beside them: the first min(5, n/2) of
- * the ranking, and the last min(8, n − asked). Nothing for a ranking under three members.
+ * The members asked about and the typical members shown beside them: the first min(5, n − 1) of
+ * the ranking, and the last min(8, n − asked), so at least one typical member is always shown.
+ * Nothing for a ranking under three members.
  */
 export function selectMembers(ranking: readonly SearchRankedMember[]): {
   judged: SearchRankedMember[];
   typical: SearchRankedMember[];
 } {
   if (ranking.length < MIN_RANKED) return { judged: [], typical: [] };
-  const asked = Math.min(JUDGED, Math.floor(ranking.length / 2));
+  const asked = Math.min(JUDGED, ranking.length - 1);
   const shown = Math.min(TYPICAL, ranking.length - asked);
   return {
     judged: ranking.slice(0, asked),

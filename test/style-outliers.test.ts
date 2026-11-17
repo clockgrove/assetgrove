@@ -123,8 +123,15 @@ test("the five most distant members are asked about beside up to eight typical o
     typical.map((m) => m.address),
     ["m25", "m24", "m23", "m22", "m21", "m20", "m19", "m18"],
   );
-  // A small set: at most half is asked about; under three members, nothing.
-  assert.equal(selectMembers(ranking.slice(0, 4)).judged.length, 2);
+  // A small set: all but its least distant member is asked about; under three members, nothing.
+  const four = selectMembers(ranking.slice(0, 4));
+  assert.equal(four.judged.length, 3);
+  assert.deepEqual(
+    four.typical.map((m) => m.address),
+    ["m3"],
+  );
+  assert.equal(selectMembers(ranking.slice(0, 6)).judged.length, 5);
+  assert.equal(selectMembers(ranking.slice(0, 3)).judged.length, 2);
   assert.equal(selectMembers(ranking.slice(0, 2)).judged.length, 0);
 });
 
@@ -194,7 +201,7 @@ test("a member with no image here is not judged", () => {
     return bytes && { bytes, path: address };
   });
   assert.deepEqual(work.notJudged, ["asset://g/pointer"]);
-  assert.equal(work.pending.length, 1);
+  assert.equal(work.pending.length, 3);
 });
 
 test("the bible's style text is its world, axes and Do's and Don'ts", () => {
@@ -310,8 +317,8 @@ test("find --outliers is a paid request: it forecasts, asks, judges the most dis
     const plan = JSON.parse(dry.stdout);
     assert.deepEqual(
       plan.jobs.map((j: { operation: string; count: number }) => [j.operation, j.count]),
-      [["style-outlier", 4]],
-      "at most half of eight members",
+      [["style-outlier", 5]],
+      "the five most distant of eight members",
     );
 
     useAttended();
@@ -335,10 +342,10 @@ test("find --outliers is a paid request: it forecasts, asks, judges the most dis
     assert.equal(result.ranking[0].differentStyle, true);
     assert.equal(
       result.ranking.filter((m: { differentStyle?: boolean }) => m.differentStyle === false).length,
-      3,
+      4,
     );
-    assert.equal(result.typical.length, 4);
-    assert.equal(styleCalls() - before, 4, "each decision reached the spend ledger");
+    assert.equal(result.typical.length, 3);
+    assert.equal(styleCalls() - before, 5, "each decision reached the spend ledger");
 
     const human = await cli(base);
     assert.equal(human.code, 0, human.stderr);
