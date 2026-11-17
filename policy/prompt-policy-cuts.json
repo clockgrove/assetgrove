@@ -6,7 +6,8 @@
       "refuseAt": 0.8,
       "measuredBy": "test/real/prompt-policy.real.ts",
       "fixture": "test/fixtures/prompt-policy/red-team.jsonl",
-      "bars": "docs/decisions.md#prompt-policy-bars"
+      "bars": "docs/decisions.md#prompt-policy-bars",
+      "rates": "not recorded yet: the real check measures this route on main and records refusalRate and falseRefusalRate here"
     }
   }
 }

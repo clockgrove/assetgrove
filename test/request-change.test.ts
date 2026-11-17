@@ -771,6 +771,20 @@ test("a view region on a 3D asset runs another round of the 3D kind with the not
       runs,
       providerScript: SCRIPT_3D,
     };
+    // The round's prompt names the source spec's subject (the asset id when it has none), so the
+    // plan step checks it: a blocklisted subject exits 9 before the spend is confirmed.
+    const term = packageBlocklist().terms.find(
+      (t) => t.kind === "character" && !t.ambiguous && /^[a-z0-9 ]+$/.test(t.term),
+    )!.term;
+    const sourceRunFile = join(staged.fields["runDir"] as string, "run.json");
+    const kept = await readFile(sourceRunFile, "utf8");
+    const named = JSON.parse(kept);
+    named.spec.subject = term;
+    await writeFile(sourceRunFile, JSON.stringify(named));
+    const refused = await runCommand(requestChangeCommand, { ...args, bible }, context());
+    assert.equal(refused.exitCode, 9, refused.error?.message);
+    assert.equal(refused.error?.code, "prompt_refused");
+    await writeFile(sourceRunFile, kept);
     const noBible = await runCommand(requestChangeCommand, args, context());
     assert.equal(noBible.exitCode, 2);
     assert.match(noBible.error!.message, /--bible/);

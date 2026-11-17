@@ -202,8 +202,9 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   let job: Job;
   let jobs: PlanJob[];
   // Text a prompt carries besides the region notes: a frame fix names the family and the subject
-  // (the asset id when the spec has no subject) in its template decision and fix prompt, so the
-  // plan step checks them, free, before the spend is confirmed.
+  // (the asset id when the spec has no subject) in its template decision and fix prompt, and a 3D
+  // round names the subject on its prompt's Subject: line, so the plan step checks them, free,
+  // before the spend is confirmed.
   const promptText: string[] = [];
   let bible: Awaited<ReturnType<typeof loadStyleBible>> | undefined;
   const registry = ctx.extensions ?? CORE_REGISTRY;
@@ -214,6 +215,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
         "a view region asks for another round of the 3D kind, which reads the style bible: give it with --bible",
       );
     bible = await loadStyleBible(args.bible);
+    promptText.push(source.spec.subject ?? source.spec.assetId ?? asset.assetId);
     const plan = planStage({
       spec: source.spec,
       profile: source.profile,
