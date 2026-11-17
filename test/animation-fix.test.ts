@@ -719,6 +719,26 @@ test("fix-scale: a wings-spread neighbour's area would oversize the body, so the
   );
 });
 
+test("fix-scale: in a looping cycle the last frame is drawn over the first as its next, as the onion sheet draws it", async () => {
+  const promptOf = async (loop: boolean) => {
+    const { provider, call } = flyerSetup("height");
+    await fixFrame(flyerOptions(call, { index: 4, from: { neighbour: 3 }, loop }));
+    const decides = provider.calls.filter((c) => c.kind === "decide");
+    assert.equal(decides.length, 1);
+    return decides[0]!.request as import("../src/gateway/provider.ts").DecisionRequest;
+  };
+  const looped = await promptOf(true);
+  assert.match(looped.prompt, /previous frame \(red\) and next frame \(blue\)/);
+  assert.match(looped.prompt, /the cycle loops, so frame 1 is drawn as its next/);
+  const open = await promptOf(false);
+  assert.match(open.prompt, /it is the last frame, so no next frame is drawn/);
+  // The looped images carry the first frame as the faint next one; the open ones do not.
+  assert.notDeepEqual(
+    looped.images.map((i) => Buffer.from(i.bytes).toString("base64")),
+    open.images.map((i) => Buffer.from(i.bytes).toString("base64")),
+  );
+});
+
 test("fix-scale: choosing area registers at the area-matched scale", async () => {
   const { call } = flyerSetup("area");
   const result = await fixFrame(flyerOptions(call));

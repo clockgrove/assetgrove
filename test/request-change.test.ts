@@ -479,6 +479,40 @@ test("a frame region edits only that frame, through fix-frame's path", async () 
   });
 });
 
+test("a frame region's dry run confirms the fix-scale decision with the edit, one per candidate and frame", async () => {
+  const strip = createRaster(128, 32);
+  for (let i = 0; i < 4; i++)
+    for (let y = 12; y < 30; y++)
+      for (let x = i * 32 + 10; x < i * 32 + 20; x++)
+        setPixel(strip, x, y, [60 + i * 30, 90, 140, 255]);
+  const p = await project(
+    { kind: "sprite-strip", assetId: "walker", animationFamily: "walk" },
+    strip,
+  );
+  const s = await script(p.dir);
+  await inProject(p.dir, async () => {
+    const dry = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,16,16 frame 2 : lift the tail", "0,0,16,16 frame 3 : raise the paw"],
+        candidates: 2,
+        runs: p.runs,
+        providerScript: s.path,
+        dryRun: true,
+      },
+      context(),
+    );
+    assert.equal(dry.exitCode, 0, dry.error?.message);
+    assert.equal((dry.fields["plan"] as { job: string }).job, "fix-frame");
+    const jobs = dry.fields["jobs"] as Array<{ operation: string; count: number }>;
+    // Two candidates, each fixing frames 2 and 3: four edits and up to four size decisions.
+    assert.equal(jobs.find((j) => j.operation === "edit")?.count, 4);
+    assert.equal(jobs.find((j) => j.operation === "fix-scale")?.count, 4);
+    assert.equal((await s.calls()).length, 0, "the plan step makes no call");
+  });
+});
+
 test("a frame region of a family no template names makes one motion-template decision, recorded in every candidate's provenance", async () => {
   const strip = createRaster(128, 32);
   for (let i = 0; i < 4; i++)

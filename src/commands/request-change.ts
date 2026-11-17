@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { defaultAnchor, profileFrame } from "../animation/run.ts";
+import { choiceLoops, defaultAnchor, profileFrame } from "../animation/run.ts";
 import { qaStyle } from "../animation/commands.ts";
 import { fixFrame } from "../animation/fix.ts";
 import { splitStrip } from "../animation/strip.ts";
@@ -679,6 +679,7 @@ version is appended with answers naming the requests. The run that made the asse
                 anchor,
                 family,
                 pin,
+                loop: choiceLoops(choice),
                 groundTolerance: thresholdsFor(source.profile).groundTolerance,
                 subject: source.spec.subject ?? source.spec.assetId ?? asset.assetId,
                 index: f,

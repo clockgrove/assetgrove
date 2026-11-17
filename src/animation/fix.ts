@@ -114,6 +114,12 @@ export interface FixFrameOptions {
    */
   groundTolerance?: number;
   subject: string;
+  /**
+   * Whether the family's cycle loops (its motion template's `loop`). The `fix-scale` decision
+   * draws the fixed frame over its neighbours as the onion sheet does, so in a loop the first
+   * frame's previous is the last frame and the last frame's next is the first.
+   */
+  loop?: boolean;
   /** 1-based frame to fix. */
   index: number;
   from: { neighbour: number } | { keyPose: LoadedReference };
@@ -455,8 +461,9 @@ export async function fixFrame(
   let decision: { record: CallRecord; probability?: number } | undefined;
   // The model judges size against the surrounding frames; a strip of one frame has none to draw,
   // so the first candidate stands without a call.
-  const previous = index > 1 ? frames[index - 2] : undefined;
-  const next = index < count ? frames[index] : undefined;
+  const loops = options.loop === true && count > 1;
+  const previous = index > 1 ? frames[index - 2] : loops ? frames[count - 1] : undefined;
+  const next = index < count ? frames[index] : loops ? frames[0] : undefined;
   if (distinct.length > 1 && (previous || next)) {
     const images = distinct.map(({ name, registered }, i) => {
       const cell = onionCell((registered.items[0] as ImageItem).raster, {
@@ -482,7 +489,11 @@ export async function fixFrame(
         `Each image shows frame ${index} of ${count} of the "${options.family}" cycle of ${options.subject} drawn at a different size,`,
         `at full opacity over ${
           previous && next
-            ? "the faint previous frame (red) and next frame (blue)"
+            ? loops && (index === 1 || index === count)
+              ? `the faint previous frame (red) and next frame (blue); the cycle loops, so frame ${
+                  index === 1 ? count : 1
+                } is drawn as its ${index === 1 ? "previous" : "next"}`
+              : "the faint previous frame (red) and next frame (blue)"
             : previous
               ? "the faint previous frame (red); it is the last frame, so no next frame is drawn"
               : "the faint next frame (blue); it is the first frame, so no previous frame is drawn"
