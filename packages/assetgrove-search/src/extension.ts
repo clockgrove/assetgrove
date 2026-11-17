@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   Extension,
+  ExtensionContext,
   SearchContext,
   SearchFindResult,
   NearMatchQuery,
@@ -19,7 +20,7 @@ import type {
   SearchSlot,
   SearchSource,
   SearchStoreSettings,
-} from "./contract.ts";
+} from "@clockgrove/assetgrove/extension";
 import type { Embedder } from "./embedder.ts";
 import { SearchError } from "./errors.ts";
 import {
@@ -707,7 +708,7 @@ async function forecast(
 export const searchSlot: SearchSlot = { find, outliers, index, status, setup, nearMatch, forecast };
 
 /** Core's entry: refuses on darwin-x64 before LanceDB or Transformers.js is imported. */
-export default function searchExtension(_context: { api: 1 }): Extension {
+export default function searchExtension(context: ExtensionContext): Extension {
   assertSupportedPlatform();
-  return { api: 1, name: "search", search: searchSlot };
+  return { api: context.api, name: "search", search: searchSlot };
 }

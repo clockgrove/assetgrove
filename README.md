@@ -235,18 +235,18 @@ Exit 1 is an unexpected internal error; please [report it](https://github.com/cl
 
 ## Documentation
 
-| To                                                   | Read                                                                                                                           |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Set up through Claude Code or another harness        | [docs/quick-start.md](docs/quick-start.md), [docs/keys.md](docs/keys.md)                                                       |
-| Write a spec, a style bible or a target profile      | [docs/target-profile.md](docs/target-profile.md), [docs/generation-knobs.md](docs/generation-knobs.md)                         |
-| Configure providers, routes, caps and limits         | [docs/settings.md](docs/settings.md), [docs/models.md](docs/models.md)                                                         |
-| Hand off to an engine or an atlas format             | [docs/handoff.md](docs/handoff.md)                                                                                             |
-| Browse, review, approve and change picked assets     | [docs/library.md](docs/library.md)                                                                                             |
-| Animate, build 3D characters, derive material maps   | [docs/animation.md](docs/animation.md), [docs/characters-3d.md](docs/characters-3d.md), [docs/materials.md](docs/materials.md) |
-| Know what the prompt policy refuses                  | [docs/prompt-policy.md](docs/prompt-policy.md)                                                                                 |
-| Understand AI marks, content credentials, disclosure | [docs/disclosure.md](docs/disclosure.md)                                                                                       |
-| Extend Assetgrove with a package                     | [docs/extensions.md](docs/extensions.md)                                                                                       |
-| See why it is built this way, and what is planned    | [docs/decisions.md](docs/decisions.md), [docs/PRD.md](docs/PRD.md), [docs/PLAN.md](docs/PLAN.md)                               |
+| To                                                          | Read                                                                                                                           |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Set up through Claude Code or another harness               | [docs/quick-start.md](docs/quick-start.md), [docs/keys.md](docs/keys.md)                                                       |
+| Write a spec, a style bible or a target profile             | [docs/target-profile.md](docs/target-profile.md), [docs/generation-knobs.md](docs/generation-knobs.md)                         |
+| Configure providers, routes, caps and limits                | [docs/settings.md](docs/settings.md), [docs/models.md](docs/models.md)                                                         |
+| Hand off to an engine or an atlas format                    | [docs/handoff.md](docs/handoff.md)                                                                                             |
+| Browse, review, approve and change picked assets            | [docs/library.md](docs/library.md)                                                                                             |
+| Animate, build 3D characters, derive material maps          | [docs/animation.md](docs/animation.md), [docs/characters-3d.md](docs/characters-3d.md), [docs/materials.md](docs/materials.md) |
+| Know what the prompt policy refuses                         | [docs/prompt-policy.md](docs/prompt-policy.md)                                                                                 |
+| Understand AI marks, content credentials, disclosure        | [docs/disclosure.md](docs/disclosure.md)                                                                                       |
+| Extend Assetgrove with a package (a pack, and its test kit) | [docs/extensions.md](docs/extensions.md)                                                                                       |
+| See why it is built this way, and what is planned           | [docs/decisions.md](docs/decisions.md), [docs/PRD.md](docs/PRD.md), [docs/PLAN.md](docs/PLAN.md)                               |
 
 ## Status
 

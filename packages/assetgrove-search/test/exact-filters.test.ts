@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { searchSlot } from "../src/extension.ts";
-import type { SearchContext } from "../src/contract.ts";
+import type { SearchContext } from "@clockgrove/assetgrove/extension";
 import { cleanup, tempDir } from "./helpers/fixture.ts";
 import { projectLibrary } from "./helpers/project.ts";
 

@@ -16,4 +16,22 @@ export * from "./lock.ts";
 export * from "./platform.ts";
 export * from "./where.ts";
 export * from "./extension.ts";
-export type * from "./contract.ts";
+export type {
+  Extension,
+  NearMatchQuery,
+  SearchContext,
+  SearchFindResult,
+  SearchForecast,
+  SearchHit,
+  SearchLibrary,
+  SearchLibraryItem,
+  SearchLoadedItem,
+  SearchOutliersResult,
+  SearchQuery,
+  SearchRankedMember,
+  SearchRouteEmbedder,
+  SearchSettings,
+  SearchSlot,
+  SearchSource,
+  SearchStoreSettings,
+} from "@clockgrove/assetgrove/extension";

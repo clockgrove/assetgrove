@@ -27,6 +27,7 @@ import {
 } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import { isLoopback } from "../settings.ts";
+import { allowedHosts, guardedFetch } from "../extension/http.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
 /**
@@ -46,6 +47,11 @@ export interface AdapterContext {
   settings: ProviderSettings;
   /** The scripted adapter's module (`--provider-script`); other adapters ignore it. */
   script?: Script;
+  /**
+   * A `fetch` that reaches only the adapter's `fixedHosts` and this entry's `baseURL` host,
+   * re-checking every redirect hop (src/extension/http.ts). A pack's SDK takes it as its `fetch`.
+   */
+  fetch: typeof fetch;
 }
 
 export interface ProviderAdapter {
@@ -334,6 +340,7 @@ export function createProvider(
   const created = adapter.create({
     providerId: id,
     settings: entry,
+    fetch: guardedFetch({ adapter: adapter.id, hosts: allowedHosts(adapter, entry.baseURL) }),
     ...(apiKey !== undefined && { apiKey }),
     ...(keyEnv !== undefined && { keyEnv }),
     ...(entry.baseURL !== undefined && { baseURL: entry.baseURL }),

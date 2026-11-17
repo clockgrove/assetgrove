@@ -49,8 +49,16 @@ const ALLOWED = [
   "CBOR_NATIVE_ACCELERATION_DISABLED",
 ];
 
-/** The functions in src/env.ts that index the environment by a name they are given. */
-const DYNAMIC_READERS = new Set(["refusedVariables", "keyValue", "windowsSearchPath"]);
+/**
+ * The functions in src/env.ts that index the environment by a name they are given, or (for
+ * `isolateForSettings`, as for `refusedVariables`) by each of `REFUSED_VARIABLES`.
+ */
+const DYNAMIC_READERS = new Set([
+  "refusedVariables",
+  "keyValue",
+  "windowsSearchPath",
+  "isolateForSettings",
+]);
 
 function files(dir: string, pattern: RegExp): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

@@ -6,15 +6,6 @@
  * no provider call, a route without `embed` exits 2 before any reservation, and an index built by
  * another embedder exits 2 `embedder_changed` until `search index --rebuild`.
  */
-import "../../../test/fixtures/env.ts";
-import {
-  approve,
-  ledgerPath,
-  settingsPath,
-  stateDir,
-  useAttended,
-  writeSettings,
-} from "../../../test/fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -29,25 +20,19 @@ import {
 } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
-import { PassThrough } from "node:stream";
+import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { commands } from "../../../src/commands/registry.ts";
-import { searchCall } from "../../../src/commands/search.ts";
-import { runCommand } from "../../../src/commands/runner.ts";
-import type { CommandSpec, Outcome, RunContext } from "../../../src/commands/types.ts";
-import type { ConfirmPort, ConfirmRequest } from "../../../src/confirm/prompt.ts";
-import { routeDataFlows } from "../../../src/dataflows.ts";
-import { coreExtension } from "../../../src/extensions/core.ts";
-import { ExtensionRegistry } from "../../../src/extensions/registry.ts";
-import { nearMatchesFor } from "../../../src/search/near-match.ts";
-import { requiresUserInteraction, serveMcp, toolAnnotations } from "../../../src/mcp.ts";
-import { loadSettings } from "../../../src/settings.ts";
-import { GAME, fixtureLibrary } from "../../../test/fixtures/library.ts";
-import { drawSubject } from "../../../test/fixtures/synthetic.ts";
-import { encodePng } from "../../../src/image/raster.ts";
-import searchExtension, { nearMatchesWith } from "../src/extension.ts";
+import {
+  extensionContext,
+  sampleBible,
+  samplePng,
+  sampleProfile,
+  tempProject,
+} from "@clockgrove/assetgrove/testing";
+import type { ConfirmRequest, McpSession, Outcome } from "@clockgrove/assetgrove/testing";
+import searchExtension from "../src/extension.ts";
+import { GAME, drawSubject, writeLibrary } from "./helpers/core-library.ts";
 
 const script = fileURLToPath(new URL("./fixtures/embed-script.ts", import.meta.url));
 const calls = ((globalThis as { embedCalls?: { image: number; text: number } }).embedCalls ??= {
@@ -55,31 +40,28 @@ const calls = ((globalThis as { embedCalls?: { image: number; text: number } }).
   text: 0,
 });
 
-const lib = fixtureLibrary();
+const project = tempProject();
 const home = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-search-hosted-")));
 const runs = join(home, "runs");
+const ledgerPath = join(project.stateDir, "spend.jsonl");
+const stateDir = project.stateDir;
+const lib = { dir: project.dir };
+const { raster } = extensionContext("search-hosted-test");
+writeLibrary(project.dir);
 after(async () => {
-  await rm(lib.dir, { recursive: true, force: true });
+  project.close();
   await rm(home, { recursive: true, force: true });
 });
 
-approve(script);
-
-const extensions = new ExtensionRegistry([
-  {
-    extension: coreExtension,
-    info: { package: "@clockgrove/assetgrove", version: null, entry: null },
-  },
-  {
-    extension: searchExtension({ api: 1 }) as never,
-    info: { package: "@clockgrove/assetgrove-search", version: null, entry: "test" },
-  },
-]);
+const extensions = [searchExtension(extensionContext("search"))];
 
 /** The installed package name the tree test lists in settings. */
 const SHIM = "assetgrove-search-hosted-shim";
 
-const spec = (name: string): CommandSpec => commands.find((c) => c.name === name)!;
+/** Attended settings: a person is asked, so a test's confirmation port answers. */
+function writeSettings(settings: Record<string, unknown>): void {
+  project.writeSettings(settings, { attended: true });
+}
 
 /** Hosted settings with the embeddings role on `provider` (the scripted one by default). */
 function hosted(model = "scripted/embed-a", provider = "scripted", listed = false): void {
@@ -90,34 +72,116 @@ function hosted(model = "scripted/embed-a", provider = "scripted", listed = fals
       scripted: { limit: { kind: "prepaid", usd: 100 } },
       anthropic: {},
     },
-    roles: { embeddings: { provider, model, estimatedCostUsd: 0.002 } },
+    roles: {
+      embeddings: { provider, model, estimatedCostUsd: 0.002 },
+      decisions: { provider: "scripted", model: "scripted/decide" },
+    },
   });
-  useAttended();
 }
 
-/** Runs a command in process with a TTY port that says yes and records each request. */
+/**
+ * Runs a command in process with a TTY port that says yes. Each spend confirmation is recorded
+ * in `asked`; the first run of the provider script is approved the same way, unrecorded.
+ */
 async function run(
   name: string,
   args: Record<string, unknown>,
   asked: ConfirmRequest[] = [],
   env?: NodeJS.ProcessEnv,
 ): Promise<Outcome> {
-  const prompt: ConfirmPort = {
-    method: "tty",
-    confirm: async (request) => {
-      asked.push(request);
-      return true;
+  return project.run(
+    name,
+    { target: lib.dir, providerScript: script, runs, ...args },
+    {
+      extensions,
+      confirm: (request) => {
+        if (request.kind === "spend") asked.push(request);
+        return true;
+      },
+      ...(env && { env }),
     },
-  };
-  const ctx: RunContext = {
-    settings: loadSettings(),
-    extensions,
-    log: () => {},
-    prompt,
-    ...(env && { env }),
-  };
-  return runCommand(spec(name), { target: lib.dir, providerScript: script, runs, ...args }, ctx);
+  );
 }
+
+/** A bible and a target profile written by `init` into a repository of their own. */
+async function initFiles(): Promise<{ bible: string; profile: string; flows: unknown[] }> {
+  const target = realpathSync(mkdtempSync(join(home, "init-")));
+  execFileSync("git", ["init", "-q", target]);
+  const init = await project.run(
+    "init",
+    {
+      directory: target,
+      world: "Synthetic Grove",
+      profilePreset: "sprite-32",
+      stylePreset: "flat-cartoon-kids",
+    },
+    { extensions },
+  );
+  assert.equal(init.exitCode, 0, JSON.stringify(init.error));
+  const files = init.fields["files"] as { path: string; role: string }[];
+  const pathOf = (role: string) => files.find((f) => f.role === role)!.path;
+  return {
+    bible: pathOf("bible"),
+    profile: pathOf("profile"),
+    flows: init.fields["providers"] as unknown[],
+  };
+}
+
+/**
+ * The plan step of `stage` over a sprite-strip spec for the walk, as core's near matches see it:
+ * the outcome's `nearMatches` and `searchError`, with `keyPose` the reference image (a sample picture when absent).
+ */
+async function planStep(keyPose?: string): Promise<Outcome> {
+  const dir = mkdtempSync(join(home, "stage-"));
+  const [spec, bible, profile] = ["spec", "bible", "profile"].map((n) =>
+    join(dir, `${n}.json`),
+  ) as [string, string, string];
+  writeFileSync(
+    spec,
+    JSON.stringify({
+      kind: "sprite-strip",
+      assetId: "walk",
+      animationFamily: "walk",
+      frames: { count: 2 },
+      anchor: { x: 4, y: 7 },
+      keyPose: keyPose ?? "pose.png",
+    }),
+  );
+  writeFileSync(join(dir, "pose.png"), samplePng());
+  writeFileSync(bible, JSON.stringify(sampleBible()));
+  writeFileSync(profile, JSON.stringify(sampleProfile()));
+  // The stage command finds the library from the working directory.
+  const cwd = process.cwd();
+  process.chdir(lib.dir);
+  try {
+    return await project.run(
+      "stage",
+      { spec, bible, profile, providerScript: script, runs, dryRun: true },
+      { extensions },
+    );
+  } finally {
+    process.chdir(cwd);
+  }
+}
+
+interface ListedTool {
+  name: string;
+  _meta?: Record<string, unknown>;
+  annotations?: { openWorldHint?: boolean };
+}
+
+/** The tools an MCP server lists under the settings written now (the server reads them at start). */
+async function listTools(): Promise<ListedTool[]> {
+  const mcp = await project.mcp({ extensions, providerScript: script });
+  try {
+    return ((await mcp.request("tools/list", {}))["result"] as { tools: ListedTool[] }).tools;
+  } finally {
+    await mcp.close();
+  }
+}
+
+const needsPerson = (tool: ListedTool | undefined): unknown =>
+  tool?._meta?.["anthropic/requiresUserInteraction"];
 
 /** The ledger lines of `embed` calls. */
 function embedEntries(): string[] {
@@ -181,35 +245,26 @@ test("reads with a hosted embedder use stored vectors only; find with words is a
     assert.equal(found.exitCode, 0, JSON.stringify(found.error));
     assert.ok((found.fields["hits"] as unknown[]).length > 0, JSON.stringify(args));
   }
-  // A plan step's near matches: by stored vectors only, with and without a reference image.
-  const lanternHit = (
-    (await run("find", { where: ["subject=lantern"] })).fields["hits"] as { path: string }[]
-  )[0]!;
-  const reference = isAbsolute(lanternHit.path) ? lanternHit.path : join(lib.dir, lanternHit.path);
-  const cwd = process.cwd();
-  process.chdir(lib.dir);
-  try {
-    const near: RunContext = { settings: loadSettings(), extensions, log: () => {} };
-    const spec = { kind: "still", assetId: "lantern", subject: "lantern" };
-    for (const refs of [[], [reference]]) {
-      const outcome = await nearMatchesFor(spec, refs, near);
-      assert.equal(outcome.searchError, undefined, JSON.stringify(refs));
-      assert.ok((outcome.nearMatches ?? []).length > 0, JSON.stringify(refs));
-    }
-    // The reference's stored vector ranks the lantern itself first.
-    const { context } = await searchCall("find", undefined, near);
-    const image = new Uint8Array(readFileSync(reference));
-    const matched = await nearMatchesWith(
-      { kind: "still", subject: "lantern", references: [image], limit: 1 },
-      context,
-      { paid: true },
-    );
-    assert.deepEqual(
-      matched.hits.map((h) => h.address),
-      [`asset://${GAME}/lantern`],
-    );
-  } finally {
-    process.chdir(cwd);
+  // A plan step's near matches: by stored vectors only, with and without a reference image. The
+  // library holds two sprite-strip cards of the fox, so only the reference's stored vector can
+  // rank one of them first.
+  const hitsWhere = async (where: string) =>
+    (await run("find", { where: [where] })).fields["hits"] as { address: string; path: string }[];
+  const strips = await hitsWhere("kind=sprite-strip");
+  assert.deepEqual(strips.map((h) => h.address).sort(), [
+    `asset://${GAME}/trot`,
+    `asset://${GAME}/walk`,
+  ]);
+  const unreferenced = await planStep();
+  assert.equal(unreferenced.exitCode, 0, JSON.stringify(unreferenced.error));
+  assert.equal(unreferenced.fields["searchError"], undefined);
+  assert.ok(((unreferenced.fields["nearMatches"] ?? []) as unknown[]).length > 0);
+  for (const hit of strips) {
+    const outcome = await planStep(join(lib.dir, hit.path));
+    assert.equal(outcome.exitCode, 0, JSON.stringify(outcome.error));
+    assert.equal(outcome.fields["searchError"], undefined, hit.address);
+    const near = (outcome.fields["nearMatches"] ?? []) as { address: string }[];
+    assert.equal(near[0]?.address, hit.address, "the reference's stored vector ranks it first");
   }
   assert.equal(total(), before, "no provider call from a read or a plan step");
   assert.equal(asked.length, 0);
@@ -226,7 +281,7 @@ test("the tree's find, like and where paths over MCP with a hosted embedder make
   // The server loads the package from the project, as settings list it: an installed shim whose
   // entry re-exports this package's extension (Git tracks the package's own files, which an
   // extension entry may not be).
-  const shim = join(lib.dir, "node_modules", SHIM);
+  const shim = join(home, "shim");
   mkdirSync(shim, { recursive: true });
   writeFileSync(
     join(shim, "package.json"),
@@ -234,75 +289,33 @@ test("the tree's find, like and where paths over MCP with a hosted embedder make
       name: SHIM,
       version: "1.0.0",
       type: "module",
-      assetgrove: { api: 1, entry: "./index.js" },
+      assetgrove: { api: 2, entry: "./index.js" },
+      peerDependencies: { "@clockgrove/assetgrove": "^0.2.0" },
     }),
   );
   writeFileSync(
     join(shim, "index.js"),
     `export { default } from ${JSON.stringify(new URL("../src/extension.ts", import.meta.url).href)};\n`,
   );
+  project.install(shim, SHIM);
   hosted("scripted/embed-a", "scripted", true);
   const indexed = await run("search index", {});
   assert.equal(indexed.exitCode, 0, JSON.stringify(indexed.error));
   const before = total();
   const ledger = embedEntries().length;
 
-  const input = new PassThrough();
-  const output = new PassThrough();
-  const pending = new Map<number, (message: Record<string, unknown>) => void>();
-  let buffered = "";
-  output.on("data", (chunk: Buffer) => {
-    buffered += chunk.toString("utf8");
-    let end: number;
-    while ((end = buffered.indexOf("\n")) >= 0) {
-      const line = buffered.slice(0, end).trim();
-      buffered = buffered.slice(end + 1);
-      if (line === "") continue;
-      const message = JSON.parse(line) as { id?: number };
-      if (typeof message.id === "number") pending.get(message.id)?.(message);
-    }
-  });
-  let next = 0;
-  const request = (method: string, params: unknown) =>
-    new Promise<Record<string, unknown>>((done) => {
-      const id = ++next;
-      pending.set(id, done);
-      input.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    });
-  const read = async (uri: string) => request("resources/read", { uri });
-
   const cwd = process.cwd();
   process.chdir(lib.dir);
-  const ctx: RunContext = {
-    settings: loadSettings(),
-    extensions,
-    log: () => {},
-    providerScript: script,
-  };
-  const served = serveMcp(ctx, input, output, { target: lib.dir });
+  const mcp: McpSession = await project.mcp({ extensions, providerScript: script });
+  const read = (uri: string) => mcp.request("resources/read", { uri });
   try {
-    await request("initialize", {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "hosted-test", version: "0.0.0" },
-    });
-    input.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
     // The server passes its settings to the mark: with a hosted embedder, find and search_index
     // are paid tools that need the person and reach the provider.
-    const listed = await request("tools/list", {});
-    const tools = (
-      listed["result"] as {
-        tools: {
-          name: string;
-          _meta?: Record<string, unknown>;
-          annotations?: { openWorldHint?: boolean };
-        }[];
-      }
-    ).tools;
+    const tools = await listTools();
     for (const name of ["find", "search_index"]) {
       const tool = tools.find((t) => t.name === name);
       assert.ok(tool, `${name} is listed`);
-      assert.equal(tool._meta?.["anthropic/requiresUserInteraction"], true, name);
+      assert.equal(needsPerson(tool), true, name);
       assert.equal(tool.annotations?.openWorldHint, true, name);
     }
     for (const path of ["like/lantern", `where/${encodeURIComponent("kind=still")}`]) {
@@ -319,8 +332,7 @@ test("the tree's find, like and where paths over MCP with a hosted embedder make
     assert.equal(refused.data.exitCode, 2);
     assert.match(refused.message, /find tool/);
   } finally {
-    input.end();
-    await served;
+    await mcp.close();
     process.chdir(cwd);
   }
   assert.equal(total(), before, "no provider call from a tree read");
@@ -346,21 +358,19 @@ test("a route whose adapter lacks embed exits 2 route_unavailable before any res
   assert.equal(embedEntries().length, ledger);
 
   hosted();
-  const flows = routeDataFlows(loadSettings());
-  const flow = flows.find((f) => f.operation === "embed");
-  assert.equal(flow?.providerId, "scripted");
+  const flows = (await initFiles()).flows as { operation: string; providerId: string }[];
+  assert.equal(flows.find((f) => f.operation === "embed")?.providerId, "scripted");
 });
 
 test("a hosted find without words brings the index up to date first: it forecasts the new image, asks once, and a repeat pays nothing", async () => {
   hosted();
   assert.equal((await run("search index", {})).exitCode, 0);
   const folder = realpathSync(mkdtempSync(join(home, "folder-")));
-  writeFileSync(join(folder, "moon.png"), encodePng(drawSubject(40, 11)));
-  const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+  writeFileSync(join(folder, "moon.png"), raster.encodePng(drawSubject(40, 11)));
+  const settings = JSON.parse(readFileSync(project.settingsPath, "utf8")) as {
     search: Record<string, unknown>;
   };
   writeSettings({ ...settings, search: { ...settings.search, folders: [folder] } });
-  useAttended();
 
   const dry = await run("find", { where: ["source=folder"], dryRun: true });
   assert.equal(dry.exitCode, 0, JSON.stringify(dry.error));
@@ -405,16 +415,9 @@ test("an index built by another embedder exits 2 embedder_changed until search i
 
   hosted("scripted/embed-b");
   // A plan step's near matches record the refusal as their searchError (design 7.6) and go on.
-  const cwd = process.cwd();
-  process.chdir(lib.dir);
-  try {
-    const near: RunContext = { settings: loadSettings(), extensions, log: () => {} };
-    const spec = { kind: "still", assetId: "lantern", subject: "lantern" };
-    const outcome = await nearMatchesFor(spec, [], near);
-    assert.match(JSON.stringify(outcome.searchError), /embedder_changed|search index --rebuild/);
-  } finally {
-    process.chdir(cwd);
-  }
+  const planned = await planStep();
+  assert.equal(planned.exitCode, 0, JSON.stringify(planned.error));
+  assert.match(String(planned.fields["searchError"]), /embedder_changed|search index --rebuild/);
   const asked: ConfirmRequest[] = [];
   for (const [name, args] of [
     ["search index", {}],
@@ -485,8 +488,6 @@ test("with the local model find and search index embed nothing and take no track
   process.chdir(repo);
   try {
     writeSettings({ search: { embedder: "scripted" } });
-    useAttended();
-    const local: RunContext = { settings: loadSettings(), extensions, log: () => {} };
     for (const [command, args] of [
       ["find", { words: "lantern" }],
       ["search index", {}],
@@ -494,19 +495,21 @@ test("with the local model find and search index embed nothing and take no track
       const outcome = await run(command, args, [], env);
       assert.notEqual(outcome.error?.code, "key_tracked", command);
     }
-    assert.equal(toolAnnotations(spec("search index"), local).openWorldHint, false);
-    assert.equal(requiresUserInteraction(spec("search index"), false, local), false);
-    // find --outliers asks style-outlier decisions under every embedder (#366): it takes the guard,
-    // and the find tool is marked as asking a spend confirmation, except under headless settings,
-    // so in Claude Code a paid --outliers goes to the person in every permission mode (docs/PRD.md).
+    // The server marks a tool at start from its settings. find --outliers asks style-outlier
+    // decisions under every embedder (#366): it takes the guard, and the find tool is marked as
+    // asking a spend confirmation, except under headless settings, so in Claude Code a paid
+    // --outliers goes to the person in every permission mode (docs/PRD.md).
+    const local = await listTools();
+    assert.equal(local.find((t) => t.name === "search_index")?.annotations?.openWorldHint, false);
+    assert.equal(needsPerson(local.find((t) => t.name === "search_index")), undefined);
     const judged = await run("find", { outliers: `asset://${GAME}/` }, [], env);
     assert.equal(judged.error?.code, "key_tracked");
-    assert.equal(toolAnnotations(spec("find"), local).openWorldHint, true);
-    assert.equal(requiresUserInteraction(spec("find"), false, local), true);
-    assert.equal(requiresUserInteraction(spec("find"), true, local), false);
+    assert.equal(local.find((t) => t.name === "find")?.annotations?.openWorldHint, true);
+    assert.equal(needsPerson(local.find((t) => t.name === "find")), true);
+    project.writeSettings({ search: { embedder: "scripted" } });
+    assert.equal(needsPerson((await listTools()).find((t) => t.name === "find")), undefined);
 
     hosted();
-    const paid: RunContext = { settings: loadSettings(), extensions, log: () => {} };
     const refused = await run("find", { words: "lantern" }, [], env);
     assert.equal(refused.error?.code, "key_tracked");
     // A hosted find without words still brings the index up to date, which can embed: it takes
@@ -515,13 +518,20 @@ test("with the local model find and search index embed nothing and take no track
     assert.equal(where.error?.code, "key_tracked");
     const hostedJudged = await run("find", { outliers: `asset://${GAME}/` }, [], env);
     assert.equal(hostedJudged.error?.code, "key_tracked");
-    assert.equal(toolAnnotations(spec("find"), paid).openWorldHint, true);
     // A hosted embedder asks a spend confirmation, so the server marks both tools at start,
     // except under headless settings.
-    for (const command of ["find", "search index"]) {
-      assert.equal(requiresUserInteraction(spec(command), false, paid), true, command);
-      assert.equal(requiresUserInteraction(spec(command), true, paid), false, command);
+    const paid = await listTools();
+    for (const command of ["find", "search_index"]) {
+      assert.equal(paid.find((t) => t.name === command)?.annotations?.openWorldHint, true, command);
+      assert.equal(needsPerson(paid.find((t) => t.name === command)), true, command);
     }
+    project.writeSettings({
+      search: { embedder: "route" },
+      providers: { scripted: { limit: { kind: "prepaid", usd: 100 } }, anthropic: {} },
+      roles: { embeddings: { provider: "scripted", model: "scripted/embed-a" } },
+    });
+    for (const tool of (await listTools()).filter((t) => ["find", "search_index"].includes(t.name)))
+      assert.equal(needsPerson(tool), undefined, tool.name);
   } finally {
     process.chdir(cwd);
   }
@@ -534,7 +544,6 @@ test("a hosted find with words or like of the wrong type exits 2 invalid_input, 
     assert.equal(paid.exitCode, 2, JSON.stringify(args));
     assert.equal(paid.error?.code, "invalid_input", JSON.stringify(args));
     writeSettings({ search: { embedder: "scripted" } });
-    useAttended();
     const local = await run("find", args);
     assert.equal(local.error?.code, "invalid_input", JSON.stringify(args));
   }
@@ -542,7 +551,6 @@ test("a hosted find with words or like of the wrong type exits 2 invalid_input, 
 
 test("with the local model a dry run or an estimate of find or search index is refused and runs nothing", async () => {
   writeSettings({ search: { embedder: "scripted" } });
-  useAttended();
   const built = await run("search index", { rebuild: true });
   assert.equal(built.exitCode, 0, JSON.stringify(built.error));
   const store = join(stateDir, "search");
@@ -563,10 +571,10 @@ test("with the local model a dry run or an estimate of find or search index is r
     assert.equal(dry.exitCode, 2, name);
     assert.equal(dry.error?.code, "invalid_input", name);
     assert.match(dry.error!.message, /spends nothing with the local model/);
-    const estimate = await runCommand(
-      spec("estimate"),
+    const estimate = await project.run(
+      "estimate",
       { command: name, args: { ...args, target: lib.dir } },
-      { settings: loadSettings(), extensions, log: () => {} },
+      { extensions },
     );
     assert.equal(estimate.exitCode, 2, name);
     assert.equal(estimate.error?.code, "invalid_input", name);

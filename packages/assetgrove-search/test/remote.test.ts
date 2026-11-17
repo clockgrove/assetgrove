@@ -26,7 +26,7 @@ describe("a shared remote store (a local folder URI)", () => {
   after(() => cleanup(p.root, p.stateDir, remoteDir, join(remoteDir, "..")));
 
   const settings = (writer: boolean) => ({
-    store: { uri, options: {}, writer },
+    store: { uri, options: {}, credentialsEnv: {}, writer },
   });
 
   it("refuses to build from uncommitted changes and writes nothing", async () => {
@@ -175,7 +175,7 @@ describe("a shared remote store (a local folder URI)", () => {
     const store = (uri: string, credentialsEnv?: Record<string, string>) => ({
       uri,
       options: { region: "auto" },
-      ...(credentialsEnv && { credentialsEnv }),
+      credentialsEnv: credentialsEnv ?? {},
       writer: false,
     });
     assert.deepEqual(
@@ -218,7 +218,9 @@ describe("a shared remote store (a local folder URI)", () => {
   });
 
   it("refuses to open a remote store with no credentials named", async () => {
-    const ctx = p.context({ store: { uri: "gs://bucket/search", options: {}, writer: false } });
+    const ctx = p.context({
+      store: { uri: "gs://bucket/search", options: {}, credentialsEnv: {}, writer: false },
+    });
     await assert.rejects(
       searchSlot.find({ words: "x", limit: 1 }, ctx),
       (e) => e instanceof SearchError && e.code === "settings_invalid",

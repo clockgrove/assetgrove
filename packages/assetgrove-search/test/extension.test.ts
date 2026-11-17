@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
+import { extensionContext } from "@clockgrove/assetgrove/testing";
 import extension from "../src/extension.ts";
 import { SearchError } from "../src/errors.ts";
 import { cleanup } from "./helpers/fixture.ts";
@@ -12,11 +13,12 @@ describe("the search extension", () => {
   });
   after(() => cleanup(p.root, p.stateDir));
 
-  const slot = extension({ api: 1 }).search!;
+  const context = extensionContext("search");
+  const slot = extension(context).search!;
 
   it("declares the search slot", () => {
-    const ext = extension({ api: 1 });
-    assert.equal(ext.api, 1);
+    const ext = extension(context);
+    assert.equal(ext.api, 2);
     assert.equal(ext.name, "search");
   });
 

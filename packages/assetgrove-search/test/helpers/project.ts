@@ -1,6 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { SearchContext, SearchLibrary, SearchSettings } from "../../src/contract.ts";
+import type {
+  SearchContext,
+  SearchLibrary,
+  SearchSettings,
+} from "@clockgrove/assetgrove/extension";
 import { folderLibrary } from "./library.ts";
 import { tempDir } from "./fixture.ts";
 

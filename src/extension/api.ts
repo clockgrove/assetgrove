@@ -1,19 +1,28 @@
 /**
- * The extension contract (design section 11), published as `@clockgrove/assetgrove/extension`.
- * A package declares `"assetgrove": {"api": 1, "entry": "..."}` in its package.json and
- * peer-depends on `@clockgrove/assetgrove`; core loads it only when the developer settings list it
- * (src/extensions/registry.ts). Its entry's default export is an `Extension`, or a function of the
- * `ExtensionContext` that returns one. Runtime helpers reach an extension through the context,
- * never through imports of core; this module exports only types and `EXTENSION_API`.
+ * The extension ("pack") contract (design section 11), published as
+ * `@clockgrove/assetgrove/extension`. A package declares `"assetgrove": {"api": 2, "entry": "..."}`
+ * in its package.json and a peer range on `@clockgrove/assetgrove`; core loads it only when the
+ * developer settings list it, it speaks an api core speaks and the range admits core's version
+ * (src/extensions/registry.ts, src/extensions/version.ts). Its entry's default export is an
+ * `Extension`, or a function of the `ExtensionContext` that returns one. Runtime helpers reach a
+ * pack through the context, never through imports of core by path; this module exports types,
+ * `EXTENSION_API`, `EXTENSION_APIS` and zod's `z`.
  */
-import type { z } from "zod";
+import { z } from "zod";
 import type { HandoffPreset } from "../handoff/presets/index.ts";
 import type { Generator } from "../generators/generator.ts";
-import type { ProviderAdapter } from "../providers/adapter.ts";
+import type { AdapterContext, ProviderAdapter } from "../providers/adapter.ts";
 import type { SearchSettings } from "../settings.ts";
+import type { prompt, qa, raster } from "./helpers.ts";
 
-/** The extension API version this build of Assetgrove loads. */
-export const EXTENSION_API = 1;
+/** The extension API version this build of Assetgrove speaks. */
+export const EXTENSION_API = 2;
+
+/** Every extension API version this build loads; a pack declaring another is refused. */
+export const EXTENSION_APIS: readonly number[] = [EXTENSION_API];
+
+/** The zod core validates preset options with, the same instance the context hands a pack. */
+export { z };
 
 /** An asset kind: one spec `kind`, its planned calls and how one candidate is made. */
 export type AssetKind = Generator;
@@ -232,31 +241,112 @@ export interface SearchSlot {
   ): Promise<SearchForecast>;
 }
 
-/** What core hands an entry's default export when it is a function. */
+/** Core's raster functions: decode, encode, crop, scale, palette and grid (src/extension/helpers.ts). */
+export type RasterHelpers = typeof raster;
+/** Core's deterministic QA checks. */
+export type QaHelpers = typeof qa;
+/** The bible-to-prompt compiler. */
+export type PromptHelpers = typeof prompt;
+
+/** The run a call is made in, when a paid command's executor opened one. */
+export interface RunInfo {
+  /** Whether the run holds a verified confirmation to spend. */
+  cleared: boolean;
+  /** The run's id and directory, when it has a run directory. */
+  id?: string;
+  dir?: string;
+}
+
+/**
+ * What core hands an entry's default export when it is a function: everything a pack needs from
+ * core, so it imports none of core's modules by path.
+ */
 export interface ExtensionContext {
   api: typeof EXTENSION_API;
   /** The zod core validates preset options with. */
   z: typeof z;
+  raster: RasterHelpers;
+  qa: QaHelpers;
+  prompt: PromptHelpers;
+  /**
+   * The guarded `fetch` for one provider instance: it refuses any host outside the adapter's
+   * `fixedHosts` and the settings `baseURL` (when `endpointFromSettings`), re-checking every
+   * redirect hop. Core hands the same as `AdapterContext.fetch`. It guards provider-steered URLs,
+   * not pack code: a pack's SDK must take it as its `fetch`.
+   */
+  http(
+    adapter: Pick<ProviderAdapter, "id" | "fixedHosts" | "endpointFromSettings">,
+    c?: Pick<AdapterContext, "baseURL">,
+  ): typeof fetch;
+  run: {
+    /** The current run, or undefined outside one. */
+    current(): RunInfo | undefined;
+  };
+  /** One line to stderr, prefixed with the pack's package name. */
+  log(message: string): void;
 }
 
 /** An entry module's default export. */
 export type ExtensionEntry =
   Extension | ((context: ExtensionContext) => Extension | Promise<Extension>);
 
-export type { GeneratedCandidate, GeneratorContext, PlannedCall } from "../generators/generator.ts";
+export type {
+  GeneratedCandidate,
+  GeneratorContext,
+  KindCheck,
+  KindCheckInput,
+  PlannedCall,
+} from "../generators/generator.ts";
+export type { Caller } from "../calls.ts";
+export type { Raster } from "../image/raster.ts";
 export type { PresetContext, PresetFile } from "../handoff/presets/index.ts";
 export type { AdapterContext, Capability, ProviderAdapter } from "../providers/adapter.ts";
 export type {
+  AnimateRequest,
   Billing,
   CallKind,
+  CallTypes,
+  DecisionAnswer,
+  DecisionQuestion,
+  DecisionRequest,
+  DecisionResult,
+  DecisionSource,
+  DeclaredLimit,
+  EmbedRequest,
+  EmbedResult,
   GenerationProvider,
   ImageInput,
   ImageRequest,
   ImageResult,
+  JobProvider,
+  JobStatus,
+  LimitReading,
+  ModelRequest,
+  ModelResult,
+  ModelView,
+  ProviderJobs,
+  ProviderResult,
+  RigRequest,
   VisionRequest,
   VisionResult,
 } from "../gateway/provider.ts";
 export type { Route, Routes } from "../routes.ts";
 export type { ProviderSettings } from "../settings.ts";
 export type { SearchSettings, SearchStoreSettings } from "../settings.ts";
-export type { AssetSpec, MediaOutput, QaResult, Reason, TargetProfile } from "../types.ts";
+export type {
+  AssetSpec,
+  Box,
+  LoadedReference,
+  MediaOutput,
+  Point,
+  QaResult,
+  Reason,
+  Rgb,
+  Size,
+  StyleBible,
+  StyleProfile,
+  TargetProfile,
+} from "../types.ts";
+export type { ResolvedStyle } from "../style.ts";
+export type { SpecExpectation } from "../qa.ts";
+export type { FrameGrid } from "../request.ts";

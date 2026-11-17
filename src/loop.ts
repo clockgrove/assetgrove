@@ -16,7 +16,7 @@ import { pixelHash } from "./transform/run.ts";
 import { Budget, BudgetExceededError } from "./budget.ts";
 import { SpendHoldError, ledgerFor } from "./spend.ts";
 import type { SpendLedger } from "./spend.ts";
-import { Caller } from "./calls.ts";
+import { Caller, RefusingCaller } from "./calls.ts";
 import { currentRunScope } from "./runs/journal.ts";
 import { referenceLicenses } from "./bible.ts";
 import { InputError, JobStoppedError } from "./errors.ts";
@@ -29,6 +29,7 @@ import type { IdentityAgreement, IdentityRecordCheck } from "./identity.ts";
 import { applyStability, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
+import { runKindChecks } from "./generators/generator.ts";
 import type { Generator, PlannedCall } from "./generators/generator.ts";
 import { loadBibleInputs, sha256, sniffMediaType } from "./request.ts";
 import { writeContact } from "./contact.ts";
@@ -388,7 +389,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       16,
     );
     try {
-      const generated = await generator.generate({
+      let generated = await generator.generate({
         spec,
         specDir: options.specDir,
         bible,
@@ -402,6 +403,21 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         referenceViews,
         clipMaps,
       });
+      if (generator.checks !== undefined && generator.checks.length > 0) {
+        const extra = await runKindChecks(
+          generator.checks,
+          { spec, profile, bible, output: generated.output },
+          call,
+          () => new RefusingCaller(`an exact check of ${generator.kind} makes no provider call`),
+        );
+        generated = {
+          ...generated,
+          qa: {
+            passed: generated.qa.passed && extra.every((r) => r.shadow === true || r.passed),
+            reasons: [...generated.qa.reasons, ...extra],
+          },
+        };
+      }
       const id = `c${index + 1}`;
       // Record paths use "/"; the candidate's writes are checked before the first one.
       const { artifacts, artifactNames } = artifactPaths(

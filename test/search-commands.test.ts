@@ -42,14 +42,15 @@ writeFileSync(
     name: STUB,
     version: "1.0.0",
     type: "module",
-    assetgrove: { api: 1, entry: "./index.js" },
+    peerDependencies: { "@clockgrove/assetgrove": ">=0.2.0" },
+    assetgrove: { api: 2, entry: "./index.js" },
   }),
 );
 writeFileSync(
   join(pkg, "index.js"),
   `export default function extension() {
   return {
-    api: 1,
+    api: 2,
     name: "search-stub",
     search: {
       async find(query, ctx) {
