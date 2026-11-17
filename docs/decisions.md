@@ -314,7 +314,21 @@ Git LFS pointers are parsed by hand for the same reason as the tracked-key scan:
 
 An extension is code, so the only input that may name one is the developer settings' `extensions` array. Shared files (target profile, style bible, specs) travel between developers and must never steer code: a `<ext>:<name>` id in one never loads anything, it exits 2 `extension_unavailable` when that extension is not loaded. A package.json dependency alone loads nothing either.
 
-A package whose entry file any Git work tree at or above it tracks is refused (`extension_refused`), because a tracked entry would be code the project supplies, and a project must never make Assetgrove run its code. The manifest (`assetgrove.api`, `entry` inside the package) is checked by reading package.json before any import. Core registers its own kinds, preset and adapters through the same contract, so the contract is the one path by which anything is added.
+A package whose entry file any Git work tree at or above it tracks is refused (`extension_refused`), because a tracked entry would be code the project supplies, and a project must never make Assetgrove run its code. The manifest (`assetgrove.api`, the peer range on `@clockgrove/assetgrove`, `entry` inside the package) is checked by reading package.json before any import. Core registers its own kinds, preset and adapters through the same contract, so the contract is the one path by which anything is added.
+
+## Packs speak a versioned contract, checked before import (#414)
+
+A pack's package.json declares the contract it speaks (`assetgrove.api`, now 2) and the core releases it was built for (its `peerDependencies["@clockgrove/assetgrove"]` range). Core reads both before importing anything and refuses (`extension_refused`) a pack whose `api` it does not speak, or whose range is missing, not a semver range, or excludes core's own version, naming the api versions it speaks and its version. The range is checked with `semver` (npm's own range implementation, rather than a hand-written matcher) with pre-releases included, so a pre-release core inside a pack's bounds loads it and one past them does not. A `*` range said nothing and let a pack built for another core load and fail later. Api 1 is refused outright: adapting a previous major comes at 1.0.
+
+## A pack's network goes through the injected fetch (#414)
+
+An adapter declares its hosts (`fixedHosts`, and the settings `baseURL` when `endpointFromSettings`). Core makes the declaration hold for the URLs a provider steers (a download link in a result, a redirect): `AdapterContext.fetch`, and `ExtensionContext.http` for the same hosts, is a `fetch` that refuses any other host and follows redirects itself, checking each hop before requesting it, so a 302 to an undeclared host is never requested. It guards provider-steered URLs, not pack code: a pack is code the developer chose to install and can reach the global `fetch` or a socket. So a pack's SDK must take the injected `fetch`. An SDK that cannot is an exception recorded here, under this heading, with the pack, the SDK, what was looked at and why it does not fit. None is recorded yet. Core's own adapters keep their SDKs' default fetch; their hosts are core's and tested here.
+
+The conformance suite (`@clockgrove/assetgrove/testing`) traps the global `fetch` while it runs, so a pack that bypasses `http` in what the suite exercises fails it.
+
+## A kind's exact checks make no call (#414)
+
+A kind may declare QA `checks`, each `exact` or `judged`. An exact check is deterministic and free, so core runs it under a `Caller` that refuses every call (`RefusingCaller`, which also records each attempt, so a check that catches the refusal is still seen), and the conformance suite runs each one twice: a call, or a different answer the second time, fails the suite. A judged check runs under the candidate's `Caller`, reserved and recorded like every call.
 
 ## Copying a retargeted clip onto the base model is hand-written
 
