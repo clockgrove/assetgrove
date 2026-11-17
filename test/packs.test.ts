@@ -216,4 +216,18 @@ test("release builds core and every pack whose version is not on the registry", 
   ]);
   assert.ok(asked.includes("@clockgrove/alpha-pack@0.3.0"));
   assert.equal(tarballName("plain", "1.0.0"), "plain-1.0.0.tgz");
+
+  // Core's version already published: a pack whose version changed is released without core, so
+  // core's refusal can't stop the pack's verify and publish.
+  registry.add("@clockgrove/assetgrove@0.2.0");
+  assert.deepEqual(
+    releasePlan(root, run).map((t) => t.short),
+    ["tiles-pack"],
+  );
+  // Nothing new at all: core stays, and its own steps refuse the published version.
+  registry.add("@clockgrove/tiles-pack@0.3.0");
+  assert.deepEqual(
+    releasePlan(root, run).map((t) => t.short),
+    ["assetgrove"],
+  );
 });

@@ -232,9 +232,11 @@ export function tarballName(name: string, version: string): string {
 }
 
 /**
- * What release builds: core, always (its own steps refuse a version or tag that already exists),
- * then every pack whose `name@version` is not on the registry yet, that is, whose version changed
- * since it was last published. `run` asks the registry (`npm view`).
+ * What release builds: every pack whose `name@version` is not on the registry yet, that is, whose
+ * version changed since it was last published, and core unless its `name@version` is already there
+ * while a pack is to be released. So a pack released on its own is verified and published without
+ * core's leg failing, and a run with no pack still lists core, whose own steps refuse a version or
+ * tag that already exists. `run` asks the registry (`npm view`).
  */
 export function releasePlan(root: string = ROOT, run: Runner = defaultRunner): ReleaseTarget[] {
   const exists = (spec: string) => run(["npm", "view", spec, "version"], root).status === 0;
@@ -257,12 +259,13 @@ export function releasePlan(root: string = ROOT, run: Runner = defaultRunner): R
     artifact: `${short}-${version}`,
     onRegistry: exists(name),
   });
-  const targets = [target(".", "assetgrove", core.name, core.version, true)];
+  const packs: ReleaseTarget[] = [];
   for (const pack of listPacks(root)) {
     if (exists(`${pack.name}@${pack.version}`)) continue;
-    targets.push(target(pack.dir, pack.short, pack.name, pack.version, false));
+    packs.push(target(pack.dir, pack.short, pack.name, pack.version, false));
   }
-  return targets;
+  if (packs.length > 0 && exists(`${core.name}@${core.version}`)) return packs;
+  return [target(".", "assetgrove", core.name, core.version, true), ...packs];
 }
 
 export type MatrixEntry = Pick<Pack, "dir" | "short" | "name"> & { touched?: boolean };
