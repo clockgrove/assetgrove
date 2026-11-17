@@ -17,6 +17,8 @@ import type {
 } from "../gateway/provider.ts";
 import { ScriptedProvider } from "../gateway/scripted.ts";
 import type { Script } from "../gateway/scripted.ts";
+import { promptPolicyCut } from "../policy/cuts.ts";
+import type { PromptPolicyCut } from "../policy/cuts.ts";
 import { enforcePromptPolicy } from "../policy/text.ts";
 import { resolveRoutes, roleOf, OPERATION_ROLES } from "../routes.ts";
 import type { Route, Routes } from "../routes.ts";
@@ -81,7 +83,9 @@ export class ProviderSet implements GenerationProvider {
 
   /** The providers and routes of the settings; `script` is given to scripted providers. */
   static fromSettings(
-    settings: Pick<Settings, "providers" | "roles" | "routes" | "path">,
+    settings: Pick<Settings, "providers" | "roles" | "routes" | "path"> & {
+      promptPolicy?: Pick<Settings["promptPolicy"], "cuts">;
+    },
     options: {
       env?: Env;
       script?: Script;
@@ -90,12 +94,22 @@ export class ProviderSet implements GenerationProvider {
     } = {},
   ): ProviderSet {
     const configured = createProviders(settings, options);
-    return new ProviderSet(
+    const set = new ProviderSet(
       configured,
       resolveRoutes(settings, configured),
       options.script !== undefined,
       options.promptAllow ?? [],
     );
+    set.#promptCuts = settings.promptPolicy?.cuts ?? {};
+    return set;
+  }
+
+  /** Settings `promptPolicy.cuts`: cuts the developer measured on their own decisions routes. */
+  #promptCuts: Readonly<Record<string, PromptPolicyCut>> = {};
+
+  /** The cut measured for the adapter and model of the decisions route; see src/policy/cuts.ts. */
+  promptPolicyCut(adapter: string, model: string): PromptPolicyCut | undefined {
+    return promptPolicyCut(adapter, model, this.#promptCuts);
   }
 
   /** Refuses (exit 9 `prompt_refused`) a final prompt the prompt policy blocks; makes no call. */

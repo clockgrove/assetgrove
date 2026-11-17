@@ -44,7 +44,9 @@ function cli(args: string[], connectionLog: string): Promise<Result> {
 }
 
 /** The local-only recipe: image on one loopback server, vision, decisions and planning on chat. */
-async function localOnly(baseURL: string): Promise<string> {
+const MEASURED = { confirmAt: 0.5, refuseAt: 0.8, refusalRate: 0.95, falseRefusalRate: 0.05 };
+
+async function localOnly(baseURL: string, cut: object | null = MEASURED): Promise<string> {
   const stateDir = await mkdtemp(join(tmpdir(), "assetgrove-local-"));
   const terms = "Local model licence (synthetic)";
   const route = (provider: string, model: string) => ({
@@ -65,6 +67,8 @@ async function localOnly(baseURL: string): Promise<string> {
       decisions: route("chat", "local-chat"),
       planning: route("chat", "local-chat"),
     },
+    // A cut the developer measured on this route (synthetic here), as docs/settings.md describes.
+    ...(cut && { promptPolicy: { allow: [], cuts: { "openai-compatible:local-chat": cut } } }),
   });
   return stateDir;
 }
@@ -108,6 +112,39 @@ test("a still stages through the openai-compatible adapter against the loopback 
       JSON.stringify(server.requests),
     );
     assert.equal(existsSync(join(stateDir, "spend.jsonl")), false, "no ledger entry");
+  } finally {
+    await server.close();
+  }
+});
+
+test("the same setup without a measured cut for its decisions route exits 2 route_unavailable before any call", async () => {
+  const server = await startOpenAiCompatibleServer();
+  try {
+    const stateDir = await localOnly(server.baseURL, null);
+    const r = await cli(await stageArgs(stillSpec), join(stateDir, "connections.jsonl"));
+    assert.equal(r.code, 2, r.stderr);
+    const error = (JSON.parse(r.stdout) as { error: { code: string; message: string } }).error;
+    assert.equal(error.code, "route_unavailable");
+    assert.match(error.message, /openai-compatible:local-chat/);
+    assert.match(error.message, /policy\/prompt-policy-cuts\.json/);
+    assert.match(error.message, /promptPolicy\.cuts/);
+    assert.deepEqual(server.requests, []);
+    assert.equal(existsSync(join(stateDir, "spend.jsonl")), false, "no ledger entry");
+  } finally {
+    await server.close();
+  }
+});
+
+test("a settings cut whose measured rates miss the bars is settings_invalid", async () => {
+  const server = await startOpenAiCompatibleServer();
+  try {
+    const stateDir = await localOnly(server.baseURL, { ...MEASURED, falseRefusalRate: 0.3 });
+    const r = await cli(await stageArgs(stillSpec), join(stateDir, "connections.jsonl"));
+    assert.equal(r.code, 2, r.stderr);
+    const error = (JSON.parse(r.stdout) as { error: { code: string; message: string } }).error;
+    assert.equal(error.code, "settings_invalid");
+    assert.match(error.message, /falseRefusalRate 0\.3 is over the bar 0\.1/);
+    assert.deepEqual(server.requests, []);
   } finally {
     await server.close();
   }

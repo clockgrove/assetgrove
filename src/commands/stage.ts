@@ -8,7 +8,7 @@ import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { rigReads } from "../model3d/rig/template.ts";
 import type { AssetSpec } from "../types.ts";
-import { sharedTexts, withSharedText } from "../request.ts";
+import { sharedTexts, subjectOf, withSharedText } from "../request.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext, WorkPlan } from "./types.ts";
@@ -77,7 +77,9 @@ async function prepare(args: StageArgs, ctx: RunContext) {
     near,
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile"],
-    promptText: args.note !== undefined ? [args.note] : [],
+    // The candidate prompts name the subject (the asset id when the spec has no subject), so the
+    // plan step checks it, free, before the spend is confirmed.
+    promptText: [subjectOf(spec.value), ...(args.note !== undefined ? [args.note] : [])],
     reads: {
       ...bibleFiles,
       ...specReads("spec", spec),

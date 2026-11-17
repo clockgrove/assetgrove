@@ -201,6 +201,11 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   const capUsd = runCap(args.cap, ctx.settings);
   let job: Job;
   let jobs: PlanJob[];
+  // Text a prompt carries besides the region notes: a frame fix names the family and the subject
+  // (the asset id when the spec has no subject) in its template decision and fix prompt, and a 3D
+  // round names the subject on its prompt's Subject: line, so the plan step checks them, free,
+  // before the spend is confirmed.
+  const promptText: string[] = [];
   let bible: Awaited<ReturnType<typeof loadStyleBible>> | undefined;
   const registry = ctx.extensions ?? CORE_REGISTRY;
   const generators = [...registry.kinds];
@@ -210,6 +215,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
         "a view region asks for another round of the 3D kind, which reads the style bible: give it with --bible",
       );
     bible = await loadStyleBible(args.bible);
+    promptText.push(source.spec.subject ?? source.spec.assetId ?? asset.assetId);
     const plan = planStage({
       spec: source.spec,
       profile: source.profile,
@@ -233,6 +239,10 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       checkFrames(frames, imageSize(bytes), profileFrame(source.profile));
       const scaleRoute = routes["fix-scale"];
       if (!scaleRoute) throw new InputError('no model route for operation "fix-scale"');
+      promptText.push(
+        source.spec.animationFamily ?? "strip",
+        source.spec.subject ?? source.spec.assetId ?? asset.assetId,
+      );
       // The frame fix pins the point the family's template keeps still: one motion-template
       // decision first when the spec declares no template and none is named for the family.
       jobs = [
@@ -270,7 +280,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     inputs: ["bible"],
     reads,
     hashes: { version: version.sha256 },
-    promptText: regions.map((r) => r.note),
+    promptText: [...regions.map((r) => r.note), ...promptText],
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

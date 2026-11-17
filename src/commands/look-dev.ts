@@ -6,6 +6,7 @@ import { providerSet, spendLedger } from "../providers/index.ts";
 import { rigReads } from "../model3d/rig/template.ts";
 import { lookdevSettings } from "../model3d/lookdev/settings.ts";
 import type { AssetSpec } from "../types.ts";
+import { subjectOf } from "../request.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -60,7 +61,12 @@ async function prepare(args: LookDevArgs, ctx: RunContext) {
       ...specReads("spec", spec),
       ...rigReads("profile", profile),
     },
-    promptText: (seasons ?? []).flatMap((season) => [season, traits[season] ?? ""]),
+    // The look-dev prompts name the subject (the asset id when the spec has no subject), so the
+    // plan step checks it, free, before the spend is confirmed.
+    promptText: [
+      subjectOf(spec.value),
+      ...(seasons ?? []).flatMap((season) => [season, traits[season] ?? ""]),
+    ],
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),

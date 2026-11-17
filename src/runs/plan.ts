@@ -17,7 +17,9 @@ import {
   readingTerms,
 } from "../policy/text.ts";
 import type { PromptPart, PromptPolicyRecord } from "../policy/text.ts";
-import { PROMPT_POLICY_OPERATION } from "../routes.ts";
+import { PROMPT_POLICY_BAR_RATES, promptPolicyCut } from "../policy/cuts.ts";
+import type { PromptPolicyCut } from "../policy/cuts.ts";
+import { PROMPT_POLICY_OPERATION, RouteUnavailableError } from "../routes.ts";
 import type { Route } from "../routes.ts";
 import type { NearMatch, NearMatchOutcome } from "../search/near-match.ts";
 import { runDirOf } from "./dir.ts";
@@ -280,9 +282,35 @@ export interface WorkPlanParts {
 }
 
 /** What the plan step reads from a command's provider set: its routes and its providers' billing. */
-export type PolicyProviders = Parameters<typeof paidBy>[0] & {
+export type PolicyProviders = {
+  get(id: string): { provider: { billing: { paid: boolean; adapter?: string } } } | undefined;
   routes: Readonly<Record<string, Route>>;
+  /** The cut measured for a decisions route's adapter and model (settings first, then the package). */
+  promptPolicyCut?(adapter: string, model: string): PromptPolicyCut | undefined;
 };
+
+/**
+ * The prompt-policy check's cut on the decisions route, or `RouteUnavailableError` (exit 2
+ * `route_unavailable`) when that adapter and model have no measured rates: the check is not run
+ * on a route nobody measured, and nothing is spent.
+ */
+export function promptPolicyCutOf(providers: PolicyProviders): PromptPolicyCut {
+  const route = providers.routes[PROMPT_POLICY_OPERATION]!;
+  const adapter =
+    route.provider !== undefined
+      ? providers.get(route.provider)?.provider.billing.adapter
+      : undefined;
+  const cut =
+    adapter !== undefined
+      ? (providers.promptPolicyCut?.(adapter, route.model) ?? promptPolicyCut(adapter, route.model))
+      : undefined;
+  if (cut === undefined)
+    throw new RouteUnavailableError(
+      PROMPT_POLICY_OPERATION,
+      `the prompt-policy check has no measured cut for its decisions route (${adapter ?? "no adapter"}:${route.model}), so it is not run on it: add an entry for it to policy/prompt-policy-cuts.json in the package, or record one you measured on the red-team set (confirmAt, refuseAt, refusalRate >= ${PROMPT_POLICY_BAR_RATES.minRefusalRate}, falseRefusalRate <= ${PROMPT_POLICY_BAR_RATES.maxFalseRefusalRate}) under promptPolicy.cuts in the developer settings, or route the decisions role to a measured model`,
+    );
+  return cut;
+}
 
 /** The prompt text each plan checked, kept beside the plan (never printed or digested as text). */
 const policyTexts = new WeakMap<WorkPlan, PromptPart[]>();
@@ -390,6 +418,7 @@ export async function buildWorkPlan(
   const policyText = partsText(promptParts);
   // The model check (design section 16): one decide call when there is text to check, and a
   // second, on the person's parts alone, when model-written text could be all it objects to.
+  if (policyText.trim()) promptPolicyCutOf(parts.providers);
   const ownPolicyJobs = policyText.trim()
     ? [
         policyJobOf(

@@ -93,6 +93,19 @@ export interface PromptPolicyRecord {
    * the protected name, an ordinary word, or an unrelated name. Only `protected` refuses.
    */
   readings?: PolicyReading[];
+  /**
+   * The cut the model answer was judged by, from `policy/prompt-policy-cuts.json` for the decisions
+   * route: under `confirmAt` allowed, from `confirmAt` up to `refuseAt` a person confirms, `refuseAt`
+   * or more refused.
+   */
+  cut?: { confirmAt: number; refuseAt: number };
+  /**
+   * The deciding answer fell between the cut's `confirmAt` and `refuseAt`: the verdict is allowed,
+   * and a person confirms the request before the run goes on (`clearedBy`).
+   */
+  borderline?: true;
+  /** The confirmation (`policy` kind) that cleared a borderline request: its id and method. */
+  clearedBy?: { id: string; method: "headless" | "tty" | "terminal" | "elicitation" };
 }
 
 /** What an ambiguous name in a request refers to, as the reading call answers. */
@@ -147,7 +160,7 @@ export class PromptRefusedError extends Error {
       named !== undefined
         ? `${where} uses "${named.term}" as the protected ${named.kind} name (the prompt-policy reading call, ${named.model}): describe the look in plain visual words and anchor it with reference images`
         : policy.match === undefined && policy.probability !== undefined
-          ? `${where} reads as a request for a protected style, work, character or real person (the prompt-policy model check gives ${policy.probability.toFixed(2)}, refused at 0.5 or more): describe the look in plain visual words and anchor it with reference images`
+          ? `${where} reads as a request for a protected style, work, character or real person (the prompt-policy model check gives ${policy.probability.toFixed(2)}, refused at ${(policy.cut?.refuseAt ?? 0.5).toFixed(2)} or more): describe the look in plain visual words and anchor it with reference images`
           : `${where} names "${policy.match?.term ?? ""}" (${policy.match?.kind ?? "term"}), which the prompt policy refuses: describe the look in plain visual words and anchor it with reference images, or add the term to promptPolicy.allow in the developer settings if it is not a name`,
     );
     this.name = "PromptRefusedError";
@@ -297,55 +310,44 @@ export function enforcePromptPolicy(
   return record;
 }
 
-/** The extensions of the files a request names: images, models, data, documents and audio. */
-const FILE_EXTENSIONS: ReadonlySet<string> = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "webp",
-  "gif",
-  "bmp",
-  "tga",
-  "tif",
-  "tiff",
-  "exr",
-  "hdr",
-  "ktx2",
-  "svg",
-  "glb",
-  "gltf",
-  "fbx",
-  "obj",
-  "bin",
-  "json",
-  "jsonl",
-  "yaml",
-  "yml",
-  "md",
-  "txt",
-  "csv",
-  "wav",
-  "ogg",
-  "mp3",
-  "mp4",
-  "webm",
-]);
-
 /**
- * A string that names a file rather than describing anything: no whitespace and a known file
- * extension. Anything else, slash- or dot-bearing or not, is prompt text.
+ * The fields of each input argument whose values are files or ids, not text: dot-separated field
+ * paths, `*` matching any key or array index. A spec's `assetId` is an id and its `keyPose` a file;
+ * a bible's anchors, turnarounds and references are files, as are the stage bible's references
+ * and perspective sample.
  */
-function pathLike(value: string): boolean {
-  const extension = /\.([A-Za-z0-9]+)$/.exec(value)?.[1]?.toLowerCase();
-  return !/\s/.test(value) && extension !== undefined && FILE_EXTENSIONS.has(extension);
+export const NON_TEXT_FIELDS: Readonly<Record<string, readonly string[]>> = (() => {
+  const bible = [
+    "anchors.*.*.path",
+    "identities.*.turnaround",
+    "identities.*.references.*",
+    "references.*.path",
+    "perspective",
+  ];
+  return { spec: ["assetId", "keyPose"], bible, lockBible: bible };
+})();
+
+function fieldMatches(pattern: string, path: readonly string[]): boolean {
+  const parts = pattern.split(".");
+  return parts.length === path.length && parts.every((p, i) => p === "*" || p === path[i]);
 }
 
-/** Every string value of a JSON value, keys left out, path-like strings left out. */
-export function promptStrings(value: unknown): string[] {
-  if (typeof value === "string") return pathLike(value) ? [] : [value];
-  if (Array.isArray(value)) return value.flatMap(promptStrings);
+/**
+ * Every string value of a JSON value, keys left out, and a string whose field path matches one of
+ * `skip` left out. With no `skip`, every string is text.
+ */
+export function promptStrings(
+  value: unknown,
+  skip: readonly string[] = [],
+  path: readonly string[] = [],
+): string[] {
+  if (typeof value === "string") return skip.some((p) => fieldMatches(p, path)) ? [] : [value];
+  if (Array.isArray(value))
+    return value.flatMap((v, i) => promptStrings(v, skip, [...path, String(i)]));
   if (value !== null && typeof value === "object")
-    return Object.values(value as Record<string, unknown>).flatMap(promptStrings);
+    return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
+      promptStrings(v, skip, [...path, k]),
+    );
   return [];
 }
 
@@ -368,8 +370,8 @@ const FILE_LABELS: Readonly<Record<string, PromptPartLabel>> = {
 };
 
 /**
- * The prompt text of one input file, labelled: a JSON file's strings minus paths; a template's
- * body without its `{{fields}}`; another Markdown file's front matter strings minus paths (`tone`)
+ * The prompt text of one input file, labelled: a JSON file's strings minus its file and id fields (`NON_TEXT_FIELDS`); a template's
+ * body without its `{{fields}}`; another Markdown file's front matter strings minus those fields (`tone`)
  * and its Do's and Don'ts section (`rules`). A saved plan is not read here: apply labels its
  * input files as the plan step does and its compiler-written text apart (`savedPlanPromptParts`
  * in src/planning.ts). A file that cannot be read gives none (the command reports it when it
@@ -394,7 +396,7 @@ export async function promptPartsOf(name: string, path: string): Promise<PromptP
       data = undefined;
     }
     return [
-      ...promptStrings(data).map((text) => ({ label, text })),
+      ...promptStrings(data, NON_TEXT_FIELDS[name]).map((text) => ({ label, text })),
       { label: "rules" as const, text: doDontSection(body) },
     ].filter((p) => p.text.length > 0);
   }
@@ -404,7 +406,7 @@ export async function promptPartsOf(name: string, path: string): Promise<PromptP
   } catch {
     return [];
   }
-  return promptStrings(data).map((text) => ({ label, text }));
+  return promptStrings(data, NON_TEXT_FIELDS[name]).map((text) => ({ label, text }));
 }
 
 /** The prompt text of one input file, unlabelled (`promptPartsOf`). */

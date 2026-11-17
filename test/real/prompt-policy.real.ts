@@ -2,13 +2,18 @@
  * Real check of the prompt policy against its red-team set (design section 16), run through the
  * product's spend controls under the shared budget of test/real/budget.ts. Each row goes through
  * the policy as a request does: the blocklist first, then, for a row it lets through, the model
- * check's decide call on the gateway's `prompt-policy` route. The check fails when the refusal
- * rate on must-refuse rows or the false-refusal rate on allowed rows misses the bars in the
+ * check's decide call on the gateway's `prompt-policy` route, judged by that route's cut in
+ * policy/prompt-policy-cuts.json (the check fails when the route has none). A row in the
+ * `confirm` band stops the run until a person clears it (exit 8, and headless settings cannot), so
+ * it counts as stopped for both rates: refused for the refusal rate, and a false refusal on an
+ * allowed row. The share of borderline rows is printed beside them. The check fails when the
+ * refusal rate on must-refuse rows or the false-refusal rate on allowed rows misses the bars in the
  * fenced JSON block of docs/decisions.md ("Prompt-policy bars"). Skips without AI_GATEWAY_API_KEY.
  */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { promptPolicyCut } from "../../src/policy/cuts.ts";
 import { decidePromptPolicy, readAmbiguousNames } from "../../src/policy/model.ts";
 import { checkPromptText, readingTerms } from "../../src/policy/text.ts";
 import type { PolicyHit, PromptPart, PromptPartLabel } from "../../src/policy/text.ts";
@@ -59,6 +64,12 @@ test(
   { skip },
   async () => {
     const bars = await readBars();
+    const route = defaultRoutes[PROMPT_POLICY_OPERATION]!;
+    const cut = promptPolicyCut("vercel-ai-gateway", route.model);
+    assert.ok(
+      cut,
+      `policy/prompt-policy-cuts.json has no cut for vercel-ai-gateway:${route.model}`,
+    );
     const rows = await readRows();
     // The blocklist refuses unambiguous names for free, as it does before a request's confirmation;
     // every other row goes to the model with the hits the free check recorded.
@@ -77,35 +88,55 @@ test(
       (toModel.length + readingCalls) * estimate,
       "real prompt-policy",
     );
-    const refused = new Map<string, boolean>();
-    for (const r of rows) if (!toModel.includes(r)) refused.set(r.id, true);
+    // `refuse`: the run ends (exit 9); `confirm`: a person is asked (exit 8); `allow`: it goes on.
+    const bandOf = new Map<string, "allow" | "confirm" | "refuse">();
+    for (const r of rows) if (!toModel.includes(r)) bandOf.set(r.id, "refuse");
     await rb.cleared("real prompt-policy", async () => {
       for (const r of toModel) {
         // As a run does: each ambiguous name is read first, and a protected reading refuses.
         const hits = records.get(r.id)!.hits ?? ([] as PolicyHit[]);
         const readings = await readAmbiguousNames(caller, partsOf(r), hits);
         if (readings.some((x) => x.reading === "protected")) {
-          refused.set(r.id, true);
+          bandOf.set(r.id, "refuse");
           console.log(`${r.id} ${r.expect}: read as the protected name`);
           continue;
         }
-        const verdict = await decidePromptPolicy(caller, partsOf(r), hits, readings);
-        refused.set(r.id, verdict.refused);
-        console.log(`${r.id} ${r.expect}: ${verdict.probability.toFixed(3)}`);
+        const verdict = await decidePromptPolicy(caller, partsOf(r), hits, readings, cut);
+        bandOf.set(r.id, verdict.band);
+        console.log(`${r.id} ${r.expect}: ${verdict.probability.toFixed(3)} (${verdict.band})`);
       }
     });
-    const rate = (expect: Row["expect"]) => {
+    const share = (expect: Row["expect"], stopped: (band: string) => boolean) => {
       const of = rows.filter((r) => r.expect === expect);
-      return of.filter((r) => refused.get(r.id)).length / of.length;
+      return of.filter((r) => stopped(bandOf.get(r.id)!)).length / of.length;
     };
-    const refusalRate = rate("refuse");
-    const falseRefusalRate = rate("allow");
-    const missed = rows.filter((r) => r.expect === "refuse" && !refused.get(r.id)).map((r) => r.id);
-    const wrong = rows.filter((r) => r.expect === "allow" && refused.get(r.id)).map((r) => r.id);
+    const refusalRate = share("refuse", (band) => band !== "allow");
+    const falseRefusalRate = share("allow", (band) => band !== "allow");
+    const borderlineRate = rows.filter((r) => bandOf.get(r.id) === "confirm").length / rows.length;
+    const missed = rows
+      .filter((r) => r.expect === "refuse" && bandOf.get(r.id) === "allow")
+      .map((r) => r.id);
+    const wrong = rows
+      .filter((r) => r.expect === "allow" && bandOf.get(r.id) !== "allow")
+      .map((r) => r.id);
     console.log(
-      JSON.stringify({ refusalRate, falseRefusalRate, bars, missed, falselyRefused: wrong }),
+      JSON.stringify({
+        cut,
+        refusalRate,
+        falseRefusalRate,
+        borderlineRate,
+        bars,
+        missed,
+        falselyRefused: wrong,
+      }),
     );
     console.log(`budget left: $${rb.budgetLeftUsd().toFixed(4)}`);
+    // The entry to record in policy/prompt-policy-cuts.json once the bars are met.
+    console.log(
+      JSON.stringify({
+        [`vercel-ai-gateway:${route.model}`]: { ...cut, refusalRate, falseRefusalRate },
+      }),
+    );
     assert.ok(
       refusalRate >= bars.minRefusalRate,
       `refusal rate ${refusalRate.toFixed(3)} is under the bar ${bars.minRefusalRate}; missed: ${missed.join(", ")}`,

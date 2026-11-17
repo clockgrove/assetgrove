@@ -18,6 +18,7 @@ import { packageBlocklist } from "../src/policy/blocklist.ts";
 import {
   checkPromptText,
   enforcePromptPolicy,
+  NON_TEXT_FIELDS,
   promptStrings,
   PromptRefusedError,
 } from "../src/policy/text.ts";
@@ -542,16 +543,127 @@ test("policyTextSha256 is in the WorkPlan and changes the digest with the spec t
   assert.notEqual(a.digest, b.digest);
 });
 
-test("only file names are left out of prompt text: slash- and dot-bearing words are checked", () => {
-  const strings = promptStrings({
-    description: `${FIRST}/${LAST}`,
-    mood: `${FIRST}${LAST}.art`,
-    tag: `style:${FIRST}/${LAST}`,
-    reference: "refs/fox-turnaround.png",
-    model: "models/fox.glb",
-  });
-  assert.deepEqual(strings, [`${FIRST}/${LAST}`, `${FIRST}${LAST}.art`, `style:${FIRST}/${LAST}`]);
-  for (const text of strings) assert.equal(checkPromptText(text).match?.term, TERM, text);
+test("only file and id fields are left out of prompt text, by field, whatever the extension", () => {
+  const spec = {
+    assetId: `${FIRST}-${LAST}`,
+    keyPose: `refs/${FIRST}-${LAST}.psd`,
+    fields: { description: `${FIRST}/${LAST}`, mood: `${FIRST}${LAST}.png`, ref: "refs/fox.png" },
+  };
+  const strings = promptStrings(spec, NON_TEXT_FIELDS.spec);
+  assert.deepEqual(strings, [`${FIRST}/${LAST}`, `${FIRST}${LAST}.png`, "refs/fox.png"]);
+  for (const text of strings.slice(0, 2))
+    assert.equal(checkPromptText(text).match?.term, TERM, text);
+  const bible = {
+    anchors: { positive: { a: { path: `refs/${FIRST}-${LAST}.aseprite`, note: "soft" } } },
+    identities: {
+      fox: { turnaround: `t/${FIRST}-${LAST}.png`, references: [`r/${FIRST}-${LAST}.tmx`] },
+    },
+    perspective: `p/${FIRST}-${LAST}.png`,
+    tone: "warm",
+  };
+  assert.deepEqual(promptStrings(bible, NON_TEXT_FIELDS.bible), ["soft", "warm"]);
+  assert.equal(promptStrings(bible).length, 6);
+});
+
+test("a spec's asset id is not prompt text: not refused at the plan step, not in the prompt", async () => {
+  const dir = await tempDir("assetgrove-policy-assetid-");
+  const files = await planFiles(dir, "");
+  const id = `npc-${FIRST}-${LAST}`;
+  await writeFile(
+    files.spec,
+    JSON.stringify({ kind: "still", assetId: id, fields: { description: "a round icon" } }),
+  );
+  const run = await cli([
+    ...["plan", "--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
+    ...["--run-options", files.runOptions, "--out", files.plan, "--runs", join(dir, "runs")],
+    "--json",
+  ]);
+  assert.equal(run.code, 0, run.stdout + run.stderr);
+  const saved = JSON.parse(await readFile(files.plan, "utf8")) as SavedPlan;
+  assert.equal(JSON.stringify(saved.prompts).includes(id), false);
+});
+
+test("stage, generate-sheet and look-dev name a subject-less spec's asset id in their prompts, so a blocklisted id exits 9 at the plan step, before confirmation or any call", async () => {
+  const dir = await tempDir("assetgrove-policy-subject-id-");
+  const watch = await recorder(dir);
+  const ledgerBefore = await ledgerContent();
+  const id = `npc-${FIRST}-${LAST}-baker`;
+  const stage = await stageFiles("");
+  const withId = async (path: string) => {
+    const spec = JSON.parse(await readFile(path, "utf8")) as Doc;
+    delete spec["subject"];
+    await writeFile(path, JSON.stringify({ ...spec, assetId: id }));
+  };
+  await withId(stage.spec);
+  const lookDev = await lookDevFiles(await tempDir("assetgrove-policy-subject-ld-"), "");
+  await withId(lookDev.spec);
+  const stageArgs = ["--spec", stage.spec, "--bible", stage.bible, "--profile", stage.profile];
+  const cases: Array<[string, string[]]> = [
+    ["stage", stageArgs],
+    ["generate-sheet", stageArgs],
+    [
+      "look-dev",
+      [
+        ...["--model", lookDev.model, "--provenance", lookDev.provenance],
+        ...["--spec", lookDev.spec, "--bible", lookDev.bible, "--profile", lookDev.profile],
+      ],
+    ],
+  ];
+  for (const [name, args] of cases) {
+    for (const mode of [[], ["--dry-run"]]) {
+      const run = await cli([
+        name,
+        ...args,
+        ...["--runs", join(dir, "runs"), "--provider-script", watch.script, ...mode, "--json"],
+      ]);
+      assert.equal(run.code, 9, `${name} ${mode.join("")}: ${run.stdout}${run.stderr}`);
+      assert.equal(doc(run).error.code, "prompt_refused", name);
+      assert.equal(doc(run).error.policy.match.term, TERM, name);
+    }
+  }
+  assert.equal(existsSync(join(dir, "runs")), false, "no run directory");
+  assert.equal(existsSync(watch.events), false, "no provider call");
+  assert.equal(await ledgerContent(), ledgerBefore, "no ledger entry");
+});
+
+test("a key pose path holding a blocklisted name, with an unlisted extension, passes the plan step and apply's final-prompt check", async () => {
+  const dir = await tempDir("assetgrove-policy-keypose-");
+  const files = await planFiles(dir, "");
+  // An extension the old list did not hold: the path was matched as prompt text before.
+  const pose = `${FIRST}-${LAST}.psd`;
+  await writeFile(
+    join(dir, pose),
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  );
+  await writeFile(
+    files.spec,
+    JSON.stringify({
+      kind: "still",
+      assetId: "icon",
+      keyPose: pose,
+      fields: { description: "a round icon" },
+    }),
+  );
+  const run = await cli([
+    ...["plan", "--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
+    ...["--run-options", files.runOptions, "--out", files.plan, "--runs", join(dir, "runs")],
+    "--json",
+  ]);
+  assert.equal(run.code, 0, run.stdout + run.stderr);
+  const saved = JSON.parse(await readFile(files.plan, "utf8")) as SavedPlan;
+  const stem = `${FIRST}-${LAST}`;
+  assert.equal(JSON.stringify(saved.prompts).includes(stem), false, "no path in the prompts");
+  // Apply runs every image call through the ProviderSet's final-prompt check.
+  const script = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
+  approve(script);
+  const applied = await cli([
+    ...["apply", files.plan, "--out", join(dir, "runs")],
+    ...["--provider-script", script, "--json"],
+  ]);
+  assert.equal(applied.code, 0, applied.stdout + applied.stderr);
 });
 
 test("a sheet brief honours the settings allow terms", () => {

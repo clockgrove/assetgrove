@@ -31,10 +31,10 @@ import { checkPromptModel } from "../policy/model.ts";
 import type { PromptPart, PromptPolicyRecord } from "../policy/text.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
 import { SpendHoldError, ledgerFor } from "../spend.ts";
-import { bindConfirmation, requireConfirmation } from "../confirm/index.ts";
+import { bindConfirmation, digestOf, requireConfirmation } from "../confirm/index.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import type { ConfirmationRecord } from "../types.ts";
-import { DEFAULT_ROUND, policyPartsOf } from "./plan.ts";
+import { DEFAULT_ROUND, policyPartsOf, promptPolicyCutOf } from "./plan.ts";
 import type { WorkPlan } from "./plan.ts";
 import { RUN_RECORD_FILE, openRunDir, runIdOfDir, writeRunRecord } from "./dir.ts";
 import { Journal, withRunScope } from "./journal.ts";
@@ -181,6 +181,46 @@ export function spendRequest(command: string, round: number, plan: WorkPlan): Ki
   };
 }
 
+/** The policy request of a borderline prompt-policy answer: what a person confirms to go on. */
+export function policyRequest(
+  command: string,
+  plan: Pick<WorkPlan, "digest" | "policyTextSha256">,
+  record: Pick<PromptPolicyRecord, "model" | "probability">,
+): KindRequest {
+  const body = {
+    command,
+    digest: plan.digest,
+    policyTextSha256: plan.policyTextSha256,
+    model: record.model ?? "",
+    probability: record.probability ?? 0,
+  };
+  return {
+    kind: "policy",
+    id: digestOf(body),
+    summary: `the ${command} request reads as borderline to the prompt-policy check (model ${body.model} gives ${body.probability.toFixed(2)}): confirm it asks for no copy of a protected style, work, character or person`,
+    details: { ...body },
+    body,
+  };
+}
+
+/**
+ * Asks a person to clear a borderline request (exit 8 `confirmation_required` when no one does;
+ * headless settings do not). The cleared record names the confirmation.
+ */
+async function clearBorderline(
+  ctx: RunContext,
+  plan: WorkPlan,
+  command: string,
+  record: PromptPolicyRecord,
+): Promise<PromptPolicyRecord> {
+  const cleared = await requireConfirmation(
+    policyRequest(command, plan, record),
+    { settings: ctx.settings, ...(ctx.prompt && { prompt: ctx.prompt }) },
+    { person: true },
+  );
+  return { ...record, clearedBy: { id: cleared.digest, method: cleared.method } };
+}
+
 /** Adds the confirmation to the run's `run.json`, whoever wrote it. */
 async function recordConfirmation(runDir: string, record: ConfirmationRecord): Promise<void> {
   const path = join(runDir, RUN_RECORD_FILE);
@@ -319,6 +359,11 @@ export async function executeRun(options: {
             if (refusedRecord !== undefined) promptPolicy = refusedRecord;
             throw error;
           }
+          // The record is the run's before a person is asked, so a run stopped for confirmation
+          // (exit 8) keeps the deciding answer's model, probability, cut and `borderline`.
+          promptPolicy = scope.promptPolicy;
+          if (scope.promptPolicy?.borderline)
+            scope.promptPolicy = await clearBorderline(ctx, plan, command, scope.promptPolicy);
           promptPolicy = scope.promptPolicy;
         }
         return options.run({
@@ -407,7 +452,7 @@ async function promptPolicyCheck(
     routes: providers.routes,
     log: ctx.log,
   });
-  const checked = await checkPromptModel(caller, text, record);
+  const checked = await checkPromptModel(caller, text, record, promptPolicyCutOf(providers));
   // The command's budgets count this spend against the same cap (src/budget.ts), and each counts
   // the run's unanswered ledger spend itself.
   return { record: checked, spentUsd: budget.spentUsd - budget.unansweredUsd };

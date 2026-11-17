@@ -609,6 +609,47 @@ test("a frame region beyond the strip exits 2 before confirmation and records no
   });
 });
 
+test("a frame region on a spec with no subject checks the asset id its prompts name: a blocklisted id exits 9 before confirmation", async () => {
+  // fix-frame's template decision and prompt name the subject, which is the asset id when the
+  // spec has none, so the plan step checks it, free, rather than the final-prompt check after spend.
+  const term = packageBlocklist().terms.find(
+    (t) => t.kind === "character" && !t.ambiguous && /^[a-z0-9 ]+$/.test(t.term),
+  )!.term;
+  const assetId = `npc-${term.replace(/ /g, "-")}-baker`;
+  const strip = createRaster(128, 32);
+  for (let i = 0; i < 4; i++)
+    for (let y = 12; y < 30; y++)
+      for (let x = i * 32 + 10; x < i * 32 + 20; x++) setPixel(strip, x, y, [90, 90, 140, 255]);
+  const p = await project({ kind: "sprite-strip", assetId, animationFamily: "walk" }, strip);
+  const s = await script(p.dir);
+  useAttended();
+  const asked: ConfirmRequest[] = [];
+  const port: ConfirmPort = {
+    method: "tty",
+    confirm: async (request) => {
+      asked.push(request);
+      return true;
+    },
+  };
+  await inProject(p.dir, async () => {
+    const done = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,16,16 frame 3 : raise the paw"],
+        candidates: 1,
+        runs: p.runs,
+        providerScript: s.path,
+      },
+      context(port),
+    );
+    assert.equal(done.exitCode, 9, done.error?.message);
+    assert.equal(done.error?.code, "prompt_refused");
+    assert.equal(asked.length, 0, "no spend confirmation");
+    assert.equal((await s.calls()).length, 0);
+  });
+});
+
 test("a request on an assessed version reports the version's derived state", async () => {
   const p = await project();
   const s = await script(p.dir);
@@ -730,6 +771,20 @@ test("a view region on a 3D asset runs another round of the 3D kind with the not
       runs,
       providerScript: SCRIPT_3D,
     };
+    // The round's prompt names the source spec's subject (the asset id when it has none), so the
+    // plan step checks it: a blocklisted subject exits 9 before the spend is confirmed.
+    const term = packageBlocklist().terms.find(
+      (t) => t.kind === "character" && !t.ambiguous && /^[a-z0-9 ]+$/.test(t.term),
+    )!.term;
+    const sourceRunFile = join(staged.fields["runDir"] as string, "run.json");
+    const kept = await readFile(sourceRunFile, "utf8");
+    const named = JSON.parse(kept);
+    named.spec.subject = term;
+    await writeFile(sourceRunFile, JSON.stringify(named));
+    const refused = await runCommand(requestChangeCommand, { ...args, bible }, context());
+    assert.equal(refused.exitCode, 9, refused.error?.message);
+    assert.equal(refused.error?.code, "prompt_refused");
+    await writeFile(sourceRunFile, kept);
     const noBible = await runCommand(requestChangeCommand, args, context());
     assert.equal(noBible.exitCode, 2);
     assert.match(noBible.error!.message, /--bible/);
