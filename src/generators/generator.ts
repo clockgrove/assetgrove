@@ -1,5 +1,6 @@
 import type { Caller } from "../calls.ts";
 import type { ReferenceViewCache } from "../model3d/views.ts";
+import type { ClipMapCache } from "../model3d/clip-map.ts";
 import type { Routes } from "../routes.ts";
 import type { AssetSpec, MediaOutput, QaResult, StyleBible, TargetProfile } from "../types.ts";
 
@@ -27,6 +28,8 @@ export interface GeneratorContext {
   profileDir?: string;
   /** The run's cache of which view each reference image shows, shared by its candidates. */
   referenceViews?: ReferenceViewCache;
+  /** The run's cache of clip-map decisions, shared by its candidates. */
+  clipMaps?: ClipMapCache;
 }
 
 export interface GeneratedCandidate {

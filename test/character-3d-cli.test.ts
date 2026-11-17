@@ -283,9 +283,9 @@ test("stage writes rigged candidates with clips, renders and per-candidate QA; p
   const p = c1.provenance;
   assert.deepEqual(
     p.calls.map((c: { operation: string }) => c.operation),
-    ["model3d", "model3d-facing", "rig3d", "clips3d", "identity"],
+    ["model3d", "model3d-facing", "rig3d", "clip-map", "clips3d", "identity"],
   );
-  assert.ok(Math.abs(p.costUsd - 0.65005) < 1e-9, `cost ${p.costUsd}`);
+  assert.ok(Math.abs(p.costUsd - 0.65008) < 1e-9, `cost ${p.costUsd}`);
   assert.equal(p.outputGrant.relabel, true);
   assert.equal(p.calls[0].referenceHashes.length, 3);
   assert.deepEqual(
@@ -349,9 +349,14 @@ test("stage writes rigged candidates with clips, renders and per-candidate QA; p
 test("a family with no library clip is reported missing and the candidate is kept", async () => {
   const w = await world({ gait: "quadruped", clips: ["idle"] });
   const dry = await cli(["stage", ...w.base, "--dry-run", "--json"]);
+  // The forecast is an upper bound: the family may be mapped to the one library clip.
   assert.deepEqual(
     doc(dry)["plan"].perCandidate.map((c: { operation: string }) => c.operation),
-    ["model3d", "model3d-facing", "rig3d", "identity"],
+    ["model3d", "model3d-facing", "rig3d", "clips3d", "identity"],
+  );
+  assert.deepEqual(
+    doc(dry)["plan"].perRequest.map((c: { operation: string }) => c.operation),
+    ["clip-map"],
   );
   const r = await cli([
     "stage",
@@ -369,7 +374,96 @@ test("a family with no library clip is reported missing and the candidate is kep
   assert.deepEqual(c1.fields.clips, []);
   assert.equal(c1.fields.missingClips[0].family, "idle");
   assert.match(c1.fields.missingClips[0].why, /no close quadruped clip/);
+  assert.match(c1.fields.missingClips[0].why, /the clip-map decision answered none/);
   assert.equal(c1.provenance.calls[2].parameters.rigType, "quadruped");
+});
+
+test("a family that is not a library key is mapped by one clip-map decision per run, and a low or unreported probability keeps it missing", async () => {
+  const w = await world({ clips: ["attack", "sprint", "death"] });
+  const dry = await cli(["stage", ...w.base, "--dry-run", "--json"]);
+  assert.deepEqual(
+    doc(dry)["plan"].perRequest.map((c: { operation: string }) => c.operation),
+    ["clip-map", "clip-map", "clip-map"],
+  );
+  const run = async (map: Record<string, unknown>, runs: string) => {
+    const r = await cli(
+      [
+        "stage",
+        ...w.base,
+        "--runs",
+        runs,
+        "--provider-script",
+        SCRIPT,
+        "--candidates",
+        "2",
+        "--json",
+      ],
+      { SCRIPT_3D_CLIP_MAP: JSON.stringify(map) },
+    );
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    return doc(r);
+  };
+  const out = await run(
+    {
+      attack: { choice: "slash", probability: 0.9 },
+      sprint: { choice: "run", probability: 0.9 },
+      death: { choice: "none" },
+    },
+    w.runs,
+  );
+  assert.equal(out["candidates"].length, 2);
+  const decisions = (c: {
+    provenance: { calls: Array<{ operation: string; requestId: string }> };
+  }) => c.provenance.calls.filter((x) => x.operation === "clip-map").map((x) => x.requestId);
+  // Made once per family for the run, by the first candidate; the second reuses them.
+  assert.deepEqual(decisions(out["candidates"][0]), [
+    "scripted-clip-map-0",
+    "scripted-clip-map-1",
+    "scripted-clip-map-2",
+  ]);
+  assert.deepEqual(decisions(out["candidates"][1]), []);
+  for (const c of out["candidates"]) {
+    assert.deepEqual(c.fields.clips, [
+      { name: "attack", durationMs: 1500, loop: false },
+      { name: "sprint", durationMs: 1500, loop: true },
+    ]);
+    assert.deepEqual(
+      c.fields.missingClips.map((m: { family: string }) => m.family),
+      ["death"],
+    );
+    assert.match(c.fields.missingClips[0].why, /no close biped clip for "death"/);
+    assert.match(c.fields.missingClips[0].why, /the clip-map decision answered none/);
+    assert.deepEqual(
+      c.fields.mappedClips.map((m: { family: string; key: string; probability: number }) => [
+        m.family,
+        m.key,
+        m.probability,
+      ]),
+      [
+        ["attack", "slash", 0.9],
+        ["sprint", "run", 0.9],
+      ],
+    );
+  }
+  const staged = parseGlb(
+    new Uint8Array(await readFile(join(w.runs, out["runId"], out["candidates"][0].file))),
+  );
+  assert.deepEqual(
+    clipsOf(staged).map((c) => c.name),
+    ["attack", "sprint"],
+  );
+
+  const low = await run(
+    { attack: { choice: "slash", probability: 0.3 }, sprint: { choice: "run" } },
+    `${w.runs}-low`,
+  );
+  const c = low["candidates"][0];
+  assert.deepEqual(c.fields.clips, []);
+  const attack = c.fields.missingClips.find((m: { family: string }) => m.family === "attack");
+  assert.match(attack.why, /chose slash with probability 0\.30, under 0\.5/);
+  const sprint = c.fields.missingClips.find((m: { family: string }) => m.family === "sprint");
+  assert.match(sprint.why, /chose run with no probability reported/);
+  assert.equal(c.fields.mappedClips, undefined);
 });
 
 test("over budget fails with the measured value, and the rejection keeps its cost and renders", async () => {

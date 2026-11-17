@@ -1,4 +1,5 @@
 import { ReferenceViewCache } from "./model3d/views.ts";
+import { ClipMapCache } from "./model3d/clip-map.ts";
 import type { PromptPolicyRecord } from "./policy/text.ts";
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -371,6 +372,8 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
 
   // Which view each reference shows is judged once for the run, whatever its candidate count.
   const referenceViews = new ReferenceViewCache(options.stateDir);
+  // Which library clip a requested family is, likewise decided once per family for the run.
+  const clipMaps = new ClipMapCache();
   for (let index = 0; index < requested; index++) {
     const call = new Caller({
       provider: options.provider,
@@ -397,6 +400,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         ...(options.note !== undefined && { note: options.note }),
         ...(options.profileDir !== undefined && { profileDir: options.profileDir }),
         referenceViews,
+        clipMaps,
       });
       const id = `c${index + 1}`;
       // Record paths use "/"; the candidate's writes are checked before the first one.
