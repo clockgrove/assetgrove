@@ -4,10 +4,12 @@
     "vercel-ai-gateway:perplexity/pplx-decider-v1.2": {
       "confirmAt": 0.5,
       "refuseAt": 0.8,
+      "refusalRate": 1,
+      "falseRefusalRate": 0.016129032258064516,
       "measuredBy": "test/real/prompt-policy.real.ts",
       "fixture": "test/fixtures/prompt-policy/red-team.jsonl",
       "bars": "docs/decisions.md#prompt-policy-bars",
-      "rates": "not recorded yet: the real check measures this route on main and records refusalRate and falseRefusalRate here"
+      "measuredAt": "https://github.com/clockgrove/assetgrove/actions/runs/44030094338"
     }
   }
 }

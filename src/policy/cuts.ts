@@ -72,18 +72,16 @@ export function readPromptPolicyCuts(
       !(confirmAt >= 0 && confirmAt <= refuseAt && refuseAt <= 1)
     )
       throw new InputError(`${path}: ${key} needs 0 <= confirmAt <= refuseAt <= 1`);
-    // The measured rates, once a real run has recorded them, are held to the bars as a settings
-    // entry's are. Both or neither: one rate alone is not a measurement.
-    if (refusalRate !== undefined || falseRefusalRate !== undefined) {
-      if (
-        typeof refusalRate !== "number" ||
-        typeof falseRefusalRate !== "number" ||
-        !(refusalRate >= 0 && refusalRate <= 1 && falseRefusalRate >= 0 && falseRefusalRate <= 1)
-      )
-        throw new InputError(`${path}: ${key} needs both refusalRate and falseRefusalRate, 0..1`);
-      const problem = barProblem({ confirmAt, refuseAt, refusalRate, falseRefusalRate });
-      if (problem !== undefined) throw new InputError(`${path}: ${key}: ${problem}`);
-    }
+    // Every entry carries the rates a real run measured it at, held to the bars as a settings
+    // entry's are: a route with no measured rates has no cut.
+    if (
+      typeof refusalRate !== "number" ||
+      typeof falseRefusalRate !== "number" ||
+      !(refusalRate >= 0 && refusalRate <= 1 && falseRefusalRate >= 0 && falseRefusalRate <= 1)
+    )
+      throw new InputError(`${path}: ${key} needs refusalRate and falseRefusalRate, each 0..1`);
+    const problem = barProblem({ confirmAt, refuseAt, refusalRate, falseRefusalRate });
+    if (problem !== undefined) throw new InputError(`${path}: ${key}: ${problem}`);
     cuts.set(key, { confirmAt, refuseAt });
   }
   return cuts;
