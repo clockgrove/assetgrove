@@ -163,6 +163,33 @@ test("a full run through a provider script stages candidates", async () => {
   assert.match(JSON.stringify(d["candidates"][0].provenance), /scripted:/);
 });
 
+test("a style bible missing a field is refused with exit 2 naming it, never a crash", async () => {
+  const { world, base } = await files();
+  const biblePath = base[base.indexOf("--bible") + 1] as string;
+  const without = (...fields: string[]) =>
+    Object.fromEntries(Object.entries(world.bible).filter(([key]) => !fields.includes(key)));
+  for (const [bible, message] of [
+    // No safe default: refused when the bible loads.
+    [without("version"), /style bible .* is invalid: version/],
+    [without("palette"), /style bible .* is invalid: palette/],
+    [{ ...world.bible, palette: ["red"] }, /palette\.0: must be a six-digit hex colour/],
+    [{ ...world.bible, references: [{ role: "sheet" }] }, /references\.0\.path/],
+    // References default to none, and a request that needs them names the subject.
+    [without("references"), /no reference images for subject "fern"/],
+    // A request that sends the perspective sample names the missing field.
+    [without("perspective"), /names no perspective sample: set `perspective`/],
+  ] as const) {
+    await writeFile(biblePath, JSON.stringify(bible));
+    const r = await cli(
+      ["stage", ...base, "--candidates", "1", "--provider-script", passingScript, "--json"],
+      noKey(),
+    );
+    assert.equal(r.code, 2, `${String(message)}: ${r.stdout}${r.stderr}`);
+    assert.equal(doc(r)["error"].code, "invalid_input");
+    assert.match(doc(r)["error"].message, message);
+  }
+});
+
 test("every candidate failing to generate is provider_error", async () => {
   const { world, base } = await files();
   const s = await script(

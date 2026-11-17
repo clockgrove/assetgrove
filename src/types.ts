@@ -83,8 +83,11 @@ export interface StyleBible {
   referenceLicense?: string;
   palette: string[];
   references: BibleReference[];
-  /** Path (relative to the bible file) of the perspective sample. */
-  perspective: string;
+  /**
+   * Path (relative to the bible file) of the perspective sample. Optional in the file; a request
+   * that sends the sample refuses without it (exit 2), naming the field.
+   */
+  perspective?: string;
   /** How the perspective sample's view is described, for example `isometric, three-quarter view`. */
   perspectiveDescription?: string;
   subjects?: Record<string, { description: string }>;
