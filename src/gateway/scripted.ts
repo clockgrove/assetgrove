@@ -24,6 +24,9 @@ import {
   MODEL3D_FACING_OPERATION,
   PROMPT_POLICY_OPERATION,
   MOTION_TEMPLATE_OPERATION,
+  STYLE_VERDICT_OPERATION,
+  BRIEF_CLAMP_OPERATION,
+  UI_ASSET_OPERATION,
   REFERENCE_VIEW_OPERATION,
   STYLE_OUTLIER_OPERATION,
 } from "../routes.ts";
@@ -123,6 +126,28 @@ export interface Script {
   sheetBlob?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers whether a planned run's candidate violates the constitution or asset spec (the
+   * `style-verdict` decisions). A script without it finds no violation (probability 0); its calls
+   * do not count toward `decide`'s index.
+   */
+  styleVerdict?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
+  /**
+   * Answers which allowed mood or adjustment value is closest to a brief's out-of-bounds one (the
+   * `brief-clamp` choice decisions). A script without it falls through to `decide`.
+   */
+  briefClamp?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
+  /**
+   * Answers whether an asset is part of the game's user interface (the `ui-asset` decisions). A
+   * script without it answers probability 0 (not UI); its calls do not count toward `decide`'s index.
+   */
+  uiAsset?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -180,6 +205,9 @@ export class ScriptedProvider implements GenerationProvider {
   private templateCount = 0;
   private cutoutCount = 0;
   private sheetBlobCount = 0;
+  private verdictCount = 0;
+  private clampCount = 0;
+  private uiCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -252,6 +280,24 @@ export class ScriptedProvider implements GenerationProvider {
     if (request.operation === LOOKDEV_MARKING_OPERATION && this.script.marking) {
       const index = this.markingCount++;
       return { requestId: `scripted-marking-${index}`, ...this.script.marking(request) };
+    }
+    if (request.operation === STYLE_VERDICT_OPERATION) {
+      const index = this.verdictCount++;
+      const answer = this.script.styleVerdict
+        ? this.script.styleVerdict(request)
+        : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
+      return { requestId: `scripted-style-verdict-${index}`, ...answer };
+    }
+    if (request.operation === BRIEF_CLAMP_OPERATION && this.script.briefClamp) {
+      const index = this.clampCount++;
+      return { requestId: `scripted-brief-clamp-${index}`, ...this.script.briefClamp(request) };
+    }
+    if (request.operation === UI_ASSET_OPERATION) {
+      const index = this.uiCount++;
+      const answer = this.script.uiAsset
+        ? this.script.uiAsset(request)
+        : { answer: { type: "boolean" as const, probability: 0 }, costUsd: 0 };
+      return { requestId: `scripted-ui-asset-${index}`, ...answer };
     }
     if (request.operation === MOTION_TEMPLATE_OPERATION) {
       const index = this.templateCount++;
