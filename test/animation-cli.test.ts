@@ -45,7 +45,7 @@ function profile(style: TargetProfile["style"]): TargetProfile {
 async function setup(style: TargetProfile["style"], drawn: Parameters<typeof syntheticStrip>[0]) {
   const root = await mkdtemp(join(tmpdir(), "assetgrove-anim-cli-"));
   const { strip } = syntheticStrip(drawn);
-  await writeFile(join(root, "walk-right.png"), encodePng(strip));
+  await writeFile(join(root, "walk.png"), encodePng(strip));
   await writeFile(join(root, "profile.json"), JSON.stringify(profile(style)));
   return { root, strip };
 }
@@ -66,7 +66,7 @@ for (const [name, style, drawn] of STYLES) {
     const out = join(root, "qa");
     const r = await cli([
       "animation-qa",
-      ...["--strip", join(root, "walk-right.png"), "--family", "walk-right"],
+      ...["--strip", join(root, "walk.png"), "--family", "walk"],
       ...["--profile", join(root, "profile.json"), "--out", out, "--subject", "testcoon"],
       ...["--provider-script", SCRIPT, "--json"],
     ]);
@@ -108,9 +108,9 @@ for (const [name, style, drawn] of STYLES) {
       assert.ok(h.areas.length > 0);
     }
     assert.equal(d.spentUsd.toFixed(3), (0.08 + 0.003 * family.holeDecisions.length).toFixed(3));
-    const onion = decodePng(new Uint8Array(await readFile(join(out, "walk-right.onion.png"))));
+    const onion = decodePng(new Uint8Array(await readFile(join(out, "walk.onion.png"))));
     assert.ok(onion.width > 64 && onion.height > 64);
-    const webp = await readFile(join(out, "walk-right.webp"));
+    const webp = await readFile(join(out, "walk.webp"));
     assert.equal(webp.subarray(0, 4).toString(), "RIFF");
     assert.equal(webp.subarray(8, 12).toString(), "WEBP");
     assert.ok(webp.includes(Buffer.from("ANMF")));
@@ -126,7 +126,7 @@ test("animation-qa: pixel failures name the frame; --no-vision spends nothing", 
   });
   const r = await cli([
     "animation-qa",
-    ...["--strip", join(root, "walk-right.png"), "--family", "walk-right"],
+    ...["--strip", join(root, "walk.png"), "--family", "walk"],
     ...["--profile", join(root, "profile.json"), "--out", join(root, "qa")],
     ...["--no-vision", "--json"],
   ]);
@@ -145,7 +145,7 @@ test("animation-qa: --dry-run forecasts the flicker calls and refuses over the c
   const { root } = await setup(undefined, { count: 8, style: "painterly", motion: "walk" });
   const args = [
     "animation-qa",
-    ...["--strip", join(root, "walk-right.png"), "--family", "walk-right"],
+    ...["--strip", join(root, "walk.png"), "--family", "walk"],
     ...["--profile", join(root, "profile.json"), "--dry-run", "--json"],
   ];
   const ok = await cli(args);
@@ -177,7 +177,7 @@ test("fix-frame: regenerates only that frame and records it in provenance", asyn
     floatFrame: 3,
   });
   await writeFile(
-    join(root, "walk-right.png.provenance.json"),
+    join(root, "walk.png.provenance.json"),
     JSON.stringify({
       generator: "sheet-import",
       route: "import:hand",
@@ -198,7 +198,7 @@ test("fix-frame: regenerates only that frame and records it in provenance", asyn
   const out = join(root, "fixed");
   const base = [
     "fix-frame",
-    ...["--strip", join(root, "walk-right.png"), "--family", "walk-right"],
+    ...["--strip", join(root, "walk.png"), "--family", "walk"],
     ...["--profile", join(root, "profile.json"), "--frame", "3", "--from", "2", "--out", out],
   ];
   const dry = await cli([...base, "--dry-run", "--json"]);
@@ -207,7 +207,7 @@ test("fix-frame: regenerates only that frame and records it in provenance", asyn
   assert.equal((await cli([...base, "--dry-run", "--cap", "0.01", "--json"])).code, 3);
   declareLimit("vercel-ai-gateway", { kind: "prepaid", usd: 5 });
   assert.equal((await cli([...base, "--json"])).code, 4, "no key and no script: provider error");
-  const bad = await cli([...base, "--key-pose", join(root, "walk-right.png"), "--json"]);
+  const bad = await cli([...base, "--key-pose", join(root, "walk.png"), "--json"]);
   assert.equal(bad.code, 2);
   // With the gateway configured it serves the edit role, not the scripted stand-in.
   writeSettings({});
@@ -250,7 +250,7 @@ test("fix-frame: a provenance it cannot extend exits 2 before any call and write
   const out = join(root, "fixed");
   const r = await cli([
     "fix-frame",
-    ...["--strip", join(root, "walk-right.png"), "--family", "walk-right"],
+    ...["--strip", join(root, "walk.png"), "--family", "walk"],
     ...["--profile", join(root, "profile.json"), "--frame", "3", "--from", "2", "--out", out],
     ...["--provenance", join(root, "other.provenance.json")],
     ...["--provider-script", SCRIPT, "--json"],
@@ -258,7 +258,7 @@ test("fix-frame: a provenance it cannot extend exits 2 before any call and write
   assert.equal(r.code, 2, r.stderr);
   assert.equal(doc(r).error.code, "invalid_input");
   assert.match(doc(r).error.message, /cannot extend the provenance/);
-  await assert.rejects(readFile(join(out, "walk-right.png")), "nothing written");
+  await assert.rejects(readFile(join(out, "walk.png")), "nothing written");
 });
 
 test("write-families writes the onion skin and loop preview and reports animation QA", async () => {
@@ -290,7 +290,7 @@ test("write-families writes the onion skin and loop preview and reports animatio
     status: "confirmed",
     families: [
       { name: "idle", frames: [1, 2, 3, 4], reason: "standing" },
-      { name: "walk-right", frames: [5, 6, 7, 8, 9, 10], reason: "legs swing" },
+      { name: "walk", frames: [5, 6, 7, 8, 9, 10], reason: "legs swing" },
     ],
     unassigned: [],
   };
@@ -315,7 +315,7 @@ test("write-families writes the onion skin and loop preview and reports animatio
     families.map((f) => [f.name, f.animation.template]),
     [
       ["idle", "idle"],
-      ["walk-right", "walk"],
+      ["walk", "walk"],
     ],
   );
   for (const f of families) {
@@ -325,7 +325,7 @@ test("write-families writes the onion skin and loop preview and reports animatio
       [...new Set(f.animation.reasons.map((r) => r.check))],
       [
         "template",
-        ...(f.name === "walk-right" ? ["timing"] : []),
+        ...(f.name === "walk" ? ["timing"] : []),
         "beats",
         "ground-contact",
         "footprint-drift",
@@ -352,14 +352,58 @@ test("write-families writes the onion skin and loop preview and reports animatio
   assert.equal(qa.code, 0, qa.stderr);
   assert.deepEqual(
     doc(qa).families.map((f: { family: string }) => f.family),
-    ["idle", "walk-right"],
+    ["idle", "walk"],
   );
+});
+
+test("animation-qa: --no-vision needs no key; an undeclared family's template checks are pending, a declared one is checked", async () => {
+  const { root } = await setup(
+    { alpha: { mode: "binary" }, color: { rule: "full" } },
+    { count: 8, style: "flat", motion: "walk" },
+  );
+  const strip = join(root, "walk-right.png");
+  await writeFile(strip, await readFile(join(root, "walk.png")));
+  await writeFile(
+    join(root, "spec.json"),
+    JSON.stringify({ kind: "sprite-strip", assetId: "testcoon", template: "walk" }),
+  );
+  const args = [
+    "animation-qa",
+    ...["--strip", strip, "--family", "walk-right"],
+    ...["--profile", join(root, "profile.json"), "--out", join(root, "qa"), "--no-vision"],
+    "--json",
+  ];
+  // Nothing declares or names walk-right: --no-vision makes no call, so the template stays
+  // undecided and its three checks are pending, never passing.
+  const undeclared = await cli(args);
+  assert.equal(undeclared.code, 5, undeclared.stdout + undeclared.stderr);
+  const pendingFamily = doc(undeclared).families[0];
+  assert.equal(pendingFamily.templateSource, "undecided");
+  assert.equal(pendingFamily.passed, false);
+  assert.deepEqual(pendingFamily.pending.map((p: { check: string }) => p.check).sort(), [
+    "footprint-drift",
+    "ground-contact",
+    "loop-seam",
+  ]);
+  assert.deepEqual(
+    pendingFamily.reasons.filter((x: { passed: boolean }) => !x.passed),
+    [],
+  );
+  assert.deepEqual(doc(undeclared).templateDecisions, []);
+  assert.equal(doc(undeclared).spentUsd, 0);
+  assert.match(undeclared.stdout + undeclared.stderr, /checks pending for walk-right/);
+  const declared = await cli([...args, "--spec", join(root, "spec.json")]);
+  assert.equal(declared.code, 0, declared.stdout + declared.stderr);
+  const family = doc(declared).families[0];
+  assert.equal(family.template, "walk");
+  assert.equal(family.templateSource, "declared");
+  assert.deepEqual(doc(declared).templateDecisions, []);
 });
 
 test("animation-qa: --spec declares the gait; a four-legged walk passes under it", async () => {
   const root = await mkdtemp(join(tmpdir(), "assetgrove-anim-gait-"));
   const walk = quadrupedWalk(8);
-  await writeFile(join(root, "walk-right.png"), encodePng(joinStrip(walk.frames)));
+  await writeFile(join(root, "walk.png"), encodePng(joinStrip(walk.frames)));
   await writeFile(
     join(root, "profile.json"),
     JSON.stringify({
@@ -374,7 +418,7 @@ test("animation-qa: --spec declares the gait; a four-legged walk passes under it
   );
   const args = [
     "animation-qa",
-    ...["--strip", join(root, "walk-right.png"), "--family", "walk-right"],
+    ...["--strip", join(root, "walk.png"), "--family", "walk"],
     ...["--profile", join(root, "profile.json"), "--out", join(root, "qa")],
     ...["--anchor", "80,70", "--no-vision", "--json"],
   ];

@@ -112,20 +112,26 @@ export async function lockFor(
 }
 
 /**
- * The subject and gait an asset spec given with `--spec` declares, for animation QA. The gait
- * picks each motion template's rule for it (the spec's over the profile's `animation.gait`).
+ * The subject, gait, family and motion template an asset spec given with `--spec` declares, for
+ * animation QA. The gait picks each motion template's rule for it (the spec's over the profile's
+ * `animation.gait`); the template is the one its `animationFamily` is judged by.
  */
 export async function specForQa(
   specPath: string | undefined,
-): Promise<{ subject?: string; gait?: string }> {
+): Promise<{ subject?: string; gait?: string; family?: string; template?: string }> {
   if (specPath === undefined) return {};
   const spec = (await readJson<AssetSpec>(specPath)).value;
   if (spec.gait !== undefined && typeof spec.gait !== "string") {
     throw new InputError(`the spec's gait must be text, for example "quadruped"`);
   }
+  if (spec.template !== undefined && typeof spec.template !== "string") {
+    throw new InputError(`the spec's template must be a motion template's name, or "none"`);
+  }
   return {
     ...(typeof spec.subject === "string" && { subject: spec.subject }),
     ...(spec.gait !== undefined && { gait: spec.gait }),
+    ...(typeof spec.animationFamily === "string" && { family: spec.animationFamily }),
+    ...(spec.template !== undefined && { template: spec.template }),
   };
 }
 

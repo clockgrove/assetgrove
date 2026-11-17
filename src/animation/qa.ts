@@ -8,7 +8,9 @@ import type { Raster } from "../image/raster.ts";
 import type { ResolvedStyle } from "../style.ts";
 import type { Point, TargetProfile } from "../types.ts";
 import { edgeHaloReasons } from "./halo.ts";
-import { gaitFor, templateFor, templatesFor, thresholdsFor, withGait } from "./templates.ts";
+import { gaitFor, templatesFor, thresholdsFor, withGait } from "./templates.ts";
+import { describeChoice, templateWithoutCall, UNDECIDED } from "./template-choice.ts";
+import type { TemplateChoice } from "./template-choice.ts";
 import { measureThreshold } from "./strip.ts";
 import type {
   AnimationFrameMeasure,
@@ -144,7 +146,13 @@ const fix = (n: number) => Number(n.toFixed(2));
 export function checkAnimation(
   input: StripInput,
   options: {
+    /** The template to judge by; shorthand for a `choice` of a template named like the family. */
     template?: MotionTemplate;
+    /**
+     * How the family's template was chosen (src/animation/template-choice.ts). With no template,
+     * the contact, footprint and loop-seam checks are not applicable.
+     */
+    choice?: TemplateChoice;
     thresholds: AnimationThresholds;
     threshold: number;
     /** The declared gait; picks the template's rule under `gaits`. */
@@ -152,7 +160,10 @@ export function checkAnimation(
   },
 ): AnimationReport {
   const { thresholds, threshold, gait } = options;
-  const gaited = options.template ? withGait(options.template, gait) : undefined;
+  const choice: TemplateChoice =
+    options.choice ??
+    (options.template ? { template: options.template, source: "named" } : UNDECIDED);
+  const gaited = choice.template ? withGait(choice.template, gait) : undefined;
   const template = gaited?.template;
   const { frames, anchor, family } = input;
   const count = frames.length;
@@ -167,15 +178,30 @@ export function checkAnimation(
       ...(at !== undefined && { frames: at }),
     });
 
-  const loop = template ? template.loop : true;
+  // With no template nothing says the cycle loops or where the feet are. Decided as none, the seam,
+  // contact and footprint checks are not applicable; undecided, they are not run but pending (left
+  // for animation-qa, which decides the template), so the strip is never read as checked.
+  const loop = template ? template.loop : false;
+  const undecided = !template && choice.source === "undecided";
+  const pending: Array<{ check: string; reason: string }> = [];
+  const notRun = `not run: template undecided (${describeChoice(family, choice)})`;
+  const notApplicable = template
+    ? ""
+    : `${describeChoice(family, choice)}; not applicable without a motion template`;
+  /** A template check with no template: pending while undecided, else not applicable. */
+  const withoutTemplate = (check: string) =>
+    undecided ? pending.push({ check, reason: notRun }) : add(check, true, notApplicable);
   const silhouette = template?.silhouette ?? DEFAULT_SILHOUETTE;
 
   if (!template) {
-    add(
-      "template",
-      true,
-      `no motion template matches family ${family}; loop and continuity checks use the defaults`,
-    );
+    // Undecided, there is no template reason: what was not run is listed under pending.
+    if (!undecided) {
+      add(
+        "template",
+        true,
+        `${describeChoice(family, choice)}; ground contact, footprint drift and the loop seam are not applicable`,
+      );
+    }
   } else {
     const { min, max } = template.frames;
     const ok = count >= min && count <= max;
@@ -217,9 +243,9 @@ export function checkAnimation(
       }))
     : [];
   const mustTouch = new Set<number>();
-  if (!template || template.contact === "all") {
+  if (template?.contact === "all") {
     for (let f = 1; f <= count; f++) mustTouch.add(f);
-  } else if (template.contact === "beats") {
+  } else if (template?.contact === "beats") {
     for (const b of beatFrames) if (b.contact && b.frame <= count) mustTouch.add(b.frame);
   }
 
@@ -253,12 +279,14 @@ export function checkAnimation(
         },
       ];
     });
-  if (groundFails.length === 0) {
+  if (!template) {
+    withoutTemplate("ground-contact");
+  } else if (groundFails.length === 0) {
     add(
       "ground-contact",
       true,
       mustTouch.size === 0
-        ? `${template?.name ?? family} has no contact frames to check`
+        ? `${template.name} has no contact frames to check`
         : `frames ${[...mustTouch].join(", ")} rest on the ground line ${anchor.y}`,
     );
   }
@@ -296,7 +324,9 @@ export function checkAnimation(
     .filter((x) => x !== "")
     .join("; ");
   const noted = (text: string) => (ruleNote ? `${text} (${ruleNote})` : text);
-  if (template?.footprint === "moving") {
+  if (!template) {
+    withoutTemplate("footprint-drift");
+  } else if (template.footprint === "moving") {
     // The contacts move by design, so a frame is held to its own phase: with two or more strides
     // per cycle, the same frame one stride earlier (frame f against f − count/strides); with one,
     // the loop's mean footprint. Each frame that strays fails on its own, so the author can see
@@ -423,8 +453,10 @@ export function checkAnimation(
         [p.a, p.b],
       );
     }
-    if (!loop) {
-      add("loop-seam", true, `the ${template?.name} template does not loop; no seam to check`);
+    if (!template) {
+      withoutTemplate("loop-seam");
+    } else if (!loop) {
+      add("loop-seam", true, `the ${template.name} template does not loop; no seam to check`);
     } else {
       const seam = frameDistance(frames[count - 1] as Raster, frames[0] as Raster, threshold);
       const bound = thresholds.loopSeamRatio * Math.max(thresholds.loopSeamFloor, ...dists);
@@ -445,11 +477,13 @@ export function checkAnimation(
   return {
     family,
     ...(template && { template: template.name }),
+    templateSource: choice.source,
     ...(gait !== undefined && { gait }),
     frameCount: count,
     figureHeightPx,
-    passed: reasons.every((r) => r.passed),
+    passed: pending.length === 0 && reasons.every((r) => r.passed),
     reasons,
+    ...(pending.length > 0 && { pending }),
     measures,
     silhouetteChange: seamChange === undefined ? changes : [...changes, seamChange],
     thresholds,
@@ -464,10 +498,12 @@ export function animationQa(
   input: StripInput,
   profile: Pick<TargetProfile, "animation">,
   style: ResolvedStyle,
+  /** The family's template as chosen for this run; without it, the declared or named one only. */
+  choice?: TemplateChoice,
 ): AnimationReport {
   const gait = gaitFor(profile, input.gait);
   return checkAnimation(input, {
-    template: templateFor(input.family, templatesFor(profile)),
+    choice: choice ?? templateWithoutCall(input.family, templatesFor(profile), input.template),
     thresholds: thresholdsFor(profile),
     threshold: measureThreshold(style),
     ...(gait !== undefined && { gait }),

@@ -17,7 +17,15 @@ import { defaultRoutes } from "../src/routes.ts";
 import { generateSheet, motionLines, sheetBrief } from "../src/sheet/generate.ts";
 import { templateFor, templatesFor } from "../src/animation/templates.ts";
 import { SliceError } from "../src/sheet/slice.ts";
-import { GROUPING_FILE, importSheet, writeFamilies } from "../src/sheet/import.ts";
+import {
+  GROUPING_FILE,
+  importSheet,
+  readImport,
+  writeFamilies,
+  writeImport,
+} from "../src/sheet/import.ts";
+import { importTargets, runAnimationQa } from "../src/animation/commands.ts";
+import { formatReport } from "../src/animation/run.ts";
 import { jitterOf } from "../src/sheet/register.ts";
 import type { Grouping } from "../src/sheet/types.ts";
 import type { AssetSpec, FrameProvenance, TargetProfile } from "../src/types.ts";
@@ -251,6 +259,109 @@ test("an imported sheet is sliced, cleaned to soft alpha, grouped by proposal, a
   assert.equal(await scaleOf(again.families[0]!.result.manifestPath), first);
 });
 
+test("write-families writes a family no template names as undecided, its template checks pending, not passing; animation-qa --import decides and runs them", async () => {
+  const sheet = syntheticSheet();
+  const { importsDir, targetDir } = await dirs();
+  const provider = groupingProvider();
+  const call = new Caller({
+    provider,
+    providerName: "scripted",
+    budget: new Budget(5),
+    routes: defaultRoutes,
+  });
+  const { importDir, grouping } = await importSheet({
+    digitalSourceType: "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+    sheet: sheet.png,
+    sheetPath: "sheets/bram-like.png",
+    tool: "ChatGPT image generation",
+    assetId: "fern",
+    profile: painterlyProfile(),
+    importsDir,
+    importId: "imp-undecided",
+    propose: { call, hints: ["idle", "walk-right", "walk-left"] },
+  });
+  const confirmed: Grouping = {
+    ...grouping,
+    status: "confirmed",
+    families: [grouping.families[0]!, grouping.families[1]!],
+  };
+  const calls = provider.calls.length;
+  const written = await writeFamilies({ importDir, grouping: confirmed, targetDir });
+  // Free: no motion-template question is asked.
+  assert.equal(provider.calls.length, calls);
+  const [idle, walk] = written.families;
+  assert.equal(idle!.animation.templateSource, "named");
+  assert.equal(idle!.animation.pending, undefined);
+  const report = walk!.animation;
+  assert.equal(report.templateSource, "undecided");
+  assert.equal(report.template, undefined);
+  // Not run, so neither passing nor "not applicable".
+  assert.deepEqual(
+    report.pending?.map((p) => p.check),
+    ["ground-contact", "footprint-drift", "loop-seam"],
+  );
+  for (const p of report.pending!) assert.match(p.reason, /^not run: template undecided/);
+  for (const check of ["ground-contact", "footprint-drift", "loop-seam", "template"]) {
+    assert.equal(
+      report.reasons.some((r) => r.check === check),
+      false,
+      `${check} is not reported as run`,
+    );
+  }
+  assert.equal(report.passed, false);
+  assert.ok(
+    report.reasons.every((r) => r.passed),
+    "no check that ran failed",
+  );
+  const lines = formatReport({ ...report, identityFlicker: "skipped", holes: "skipped" });
+  assert.doesNotMatch(lines[0]!, /all checks passed/);
+  assert.match(lines[0]!, /template undecided/);
+  assert.match(lines[0]!, /3 check\(s\) pending/);
+  assert.ok(lines.some((l) => /footprint-drift \[pending\]: not run: template undecided/.test(l)));
+  // The import's record of the write shows them pending.
+  const record = JSON.parse(await readFile(join(importDir, "import.json"), "utf8"));
+  assert.deepEqual(record.written.at(-1).pending, {
+    "walk-right": ["ground-contact", "footprint-drift", "loop-seam"],
+  });
+
+  // animation-qa --import decides the template and runs the three checks.
+  const asked: string[] = [];
+  const qaProvider = new ScriptedProvider({
+    image: () => {
+      throw new Error("no image calls expected");
+    },
+    vision: () => ({
+      text: JSON.stringify({ label: "same", confidence: 0.95, reason: "same figure" }),
+    }),
+    motionTemplate: (request) => {
+      asked.push(request.prompt);
+      return { answer: { type: "choice", choice: "walk" }, costUsd: 0.001 };
+    },
+  });
+  const qa = await runAnimationQa({
+    targets: await importTargets(importDir),
+    outDir: join(importDir, "qa"),
+    routes: defaultRoutes,
+    capUsd: 1,
+    provider: { provider: qaProvider, name: "scripted" },
+    vision: false,
+  });
+  assert.equal(asked.length, 1);
+  assert.match(asked[0]!, /"walk-right"/);
+  const decided = qa.results.find((r) => r.report.family === "walk-right")!.report;
+  assert.equal(decided.templateSource, "judged");
+  assert.equal(decided.template, "walk");
+  assert.equal(decided.pending, undefined);
+  for (const check of ["ground-contact", "footprint-drift", "loop-seam"]) {
+    const ran = decided.reasons.filter((r) => r.check === check);
+    assert.ok(ran.length > 0, `${check} ran`);
+    assert.ok(
+      ran.every((r) => !/not applicable|not run/.test(r.reason)),
+      check,
+    );
+  }
+});
+
 test("a family over the jitter bound is refused, and nothing is written", async () => {
   const sheet = syntheticSheet();
   const { importsDir, targetDir } = await dirs();
@@ -391,6 +502,139 @@ test("sheet generation: one request for the whole cycle within the cap, then the
   // The spec's fields reach the family it asked for, not a generic default.
   assert.equal(manifest.accessibilityLabel, "Fern walking");
   assert.deepEqual(manifest.semantic, { role: "actor", entity: "grove.fern" });
+});
+
+test("sheet generation decides a family no template names before the sheet, and the import keeps the answer as judged for write-families and animation-qa --import", async () => {
+  const world = await syntheticWorld();
+  const { importsDir, targetDir } = await dirs();
+  const sheet = syntheticSheet({
+    families: [{ name: "walk-right", count: 6, facing: 1, walk: true }],
+    columns: 3,
+  });
+  const spec: AssetSpec = {
+    kind: "sprite-sheet",
+    assetId: "fern",
+    animationFamily: "trot",
+    frames: { count: 6 },
+  };
+  const asked: string[] = [];
+  const provider = new ScriptedProvider({
+    image: () => ({ images: [{ mediaType: "image/png", bytes: sheet.png }], costUsd: 0.21 }),
+    vision: () => ({
+      text: JSON.stringify({
+        families: [{ name: "trot", frames: [1, 2, 3, 4, 5, 6], reason: "one trot cycle" }],
+        unassigned: [],
+      }),
+      costUsd: 0.01,
+    }),
+    motionTemplate: (request) => {
+      asked.push(request.prompt);
+      return { answer: { type: "choice", choice: "walk" }, costUsd: 0.001 };
+    },
+  });
+  const { record, importDir, grouping, spentUsd } = await generateSheet({
+    spec,
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: painterlyProfile(),
+    routes: defaultRoutes,
+    providerName: "scripted",
+    importsDir,
+    provider,
+  });
+  // One decision, before the sheet call, whose prompt states the decided walk's motion.
+  assert.equal(asked.length, 1);
+  assert.match(asked[0]!, /"trot"/);
+  assert.deepEqual(
+    provider.calls.map((c) => c.kind),
+    ["decide", "image", "vision"],
+  );
+  const image = provider.calls.find((c) => c.kind === "image")!.request as ImageRequest;
+  assert.match(image.prompt, /Motion: a walk cycle/);
+  assert.ok(Math.abs(spentUsd - 0.221) < 1e-9, String(spentUsd));
+  // Judged, not declared: the answer is kept apart from the spec's declarations.
+  assert.deepEqual(record.judgedTemplates, { trot: "walk" });
+  assert.equal(record.templates, undefined);
+  assert.ok(record.generation?.calls.some((c) => c.operation === "motion-template"));
+
+  const written = await writeFamilies({
+    importDir,
+    grouping: { ...grouping, status: "confirmed" },
+    targetDir,
+  });
+  const family = written.families[0]!;
+  assert.equal(family.animation.template, "walk");
+  assert.equal(family.animation.templateSource, "judged");
+  const manifest = JSON.parse(await readFile(family.result.manifestPath, "utf8"));
+  assert.ok(
+    manifest.provenance.generated.calls.some(
+      (c: { operation: string }) => c.operation === "motion-template",
+    ),
+  );
+
+  // animation-qa --import reads the recorded answer: judged, and no new decision.
+  const targets = await importTargets(importDir);
+  assert.equal(targets[0]!.judgedTemplate, "walk");
+  assert.equal(targets[0]!.template, undefined);
+  const noDecision = new ScriptedProvider({
+    image: () => {
+      throw new Error("no image calls expected");
+    },
+    vision: () => ({
+      text: JSON.stringify({ label: "same", confidence: 0.95, reason: "same figure" }),
+    }),
+  });
+  const qa = await runAnimationQa({
+    targets,
+    outDir: join(importDir, "qa"),
+    routes: defaultRoutes,
+    capUsd: 1,
+    provider: { provider: noDecision, name: "scripted" },
+    vision: false,
+  });
+  assert.equal(noDecision.calls.length, 0);
+  assert.equal(qa.results[0]!.report.template, "walk");
+  assert.equal(qa.results[0]!.report.templateSource, "judged");
+  assert.deepEqual(qa.templateDecisions, []);
+
+  // A grouping family's own template is a declaration, over the recorded decision.
+  const again = await writeFamilies({
+    importDir,
+    grouping: {
+      ...grouping,
+      status: "confirmed",
+      families: grouping.families.map((f) => ({ ...f, template: "none" })),
+    },
+    targetDir,
+  });
+  assert.equal(again.families[0]!.animation.template, undefined);
+  assert.equal(again.families[0]!.animation.templateSource, "declared");
+  const declared = await importTargets(importDir);
+  assert.equal(declared[0]!.template, "none");
+
+  // A later write whose grouping no longer declares it drops the declaration: animation-qa
+  // --import reads the last write of the family, not an earlier one's stale template.
+  const rewritten = await readImport(importDir);
+  rewritten.written!.push({ ...rewritten.written!.at(-1)!, templates: undefined });
+  await writeImport(importDir, JSON.parse(JSON.stringify(rewritten)));
+  assert.equal((await importTargets(importDir))[0]!.template, undefined);
+
+  // A family named like an Object.prototype member has no recorded answer: it is written
+  // undecided, not refused, and animation-qa --import reads no inherited value either.
+  const inherited = await writeFamilies({
+    importDir,
+    grouping: {
+      ...grouping,
+      status: "confirmed",
+      families: grouping.families.map((f) => ({ ...f, name: "constructor" })),
+    },
+    targetDir,
+  });
+  assert.equal(inherited.families[0]!.animation.templateSource, "undecided");
+  const own = (await importTargets(importDir)).find((t) => t.family === "constructor")!;
+  assert.equal(own.judgedTemplate, undefined);
+  assert.equal(own.template, undefined);
 });
 
 test("write-families gives the spec's fields to the family it asked for under another name, or refuses", async () => {

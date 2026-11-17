@@ -217,7 +217,8 @@ test("the pin follows the family's footprint rule: planted families pin the feet
   assert.equal(pinOf("sniff"), "footprint");
   assert.equal(pinOf("idle"), "footprint");
   assert.equal(pinOf("walk"), "center");
-  assert.equal(pinOf("walk-left"), "center");
+  // A family only a name-prefix of a template has no template: QA treats it as the planted default.
+  assert.equal(pinOf("walk-left"), "footprint");
   // A profile template that plants a family pins its feet, whatever its name.
   assert.equal(
     pinOf("walk", {

@@ -103,6 +103,11 @@ export interface FixFrameOptions {
   from: { neighbour: number } | { keyPose: LoadedReference };
   style: ResolvedStyle;
   call: Caller;
+  /**
+   * Calls made for this fix before its edit (the motion-template decision that chose its
+   * registration pin): recorded in its provenance ahead of the edit call.
+   */
+  decisions?: CallRecord[];
   note?: string;
   provenance?: Provenance;
   stripPath?: string;
@@ -433,6 +438,8 @@ export async function fixFrame(
     costUsd: 0,
     calls: [],
   };
+  // The decisions that shaped the fix, then its edit call.
+  const added = [...(options.decisions ?? []), record];
   // The fix adds a call, so the strip is no longer media made outside Assetgrove.
   const { madeOutsideAssetgrove: _outside, ...extended } = base;
   void _outside;
@@ -442,17 +449,17 @@ export async function fixFrame(
       base.digitalSourceType ?? DIGITAL_SOURCE_TYPES.undeclared,
       DIGITAL_SOURCE_TYPES.generated,
     ]),
-    models: unique([...base.models, record.model]),
-    requestIds: [...base.requestIds, record.requestId],
+    models: unique([...base.models, ...added.map((r) => r.model)]),
+    requestIds: [...base.requestIds, ...added.map((r) => r.requestId)],
     referenceHashes: unique([...base.referenceHashes, first.sha256, second.sha256]),
     providerTerms: unique([
       ...base.providerTerms,
-      ...(record.providerTerms !== undefined ? [record.providerTerms] : []),
+      ...added.flatMap((r) => (r.providerTerms !== undefined ? [r.providerTerms] : [])),
     ]),
     finishedAt: at,
-    costUsd: base.costUsd + record.costUsd,
-    calls: [...base.calls, record],
-    ...grantFields(base, [...base.calls, record]),
+    costUsd: added.reduce((sum, r) => sum + r.costUsd, base.costUsd),
+    calls: [...base.calls, ...added],
+    ...grantFields(base, [...base.calls, ...added]),
     steps: [...(base.steps ?? []), ...steps],
     fixes: [...(base.fixes ?? []), fix],
     ...(base.frames && {

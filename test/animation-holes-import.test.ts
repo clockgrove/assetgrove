@@ -89,6 +89,8 @@ test("animation-qa on an import asks the holes decision on every frame, before a
         request.operation === "holes" && /frame 3 of a "walk-right"/.test(request.prompt);
       return { answer: { type: "boolean", probability: bitten ? 0.85 : 0.05 } };
     },
+    // walk-right declares no template, so the run decides it (#364): it is a walk.
+    motionTemplate: () => ({ answer: { type: "choice", choice: "walk" } }),
   });
   const { results } = await runAnimationQa({
     targets: targets.filter((t) => t.family === "walk-right"),

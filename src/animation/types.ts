@@ -17,7 +17,7 @@ export interface MotionBeat {
 
 /** One family's motion template, as data. */
 export interface MotionTemplate {
-  /** The family name it serves; also matches `<name>-<suffix>` families (walk → walk-right). */
+  /** Its name. A family of exactly this name uses it; any other family declares it or is decided (docs/animation.md). */
   name: string;
   description?: string;
   /** The cycle loops: the last frame must flow into the first. */
@@ -147,20 +147,35 @@ export interface StripInput {
   durationMs?: number;
   /** The subject's gait, from the asset spec; the profile's `animation.gait` when unset. */
   gait?: string;
+  /**
+   * The motion template the asset spec (or the grouping) declares for this family; `none`
+   * declares that no template applies. Unset: the template named like the family, else decided.
+   */
+  template?: string;
 }
 
 /** The animation QA report of one strip. Each reason's text names the frame(s). */
 export interface AnimationReport {
   family: string;
-  /** The matched template's name, or undefined when none matched. */
+  /** The template the strip was judged by, or undefined when none applies or none was decided. */
   template?: string;
+  /** How the template was known: declared, named like the family, judged by a decision, or undecided. */
+  templateSource: import("./template-choice.ts").TemplateSource;
   /** The gait the checks used, when one was declared. */
   gait?: string;
   frameCount: number;
   /** The strip's figure height in px: the median over non-empty frames of baseline − top + 1; 0 when all are empty. */
   figureHeightPx: number;
+  /** True only when every check ran and passed: false while a check failed or is still pending. */
   passed: boolean;
   reasons: AnimationReason[];
+  /**
+   * Checks not run, each with why: with the template undecided (no declaration, no template of the
+   * family's name, no recorded decision and no call in this run, as in `write-families`),
+   * ground-contact, footprint-drift and loop-seam wait for `animation-qa`, which decides the
+   * template and runs them. A pending check is neither passing nor "not applicable".
+   */
+  pending?: Array<{ check: string; reason: string }>;
   measures: AnimationFrameMeasure[];
   /** Consecutive distances: distances[i] is between frame i+1 and i+2 (1-based); the seam last. */
   silhouetteChange: number[];

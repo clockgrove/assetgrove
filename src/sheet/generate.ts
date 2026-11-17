@@ -38,7 +38,9 @@ import { SliceError } from "./slice.ts";
 import type { ImportIdentity, MatteLimits } from "./import.ts";
 import type { ImportRecord } from "./import.ts";
 import type { Grouping, SliceOptions } from "./types.ts";
-import { templateFor, templatesFor } from "../animation/templates.ts";
+import { NO_TEMPLATE, templatesFor } from "../animation/templates.ts";
+import { planTemplateDecisions, TemplateChooser } from "../animation/template-choice.ts";
+import type { TemplateRequest } from "../animation/template-choice.ts";
 import type { MotionTemplate } from "../animation/types.ts";
 import { assertOriginalDescription } from "../planning.ts";
 import type { GenerationBrief } from "../planning.ts";
@@ -183,16 +185,31 @@ export function buildSheetPrompt(
   ].join("\n");
 }
 
-/** The calls one generated sheet makes: the sheet itself, then the grouping proposal. */
+/** The template request of a sheet spec's family: its family, subject and declared template. */
+function templateRequest(spec: AssetSpec): TemplateRequest {
+  return {
+    family: spec.animationFamily as string,
+    subject: subjectOf(spec),
+    ...(spec.template !== undefined && { declared: spec.template }),
+  };
+}
+
+/**
+ * The calls one generated sheet makes: the motion-template decision when the spec declares no
+ * template and none is named for its family, the sheet itself, then the grouping proposal.
+ */
 export function planSheet(spec: AssetSpec, profile: TargetProfile, routes: Routes): PlannedCall[] {
   if (!spec.animationFamily) throw new InputError("a sheet spec needs an animationFamily");
   const grid = frameGrid(spec, profile, 1);
   if (grid.count < 2) throw new InputError("a sheet spec needs frames.count of at least 2");
-  return ["sheet", "vision"].map((operation) => {
-    const route = routes[operation];
-    if (!route) throw new InputError(`no model route for operation "${operation}"`);
-    return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
-  });
+  return [
+    ...planTemplateDecisions([templateRequest(spec)], templatesFor(profile), routes),
+    ...["sheet", "vision"].map((operation) => {
+      const route = routes[operation];
+      if (!route) throw new InputError(`no model route for operation "${operation}"`);
+      return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
+    }),
+  ];
 }
 
 /**
@@ -237,7 +254,11 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
   const keyPose: LoadedReference[] = spec.keyPose
     ? [await loadReference(spec.keyPose, "key pose (approved)", options.specDir)]
     : [];
-  const template = templateFor(spec.animationFamily as string, templatesFor(profile));
+  // The sheet prompt states the family's motion; a family nothing declares or names is decided.
+  const choice = await new TemplateChooser(templatesFor(profile), call).choose(
+    templateRequest(spec),
+  );
+  const template = choice.template;
   const prompt = withNote(
     buildSheetPrompt(
       spec,
@@ -278,6 +299,14 @@ export async function generateSheet(options: GenerateSheetOptions): Promise<{
       assetId: spec.assetId,
       ...(spec.subject !== undefined && { subject: spec.subject }),
       ...(spec.gait !== undefined && { gait: spec.gait }),
+      // A declared or decided template is the family's from here on: write-families reads it,
+      // the decided one as judged (its call is in the generation's calls).
+      ...(choice.source === "declared" && {
+        templates: { [spec.animationFamily as string]: template?.name ?? NO_TEMPLATE },
+      }),
+      ...(choice.source === "judged" && {
+        judgedTemplates: { [spec.animationFamily as string]: template?.name ?? NO_TEMPLATE },
+      }),
       ...(spec.fields !== undefined && {
         spec: { animationFamily: spec.animationFamily as string, fields: spec.fields },
       }),

@@ -64,12 +64,8 @@ import {
 } from "../runs/plan.ts";
 import type { PlanJob } from "../runs/plan.ts";
 import { ledgerFor } from "../spend.ts";
-import {
-  registrationPin,
-  templateFor,
-  templatesFor,
-  thresholdsFor,
-} from "../animation/templates.ts";
+import { registrationPin, templatesFor, thresholdsFor } from "../animation/templates.ts";
+import { planTemplateDecisions, TemplateChooser } from "../animation/template-choice.ts";
 import type { LoadedReference, Provenance } from "../types.ts";
 import { dryRunOutcome, formatWork, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
@@ -235,7 +231,25 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     const frames = new Set(regions.flatMap((r) => (r.frame !== undefined ? [r.frame] : [])));
     if (kind === "frame") {
       checkFrames(frames, imageSize(bytes), profileFrame(source.profile));
-      jobs = [jobOf("edit", route, candidates * frames.size)];
+      // The frame fix pins the point the family's template keeps still: one motion-template
+      // decision first when the spec declares no template and none is named for the family.
+      jobs = [
+        ...jobsOf(
+          planTemplateDecisions(
+            [
+              {
+                family: source.spec.animationFamily ?? "strip",
+                subject: source.spec.subject ?? source.spec.assetId ?? asset.assetId,
+                ...(source.spec.template !== undefined && { declared: source.spec.template }),
+              },
+            ],
+            templatesFor(source.profile),
+            routes,
+          ),
+          routes,
+        ),
+        jobOf("edit", route, candidates * frames.size),
+      ];
       job = "fix-frame";
     } else {
       jobs = [jobOf("edit", route, candidates)];
@@ -629,6 +643,7 @@ version is appended with answers naming the requests. The run that made the asse
       const frames = [
         ...new Set(regions.flatMap((r) => (r.frame !== undefined ? [r.frame] : []))),
       ].sort((a, b) => a - b);
+      let templates: TemplateChooser | undefined;
       for (let index = 0; index < candidates; index++) {
         const caller = new Caller({
           provider: providers,
@@ -645,11 +660,14 @@ version is appended with answers naming the requests. The run that made the asse
             let strip = before;
             let provenance: Provenance | undefined = sourceCandidate?.provenance;
             const family = source.spec.animationFamily ?? "strip";
-            const pin = registrationPin(
-              templateFor(family, templatesFor(source.profile)),
-              source.profile,
-              source.spec.gait,
-            );
+            // Decided once, on the first candidate's caller, and reused by every candidate.
+            templates ??= new TemplateChooser(templatesFor(source.profile), caller);
+            const choice = await templates.choose({
+              family,
+              subject: source.spec.subject ?? source.spec.assetId ?? asset.assetId,
+              ...(source.spec.template !== undefined && { declared: source.spec.template }),
+            });
+            const pin = registrationPin(choice.template, source.profile, source.spec.gait);
             for (const f of frames) {
               const count = splitStrip(strip, frame).length;
               const fixed = await fixFrame({
@@ -664,6 +682,10 @@ version is appended with answers naming the requests. The run that made the asse
                 from: { neighbour: f > 1 ? f - 1 : Math.min(2, count) },
                 style: qaStyle(source.profile),
                 call: caller,
+                // The decision chose the pin of every candidate's fix, so each candidate's
+                // provenance records it once, with its first fixed frame.
+                ...(choice.record !== undefined &&
+                  f === frames[0] && { decisions: [choice.record] }),
                 note: regions
                   .filter((r) => r.frame === f)
                   .map((r) => `${whereOf(r)} of the frame: ${r.note}`)

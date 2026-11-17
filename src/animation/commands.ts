@@ -8,7 +8,7 @@ import {
   checkProvenance,
   ProvenanceError,
 } from "../provenance-binding.ts";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Budget } from "../budget.ts";
 import { ledgerFor } from "../spend.ts";
@@ -27,19 +27,22 @@ import {
 import type { DigitalSourceType } from "../metadata.ts";
 import { requireInsideProject } from "../bible.ts";
 import { loadReference, sniffMediaType } from "../request.ts";
+import { MOTION_TEMPLATE_OPERATION } from "../routes.ts";
 import type { Routes } from "../routes.ts";
 import { readImport } from "../sheet/import.ts";
 import { resolveStyle } from "../style.ts";
 import type { ResolvedStyle } from "../style.ts";
-import type { Point, Provenance, Size, TargetProfile } from "../types.ts";
+import type { CallRecord, Point, Provenance, Size, TargetProfile } from "../types.ts";
 import { DEFAULT_FIX_CAP_USD, fixBaseProvenance, fixFrame, planFix } from "./fix.ts";
 import type { FrameFix } from "./fix.ts";
 import { planFlicker } from "./flicker.ts";
 import { planHoles } from "./holes.ts";
 import type { HoleSource } from "./holes.ts";
 import { measureThreshold, splitStrip } from "./strip.ts";
-import { registrationPin, templateFor, templatesFor, thresholdsFor } from "./templates.ts";
-import { defaultAnchor, familyLoops, profileFrame, qaStrip } from "./run.ts";
+import { NO_TEMPLATE, registrationPin, templatesFor, thresholdsFor } from "./templates.ts";
+import { planTemplateDecisions, TemplateChooser } from "./template-choice.ts";
+import type { TemplateChoice } from "./template-choice.ts";
+import { defaultAnchor, familyMayLoop, profileFrame, qaStrip } from "./run.ts";
 import type { StripQaResult } from "./run.ts";
 
 /** One strip to check: where it is and how to read it. */
@@ -59,6 +62,10 @@ export interface StripTarget {
    * where they exist (a sheet import's frames); the holes decision is asked on each such frame.
    */
   holeSources?: Array<{ before: string; after: string } | undefined>;
+  /** The motion template its spec or grouping declares for the family (`none`: no template). */
+  template?: string;
+  /** The template a recorded motion-template decision (generate-sheet's) chose for the family. */
+  judgedTemplate?: string;
 }
 
 /** QA measures alpha only, so a palette rule needs no palette here. */
@@ -149,8 +156,28 @@ export async function importTargets(importDir: string): Promise<StripTarget[]> {
     });
     return sources.some((x) => x !== undefined) ? sources : undefined;
   };
+  // A template the grouping declared for a family in the last write that wrote it, else the
+  // spec's for its own family, as writeFamilies took it. An earlier write's declaration that the
+  // last one no longer makes does not count.
+  const declared = new Map<string, string>();
+  for (const family of families) {
+    const last = (record.written ?? []).findLast((w) => w.families.includes(family));
+    const template =
+      last?.templates !== undefined && Object.hasOwn(last.templates, family)
+        ? last.templates[family]
+        : record.templates !== undefined && Object.hasOwn(record.templates, family)
+          ? record.templates[family]
+          : undefined;
+    if (template !== undefined) declared.set(family, template);
+  }
   return families.map((family) => ({
     family,
+    ...(declared.has(family) && { template: declared.get(family) as string }),
+    // Own keys only: a family named like an Object.prototype member has no recorded answer.
+    ...(record.judgedTemplates !== undefined &&
+      Object.hasOwn(record.judgedTemplates, family) && {
+        judgedTemplate: record.judgedTemplates[family],
+      }),
     path: join(importDir, "preview", `${family}.png`),
     frame: record.frame,
     anchor: record.anchor,
@@ -171,6 +198,7 @@ export function stripTarget(options: {
   subject?: string;
   anchor?: Point;
   gait?: string;
+  template?: string;
 }): StripTarget {
   const frame = profileFrame(options.profile);
   return {
@@ -185,13 +213,23 @@ export function stripTarget(options: {
     profile: options.profile,
     subject: options.subject ?? options.family,
     ...(options.gait !== undefined && { gait: options.gait }),
+    ...(options.template !== undefined && { template: options.template }),
   };
 }
 
 export interface QaPlan {
   calls: number;
-  perFamily: Array<{ family: string; calls: number; flickerCalls: number; holeCalls: number }>;
+  perFamily: Array<{
+    family: string;
+    calls: number;
+    flickerCalls: number;
+    holeCalls: number;
+    /** 1 when this family's motion template is decided by a call (once per family and subject). */
+    templateCalls: number;
+  }>;
   model: string;
+  /** The motion-template route's model. */
+  templateModel: string;
   /** The holes route's model (one call per frame with a see-through area inside its outline). */
   holesModel: string;
   estimateUsd: number;
@@ -200,24 +238,45 @@ export interface QaPlan {
 }
 
 /**
- * The vision calls a QA run would make: identity flicker per frame pair, and holes per frame
- * with a see-through area inside its outline (found on pixels, so the plan is exact).
+ * The calls a QA run would make: one motion-template decision per family (and subject) with no
+ * declared template and no template of its name, when `decide`; and with `vision`, identity
+ * flicker per frame pair (the seam pair counted while the template is undecided), and holes per
+ * frame with a see-through area inside its outline (found on pixels, so that count is exact).
  */
 export async function planAnimationQa(
   targets: StripTarget[],
   routes: Routes,
   capUsd: number,
   vision: boolean,
+  decide = vision,
 ): Promise<QaPlan> {
   const perFamily: QaPlan["perFamily"] = [];
   let estimateUsd = 0;
+  const asked = new Set<string>();
   for (const t of targets) {
     const { raster } = await readStrip(t.path);
     const count = Math.floor(raster.width / t.frame.width);
     const frames = splitStrip(raster, t.frame);
     const sources = holeSourcesFor(t, frames.length);
+    const key = JSON.stringify([t.family, t.subject]);
+    const template =
+      decide && !asked.has(key)
+        ? planTemplateDecisions(
+            [
+              {
+                family: t.family,
+                subject: t.subject,
+                ...(t.template !== undefined && { declared: t.template }),
+                ...(t.judgedTemplate !== undefined && { judged: t.judgedTemplate }),
+              },
+            ],
+            templatesFor(t.profile),
+            routes,
+          )
+        : [];
+    if (template.length > 0) asked.add(key);
     const flicker = vision
-      ? planFlicker(count, familyLoops(t.family, t.profile), routes)
+      ? planFlicker(count, familyMayLoop(t.family, t.profile, t.template, t.judgedTemplate), routes)
       : { calls: 0, estimatedCostUsd: 0 };
     const holes = vision
       ? planHoles(
@@ -232,17 +291,22 @@ export async function planAnimationQa(
       : { calls: 0, estimatedCostUsd: 0 };
     perFamily.push({
       family: t.family,
-      calls: flicker.calls + holes.calls,
+      calls: flicker.calls + holes.calls + template.length,
       flickerCalls: flicker.calls,
       holeCalls: holes.calls,
+      templateCalls: template.length,
     });
-    estimateUsd += flicker.estimatedCostUsd + holes.estimatedCostUsd;
+    estimateUsd +=
+      flicker.estimatedCostUsd +
+      holes.estimatedCostUsd +
+      template.reduce((sum, c) => sum + c.estimatedCostUsd, 0);
   }
   return {
     calls: perFamily.reduce((s, f) => s + f.calls, 0),
     perFamily,
     model: routes.flicker.model,
     holesModel: routes.holes.model,
+    templateModel: routes[MOTION_TEMPLATE_OPERATION]?.model ?? "",
     estimateUsd,
     capUsd,
     withinCap: estimateUsd <= capUsd + 1e-9,
@@ -250,8 +314,9 @@ export async function planAnimationQa(
 }
 
 /**
- * Runs animation QA on each strip. With a provider, the identity-flicker and holes calls of every
- * strip are reserved against the cap before the first one is made.
+ * Runs animation QA on each strip. With a provider, each family's motion template is decided when
+ * nothing declares or names it, and (unless `vision` is false) identity flicker and holes are
+ * checked; every call of every strip is checked against the cap before the first one is made.
  */
 export async function runAnimationQa(options: {
   targets: StripTarget[];
@@ -259,19 +324,38 @@ export async function runAnimationQa(options: {
   routes: Routes;
   capUsd: number;
   provider?: { provider: GenerationProvider; name: string };
+  /** Run the identity-flicker and holes checks. Default: when a provider is given. */
+  vision?: boolean;
+  /**
+   * Decide an undeclared family's motion template by a call. Default: when a provider is given.
+   * When false, such a family stays undecided and its template checks are pending.
+   */
+  decide?: boolean;
   /** The cross-run spend ledger every paid call also reserves against (src/spend.ts). */
   ledger?: SpendLedger;
   now?: () => Date;
-}): Promise<{ results: StripQaResult[]; spentUsd: number }> {
-  const vision = options.provider !== undefined;
-  const plan = await planAnimationQa(options.targets, options.routes, options.capUsd, vision);
+}): Promise<{
+  results: StripQaResult[];
+  spentUsd: number;
+  /** The motion-template decisions this run made, as logged to `motion-template.jsonl`. */
+  templateDecisions: TemplateDecisionLine[];
+}> {
+  const vision = options.provider !== undefined && options.vision !== false;
+  const decide = options.provider !== undefined && options.decide !== false;
+  const plan = await planAnimationQa(
+    options.targets,
+    options.routes,
+    options.capUsd,
+    vision,
+    decide,
+  );
   const ledger = options.targets.reduce<SpendLedger | undefined>(
     (l, t) => l?.forProfile(t.profile),
     ledgerFor(options.ledger, options.provider?.provider),
   );
   const budget = new Budget(options.capUsd, ledger);
   // Refuse up front when the whole run would not fit, before any provider call.
-  budget.check(plan.estimateUsd, "the identity-flicker and holes calls");
+  budget.check(plan.estimateUsd, "the motion-template, identity-flicker and holes calls");
   const call = options.provider
     ? new Caller({
         provider: options.provider.provider,
@@ -281,14 +365,38 @@ export async function runAnimationQa(options: {
         ...(options.now !== undefined && { now: options.now }),
       })
     : undefined;
+  // One chooser per profile: a family is decided once per run, whichever strip asks first.
+  const choosers = new Map<TargetProfile, TemplateChooser>();
   const results: StripQaResult[] = [];
+  const templateDecisions: TemplateDecisionLine[] = [];
+  const logged = new Set<CallRecord>();
   for (const t of options.targets) {
     const { raster, origin } = await readStrip(t.path);
-    const holeSources = call
-      ? await readHoleSources(t, Math.floor(raster.width / t.frame.width))
-      : undefined;
+    const holeSources =
+      call && vision
+        ? await readHoleSources(t, Math.floor(raster.width / t.frame.width))
+        : undefined;
+    let chooser = choosers.get(t.profile);
+    if (!chooser) {
+      chooser = new TemplateChooser(templatesFor(t.profile), decide ? call : undefined);
+      choosers.set(t.profile, chooser);
+    }
+    const choice = await chooser.choose({
+      family: t.family,
+      subject: t.subject,
+      ...(t.template !== undefined && { declared: t.template }),
+      ...(t.judgedTemplate !== undefined && { judged: t.judgedTemplate }),
+    });
+    if (choice.record !== undefined && !logged.has(choice.record)) {
+      logged.add(choice.record);
+      const line = templateDecisionLine(t.family, t.subject, choice);
+      templateDecisions.push(line);
+      await mkdir(options.outDir, { recursive: true });
+      await appendFile(join(options.outDir, TEMPLATE_LOG), `${JSON.stringify(line)}\n`);
+    }
     results.push(
       await qaStrip({
+        choice,
         strip: raster,
         family: t.family,
         profile: t.profile,
@@ -300,24 +408,79 @@ export async function runAnimationQa(options: {
         outDir: options.outDir,
         ...(origin !== undefined && { digitalSourceType: origin }),
         ...(holeSources !== undefined && { holeSources }),
-        ...(call && {
-          vision: {
-            call,
-            routes: options.routes,
-            subject: t.subject,
-            ...(options.now !== undefined && { now: options.now }),
-          },
-        }),
+        ...(call &&
+          vision && {
+            vision: {
+              call,
+              routes: options.routes,
+              subject: t.subject,
+              ...(options.now !== undefined && { now: options.now }),
+            },
+          }),
       }),
     );
   }
-  return { results, spentUsd: budget.spentUsd };
+  return { results, spentUsd: budget.spentUsd, templateDecisions };
+}
+
+/** The motion-template decision log beside the reports, one JSON line per call. */
+export const TEMPLATE_LOG = "motion-template.jsonl";
+
+/** One logged motion-template decision: which call, for which family, and what it chose. */
+export interface TemplateDecisionLine {
+  family: string;
+  subject: string;
+  /** The chosen template, or `none`. */
+  template: string;
+  probability?: number;
+  model: string;
+  requestId: string;
+  costUsd: number;
+  at: string;
+}
+
+function templateDecisionLine(
+  family: string,
+  subject: string,
+  choice: TemplateChoice,
+): TemplateDecisionLine {
+  const record = choice.record as CallRecord;
+  return {
+    family,
+    subject,
+    template: choice.template?.name ?? NO_TEMPLATE,
+    ...(choice.probability !== undefined && { probability: choice.probability }),
+    model: record.model,
+    requestId: record.requestId,
+    costUsd: record.costUsd,
+    at: record.finishedAt,
+  };
 }
 
 export { DEFAULT_FIX_CAP_USD };
 
-export function planFrameFix(routes: Routes, capUsd: number) {
-  const perCall: PlannedCall[] = planFix(routes);
+/**
+ * The fix's calls: one motion-template decision first when nothing declares or names the
+ * family's template (the fix's registration pin and its QA follow the template), then the edit.
+ */
+export function planFrameFix(routes: Routes, capUsd: number, target?: StripTarget) {
+  const perCall: PlannedCall[] = [
+    ...(target
+      ? planTemplateDecisions(
+          [
+            {
+              family: target.family,
+              subject: target.subject,
+              ...(target.template !== undefined && { declared: target.template }),
+              ...(target.judgedTemplate !== undefined && { judged: target.judgedTemplate }),
+            },
+          ],
+          templatesFor(target.profile),
+          routes,
+        )
+      : []),
+    ...planFix(routes),
+  ];
   const estimateUsd = perCall.reduce((s, c) => s + c.estimatedCostUsd, 0);
   return {
     calls: perCall.length,
@@ -442,22 +605,26 @@ export async function runFixFrame(options: {
     routes: options.routes,
     ...(options.now !== undefined && { now: options.now }),
   });
+  const choice = await new TemplateChooser(templatesFor(target.profile), call).choose({
+    family: target.family,
+    subject: target.subject,
+    ...(target.template !== undefined && { declared: target.template }),
+    ...(target.judgedTemplate !== undefined && { judged: target.judgedTemplate }),
+  });
   const fixed = await fixFrame({
     strip: raster,
     frame: target.frame,
     anchor: target.anchor,
     family: target.family,
-    pin: registrationPin(
-      templateFor(target.family, templatesFor(target.profile)),
-      target.profile,
-      target.gait,
-    ),
+    pin: registrationPin(choice.template, target.profile, target.gait),
     groundTolerance: thresholdsFor(target.profile).groundTolerance,
     subject: target.subject,
     index: options.index,
     from: keyPose ? { keyPose } : (options.from as { neighbour: number }),
     style,
     call,
+    // The decision chose the pin, so the fixed strip's provenance records it.
+    ...(choice.record !== undefined && { decisions: [choice.record] }),
     ...(options.note !== undefined && { note: options.note }),
     ...(provenance !== undefined && { provenance }),
     stripPath: target.path,
@@ -483,6 +650,7 @@ export async function runFixFrame(options: {
   fixed.provenance = bindProvenance(fixed.provenance, stripBytes);
   await writeFile(provenancePath, `${JSON.stringify(fixed.provenance, null, 2)}\n`);
   const qa = await qaStrip({
+    choice,
     strip: fixed.strip,
     family: target.family,
     profile: target.profile,

@@ -7,6 +7,8 @@ import { createRaster, setPixel } from "../src/image/raster.ts";
 import type { ResolvedStyle } from "../src/style.ts";
 import { postprocessFrames } from "../src/postprocess.ts";
 import { splitStrip } from "../src/animation/strip.ts";
+import { stripQaFlags } from "../src/contact.ts";
+import type { AssetSpec, TargetProfile } from "../src/types.ts";
 import { quadrupedWalk, syntheticStrip } from "./fixtures/strip.ts";
 import type { StripOptions } from "./fixtures/strip.ts";
 
@@ -28,7 +30,7 @@ const failed = (r: ReturnType<typeof run>, check: string) =>
 
 for (const s of STYLES) {
   test(`a clean ${s} walk passes every check`, () => {
-    const r = run({ count: 8, style: s, motion: "walk" }, "walk-right");
+    const r = run({ count: 8, style: s, motion: "walk" }, "walk");
     assert.deepEqual(
       r.reasons.filter((x) => !x.passed),
       [],
@@ -107,7 +109,7 @@ test("a hop passes ground-contact under play and fails it under walk", () => {
   assert.ok(failed(walk, "ground-contact").length > 0);
 });
 
-test("a profile-added template matches its family, and walk-right matches walk", () => {
+test("a profile-added template matches its family; walk-right and fly get none, left undecided without a decision", () => {
   const sleep = {
     name: "sleep",
     loop: true,
@@ -119,14 +121,27 @@ test("a profile-added template matches its family, and walk-right matches walk",
   const profile = { animation: { templates: [{ ...sleep, beats: [...sleep.beats] }] } };
   const templates = templatesFor(profile);
   assert.equal(templateFor("sleep", templates)?.name, "sleep");
-  assert.equal(templateFor("walk-right", templates)?.name, "walk");
+  assert.equal(templateFor("walk-right", templates), undefined);
   assert.equal(templateFor("fly", templates), undefined);
   const r = run({ count: 4, style: "flat", motion: "idle" }, "sleep", profile);
   assert.equal(r.template, "sleep");
   const none = run({ count: 4, style: "flat", motion: "idle" }, "fly");
   assert.equal(none.template, undefined);
-  assert.match(none.reasons[0]!.reason, /no motion template matches family fly/);
-  assert.equal(none.reasons[0]!.passed, true);
+  assert.equal(none.templateSource, "undecided");
+  // Undecided, the template checks are pending: not run, not passing.
+  assert.equal(none.passed, false);
+  assert.deepEqual(
+    none.pending?.map((p) => p.check),
+    ["ground-contact", "footprint-drift", "loop-seam"],
+  );
+  assert.match(
+    none.pending![0]!.reason,
+    /^not run: template undecided \(no motion template is declared for family fly and none is named fly/,
+  );
+  assert.equal(
+    none.reasons.some((r) => /not applicable without a motion template/.test(r.reason)),
+    false,
+  );
 });
 
 test("a frame count outside the template range fails template", () => {
@@ -189,10 +204,10 @@ const footFails = (r: ReturnType<typeof checkAnimation>) =>
   r.reasons.filter((x) => x.check === "footprint-drift" && !x.passed);
 
 test("footprint drift: a walk whose contacts alternate 40-70 px on the ground line passes", () => {
-  const input = { ...pawStrip(WALK_PAWS), family: "walk-right" };
+  const input = { ...pawStrip(WALK_PAWS), family: "walk" };
   const profile = {};
   const r = checkAnimation(input, {
-    template: templateFor("walk-right", templatesFor(profile)),
+    template: templateFor("walk", templatesFor(profile)),
     thresholds: thresholdsFor(profile),
     threshold: 128,
   });
@@ -211,9 +226,9 @@ test("footprint drift: a walk whose contacts alternate 40-70 px on the ground li
 test("footprint drift: a walk that slides over the cycle fails each slid frame against its phase", () => {
   const sliding = WALK_PAWS.map((x, i) => (i < 4 ? x : x + 10));
   const r = checkAnimation(
-    { ...pawStrip(sliding), family: "walk-left" },
+    { ...pawStrip(sliding), family: "walk" },
     {
-      template: templateFor("walk-left", templatesFor()),
+      template: templateFor("walk", templatesFor()),
       thresholds: thresholdsFor(),
       threshold: 128,
     },
@@ -232,7 +247,7 @@ test("footprint drift: a walk that slides over the cycle fails each slid frame a
   one[6] = 45 + 9;
   const single = footFails(
     checkAnimation(
-      { ...pawStrip(one), family: "walk-left" },
+      { ...pawStrip(one), family: "walk" },
       {
         template: templateFor("walk", templatesFor()),
         thresholds: thresholdsFor(),
@@ -292,15 +307,21 @@ test("footprint drift: an asymmetric 9-frame hop is held to the loop's mean, fra
     bad[0]!.reason,
     /^frame 1: .* 12 px from the loop's mean footprint centre .* \(limit 20% of the 41 px figure = 8\.2 px\)/,
   );
-  // The strict reading (no template) fails it against frame 1.
+  // The strict, planted reading fails it against frame 1.
   assert.ok(
     footFails(
-      checkAnimation({ ...pawStrip(hop), family: "crouch-hop" }, { ...opts, template: undefined }),
+      checkAnimation(
+        { ...pawStrip(hop), family: "crouch-hop" },
+        {
+          ...opts,
+          template: { ...template!, footprint: "planted", contact: "all", footprintDrift: 0.03 },
+        },
+      ),
     ).length > 0,
   );
 });
 
-test("templates: a hyphenated name serves exactly that family and its suffixes", () => {
+test("templates: a hyphenated name serves exactly that family, not its suffixes or its prefix", () => {
   const own = (name: string) => ({
     name,
     loop: true,
@@ -313,8 +334,9 @@ test("templates: a hyphenated name serves exactly that family and its suffixes",
     animation: { templates: [own("sit-groom"), own("sit")] },
   } as unknown as Parameters<typeof animationQa>[1]);
   assert.equal(templateFor("sit-groom", templates)?.name, "sit-groom");
-  assert.equal(templateFor("sit-groom-left", templates)?.name, "sit-groom");
-  assert.equal(templateFor("sit-up", templates)?.name, "sit");
+  assert.equal(templateFor("sit-groom-left", templates), undefined);
+  assert.equal(templateFor("sit-up", templates), undefined);
+  assert.equal(templateFor("sit", templates)?.name, "sit");
   for (const bad of ["-sit", "sit-", "sit--groom", "Sit"]) {
     assert.throws(
       () => templatesFor({ animation: { templates: [own(bad)] } } as never),
@@ -330,11 +352,25 @@ test("templates: a hyphenated name serves exactly that family and its suffixes",
 
 test("footprint drift: planted families hold each frame to the previous planted one", () => {
   const shuffled = [40, 40, 40, 44, 40, 40];
+  const profile = {
+    animation: {
+      templates: [
+        {
+          name: "sit-groom",
+          loop: true,
+          frames: { min: 2, max: 9 },
+          beats: [],
+          contact: "all",
+          silhouette: { min: 0, max: 1 },
+        },
+      ],
+    },
+  } as unknown as Parameters<typeof animationQa>[1];
   for (const family of ["idle", "sit-groom"]) {
     const r = checkAnimation(
       { ...pawStrip(shuffled), family },
       {
-        template: templateFor(family, templatesFor()),
+        template: templateFor(family, templatesFor(profile)),
         thresholds: thresholdsFor(),
         threshold: 128,
       },
@@ -371,12 +407,13 @@ test("footprint drift: a target template marks its own family's contacts as movi
       ],
     },
   } as unknown as Parameters<typeof animationQa>[1];
-  const template = templateFor("crouch-hop", templatesFor(profile));
+  const template = templateFor("crouch", templatesFor(profile));
   assert.equal(template?.footprint, "moving");
   const opts = { thresholds: thresholdsFor(profile), threshold: 128 };
-  const input = { ...pawStrip(hop), family: "crouch-hop" };
+  const input = { ...pawStrip(hop), family: "crouch" };
   assert.deepEqual(footFails(checkAnimation(input, { ...opts, template })), []);
-  assert.ok(footFails(checkAnimation(input, { ...opts, template: undefined })).length > 0);
+  const planted = { ...template!, footprint: "planted" as const };
+  assert.ok(footFails(checkAnimation(input, { ...opts, template: planted })).length > 0);
   assert.throws(
     () =>
       templatesFor({
@@ -391,7 +428,7 @@ test("footprint drift: a target template marks its own family's contacts as movi
 const quadFails = (input: ReturnType<typeof quadrupedWalk>, profile = {}, gait?: string) =>
   footFails(
     animationQa(
-      { ...input, family: "walk-right", ...(gait !== undefined && { gait }) },
+      { ...input, family: "walk", ...(gait !== undefined && { gait }) },
       profile,
       style("flat"),
     ),
@@ -406,7 +443,7 @@ test("gait: a four-legged walk fails the two-stride rule and passes under gait q
   );
   // The profile declares the gait: the walk template's quadruped rule applies and it passes.
   const profile = { animation: { gait: "quadruped" } };
-  const r = animationQa({ ...walk, family: "walk-right" }, profile, style("flat"));
+  const r = animationQa({ ...walk, family: "walk" }, profile, style("flat"));
   assert.deepEqual(footFails(r), []);
   assert.equal(r.gait, "quadruped");
   assert.match(
@@ -565,4 +602,25 @@ test("a long-tailed animal through stage's own placement passes ground-contact a
   assert.deepEqual(failed(r, "footprint-drift"), []);
   const m = r.measures[0]!;
   assert.ok(Math.abs(m.centerX - (anchor.x + 0.5)) > 3, String(m.centerX));
+});
+
+test("the contact sheet's QA flags judge a family by the spec's declared template", () => {
+  const { frames, anchor } = syntheticStrip({
+    count: 8,
+    style: "pixel",
+    motion: "walk",
+    floatFrame: 3,
+  });
+  const profile = { frames: {} } as unknown as TargetProfile;
+  const spec = (family: string, template?: string) =>
+    ({ assetId: "a", anchor, animationFamily: family, ...(template && { template }) }) as AssetSpec;
+  assert.ok(stripQaFlags(frames, spec("walk"), profile).includes(3));
+  // walk-right names no template and is undecided here: its contact checks are pending, so no
+  // frame can be ruled out and the sheet shows every frame, the floating one included.
+  assert.deepEqual(
+    stripQaFlags(frames, spec("walk-right"), profile),
+    frames.map((_, i) => i),
+  );
+  // Declared as walk, the floating frame is flagged as it is for walk itself.
+  assert.ok(stripQaFlags(frames, spec("walk-right", "walk"), profile).includes(3));
 });

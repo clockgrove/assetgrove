@@ -8,6 +8,9 @@ import { InputError } from "../errors.ts";
 import type { TargetProfile } from "../types.ts";
 import type { AnimationThresholds, GaitRule, MotionTemplate } from "./types.ts";
 
+/** The template value that declares, or the decision that answers, that no template applies. */
+export const NO_TEMPLATE = "none";
+
 export const DEFAULT_THRESHOLDS: AnimationThresholds = {
   groundTolerance: 0.02,
   footprintDrift: 0.03,
@@ -132,10 +135,10 @@ export function parseTemplate(value: unknown, index = 0): MotionTemplate {
   if (!isRecord(value)) fail(`#${index + 1}`, "must be an object");
   const name = value["name"];
   if (typeof name !== "string" || !/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/.test(name)) {
-    fail(
-      `#${index + 1}`,
-      "name must be lowercase words joined by '-' or '_' (it also matches name-<suffix>)",
-    );
+    fail(`#${index + 1}`, "name must be lowercase words joined by '-' or '_'");
+  }
+  if (name === NO_TEMPLATE) {
+    fail(`#${index + 1}`, `"${NO_TEMPLATE}" is reserved: it declares that no template applies`);
   }
   const where = `"${name}"`;
   if (typeof value["loop"] !== "boolean") fail(where, "loop must be true or false");
@@ -310,18 +313,15 @@ export function templatesFor(profile?: Pick<TargetProfile, "animation">): Motion
 }
 
 /**
- * The template for a family: an exact name match, else the longest template name that prefixes
- * the family before a "-" (walk-right and walk-left → walk). Undefined when none matches.
+ * The template named exactly like the family, or undefined. A family's name never picks a template
+ * by prefix (`play-dead` is not `play`): a family no template is named for is declared by its spec
+ * or decided by a `motion-template` call (src/animation/template-choice.ts).
  */
 export function templateFor(
   family: string,
   templates: readonly MotionTemplate[],
 ): MotionTemplate | undefined {
-  const exact = templates.find((t) => t.name === family);
-  if (exact) return exact;
-  return templates
-    .filter((t) => family.startsWith(`${t.name}-`))
-    .sort((a, b) => b.name.length - a.name.length)[0];
+  return templates.find((t) => t.name === family);
 }
 
 const REMOVED_THRESHOLDS: Record<string, string> = {

@@ -277,6 +277,38 @@ function runOn(
   });
 }
 
+test("fix-frame on a family no template names records its motion-template decision in the fixed strip's provenance", async () => {
+  const { root, target } = await stripOnDisk();
+  const provider = new ScriptedProvider({
+    image: () => ({ images: [{ mediaType: "image/png", bytes: figureImage(false) }] }),
+    vision: () => ({ text: "" }),
+    motionTemplate: () => ({ answer: { type: "choice", choice: "walk" }, costUsd: 0.001 }),
+  });
+  const out = join(root, "out-trot");
+  const run = await runOn({ ...target, family: "trot" }, provider, out);
+  const written = JSON.parse(await readFile(run.provenancePath, "utf8"));
+  assert.deepEqual(
+    written.calls.map((c: { operation: string }) => c.operation),
+    ["motion-template", "edit"],
+  );
+  const decision = written.calls[0];
+  assert.equal(decision.model, defaultRoutes["motion-template"]!.model);
+  assert.ok(written.requestIds.includes(decision.requestId));
+  assert.ok(written.models.includes(decision.model));
+  assert.equal(written.costUsd, written.calls[0].costUsd + written.calls[1].costUsd);
+  assert.equal(run.qa.report.template, "walk");
+  assert.equal(run.qa.report.templateSource, "judged");
+
+  // A family named like its template makes no decision, and its record has the edit only.
+  const { provider: plain } = setup();
+  const named = await runOn(target, plain, join(root, "out-walk"));
+  const record = JSON.parse(await readFile(named.provenancePath, "utf8"));
+  assert.deepEqual(
+    record.calls.map((c: { operation: string }) => c.operation),
+    ["edit"],
+  );
+});
+
 test("a provenance the fix cannot extend refuses before any paid call", async () => {
   const { root, path, target } = await stripOnDisk();
   // A recipe's record for another image, a record with no models, and not a record at all.

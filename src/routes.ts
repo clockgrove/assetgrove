@@ -33,6 +33,11 @@ export const LOOKDEV_MARKING_OPERATION = "lookdev-marking";
  * decision per asset and version pair, made only by `library judge-stale` (src/library/stale.ts).
  */
 export const STALENESS_OPERATION = "bible-staleness";
+/**
+ * Which motion template describes an animation family (#364): one typed choice decision per
+ * family with no declared template and no template of its exact name, text only.
+ */
+export const MOTION_TEMPLATE_OPERATION = "motion-template";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -276,6 +281,20 @@ export const defaultRoutes: Routes = {
     providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
     providerTermsAsOf: "2026-11-16",
   },
+  // Which motion template describes an animation family (#364): one typed choice decision per
+  // undecided family, text only, on the same typed decision model and upper bound as identity.
+  [MOTION_TEMPLATE_OPERATION]: {
+    model: "perplexity/pplx-decider-v1.2",
+    estimatedCostUsd: 0.001,
+    outputGrant: {
+      license: "LicenseRef-perplexity-api",
+      plan: "api",
+      commercial: true,
+      relabel: true,
+    },
+    providerTerms: "Perplexity API Terms of Service, via Vercel AI Gateway (as of 2026-11-16)",
+    providerTermsAsOf: "2026-11-16",
+  },
   // Identity as a choice among the whole cast's references (#92): one vision call per candidate.
   [IDENTITY_CAST_OPERATION]: {
     model: "openai/gpt-6.1-terra",
@@ -504,6 +523,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   [MODEL3D_FACING_OPERATION]: "decisions",
   [LOOKDEV_MARKING_OPERATION]: "decisions",
   [STALENESS_OPERATION]: "decisions",
+  [MOTION_TEMPLATE_OPERATION]: "decisions",
   compiler: "planning",
   model3d: "model3d",
   rig3d: "rig3d",

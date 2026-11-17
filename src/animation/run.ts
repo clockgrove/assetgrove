@@ -23,7 +23,9 @@ import type { HoleSource } from "./holes.ts";
 import { loopPreview, onionSkinSheet, PREVIEW_MEDIA_TYPES } from "./preview.ts";
 import { animationQa } from "./qa.ts";
 import { measureThreshold, splitStrip } from "./strip.ts";
-import { templateFor, templatesFor, thresholdsFor } from "./templates.ts";
+import { templatesFor, thresholdsFor } from "./templates.ts";
+import { recordedTemplate, templateWithoutCall } from "./template-choice.ts";
+import type { TemplateChoice } from "./template-choice.ts";
 import type { AnimationReport, FlickerDecision, HoleDecision } from "./types.ts";
 
 export const DEFAULT_DURATION_MS = 120;
@@ -39,9 +41,23 @@ export function profileFrame(profile: TargetProfile): Size {
   return { width: profile.frames.width, height: profile.frames.height };
 }
 
-/** Whether the family's cycle loops: its template's say, or a loop when no template matches. */
-export function familyLoops(family: string, profile: TargetProfile): boolean {
-  return templateFor(family, templatesFor(profile))?.loop ?? true;
+/** Whether a strip loops: its template's say; with no template, it does not (nothing says it does). */
+export function choiceLoops(choice: TemplateChoice): boolean {
+  return choice.template?.loop ?? false;
+}
+
+/**
+ * Whether the family's cycle may loop, for a forecast made before any new decision: the declared,
+ * named or recorded (`judged`) template's say, else a loop (an upper bound until a decision says).
+ */
+export function familyMayLoop(
+  family: string,
+  profile: TargetProfile,
+  declared?: string,
+  judged?: string,
+): boolean {
+  const known = recordedTemplate(family, templatesFor(profile), declared, judged);
+  return known ? choiceLoops(known) : true;
 }
 
 export interface Previews {
@@ -92,6 +108,13 @@ export interface StripQaOptions {
   durationMs?: number;
   /** The subject's gait from its asset spec; defaults to the profile's `animation.gait`. */
   gait?: string;
+  /** The template the spec declares for the family (`none`: no template applies). */
+  template?: string;
+  /**
+   * The family's template as chosen for this run (src/animation/template-choice.ts); defaults to
+   * the declared or named one, else undecided.
+   */
+  choice?: TemplateChoice;
   /** Where the report, the previews and the flicker log are written. */
   outDir: string;
   /** Embedded in the previews when known. */
@@ -149,6 +172,8 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
   const split = splitStrip(options.strip, frame);
   // Validate templates and thresholds before any spend.
   thresholdsFor(profile);
+  const choice =
+    options.choice ?? templateWithoutCall(family, templatesFor(profile), options.template);
   // Measured on the strip as given, so a colour kept under alpha 0 is reported (a note)...
   const base = animationQa(
     {
@@ -161,8 +186,9 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
     },
     profile,
     style,
+    choice,
   );
-  const loop = familyLoops(family, profile);
+  const loop = choiceLoops(choice);
   // ...and cleared before the vision checks and previews, as writing the strip would clear it.
   const frames = split.map(clearTransparentColour);
 
@@ -203,7 +229,7 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
     report = {
       ...base,
       reasons,
-      passed: reasons.every((r) => r.passed || r.shadow),
+      passed: !base.pending?.length && reasons.every((r) => r.passed || r.shadow),
       identityFlicker: "checked",
       holes: "checked",
       filtering: ANIMATION_VISION_CHECKS.map(
@@ -246,16 +272,26 @@ export async function qaStrip(options: StripQaOptions): Promise<StripQaResult> {
 export function formatReport(report: StripQaResult["report"]): string[] {
   const failed = report.reasons.filter((r) => !r.passed && !r.shadow);
   const advisory = report.reasons.filter((r) => !r.passed && r.shadow);
+  const pending = report.pending ?? [];
   const lines = [
-    `${report.family}: ${report.frameCount} frames, template ${report.template ?? "none"}` +
+    `${report.family}: ${report.frameCount} frames, template ${report.template ?? (report.templateSource === "undecided" ? "undecided" : "none")}` +
       (report.gait !== undefined ? `, gait ${report.gait}` : "") +
       ", " +
-      (report.passed ? "all checks passed" : `${failed.length} check(s) failed`) +
+      (failed.length > 0
+        ? `${failed.length} check(s) failed`
+        : pending.length > 0
+          ? "no check failed"
+          : "all checks passed") +
+      (pending.length > 0
+        ? `, ${pending.length} check(s) pending (${pending.map((p) => p.check).join(", ")} not run: template undecided)`
+        : "") +
       (report.identityFlicker === "skipped" ? " (identity flicker and holes not checked)" : ""),
   ];
   for (const r of failed) lines.push(`  ${r.check} [${r.source}]: ${r.reason}`);
   // An advisory check is recorded beside QA: its verdict is shown, but it filtered nothing.
   for (const r of advisory)
     lines.push(`  ${r.check} [${r.source}; failed, not filtered]: ${r.reason}`);
+  // A pending check was not run: it is neither passed nor failed.
+  for (const p of pending) lines.push(`  ${p.check} [pending]: ${p.reason}`);
   return lines;
 }
