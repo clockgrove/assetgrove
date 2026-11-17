@@ -505,10 +505,20 @@ test("a frame region's dry run confirms the fix-scale decision with the edit, on
     );
     assert.equal(dry.exitCode, 0, dry.error?.message);
     assert.equal((dry.fields["plan"] as { job: string }).job, "fix-frame");
-    const jobs = dry.fields["jobs"] as Array<{ operation: string; count: number }>;
+    const jobs = dry.fields["jobs"] as Array<{
+      operation: string;
+      count: number;
+      estimatedCostUsd: number;
+    }>;
     // Two candidates, each fixing frames 2 and 3: four edits and up to four size decisions.
     assert.equal(jobs.find((j) => j.operation === "edit")?.count, 4);
     assert.equal(jobs.find((j) => j.operation === "fix-scale")?.count, 4);
+    // The forecast a person confirms is the sum over these jobs, so it carries the size decisions.
+    const forecast = dry.fields["forecastUsd"] as number;
+    const scale = jobs.find((j) => j.operation === "fix-scale")!;
+    assert.ok(scale.estimatedCostUsd > 0, "the size decision is priced");
+    const sum = jobs.reduce((total, j) => total + j.count * j.estimatedCostUsd, 0);
+    assert.ok(Math.abs(forecast - sum) < 1e-9, `forecast ${forecast} is the jobs' sum ${sum}`);
     assert.equal((await s.calls()).length, 0, "the plan step makes no call");
   });
 });
