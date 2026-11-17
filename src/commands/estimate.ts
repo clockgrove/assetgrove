@@ -69,6 +69,9 @@ provider call, adds no ledger entry and writes nothing.`,
       throw new InputError("--args must be a JSON object");
     // The arguments are the command's tool arguments: no CLI-only option such as --dry-run.
     await validateArgs({ ...spec, input: toolInputSchema(spec) }, given);
+    // A call that takes no plan step spends nothing (find without --outliers, local model).
+    if (spec.planned?.(given, ctx) === false)
+      throw new InputError(`${spec.name} spends nothing, so it has no estimate`);
     const workItem = args.workItem ?? ctx.workItem;
     const providerScript = args.providerScript ?? ctx.providerScript;
     const properties = spec.input.properties;

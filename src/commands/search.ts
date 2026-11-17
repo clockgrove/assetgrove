@@ -658,8 +658,10 @@ asks nothing.`,
       ? (await prepareOutliers({ ...args, outliers: args.outliers }, ctx)).work
       : (await findPlan(args, ctx)).work,
   planned: findPlanned,
-  // --outliers asks style-outlier decisions under every embedder, so find can always spend.
+  // --outliers asks style-outlier decisions under every embedder, so find can always spend; only
+  // with a hosted embedder can every find spend, so only then is its tool marked as asking.
   spendsWith: () => true,
+  marksSpendWith: hosted,
   replayFinished: false,
   async run(args, ctx) {
     if (args.outliers !== undefined) return runOutliers({ ...args, outliers: args.outliers }, ctx);

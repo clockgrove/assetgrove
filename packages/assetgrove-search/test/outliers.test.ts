@@ -16,8 +16,26 @@ async function members(captions: Record<string, string>): Promise<Member[]> {
 }
 
 const SUBJECTS = [
-  "moss", "ivy", "fern", "bark", "reed", "sedge", "clover", "thistle", "acorn", "pebble",
-  "mushroom", "lily", "daisy", "nettle", "heather", "willow", "birch", "cedar", "maple", "holly",
+  "moss",
+  "ivy",
+  "fern",
+  "bark",
+  "reed",
+  "sedge",
+  "clover",
+  "thistle",
+  "acorn",
+  "pebble",
+  "mushroom",
+  "lily",
+  "daisy",
+  "nettle",
+  "heather",
+  "willow",
+  "birch",
+  "cedar",
+  "maple",
+  "holly",
 ];
 
 describe("set ranking", () => {
@@ -31,7 +49,10 @@ describe("set ranking", () => {
     const ranking = findOutliers(await members(set));
     assert.equal(ranking.length, 26, "every member is returned, uncut");
     assert.deepEqual(
-      ranking.slice(0, 6).map((r) => r.address).sort(),
+      ranking
+        .slice(0, 6)
+        .map((r) => r.address)
+        .sort(),
       [0, 1, 2, 3, 4, 5].map((i) => `asset://g/painterly-${i}`),
     );
     for (let i = 1; i < ranking.length; i++)

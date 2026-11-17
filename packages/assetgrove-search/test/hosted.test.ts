@@ -496,12 +496,13 @@ test("with the local model find and search index embed nothing and take no track
     }
     assert.equal(toolAnnotations(spec("search index"), local).openWorldHint, false);
     assert.equal(requiresUserInteraction(spec("search index"), false, local), false);
-    // find --outliers asks style-outlier decisions under every embedder (#366): it takes the guard,
-    // and the find tool is marked as asking a spend confirmation, except under headless settings.
+    // find --outliers asks style-outlier decisions under every embedder (#366): it takes the guard
+    // and the find tool can reach the provider, but with the local model a word search spends
+    // nothing, so the tool is not marked as asking; --outliers asks when the call reaches it.
     const judged = await run("find", { outliers: `asset://${GAME}/` }, [], env);
     assert.equal(judged.error?.code, "key_tracked");
     assert.equal(toolAnnotations(spec("find"), local).openWorldHint, true);
-    assert.equal(requiresUserInteraction(spec("find"), false, local), true);
+    assert.equal(requiresUserInteraction(spec("find"), false, local), false);
     assert.equal(requiresUserInteraction(spec("find"), true, local), false);
 
     hosted();
