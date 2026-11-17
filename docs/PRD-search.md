@@ -13,15 +13,15 @@ It ships in Phase 2 of 1.0, asset management and search, as its own optional pac
 
 A library of a few hundred assets is easy to hold in your head. A library of a few thousand, across several games and with rejected mockups beside it, is not. Search answers the questions people actually ask of it.
 
-| Who asks  | The question                                          | How it's answered                                                                         |
-| --------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Developer | "Find mockups like this one"                          | By look: image similarity to a picked asset, a reference or any image file                |
-| Developer | "Where are the mossy rocks?"                          | By meaning: the words matched against the images themselves, not only their cards         |
-| Developer | "Which icons were made under the old style bible?"    | By fields: exact filters on the card                                                      |
-| Agent     | "Do we already have a lantern before I spend on one?" | Combined: meaning and look, filtered to picked assets, checked before any paid generation |
-| Agent     | "Which assets in this set don't match the rest?"      | By look: assets whose nearest neighbours are far from the rest of their set               |
-| Developer | "Did I make something like this in another game?"     | Across every game indexed on the machine                                                  |
-| Team      | "Show the whole studio's library"                     | The same queries against a shared index, when the team chooses one                        |
+| Who asks  | The question                                          | How it's answered                                                                                   |
+| --------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Developer | "Find mockups like this one"                          | By look: image similarity to a picked asset, a reference or any image file                          |
+| Developer | "Where are the mossy rocks?"                          | By meaning: the words matched against the images themselves, not only their cards                   |
+| Developer | "Which icons were made under the old style bible?"    | By fields: exact filters on the card                                                                |
+| Agent     | "Do we already have a lantern before I spend on one?" | Combined: meaning and look, filtered to picked assets, checked before any paid generation           |
+| Agent     | "Which assets in this set don't match the rest?"      | By look, then judged: the set ranked by look, the most distant judged by a `style-outlier` decision |
+| Developer | "Did I make something like this in another game?"     | Across every game indexed on the machine                                                            |
+| Team      | "Show the whole studio's library"                     | The same queries against a shared index, when the team chooses one                                  |
 
 ## Principles
 
