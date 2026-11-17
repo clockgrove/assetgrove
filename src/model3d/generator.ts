@@ -17,9 +17,10 @@ import type { IdentityRecord, IdentityScore } from "../identity.ts";
 import { createRaster, decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256, subjectOf, withNote } from "../request.ts";
-import { MODEL3D_FACING_OPERATION } from "../routes.ts";
-import type { Route, Routes } from "../routes.ts";
+import { CLIP_MAP_OPERATION, MODEL3D_FACING_OPERATION } from "../routes.ts";
+import type { Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, Reason, StyleBible, TargetProfile } from "../types.ts";
+import { ClipMapCache, familiesToMap, clipPlan, resolveClipPlan } from "./clip-map.ts";
 import { judgeFacing } from "./facing.ts";
 import { GLB_MEDIA_TYPE, parseGlb, writeGlb } from "./glb.ts";
 import type { Glb } from "./glb.ts";
@@ -42,7 +43,6 @@ import {
   skeletonCheck,
   validatorCheck,
 } from "./qa.ts";
-import type { ClipPlan } from "./qa.ts";
 import { renderTurntable } from "./render.ts";
 import type { TurntableFrame } from "./render.ts";
 import { profileSha256, riggedCandidate } from "./rig/candidate.ts";
@@ -61,31 +61,6 @@ import {
 export const MODEL_OPERATION = "model3d";
 export const RIG_OPERATION = "rig3d";
 export const CLIPS_OPERATION = "clips3d";
-
-/** Which requested families the clip route's library has, and which it does not. */
-export function clipPlan(
-  character: CharacterSpec,
-  route: Route | undefined,
-): {
-  planned: Array<ClipPlan & { clip: string }>;
-  missing: Array<{ family: string; why: string }>;
-} {
-  const library = route?.library?.[character.gait] ?? {};
-  const planned: Array<ClipPlan & { clip: string }> = [];
-  const missing: Array<{ family: string; why: string }> = [];
-  for (const family of character.clips) {
-    const entry = library[family];
-    if (entry && typeof entry.clip === "string") {
-      planned.push({ family, clip: entry.clip, loop: entry.loop === true });
-    } else {
-      missing.push({
-        family,
-        why: `the ${route?.model ?? "clip route"} library has no close ${character.gait} clip for "${family}"`,
-      });
-    }
-  }
-  return { planned, missing };
-}
 
 /**
  * Bible references of the subject, each with the view it shows (declared, or judged by a model and
@@ -184,8 +159,9 @@ export const character3dGenerator: Generator = {
       rigProfileOf(profile);
     } else {
       add(RIG_OPERATION);
-      // One retarget call per planned library clip.
+      // One retarget call per exact library clip, and per other family a clip-map decision may map.
       clipPlan(character, routes[CLIPS_OPERATION]).planned.forEach(() => add(CLIPS_OPERATION));
+      familiesToMap(character, routes[CLIPS_OPERATION]).forEach(() => add(CLIPS_OPERATION));
     }
     // Identity never filters a 3D character, so no record check is forecast.
     const identity = identitySettings3d(profile);
@@ -195,9 +171,25 @@ export const character3dGenerator: Generator = {
     return calls;
   },
 
-  planRequest(spec: AssetSpec, _profile: TargetProfile, routes: Routes, bible: StyleBible) {
+  planRequest(spec: AssetSpec, profile: TargetProfile, routes: Routes, bible: StyleBible) {
     // One view call per reference that declares no view, once per request.
-    return planReferenceViews(subjectBibleReferences(spec, bible), routes);
+    const calls = planReferenceViews(subjectBibleReferences(spec, bible), routes);
+    if (declaresRig(profile)) return calls;
+    // One clip-map decision per requested family that is not exactly a library clip, once per run.
+    const mapped = familiesToMap(characterSpec(spec), routes[CLIPS_OPERATION]);
+    if (mapped.length === 0) return calls;
+    const route = Object.hasOwn(routes, CLIP_MAP_OPERATION)
+      ? routes[CLIP_MAP_OPERATION]
+      : undefined;
+    if (!route) throw new InputError(`no model route for operation "${CLIP_MAP_OPERATION}"`);
+    return [
+      ...calls,
+      ...mapped.map(() => ({
+        operation: CLIP_MAP_OPERATION,
+        model: route.model,
+        estimatedCostUsd: route.estimatedCostUsd,
+      })),
+    ];
   },
 
   async generate(context: GeneratorContext) {
@@ -283,7 +275,12 @@ export const character3dGenerator: Generator = {
       const rigRoute = call.route(RIG_OPERATION);
       const rigType = rigRoute.rigTypes?.[character.gait] ?? character.gait;
       const rigged = await call.rig3d(RIG_OPERATION, made.handle, rigType);
-      const plan = clipPlan(character, call.route(CLIPS_OPERATION));
+      const plan = await resolveClipPlan(
+        call,
+        character,
+        CLIPS_OPERATION,
+        context.clipMaps ?? new ClipMapCache(),
+      );
       const parse = (bytes: Uint8Array): Glb => {
         try {
           return parseGlb(bytes);
@@ -482,6 +479,7 @@ export const character3dGenerator: Generator = {
           gait: character.gait,
           facing: facingParameters,
           missingClips: missing,
+          ...(plan.mapped.length > 0 && { mappedClips: plan.mapped }),
           ...(unmatched.length > 0 && { unmatchedClips: unmatched }),
           ...identityFields,
         },
@@ -493,6 +491,7 @@ export const character3dGenerator: Generator = {
         rigType,
         clips: plan.planned.map((p) => ({ family: p.family, clip: p.clip, loop: p.loop })),
         missingClips: missing,
+        ...(plan.mapped.length > 0 && { mappedClips: plan.mapped }),
         ...(unmatched.length > 0 && { unmatchedClips: unmatched }),
         loopClosedChannels: closed,
         forward: settings.forward,

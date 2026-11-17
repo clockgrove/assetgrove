@@ -28,6 +28,7 @@ import {
   BRIEF_CLAMP_OPERATION,
   UI_ASSET_OPERATION,
   MAP_FLICKER_OPERATION,
+  CLIP_MAP_OPERATION,
   REFERENCE_VIEW_OPERATION,
   STYLE_OUTLIER_OPERATION,
 } from "../routes.ts";
@@ -157,6 +158,14 @@ export interface Script {
   mapFlicker?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
     requestId?: string;
   };
+  /**
+   * Answers which library clip a requested animation family is (the `clip-map` choice decision: a
+   * library clip key or none). A script without it answers none; its calls do not count toward
+   * `decide`'s index.
+   */
+  clipMap?(request: DecisionRequest): Omit<DecisionResult, "requestId"> & {
+    requestId?: string;
+  };
   /** Answers image-to-3D calls; a script without it cannot answer one. */
   model?(request: ModelRequest, index: number): Scripted<ModelResult>;
   /** Answers rig calls. */
@@ -218,6 +227,7 @@ export class ScriptedProvider implements GenerationProvider {
   private clampCount = 0;
   private uiCount = 0;
   private mapFlickerCount = 0;
+  private clipMapCount = 0;
 
   /** Free unless the script sets `paid`; `billing` overrides the descriptor's other fields. */
   constructor(script: Script, billing?: Partial<Omit<Billing, "paid">>) {
@@ -351,6 +361,13 @@ export class ScriptedProvider implements GenerationProvider {
         ? this.script.mapFlicker(request)
         : { answer: { type: "choice" as const, choice: "flickers" }, costUsd: 0 };
       return { requestId: `scripted-map-flicker-${index}`, ...answer };
+    }
+    if (request.operation === CLIP_MAP_OPERATION) {
+      const index = this.clipMapCount++;
+      const answer = this.script.clipMap
+        ? this.script.clipMap(request)
+        : { answer: { type: "choice" as const, choice: "none" }, costUsd: 0 };
+      return { requestId: `scripted-clip-map-${index}`, ...answer };
     }
     const index = this.decideCount++;
     if (!this.script.decide) throw new Error("the provider script has no decide answer");

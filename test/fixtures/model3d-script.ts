@@ -3,7 +3,8 @@
  * synthetic rigged character (test/fixtures/glb.ts). `SCRIPT_3D_TRIANGLES` makes every candidate
  * that many triangles (to exceed a budget); `SCRIPT_3D_OPEN_LOOP=1` leaves the clip unclosed by the
  * provider (Assetgrove closes it). The facing decision answers from `SCRIPT_3D_FACING` (default
- * "90", the +x the default route faces).
+ * "90", the +x the default route faces). The clip-map decision answers from `SCRIPT_3D_CLIP_MAP`, a
+ * JSON object of requested family to `{ choice, probability }`; a family it does not list is none.
  */
 import type { Script } from "../../src/gateway/scripted.ts";
 import { syntheticCharacter } from "./glb.ts";
@@ -14,6 +15,23 @@ const triangles = Number(process.env["SCRIPT_3D_TRIANGLES"] ?? 300);
 const script: Script = {
   referenceView,
   facing,
+  clipMap(request) {
+    const family = /Requested animation: "([^"]*)"/.exec(request.prompt)?.[1] ?? "";
+    const map = JSON.parse(process.env["SCRIPT_3D_CLIP_MAP"] ?? "{}") as Record<
+      string,
+      { choice: string; probability?: number }
+    >;
+    const given = map[family];
+    const choice = given?.choice ?? "none";
+    return {
+      answer: {
+        type: "choice",
+        choice,
+        ...(given?.probability !== undefined && { probabilities: { [choice]: given.probability } }),
+      },
+      costUsd: 0.00003,
+    };
+  },
   image() {
     throw new Error("the 3D script makes no images");
   },
