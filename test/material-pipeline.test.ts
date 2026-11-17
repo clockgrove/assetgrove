@@ -30,6 +30,8 @@ async function setup(
     qaGrant?: OutputGrant;
     /** Paints a still spot of the height map differently in frame 1 and answers map-flicker so. */
     flicker?: "same" | "follows-pose" | "flickers";
+    /** Re-lights frame 1's albedo on every pixel but one, so too few pixels have unchanged albedo. */
+    relit?: boolean;
   } = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-material-pipeline-"));
@@ -44,6 +46,10 @@ async function setup(
     }
   // Frame 1's height changes on pixels whose albedo (flat) did not change: over any bound.
   if (options.flicker) setPixel(height, 5, 1, [200, 200, 200, 255]);
+  if (options.relit)
+    for (let y = 0; y < 4; y++)
+      for (let x = 4; x < 8; x++)
+        if (x !== 4 || y !== 0) setPixel(albedo, x, y, [140, 160, 180, 255]);
   await writeFile(
     join(dir, "albedo.png"),
     embedDigitalSourceType(encodePng(albedo), "image/png", DIGITAL_SOURCE_TYPES.human),
@@ -545,6 +551,35 @@ test("map flicker: a pair over the bound where the albedo is unchanged is judged
   assert.ok(
     result.qa.reasons.some(
       (r) => r.check === "material-flicker" && r.source === "deterministic" && r.passed,
+    ),
+  );
+});
+
+test("map flicker: a pair with too small a share of unchanged albedo is judged by a decision told the measured share", async () => {
+  const f = await setup({ flicker: "same", relit: true });
+  const result = await runMaterials({ ...f.options, stability: [FLICKER_ENTRY] });
+  assert.equal(result.passed, true, "judged the same: the channel passes");
+  const asked = f.provider.calls.filter(
+    (c) => c.kind === "decide" && c.request.operation === "map-flicker",
+  );
+  assert.ok(asked.length > 0);
+  for (const c of asked) {
+    if (c.kind !== "decide") continue;
+    assert.match(
+      c.request.prompt,
+      /found only 1 of 16 pose-corresponding pixels with unchanged albedo, under the 0\.25 share/,
+    );
+    assert.doesNotMatch(c.request.prompt, /no pixel with unchanged albedo/);
+  }
+  const judged = result.qa.reasons.filter(
+    (r) => r.check === "material-flicker" && r.source === "decision",
+  );
+  assert.equal(judged.length, asked.length);
+  assert.ok(
+    judged.every((r) =>
+      /frame \d: only 1 of 16 pose-corresponding pixels with unchanged albedo, under the 0\.25 share needed to compare by pixels; judged same$/.test(
+        r.reason,
+      ),
     ),
   );
 });

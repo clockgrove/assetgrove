@@ -14,6 +14,7 @@ import type { Raster } from "../image/raster.ts";
 import { MAP_FLICKER_OPERATION } from "../routes.ts";
 import { cropRaster } from "../transform/raster-engine.ts";
 import type { LoadedReference, Reason } from "../types.ts";
+import { MIN_UNCHANGED_SHARE } from "./core.ts";
 import type { MaterialChannel, MaterialGrid, TemporalPair } from "./core.ts";
 
 /** The answers a `map-flicker` decision chooses among; only `flickers` fails the channel. */
@@ -84,7 +85,7 @@ export async function judgeMapFlicker(
   const measured =
     pair.state === "over"
       ? `residual ${pair.residual.toFixed(6)} > bound ${bound} on ${pair.samples} unchanged-albedo pixels`
-      : "no pixel with unchanged albedo to compare";
+      : `only ${pair.samples} of ${pair.corresponding} pose-corresponding pixels with unchanged albedo, under the ${MIN_UNCHANGED_SHARE} share needed to compare by pixels`;
   const prompt =
     `Images 1 and 2 are the albedo of frames ${previousFrame} and ${frame} of ${options.subject}; images 3 and 4 are the ${channel} map of the same two frames. ` +
     `Comparing the map pixel by pixel after registering the frames found ${measured}, which a moving limb, a turned head or a re-lit area can cause as well as flicker. ` +
