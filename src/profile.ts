@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { InputError } from "./errors.ts";
+import { refuseSettingsBlocks } from "./shared-settings.ts";
 import type { TargetProfile } from "./types.ts";
 
 const section = z.record(z.string(), z.unknown());
@@ -42,6 +43,7 @@ export const PROFILE_FIELDS = Object.keys(profileSchema.shape);
 
 /** Checks a target profile's top-level fields; `source` names the file in the message. */
 export function validateProfile(value: Record<string, unknown>, source: string): TargetProfile {
+  refuseSettingsBlocks(value, `target profile ${source}`);
   const parsed = profileSchema.safeParse(value);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((issue) => {
