@@ -36,6 +36,7 @@ import type { Generator, PlannedCall } from "./generators/generator.ts";
 import { loadBibleInputs, sha256, sniffMediaType } from "./request.ts";
 import { writeContact } from "./contact.ts";
 import type { Routes } from "./routes.ts";
+import type { CandidateSummary } from "./library/summary.ts";
 import type {
   AssetSpec,
   CallRecord,
@@ -180,6 +181,8 @@ export interface StagedCandidate {
   reasons: Reason[];
   fields: Record<string, unknown>;
   provenance: Provenance;
+  /** The model-written summary its QA call gave, and the operation and model that wrote it. */
+  summary?: CandidateSummary;
   /** Files written for the person beside the candidate (turntable renders), relative to the run. */
   artifacts?: string[];
   /**
@@ -532,6 +535,9 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         reasons: qa.reasons,
         fields: generated.output.fields,
         provenance,
+        ...(generated.summary !== undefined && {
+          summary: { ...generated.summary, operation: "vision", model: routes["vision"].model },
+        }),
         ...(artifacts.length > 0 && { artifacts }),
         ...(artifactNames.length > 0 && { artifactNames }),
       });

@@ -1,5 +1,6 @@
 import { getPixel, toHex } from "./image/raster.ts";
 import type { Raster } from "./image/raster.ts";
+import { SUMMARY_REQUEST } from "./library/summary.ts";
 import type { QaResult, Reason, Size } from "./types.ts";
 
 export interface SpecExpectation {
@@ -142,6 +143,7 @@ export function buildVisionPrompt(input: VisionPromptInput): string {
     input.perspectiveDescription
       ? `- perspective: the candidate matches the perspective of the perspective sample (${input.perspectiveDescription}).`
       : "- perspective: the candidate matches the perspective of the perspective sample.",
+    `Also include ${SUMMARY_REQUEST}, describing image 1 only.`,
     'Reply with ONLY a JSON object, no other text: {"checks":[{"check":"identity","passed":true,"reason":"..."}, ...]} with one entry for each of: ' +
       VISION_CHECKS.join(", ") +
       ". Give a short, specific reason for each.",

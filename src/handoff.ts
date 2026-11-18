@@ -35,6 +35,7 @@ import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
 import { readRun, writeRun } from "./loop.ts";
 import type { StagedCandidate } from "./loop.ts";
+import type { CandidateSummary } from "./library/summary.ts";
 import {
   checkSpecValues,
   checkWrites,
@@ -295,6 +296,8 @@ export interface TargetWrite {
    * a first pick. Another current version exits 2 `version_changed` before any write.
    */
   replaces?: string | null;
+  /** The picked candidate's model-written summary; never set for an adopt. */
+  summary?: CandidateSummary;
   /** The candidate answers a change request: the version it was made on and the requests' ids. */
   answers?: { version: string; answers: string[] };
   /** The clock the library's version and log line are stamped with. */
@@ -1116,6 +1119,7 @@ async function commitWritten(
       ...(write.confirmation && { confirmation: write.confirmation }),
       ...(write.answers && { answers: write.answers.answers }),
       ...(write.candidateReview && { candidateReview: write.candidateReview }),
+      ...(write.summary !== undefined && write.adopt === undefined && { summary: write.summary }),
       ...(write.adopt !== undefined && {
         action: "adopt" as const,
         digitalSourceType: prepared.provenance.digitalSourceType,
@@ -1267,6 +1271,7 @@ export async function pick(options: PickOptions): Promise<PickResult> {
     ...(record.changeRequest && {
       answers: { version: record.changeRequest.version, answers: record.changeRequest.answers },
     }),
+    ...(candidate.summary !== undefined && { summary: candidate.summary }),
     candidateReview: {
       path: join(options.runDir, "reviews", `${candidate.id}.review.json`),
       root: resolve(options.runDir),
