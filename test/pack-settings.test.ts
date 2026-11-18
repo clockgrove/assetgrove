@@ -144,6 +144,10 @@ test("a route's providerOptions are checked against the adapter's schema, naming
     context(role),
     refused(/roles\.image sends providerOptions .*operation "still"/),
   );
+  // A role's options never reach an operation a route overrides, so they are not checked for it.
+  await context(
+    await project({ providers: PAINT, routes: { still: route(10) }, roles: { image: route(99) } }),
+  );
   // An operation the adapter declares no schema for is not checked.
   await context(await project({ providers: PAINT, routes: { edit: route(99) } }));
 });

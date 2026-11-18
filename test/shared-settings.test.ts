@@ -30,11 +30,15 @@ test("a target profile holding extensionSettings or provider settings is refused
   );
   assert.throws(
     () =>
-      validateProfile(
-        { format: PROFILE, kinds: { "pixel:tile": { values: { providers: { x: {} } } } } },
-        "p.json",
-      ),
-    refused(/holds "kinds\.pixel:tile\.values\.providers"/),
+      validateProfile({ format: PROFILE, providers: { x: { baseURL: "https://e" } } }, "p.json"),
+    refused(/target profile p\.json holds "providers"/),
+  );
+  // Free-form nested data keeps a key of that name, as before.
+  assert.doesNotThrow(() =>
+    validateProfile(
+      { format: PROFILE, kinds: { "pixel:tile": { values: { providers: { x: {} } } } } },
+      "p.json",
+    ),
   );
   assert.doesNotThrow(() =>
     validateProfile({ format: PROFILE, kinds: { "pixel:tile": { values: { a: 1 } } } }, "p.json"),
@@ -58,9 +62,10 @@ test("a spec holding extensionSettings or providers is refused, even for a kind 
     refused(/the still spec holds "extensionSettings"/),
   );
   assert.throws(
-    () => validateKindSpec(still, spec({ fields: { providers: { x: { baseURL: "https://e" } } } })),
-    refused(/holds "fields\.providers"/),
+    () => validateKindSpec(still, spec({ providers: { x: { baseURL: "https://e" } } })),
+    refused(/the still spec holds "providers"/),
   );
+  assert.doesNotThrow(() => validateKindSpec(still, spec({ fields: { providers: { x: 1 } } })));
   assert.doesNotThrow(() => validateKindSpec(still, spec({ fields: { mood: "calm" } })));
 });
 
@@ -75,7 +80,8 @@ test("a kind schema may not declare extensionSettings", () => {
   );
 });
 
-test("settingsBlockIn matches any case and separator, through arrays", () => {
-  assert.equal(settingsBlockIn({ a: [{ Extension_Settings: 1 }] }), "a.0.Extension_Settings");
+test("settingsBlockIn matches a top-level field in any case and separator, not nested data", () => {
+  assert.equal(settingsBlockIn({ Extension_Settings: 1 }), "Extension_Settings");
+  assert.equal(settingsBlockIn({ a: [{ extensionSettings: 1 }], b: { providers: {} } }), undefined);
   assert.equal(settingsBlockIn({ provider: "x", model: "m" }), undefined);
 });

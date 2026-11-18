@@ -338,7 +338,7 @@ When the extensions load, core parses each listed pack's block (`{}` when there 
 
 A pack adapter (`adapter: "<pack>:<id>"`) may take fields in its `providers.<id>` entry beyond core's `adapter`, `keyEnv`, `baseURL`, `free`, `usdPerCredit` and `limit`. Its `providerSettingsSchema` validates them, with its defaults, when the providers are made; without a schema any such field is refused. A core adapter's entry stays strict. A route's or role's `providerOptions` sent to an adapter that declares a `routeOptionsSchema` for the operation are checked against it when the extensions load, naming the route (`routes.<operation>`, or `roles.<role>` for each operation of the role); the options reach the provider as written.
 
-Only these settings carry these blocks. A target profile, a style bible or a spec that holds a field named `extensionSettings` or `providers`, at any depth, is refused (exit 2 `invalid_input`), naming where, and no kind's `specSchema` or `profileSchema` may declare `extensionSettings`.
+Only these settings carry these blocks. A target profile, a style bible or a spec that holds a top-level field named `extensionSettings` or `providers` (where these settings keep them) is refused (exit 2 `invalid_input`), naming it, and no kind's `specSchema` or `profileSchema` may declare `extensionSettings`.
 
 `settings show` shows each listed pack's settings as the pack receives them, and `assetgrove init` lists them as `packSettings` (`[{package, extension, settings}]`). Neither writes them, and the settings writer below keeps every block as it is.
 

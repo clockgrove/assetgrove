@@ -154,7 +154,8 @@ export class ExtensionRegistry {
   /**
    * Throws `SettingsError` (exit 2 `settings_invalid`) for a settings route or role entry whose
    * `providerOptions` fail the `routeOptionsSchema` its provider's adapter declares for the
-   * operation; a role entry is checked for each operation of its role. The route is named.
+   * operation; a role entry is checked for each operation of its role that no `routes` entry
+   * overrides. The route is named.
    */
   checkRouteOptions(
     settings: Pick<Settings, "path" | "providers"> & Partial<Pick<Settings, "routes" | "roles">>,
@@ -187,7 +188,9 @@ export class ExtensionRegistry {
       check(`routes.${operation}`, route, operation);
     for (const [role, route] of Object.entries(settings.roles ?? {}))
       for (const [operation, of] of Object.entries(this.operations))
-        if (of === role) check(`roles.${role}`, route, operation);
+        // `routes.<operation>` wins over `roles.<role>` (resolveRoute), so the role's options never reach it.
+        if (of === role && !Object.hasOwn(settings.routes ?? {}, operation))
+          check(`roles.${role}`, route, operation);
   }
 
   /**

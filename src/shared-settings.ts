@@ -1,30 +1,22 @@
 /**
  * Shared files (the target profile, a style bible's front matter, a spec) travel between
  * developers, so they never carry what only the developer settings may: a pack's settings
- * (`extensionSettings`) or provider settings (`providers`). A file holding either, at any depth,
- * is refused (exit 2 `invalid_input`), naming where.
+ * (`extensionSettings`) or provider settings (`providers`). A file holding either as a top-level
+ * field, where the developer settings keep them, is refused (exit 2 `invalid_input`), naming it.
+ * Nested data is left to the kind schemas, which may not declare either field
+ * (`checkKindSchemas`), as for endpoints and models.
  */
 import { InputError } from "./errors.ts";
 
 /** Field names (lower-cased, without `-` and `_`) only the developer settings carry. */
 const SETTINGS_ONLY_FIELDS: readonly string[] = ["extensionsettings", "providers"];
 
-/** The dotted path of the first settings-only field in `value`, or undefined when it has none. */
-export function settingsBlockIn(value: unknown, at: string[] = []): string | undefined {
-  if (Array.isArray(value)) {
-    for (const [index, item] of value.entries()) {
-      const found = settingsBlockIn(item, [...at, String(index)]);
-      if (found !== undefined) return found;
-    }
-  } else if (typeof value === "object" && value !== null) {
-    for (const [field, item] of Object.entries(value)) {
-      if (SETTINGS_ONLY_FIELDS.includes(field.toLowerCase().replace(/[-_]/g, "")))
-        return [...at, field].join(".");
-      const found = settingsBlockIn(item, [...at, field]);
-      if (found !== undefined) return found;
-    }
-  }
-  return undefined;
+/** The first top-level settings-only field of `value`, or undefined when it has none. */
+export function settingsBlockIn(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return Object.keys(value).find((field) =>
+    SETTINGS_ONLY_FIELDS.includes(field.toLowerCase().replace(/[-_]/g, "")),
+  );
 }
 
 /** Throws `InputError` when `value`, the shared file `what`, holds a settings-only field. */
