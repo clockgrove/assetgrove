@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PNG } from "pngjs";
 import { readBars } from "../../../bench/search/bars.ts";
-import { formatReport, runBench } from "../../../bench/search/bench.ts";
+import { formatReport, missedBars, runBench } from "../../../bench/search/bench.ts";
 import {
   CARD_PROMPT,
   forVision,
@@ -61,6 +61,24 @@ describe("bench on the 20-image fixture", () => {
     assert.deepEqual(lines[bars.size].dropped, report.dropped);
     assert.deepEqual(lines[bars.size + 1].indexing, report.indexing);
     assert.ok("machine" in lines[bars.size + 2]);
+
+    // A missed quality bar counts everywhere; a missed speed bar only on the reference box.
+    const entry = (bar: string, pass: boolean, reference?: boolean) => ({
+      ...report.entries[0]!,
+      bar,
+      pass,
+      ...(reference !== undefined && { reference }),
+    });
+    const with_ = (...entries: ReturnType<typeof entry>[]) => missedBars({ ...report, entries });
+    assert.deepEqual(with_(entry("look-category", true), entry("indexing", true, false)), []);
+    assert.deepEqual(
+      with_(entry("look-category", false), entry("indexing", false, false)).map((e) => e.bar),
+      ["look-category"],
+    );
+    assert.deepEqual(
+      with_(entry("indexing", false, true)).map((e) => e.bar),
+      ["indexing"],
+    );
   });
 
   it("refuses to score by words while a query holds rule-made, unpooled or unjudged labels", async () => {

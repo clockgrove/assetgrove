@@ -22,8 +22,9 @@ permissions:
 # directory under packages/ whose package.json has an `assetgrove` field, scripts/packs.ts), and pack runs
 # one leg per pack and system, on the same systems as test; each pack has its own install, and its leg does
 # its work only when the change touches the pack or what it reads of core and the repository. No pack is
-# named here: a new pack gets its legs with no edit to this file. The roll-up `ci`, the one required check,
-# needs check, test and every pack leg.
+# named here: a new pack gets its legs with no edit to this file. search-bench runs the search bench on a
+# pull request that touches search. The roll-up `ci`, the one required check, needs check, test, every pack
+# leg and the bench when it ran.
 #
 # The pnpm store is cached per system and lockfile. Only a push to main saves it; pull requests and the
 # merge queue restore it read-only, so a pull request can't plant a cache that main would use.
@@ -223,24 +224,99 @@ jobs:
         working-directory: ${{ matrix.pack.dir }}
         run: pnpm test
 
+  # search-bench: the search bench on the labelled library with the real SigLIP2 model, on a pull request
+  # that touches search, the bench or what the indexer reads. It fails on a missed quality bar; speed
+  # bars count only on the reference box, so they are reported here and never fail the job. The merge
+  # queue and main skip it: it reads only Linux, and a pull request already ran it on its head. Its cache
+  # (the labelled images and the model, both checked by hash) is saved per pull request, never for main.
+  search-bench:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: See whether the change touches search
+        id: touched
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          touched=true
+          if [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] && git fetch --quiet --no-tags --depth=1 origin "$BASE"; then
+            if git diff --quiet "$BASE" HEAD -- packages/assetgrove-search bench/search src/library src/search src/tree docs/decisions.md .github/workflows/ci.yml; then
+              touched=false
+            fi
+          fi
+          echo "touched=$touched" >> "$GITHUB_OUTPUT"
+          echo "search touched: $touched"
+
+      - name: Set up Node.js
+        if: steps.touched.outputs.touched == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+
+      - name: Enable pnpm from packageManager
+        if: steps.touched.outputs.touched == 'true'
+        run: corepack enable
+
+      - name: Install the core's locked dependencies
+        if: steps.touched.outputs.touched == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install the search package's locked dependencies
+        if: steps.touched.outputs.touched == 'true'
+        working-directory: packages/assetgrove-search
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # The labelled images and the pinned model, each checked by hash after a restore or a download.
+      - name: Restore the bench images and model
+        if: steps.touched.outputs.touched == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            bench/search/.cache
+            ${{ runner.temp }}/models
+          key: search-bench-${{ hashFiles('bench/search/manifest.json', 'bench/search/inventory-full.csv', 'packages/assetgrove-search/src/model-manifest.json') }}
+
+      - name: Download the pinned model
+        if: steps.touched.outputs.touched == 'true'
+        run: >-
+          node --input-type=module -e
+          "const { setupModel } = await import('./packages/assetgrove-search/src/setup.ts');
+          const out = await setupModel({ modelsDir: process.env.RUNNER_TEMP + '/models', onProgress: (m) => console.log(m) });
+          console.log('installed', out.dir);"
+
+      - name: Run the bench
+        if: steps.touched.outputs.touched == 'true'
+        run: node bench/search/run.ts --embedder siglip2 --models "$RUNNER_TEMP/models" --fail-on-miss
+
   ci:
-    needs: [check, test, packs, pack]
+    needs: [check, test, packs, pack, search-bench]
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       # With no pack, the pack job is skipped; once the list holds one, every leg must succeed.
-      - name: Require check, every test leg and every pack leg
+      - name: Require check, every test leg, every pack leg and the search bench
         env:
           CHECK: ${{ needs.check.result }}
           TEST: ${{ needs.test.result }}
           PACKS: ${{ needs.packs.result }}
           PACK: ${{ needs.pack.result }}
           LIST: ${{ needs.packs.outputs.list }}
+          BENCH: ${{ needs.search-bench.result }}
         run: |
-          echo "check: $CHECK, test: $TEST, packs: $PACKS, pack: $PACK"
+          echo "check: $CHECK, test: $TEST, packs: $PACKS, pack: $PACK, search-bench: $BENCH"
           test "$CHECK" = success && test "$TEST" = success && test "$PACKS" = success
           if [ "$LIST" = "[]" ]; then test "$PACK" = skipped; else test "$PACK" = success; fi
+          # Skipped in the merge queue and on main; on a pull request it must succeed.
+          test "$BENCH" = success || test "$BENCH" = skipped
 
   # Licence metadata: every file must have a licence and copyright under REUSE 3.3, which the root
   # REUSE.toml assigns by path. A separate job, so the required `ci` check is unchanged.
