@@ -171,6 +171,7 @@ async function finish(
 /** A still image: one text-and-reference generation, post-processed to a single frame. */
 export const stillGenerator: Generator = {
   kind: "still",
+  frames: "single",
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,
   operations: { still: "image", [CUTOUT_OPERATION]: "decisions", vision: "vision" },
@@ -216,6 +217,7 @@ function requireAnimationFamily(spec: AssetSpec): void {
 
 export const spriteStripGenerator: Generator = {
   kind: "sprite-strip",
+  frames: "strip",
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,
   operations: { edit: "edit", [CUTOUT_OPERATION]: "decisions", vision: "vision" },

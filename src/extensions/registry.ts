@@ -21,6 +21,7 @@ import type {
   SearchSlot,
 } from "../extension/api.ts";
 import { SettingsError } from "../env.ts";
+import { FRAMES_TRAITS } from "../frames.ts";
 import { checkKindSchemas } from "../kind-schemas.ts";
 import { OPERATION_ROLES, ROLE_CAPABILITY } from "../routes.ts";
 import type { Settings } from "../settings.ts";
@@ -401,6 +402,11 @@ export function checkExtension(value: unknown, line: string): Extension {
     }
   }
   for (const kind of ext.kinds ?? []) {
+    const frames = (kind as { frames?: unknown }).frames;
+    if (frames !== undefined && !(FRAMES_TRAITS as readonly unknown[]).includes(frames))
+      throw refuse(
+        `kind ${kind.kind} declares frames ${JSON.stringify(frames)}; a kind's frames are ${FRAMES_TRAITS.map((t) => JSON.stringify(t)).join(" or ")}`,
+      );
     checkKindSchemas(kind, refuse);
     const operations = (kind as { operations?: unknown }).operations;
     if (operations === undefined) continue;
