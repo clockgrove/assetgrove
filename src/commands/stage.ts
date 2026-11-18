@@ -1,5 +1,6 @@
 import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { basename, dirname } from "node:path";
+import { paletteReads } from "../call-parameters.ts";
 import { InputError } from "../errors.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
@@ -85,6 +86,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
       ...bibleFiles,
       ...specReads("spec", spec),
       ...rigReads("profile", profile),
+      ...paletteReads([...plan.perCandidate, ...plan.perRequest]),
     },
     jobs,
     capUsd,

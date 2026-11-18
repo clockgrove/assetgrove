@@ -1,4 +1,6 @@
+import type { ZodType } from "zod";
 import type { Caller } from "../calls.ts";
+import type { CallParameters } from "../call-parameters.ts";
 import type { ReferenceViewCache } from "../model3d/views.ts";
 import type { ClipMapCache } from "../model3d/clip-map.ts";
 import type { Routes } from "../routes.ts";
@@ -58,6 +60,11 @@ export interface PlannedCall {
   operation: string;
   model: string;
   estimatedCostUsd: number;
+  /**
+   * The typed parameters the call will pass (src/call-parameters.ts), so they enter the request
+   * digest; absent when it passes none.
+   */
+  parameters?: CallParameters;
 }
 
 /** What a kind's QA check reads: the candidate's media and what it was made for. */
@@ -103,6 +110,23 @@ export interface Generator {
   generate(context: GeneratorContext): Promise<GeneratedCandidate>;
   /** QA checks core runs on each candidate after `generate`. Absent: none. */
   checks?: KindCheck[];
+  /**
+   * The operations the kind calls, each with a role of core's role table (`ROLE_CAPABILITY` in
+   * src/routes.ts). A pack's are `<pack name>:<op>`; core's kinds name core operations. Core
+   * routes each like a core operation: `routes.<op>`, then `roles.<role>`, then the role's default.
+   */
+  operations?: Readonly<Record<string, string>>;
+  /**
+   * Validates every spec of this kind (the whole spec object); an invalid one is refused before
+   * any spend, naming the field. It may not declare a routing field (an endpoint, model, provider,
+   * provider options, graph or command): model, tier and price stay on the route in settings.
+   */
+  specSchema?: ZodType;
+  /**
+   * Validates the target profile's `kinds.<kind>` block, without its `values`. Without one the
+   * block accepts only `values`. The same routing fields are refused.
+   */
+  profileSchema?: ZodType;
 }
 
 /**

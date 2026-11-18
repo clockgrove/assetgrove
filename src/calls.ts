@@ -1,5 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { requireInsideProject } from "./bible.ts";
+import { checkCallParameters } from "./call-parameters.ts";
+import type { CallParameters, KeyedCallParameters } from "./call-parameters.ts";
 import { Budget } from "./budget.ts";
 import type { Reservation } from "./budget.ts";
 import { ConfirmationError } from "./approvals.ts";
@@ -14,6 +18,7 @@ import type {
   EmbedResult,
   GenerationProvider,
   ImageInput,
+  ImageOutputParameters,
   JobProvider,
   JobStatus,
   ModelResult,
@@ -111,6 +116,7 @@ export class Caller {
     seed: number | undefined,
     request: (route: Route) => CallTypes[K][0],
     direct: (provider: GenerationProvider, request: CallTypes[K][0]) => Promise<CallTypes[K][1]>,
+    keyedParameters?: KeyedCallParameters,
   ): Promise<CallTypes[K][1]> {
     type Result = CallTypes[K][1];
     const route = this.route(operation);
@@ -131,6 +137,7 @@ export class Caller {
       ...(route.keyedProviderOptions !== undefined && {
         providerOptions: route.keyedProviderOptions,
       }),
+      ...(keyedParameters !== undefined && { parameters: keyedParameters }),
     });
     const journaled = callKey === undefined ? undefined : journal?.read(callKey);
     if (journaled !== undefined) {
@@ -427,16 +434,79 @@ export class Caller {
       delay = Math.min(maxMs, delay * 1.5);
     }
   }
+  /**
+   * The typed parameters of an image call, checked before anything is looked up, reserved or sent:
+   * each passed one must be mapped by the serving provider's adapter, and the palette must lie
+   * inside the project and be readable. Undefined when none is passed.
+   */
+  private async output(
+    operation: string,
+    route: Route,
+    given: CallParameters | undefined,
+  ): Promise<{ keyed: KeyedCallParameters; sent: ImageOutputParameters } | undefined> {
+    const passed = checkCallParameters(given, operation);
+    if (passed.length === 0 || given === undefined) return undefined;
+    const served = this.serve(route, operation);
+    let supported: readonly string[] | undefined;
+    let adapter: string;
+    if (this.provider instanceof ProviderSet) {
+      const configured = this.provider.get(served.id);
+      supported = configured?.adapter.parameters;
+      adapter = configured?.adapter.id ?? "";
+    } else {
+      supported = served.provider.parameters;
+      adapter = served.provider.billing.adapter;
+    }
+    for (const name of passed)
+      if (!(supported ?? []).includes(name))
+        throw new RouteUnavailableError(
+          operation,
+          `route unavailable: the ${operation} call passes ${name}, which provider "${served.id}" (${adapter} adapter) does not map; route ${operation} to a provider whose adapter declares it`,
+        );
+    const { size, tiling, palette } = given;
+    let file: { path: string; sha256: string; bytes: Uint8Array } | undefined;
+    if (palette !== undefined) {
+      requireInsideProject([palette.path], palette.dir, `the ${operation} call's palette`);
+      const full = resolve(palette.dir, palette.path);
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await readFile(full));
+      } catch (error) {
+        throw new InputError(`the ${operation} call's palette ${full} cannot be read`, {
+          cause: error,
+        });
+      }
+      file = {
+        path: palette.path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes,
+      };
+    }
+    return {
+      keyed: {
+        ...(size !== undefined && { size: { ...size } }),
+        ...(tiling !== undefined && { tiling: { ...tiling } }),
+        ...(file !== undefined && { palette: { path: file.path, sha256: file.sha256 } }),
+      },
+      sent: {
+        ...(size !== undefined && { size: { ...size } }),
+        ...(tiling !== undefined && { tiling: { ...tiling } }),
+        ...(file !== undefined && { palette: file }),
+      },
+    };
+  }
+
   /** An image generation or reference-guided edit; references are sent in order. */
   async image(
     operation: string,
     prompt: string,
     references: LoadedReference[],
     seed?: number,
-    options: { mask?: LoadedReference } = {},
+    options: { mask?: LoadedReference; parameters?: CallParameters } = {},
   ): Promise<ImageInput> {
     const { mask } = options;
     const route = this.route(operation);
+    const output = await this.output(operation, route, options.parameters);
     const sendSeed = route.supportsSeed ? seed : undefined;
     const parameters: Record<string, unknown> = {
       ...(route.size !== undefined && { size: route.size }),
@@ -444,6 +514,7 @@ export class Caller {
       ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
       references: references.map((r) => ({ role: r.role, path: r.path, sha256: r.sha256 })),
       ...(mask !== undefined && { mask: { path: mask.path, sha256: mask.sha256 } }),
+      ...(output !== undefined && { callParameters: output.keyed }),
     };
     const result = await this.record(
       "image",
@@ -461,8 +532,10 @@ export class Caller {
         ...(r.size !== undefined && { size: r.size }),
         ...(sendSeed !== undefined && { seed: sendSeed }),
         ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+        ...(output !== undefined && { output: output.sent }),
       }),
       (provider, request) => provider.generateImage(request),
+      output?.keyed,
     );
     const image = result.images[0];
     if (!image) throw new ProviderError(`the ${operation} call returned no image`);

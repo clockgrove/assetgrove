@@ -726,14 +726,39 @@ export const ROLE_CAPABILITY: Readonly<Record<string, string>> = {
   embeddings: "embed",
 };
 
-/** The role of an operation; undefined for an operation outside the table. */
-export function roleOf(operation: string): string | undefined {
-  return Object.hasOwn(OPERATION_ROLES, operation) ? OPERATION_ROLES[operation] : undefined;
+/**
+ * The core operation whose default route serves a role's operations that have no default of their
+ * own: a kind's `pixel:still` (role image) starts from the default of `still`.
+ */
+export const ROLE_DEFAULT_OPERATION: Readonly<Record<string, string>> = {
+  image: "still",
+  edit: "edit",
+  vision: "vision",
+  decisions: "identity",
+  planning: "compiler",
+  model3d: "model3d",
+  rig3d: "rig3d",
+  clips3d: "clips3d",
+  embeddings: EMBED_OPERATION,
+};
+
+/**
+ * The role of an operation in `operations` (core's table by default, or core's plus the loaded
+ * kinds'); undefined for an operation outside it.
+ */
+export function roleOf(
+  operation: string,
+  operations: Readonly<Record<string, string>> = OPERATION_ROLES,
+): string | undefined {
+  return Object.hasOwn(operations, operation) ? operations[operation] : undefined;
 }
 
 /** The settings fields that route an operation: its route, then its role. */
-export function routeFields(operation: string): string[] {
-  const role = roleOf(operation);
+export function routeFields(
+  operation: string,
+  operations: Readonly<Record<string, string>> = OPERATION_ROLES,
+): string[] {
+  const role = roleOf(operation, operations);
   return [`routes.${operation}`, ...(role !== undefined ? [`roles.${role}`] : [])];
 }
 
@@ -818,15 +843,22 @@ export function resolveRoute(
   settings: Pick<Settings, "roles" | "routes">,
   operation: string,
   providers: readonly RouteProvider[],
+  operations: Readonly<Record<string, string>> = OPERATION_ROLES,
 ): Route {
-  const role = roleOf(operation);
+  const role = roleOf(operation, operations);
   const capability = role !== undefined ? ROLE_CAPABILITY[role] : undefined;
-  const fields = routeFields(operation)
+  const fields = routeFields(operation, operations)
     .map((f) => `settings.${f}`)
     .join(" or ");
   const what = `the ${operation} operation${role !== undefined ? ` (role ${role})` : ""}`;
+  // An operation of a kind, outside core's table, takes its role's default where its adapter has none of its own.
+  const defaultFor = (p: RouteProvider): Route | undefined =>
+    p.adapter.defaultRoutes?.[operation] ??
+    (role !== undefined && !Object.hasOwn(OPERATION_ROLES, operation)
+      ? p.adapter.defaultRoutes?.[ROLE_DEFAULT_OPERATION[role] ?? ""]
+      : undefined);
   const candidates = providers
-    .filter((p) => p.adapter.id !== STAND_IN_ADAPTER && p.adapter.defaultRoutes?.[operation])
+    .filter((p) => p.adapter.id !== STAND_IN_ADAPTER && defaultFor(p))
     .map((p) => p.id)
     .sort();
   const field = Object.hasOwn(settings.routes, operation)
@@ -842,7 +874,7 @@ export function resolveRoute(
         : settings.roles[role!];
   const defaultOf = (id: string | undefined): Route | undefined => {
     const p = providers.find((q) => q.id === id);
-    const base = p?.adapter.defaultRoutes?.[operation];
+    const base = p !== undefined ? defaultFor(p) : undefined;
     return p !== undefined && base !== undefined
       ? { ...structuredClone(base), provider: p.id }
       : undefined;
@@ -857,9 +889,7 @@ export function resolveRoute(
       role !== undefined ? `roles.${role}` : `routes.${operation}`,
     );
   } else {
-    fallback = defaultOf(
-      candidates[0] ?? providers.find((p) => p.adapter.defaultRoutes?.[operation])?.id,
-    );
+    fallback = defaultOf(candidates[0] ?? providers.find((p) => defaultFor(p))?.id);
   }
   let route: Route;
   /** The settings field of an override that changes the pair and sets no estimate. */
@@ -955,8 +985,11 @@ export function resolveRoute(
 }
 
 /** Every operation the settings could route: the role table's and the settings' own routes. */
-export function knownOperations(settings: Pick<Settings, "routes">): string[] {
-  return [...new Set([...Object.keys(OPERATION_ROLES), ...Object.keys(settings.routes)])];
+export function knownOperations(
+  settings: Pick<Settings, "routes">,
+  operations: Readonly<Record<string, string>> = OPERATION_ROLES,
+): string[] {
+  return [...new Set([...Object.keys(operations), ...Object.keys(settings.routes)])];
 }
 
 /**
@@ -968,12 +1001,13 @@ export function knownOperations(settings: Pick<Settings, "routes">): string[] {
 export function resolveRoutes(
   settings: Pick<Settings, "roles" | "routes">,
   providers: readonly RouteProvider[],
+  operations: Readonly<Record<string, string>> = OPERATION_ROLES,
 ): Routes {
   const resolved: Record<string, Route> = {};
   const unavailable = new Map<string, RouteUnavailableError | RouteAmbiguousError>();
-  for (const operation of knownOperations(settings)) {
+  for (const operation of knownOperations(settings, operations)) {
     try {
-      resolved[operation] = resolveRoute(settings, operation, providers);
+      resolved[operation] = resolveRoute(settings, operation, providers, operations);
     } catch (error) {
       if (!(error instanceof RouteUnavailableError || error instanceof RouteAmbiguousError)) {
         throw error;

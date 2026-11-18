@@ -39,17 +39,22 @@ export function upstreamOf(adapterId: string, model: string): string | null {
  */
 export function routeDataFlows(
   settings: Pick<Settings, "providers" | "roles" | "routes" | "path">,
-  options: { env?: Env; adapters?: readonly ProviderAdapter[] } = {},
+  options: {
+    env?: Env;
+    adapters?: readonly ProviderAdapter[];
+    /** Core's operation roles plus the loaded kinds' (`ExtensionRegistry.operations`). */
+    operations?: Readonly<Record<string, string>>;
+  } = {},
 ): RouteDataFlow[] {
   const configured = createProviders(settings, {
     env: options.env ?? {},
     ...(options.adapters && { adapters: options.adapters }),
   });
   const flows: RouteDataFlow[] = [];
-  for (const operation of knownOperations(settings)) {
+  for (const operation of knownOperations(settings, options.operations)) {
     let route;
     try {
-      route = resolveRoute(settings, operation, configured);
+      route = resolveRoute(settings, operation, configured, options.operations);
     } catch (error) {
       if (error instanceof RouteUnavailableError || error instanceof RouteAmbiguousError) continue;
       throw error;

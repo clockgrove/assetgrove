@@ -1,3 +1,4 @@
+import { CALL_PARAMETERS } from "../call-parameters.ts";
 import type {
   AnimateRequest,
   Billing,
@@ -229,6 +230,8 @@ function checkDecideAnswer(request: DecisionRequest, answer: DecisionAnswer | un
 
 export class ScriptedProvider implements GenerationProvider {
   readonly billing: Billing;
+  /** It records every typed parameter it is sent, so it declares them all. */
+  readonly parameters = CALL_PARAMETERS;
   /** The script's own `estimate`, when it has one. */
   readonly estimate?: (request: CallTypes[CallKind][0], kind: CallKind) => Promise<number>;
   readonly calls: Array<

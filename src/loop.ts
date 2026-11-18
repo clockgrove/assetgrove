@@ -21,6 +21,7 @@ import { currentRunScope } from "./runs/journal.ts";
 import { referenceLicenses } from "./bible.ts";
 import { InputError, JobStoppedError } from "./errors.ts";
 import { extensionOf, unavailableId } from "./extensions/errors.ts";
+import { validateKindProfile, validateKindSpec } from "./kind-schemas.ts";
 import { ProviderLimitError } from "./limits.ts";
 import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
@@ -130,11 +131,24 @@ export function planStage(options: {
   }
   // Before any paid call: the paths the hand-off will write for this spec can be written.
   checkLayout(options.profile, options.spec);
+  validateKindSpec(generator, options.spec);
+  validateKindProfile(generator, options.profile);
   const perCandidate = generator.planCandidate(options.spec, options.profile, options.routes);
   const perRequest =
     options.bible && generator.planRequest
       ? generator.planRequest(options.spec, options.profile, options.routes, options.bible)
       : [];
+  // A kind's own operations (`<pack>:<op>`) must be declared; core's operations stay callable by
+  // every kind, as they were before kinds declared operations.
+  if (extensionOf(generator.kind) !== undefined) {
+    const declared = Object.keys(generator.operations ?? {});
+    for (const call of [...perCandidate, ...perRequest]) {
+      if (extensionOf(call.operation) !== undefined && !declared.includes(call.operation))
+        throw new InputError(
+          `kind ${generator.kind} plans a call on operation "${call.operation}", which it does not declare in its operations (declared: ${declared.length > 0 ? declared.join(", ") : "none"})`,
+        );
+    }
+  }
   const estimateUsd =
     perCandidate.reduce((sum, c) => sum + c.estimatedCostUsd, 0) * requested +
     perRequest.reduce((sum, c) => sum + c.estimatedCostUsd, 0);

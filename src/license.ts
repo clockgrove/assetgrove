@@ -150,12 +150,16 @@ export function licenseFields(
 /**
  * Throws a LicenseError for the first call that records no `outputGrant`, naming its route and the
  * developer settings fields that declare the grant of its provider and model. No grant, no
- * hand-off.
+ * hand-off. A call's role is read from `operations` (core's table, or core's plus the loaded
+ * kinds' from `ExtensionRegistry.operations`), so a kind's own operation names `roles.<role>` too.
  */
-export function requireGrants(calls: CallRecord[]): void {
+export function requireGrants(
+  calls: CallRecord[],
+  operations?: Readonly<Record<string, string>>,
+): void {
   calls.forEach((call, index) => {
     if (call.outputGrant !== undefined) return;
-    const fields = routeFields(call.operation)
+    const fields = routeFields(call.operation, operations)
       .map((f) => `${f}.outputGrant`)
       .join(" or ");
     throw new LicenseError(
@@ -169,9 +173,13 @@ export function requireGrants(calls: CallRecord[]): void {
  * it is declared under. Throws a LicenseError when a call records no grant, or when the target
  * cannot declare it.
  */
-export function requireLicensable(profile: TargetProfile, provenance: Provenance): Provenance {
+export function requireLicensable(
+  profile: TargetProfile,
+  provenance: Provenance,
+  operations?: Readonly<Record<string, string>>,
+): Provenance {
   const calls = Array.isArray(provenance.calls) ? provenance.calls : [];
-  requireGrants(calls);
+  requireGrants(calls, operations);
   const outputGrant = grantOf(calls);
   const decision = licenseDecision(profile, outputGrant);
   if ("refused" in decision) throw new LicenseError(`refused hand-off: ${decision.refused}`);

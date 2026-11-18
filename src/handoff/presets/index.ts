@@ -67,6 +67,8 @@ export interface ResolvedPreset {
 export interface PresetRegistry {
   presets: ReadonlyMap<string, HandoffPreset>;
   settingsPath?: string | undefined;
+  /** Every operation with its role, core's and the loaded kinds' (`ExtensionRegistry.operations`). */
+  operations?: Readonly<Record<string, string>>;
 }
 
 /**

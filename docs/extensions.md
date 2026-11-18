@@ -6,13 +6,13 @@ An extension adds asset kinds, engine presets and provider adapters. Core regist
 
 An extension is called a pack. The contract is api 2. `@clockgrove/assetgrove/extension` (`dist/extension/api.js`, `api.d.ts`) exports `EXTENSION_API` (2), `EXTENSION_APIS` (`[2]`, every api this core loads), zod's `z`, and every type a pack needs: the ones below, every provider request and result type (`ImageRequest`, `ImageResult`, `VisionRequest`, `VisionResult`, `DecisionRequest`, `DecisionResult`, `EmbedRequest`, `EmbedResult`, `ModelRequest`, `ModelResult`, `RigRequest`, `AnimateRequest`, ...), `Billing`, `GenerationProvider`, `Caller`, `Raster`, `AssetSpec`, `StyleBible`, `TargetProfile`, `MediaOutput`, `Reason`, `QaResult` and the search slot's types. A pack imports nothing of core by path.
 
-| Type               | Shape                                                                                                                                                                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Extension`        | `{ api: 2, name, kinds?, presets?, adapters?, search? }`                                                                                                                                                                                 |
-| `ExtensionContext` | `{ api: 2, z, raster, qa, prompt, http, run, log }` ([below](#the-context)).                                                                                                                                                             |
-| `AssetKind`        | `kind`, `planCandidate(spec, profile, routes)`, `generate(ctx)`, `checks?` ([QA checks](#qa-checks)).                                                                                                                                    |
-| `EnginePreset`     | `name`, zod `optionsSchema`, `write(ctx, options)`, `check(ctx, options, files, read)`.                                                                                                                                                  |
-| `ProviderAdapter`  | `id`, `capabilities` (`embed` means images and text in one space), `defaultKeyEnv?`, `fixedHosts`, `endpointFromSettings`, `defaultRoutes?` (by operation), `create(c)` returning a generation provider; `c.fetch` is the guarded fetch. |
+| Type               | Shape                                                                                                                                                                                                                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Extension`        | `{ api: 2, name, kinds?, presets?, adapters?, search? }`                                                                                                                                                                                                                                                              |
+| `ExtensionContext` | `{ api: 2, z, raster, qa, prompt, http, run, log }` ([below](#the-context)).                                                                                                                                                                                                                                          |
+| `AssetKind`        | `kind`, `planCandidate(spec, profile, routes)`, `generate(ctx)`, `checks?` ([QA checks](#qa-checks)), `operations?` ([operations and roles](#operations-and-roles)), `specSchema?` and `profileSchema?` ([schemas](#spec-and-profile-schemas)).                                                                       |
+| `EnginePreset`     | `name`, zod `optionsSchema`, `write(ctx, options)`, `check(ctx, options, files, read)`.                                                                                                                                                                                                                               |
+| `ProviderAdapter`  | `id`, `capabilities` (`embed` means images and text in one space), `defaultKeyEnv?`, `fixedHosts`, `endpointFromSettings`, `defaultRoutes?` (by operation), `parameters?` (the [typed call parameters](#typed-call-parameters) it maps), `create(c)` returning a generation provider; `c.fetch` is the guarded fetch. |
 
 A pack's package.json declares the contract it speaks and the core releases it was built for:
 
@@ -50,6 +50,42 @@ It guards provider-steered URLs (a download link in a result, a redirect), not p
 ## QA checks
 
 A kind may declare `checks: [{ name, mode, run(input, call) }]`, where `input` is `{ spec, profile, bible, output }` and `run` returns reasons. Core runs them on each candidate after `generate` and adds their reasons to its QA. `mode: "exact"` is a deterministic, free check: core runs it under a `Caller` that refuses every call (exit 2 `invalid_input` if it tries). `mode: "judged"` may call a model through the candidate's `Caller`; list its calls in `planCandidate`.
+
+## Operations and roles
+
+A kind declares the operations it calls as `operations: { "<op>": "<role>" }`, each role taken from core's role table (`image`, `edit`, `vision`, `decisions`, `planning`, `model3d`, `rig3d`, `clips3d`, `embeddings`; [settings.md](settings.md#roles-and-routes)). A pack's operations are named `<pack>:<op>`, for example `"pixel:still": "image"`. Core's kinds declare core operations through the same field: `still` declares `still`, `cutout` and `vision`, and `sprite-strip` declares `edit`, `cutout` and `vision`. `character-3d` declares its 3D, facing, identity, clip-map and reference-view operations.
+
+Core resolves a kind's operation like its own, with the capability check: `routes.<op>`, then `roles.<role>`, then the default route of the role's core operation (`still` for `image`). So a settings route for `pixel:still` sends that operation to its provider while core's `still` stays where the developer put it. The kind reads it as `routes["pixel:still"]` in `planCandidate` and calls it as `call.image("pixel:still", ...)`.
+
+Core refuses, with a message naming the problem:
+
+- at load (exit 2 `extension_refused`), a pack operation not named `<pack>:<op>`, or one whose role is not in the table;
+- at load (exit 2 `extension_conflict`), two kinds that declare one operation with different roles, or a core kind that declares a core operation under another role;
+- when the extensions load (exit 2 `settings_invalid`), a settings `routes` entry for an operation of a loaded pack that its kinds do not declare;
+- at plan (exit 2 `invalid_input`), a pack kind that plans a call on a `<pack>:<op>` operation it does not declare. A pack's kind may still call core's own operations (`still`, `vision`, ...) without declaring them, on their core routes. A call on an operation with no route exits 2 `route_unavailable`.
+
+## Typed call parameters
+
+A kind may pass a small typed set on an image call: `call.image(op, prompt, references, seed, { parameters })`, where `parameters` is a `CallParameters`:
+
+| Parameter | Shape                                                                                                           |
+| --------- | --------------------------------------------------------------------------------------------------------------- |
+| `size`    | `{ width, height }`: the output size in whole pixels.                                                           |
+| `tiling`  | `{ x, y }`: whether the output tiles seamlessly across each edge.                                               |
+| `palette` | `{ path, dir }`: a palette file, `/`-separated, relative to `dir` (the spec's, bible's or profile's directory). |
+
+Core validates them and refuses a malformed one (exit 2 `invalid_input`), naming it. The palette is checked by the same project-root rule as any bible reference ([target-profile.md](target-profile.md#target-profile)): a path outside the project is refused before any call. Core then reads it and hashes its bytes. The parameters enter the call's journal key (the palette by path and sha256) and its provenance record as `callParameters`. List them on the planned call too (`PlannedCall.parameters`) so they enter the request digest: the job carries the palette by path, and `stage` hashes the palette's bytes into the digest's inputs as it does a bible reference's, so a palette edited after a plan is approved is another request. With none passed, keys and digests are byte-identical to a call without them.
+
+The provider receives them as `ImageRequest.output` (`{ size?, tiling?, palette?: { path, sha256, bytes } }`), and its adapter maps them to its API. An adapter declares the ones it maps in `parameters`. A call that passes one the serving adapter does not declare is refused before any reservation or spend (exit 2 `route_unavailable`), naming the parameter, the provider and the adapter. The scripted adapter declares all three. Core's other adapters declare none yet.
+
+## Spec and profile schemas
+
+A kind may declare zod schemas (the `z` the context hands it):
+
+- `specSchema` validates every spec of the kind, the whole spec object. An invalid spec is refused at plan, before any spend (exit 2 `invalid_input`), naming each field that failed.
+- `profileSchema` validates the kind's block in the target profile, `kinds.<kind>`, without its `values` ([target-profile.md](target-profile.md#target-profile)). Without one, the block accepts only `values`.
+
+Neither may declare a routing field. A schema that names a field `endpoint`, `baseURL`, `url`, `model`, `provider`, `providerOptions`, `graph` or `command` (plurals too, in any case, at any depth) is refused at load (exit 2 `extension_refused`), naming the field. Core reads both what the schema accepts and what it gives (so a pipe or transform hides nothing), and a field is named by a property, a required key, a record's key enum, literal or pattern, or a pattern property. A key pattern that admits any name, like a record of strings, names no field. Model, tier and price stay on the route in the developer settings, never in a spec. Core's own kinds declare permissive schemas through the same fields.
 
 ## Test kit
 

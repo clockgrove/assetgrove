@@ -1,3 +1,4 @@
+import { CORE_PROFILE_SCHEMA, CORE_SPEC_SCHEMA } from "./spec-schema.ts";
 import { InputError, ProviderError } from "../errors.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
@@ -170,6 +171,9 @@ async function finish(
 /** A still image: one text-and-reference generation, post-processed to a single frame. */
 export const stillGenerator: Generator = {
   kind: "still",
+  specSchema: CORE_SPEC_SCHEMA,
+  profileSchema: CORE_PROFILE_SCHEMA,
+  operations: { still: "image", [CUTOUT_OPERATION]: "decisions", vision: "vision" },
   planCandidate: (_spec, _profile, routes) => [
     plannedCall(routes, "still"),
     plannedCall(routes, CUTOUT_OPERATION),
@@ -212,6 +216,9 @@ function requireAnimationFamily(spec: AssetSpec): void {
 
 export const spriteStripGenerator: Generator = {
   kind: "sprite-strip",
+  specSchema: CORE_SPEC_SCHEMA,
+  profileSchema: CORE_PROFILE_SCHEMA,
+  operations: { edit: "edit", [CUTOUT_OPERATION]: "decisions", vision: "vision" },
   planCandidate(spec, profile, routes) {
     const grid = frameGrid(spec, profile, 1);
     requireAnimationFamily(spec);

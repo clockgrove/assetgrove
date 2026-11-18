@@ -298,6 +298,12 @@ export type {
   PlannedCall,
 } from "../generators/generator.ts";
 export type { Caller } from "../calls.ts";
+export type {
+  CallParameterName,
+  CallParameters,
+  KeyedCallParameters,
+  PlannedCallParameters,
+} from "../call-parameters.ts";
 export type { Raster } from "../image/raster.ts";
 export type { PresetContext, PresetFile } from "../handoff/presets/index.ts";
 export type { AdapterContext, Capability, ProviderAdapter } from "../providers/adapter.ts";
@@ -316,6 +322,7 @@ export type {
   EmbedResult,
   GenerationProvider,
   ImageInput,
+  ImageOutputParameters,
   ImageRequest,
   ImageResult,
   JobProvider,
