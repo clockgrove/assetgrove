@@ -19,8 +19,11 @@ export const DEFAULT_CAPS = { runUsd: 5, dailyUsd: 10, workItemUsd: 5 } as const
 /** Field names that would hold a secret; refused anywhere in the file, in any case. */
 const SECRET_FIELDS = new Set(["apikey", "key", "token", "secret"]);
 
-/** Top-level fields whose keys are ids (providers, roles, operations, field paths), not field names. */
-const RECORD_FIELDS = new Set(["providers", "roles", "routes", "confirmedBy"]);
+/**
+ * Top-level fields whose keys are ids (providers, roles, operations, field paths, pack package
+ * names), not field names.
+ */
+const RECORD_FIELDS = new Set(["providers", "roles", "routes", "confirmedBy", "extensionSettings"]);
 
 const usd = z.number().finite().nonnegative();
 const hex = z.string().regex(/^[0-9a-f]+$/i, "must be hexadecimal");
@@ -135,6 +138,8 @@ const settingsSchema = z.strictObject({
   roles: z.record(name, routeSchema).optional(),
   routes: z.record(name, routeSchema).optional(),
   extensions: z.array(name).optional(),
+  /** Each listed pack's own block, by package name; the pack's `settingsSchema` validates it. */
+  extensionSettings: z.record(name, z.record(z.string(), z.unknown())).optional(),
   environment: z.strictObject({ allow: z.array(name) }).optional(),
   reconcile: z
     .strictObject({
@@ -176,9 +181,26 @@ const settingsSchema = z.strictObject({
   search: searchSchema.optional(),
 });
 
+/** The fields core reads in a `providers.<id>` entry; a pack adapter's entry may carry more. */
+export const PROVIDER_FIELDS: readonly string[] = Object.keys(providerSchema.shape);
+
+/**
+ * The fields of a provider entry beyond core's: those a pack adapter's `providerSettingsSchema`
+ * validates (src/providers/adapter.ts). Empty for every entry of a core adapter.
+ */
+export function providerExtras(entry: ProviderSettings): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(entry).filter(([field]) => !PROVIDER_FIELDS.includes(field)),
+  );
+}
+
 /** The settings file as written, after validation. */
 export type SettingsFile = z.infer<typeof settingsSchema>;
-export type ProviderSettings = z.infer<typeof providerSchema>;
+/**
+ * A `providers.<id>` entry: core's fields, and for a pack adapter's entry the fields its
+ * `providerSettingsSchema` takes (`providerExtras`).
+ */
+export type ProviderSettings = z.infer<typeof providerSchema> & { [field: string]: unknown };
 export type ProviderLimit = z.infer<typeof limitSchema>;
 
 /** Settings with every default filled. */
@@ -199,6 +221,11 @@ export interface Settings {
   roles: NonNullable<SettingsFile["roles"]>;
   routes: NonNullable<SettingsFile["routes"]>;
   extensions: string[];
+  /**
+   * Each listed pack's block as the developer wrote it, by package name; the registry validates it
+   * with the pack's `settingsSchema` and hands the pack the result (src/extensions/registry.ts).
+   */
+  extensionSettings: Record<string, Record<string, unknown>>;
   environment: { allow: string[] };
   reconcile: NonNullable<SettingsFile["reconcile"]>;
   spend: { acknowledgedHolds: string[] };
@@ -352,7 +379,10 @@ export function loadSettings(options: LoadOptions = {}): Settings {
     throw error;
   }
 
-  const parsed = settingsSchema.safeParse(migrated.value);
+  // A pack adapter's entry may carry fields beyond core's; they are set aside here and checked by
+  // the adapter's own schema when the providers are made. A core adapter's entry stays strict.
+  const { value: core, extras } = setAsideProviderExtras(migrated.value);
+  const parsed = settingsSchema.safeParse(core);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((issue) => {
       const at = issue.path.length > 0 ? issue.path.join(".") : "(top level)";
@@ -361,7 +391,10 @@ export function loadSettings(options: LoadOptions = {}): Settings {
     throw new SettingsError(`${path} is invalid: ${issues.join("; ")}`, { cause: parsed.error });
   }
   const file = parsed.data;
+  for (const [id, fields] of Object.entries(extras))
+    if (file.providers?.[id] !== undefined) Object.assign(file.providers[id], fields);
 
+  checkExtensionSettings(file, path);
   checkProviders(file, path);
   checkSearch(file, path);
   if (file.stateDir !== undefined) {
@@ -387,6 +420,45 @@ export function loadSettings(options: LoadOptions = {}): Settings {
   const settings = complete(file, path, configDir, true, defaultStateDir);
   if (migrated.migratedFrom !== undefined) settings.migratedFrom = migrated.migratedFrom;
   return settings;
+}
+
+/**
+ * The file's value with the fields of each pack adapter's provider entry (`adapter`, or the id,
+ * of the form `<pack>:<id>`) beyond core's taken out, and those fields by provider id.
+ */
+function setAsideProviderExtras(value: unknown): {
+  value: unknown;
+  extras: Record<string, Record<string, unknown>>;
+} {
+  const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  if (!isObject(value) || !isObject(value["providers"])) return { value, extras: {} };
+  const extras: Record<string, Record<string, unknown>> = {};
+  const providers: Record<string, unknown> = {};
+  for (const [id, entry] of Object.entries(value["providers"])) {
+    const adapter = isObject(entry) ? (entry["adapter"] ?? id) : undefined;
+    if (!isObject(entry) || typeof adapter !== "string" || !/^[^:]+:./.test(adapter)) {
+      providers[id] = entry;
+      continue;
+    }
+    const own: Record<string, unknown> = {};
+    const rest: Record<string, unknown> = {};
+    for (const [field, item] of Object.entries(entry))
+      (PROVIDER_FIELDS.includes(field) ? own : rest)[field] = item;
+    providers[id] = own;
+    if (Object.keys(rest).length > 0) extras[id] = rest;
+  }
+  return { value: { ...value, providers }, extras };
+}
+
+/** Refuses a pack block for a package the `extensions` list does not name. */
+function checkExtensionSettings(file: SettingsFile, path: string): void {
+  const listed = file.extensions ?? [];
+  for (const name of Object.keys(file.extensionSettings ?? {}))
+    if (!listed.includes(name))
+      throw new SettingsError(
+        `${path}: extensionSettings[${JSON.stringify(name)}] is for a pack the extensions list does not name; list the package under extensions, or remove its block.`,
+      );
 }
 
 function refuseConfigDir(configDir: string, project: string | undefined): void {
@@ -422,6 +494,7 @@ function complete(
     roles: file.roles ?? {},
     routes: file.routes ?? {},
     extensions: file.extensions ?? [],
+    extensionSettings: file.extensionSettings ?? {},
     environment: { allow: file.environment?.allow ?? [] },
     reconcile: file.reconcile ?? {},
     spend: { acknowledgedHolds: file.spend?.acknowledgedHolds ?? [] },

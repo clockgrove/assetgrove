@@ -12,7 +12,7 @@ import { AssertionError } from "node:assert";
 import { isAbsolute } from "node:path";
 import { Budget } from "../budget.ts";
 import { Caller, RefusingCaller } from "../calls.ts";
-import { createExtensionContext } from "../extension/context.ts";
+import { bindExtensionSettings, createExtensionContext } from "../extension/context.ts";
 import type {
   AssetKind,
   EnginePreset,
@@ -25,7 +25,7 @@ import type {
   ProviderAdapter,
 } from "../extension/api.ts";
 import { coreExtension } from "../extensions/core.ts";
-import { checkExtension } from "../extensions/registry.ts";
+import { checkExtension, packSettingsOf } from "../extensions/registry.ts";
 import { checkOf, kindQaRegistry } from "../qa/stability.ts";
 import type { QaCheck } from "../qa/stability.ts";
 import type { Script } from "../gateway/scripted.ts";
@@ -67,6 +67,11 @@ export interface ConformanceOptions {
   presets?: Record<string, PresetSample>;
   /** The settings entry each adapter is created from, by its id. */
   adapters?: Record<string, ProviderSettings>;
+  /**
+   * The pack's `extensionSettings` block, checked against its `settingsSchema` as core checks it
+   * and handed over as `context.settings`; absent, the schema's defaults alone.
+   */
+  settings?: Record<string, unknown>;
 }
 
 export interface ConformanceReport {
@@ -81,12 +86,23 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The pack's extension, as core would load it: the default export, or its factory's result. */
+/**
+ * The pack's extension, as core would load it: the default export, or its factory's result, whose
+ * `context.settings` then holds `settings` (the pack's block) checked against its `settingsSchema`.
+ */
 export async function resolveEntry(
   entry: ExtensionEntry,
   name = "conformance",
+  settings?: Record<string, unknown>,
 ): Promise<Extension> {
-  return typeof entry === "function" ? await entry(createExtensionContext(name)) : entry;
+  if (typeof entry !== "function") return entry;
+  const context = createExtensionContext(name);
+  const extension = await entry(context);
+  const schema: unknown = (extension as Partial<Extension> | null)?.settingsSchema;
+  // A schema that is not zod is left for checkExtension to refuse.
+  if (schema === undefined || typeof (schema as { safeParse?: unknown }).safeParse === "function")
+    bindExtensionSettings(context, packSettingsOf(extension, name, settings, "the pack settings"));
+  return extension;
 }
 
 /** Replaces the global `fetch` while `body` runs; every call is recorded and refused. */
@@ -391,7 +407,7 @@ export async function runConformance(
   await withFetchTrapped(trapped, async () => {
     let ext: Extension;
     try {
-      ext = checkExtension(await resolveEntry(entry, options.name), "the pack");
+      ext = checkExtension(await resolveEntry(entry, options.name, options.settings), "the pack");
     } catch (error) {
       failures.push(messageOf(error));
       return;

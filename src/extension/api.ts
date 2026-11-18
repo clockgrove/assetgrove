@@ -9,6 +9,7 @@
  * `EXTENSION_API`, `EXTENSION_APIS` and zod's `z`.
  */
 import { z } from "zod";
+import type { ZodType } from "zod";
 import type { HandoffPreset } from "../handoff/presets/index.ts";
 import type { Generator } from "../generators/generator.ts";
 import type { AdapterContext, ProviderAdapter } from "../providers/adapter.ts";
@@ -40,6 +41,14 @@ export interface Extension {
   kinds?: AssetKind[];
   presets?: EnginePreset[];
   adapters?: ProviderAdapter[];
+  /**
+   * The zod schema of the pack's own settings, its block at `extensionSettings.<package>` in the
+   * developer settings. Core parses the block (`{}` when the developer wrote none), so the schema's
+   * defaults sit under the developer's values, and hands the result over as `context.settings`. An
+   * invalid block is refused at load, naming the pack and each field; without a schema, any block
+   * for the pack is refused.
+   */
+  settingsSchema?: ZodType;
   /**
    * The optional search slot (design section 7.1): filled by the search package, which loads only
    * when the settings list it. Core declares `find` and the `search` commands and calls the slot.
@@ -263,8 +272,15 @@ export interface RunInfo {
  * What core hands an entry's default export when it is a function: everything a pack needs from
  * core, so it imports none of core's modules by path.
  */
-export interface ExtensionContext {
+export interface ExtensionContext<Settings = Record<string, unknown>> {
   api: typeof EXTENSION_API;
+  /**
+   * The pack's settings: its `extensionSettings` block parsed by its `settingsSchema`, defaults
+   * filled; `{}` when it declares none. Core fills it once the entry has returned the extension and
+   * the block has passed, so reading it inside the entry's factory throws: read it when a kind,
+   * preset or adapter runs. Optional in the type only so a hand-made context still compiles.
+   */
+  readonly settings?: Readonly<Settings>;
   /** The zod core validates preset options with. */
   z: typeof z;
   raster: RasterHelpers;
