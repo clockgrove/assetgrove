@@ -227,10 +227,11 @@ jobs:
   # search-bench: the search bench on the labelled library with the real SigLIP2 model, on a pull request
   # that touches search, the bench or what the indexer reads. It fails on a missed quality bar; speed
   # bars count only on the reference box, so they are reported here and never fail the job. The merge
-  # queue and main skip it: it reads only Linux, and a pull request already ran it on its head. Its cache
-  # (the labelled images and the model, both checked by hash) is saved per pull request, never for main.
+  # queue skips it: it reads only Linux, and the pull request already ran it on its head. A push to main
+  # runs it too and saves its cache (the labelled images and the model, both checked by hash), which every
+  # pull request restores; a pull request never saves one.
   search-bench:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -243,10 +244,10 @@ jobs:
         id: touched
         shell: bash
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           touched=true
-          if [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] && git fetch --quiet --no-tags --depth=1 origin "$BASE"; then
+          if [[ "$BASE" =~ ^[0-9a-f]{40}$ && ! "$BASE" =~ ^0+$ ]] && git fetch --quiet --no-tags --depth=1 origin "$BASE"; then
             if git diff --quiet "$BASE" HEAD -- packages/assetgrove-search bench/search src/library src/search src/tree docs/decisions.md .github/workflows/ci.yml; then
               touched=false
             fi
@@ -274,18 +275,22 @@ jobs:
         working-directory: packages/assetgrove-search
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # The labelled images and the pinned model, each checked by hash after a restore or a download.
+      # The labelled images and the pinned model, each checked by hash after a restore or a download. Only a
+      # push to main saves them (below), so every pull request restores main's one copy.
       - name: Restore the bench images and model
         if: steps.touched.outputs.touched == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: bench-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             bench/search/.cache
             ${{ runner.temp }}/models
           key: search-bench-${{ hashFiles('bench/search/manifest.json', 'bench/search/inventory-full.csv', 'packages/assetgrove-search/src/model-manifest.json') }}
 
+      # Normally seconds; the bound turns a stalled download into a red step instead of the job's whole limit.
       - name: Download the pinned model
         if: steps.touched.outputs.touched == 'true'
+        timeout-minutes: 10
         run: >-
           node --input-type=module -e
           "const { setupModel } = await import('./packages/assetgrove-search/src/setup.ts');
@@ -294,7 +299,17 @@ jobs:
 
       - name: Run the bench
         if: steps.touched.outputs.touched == 'true'
+        timeout-minutes: 20
         run: node bench/search/run.ts --embedder siglip2 --models "$RUNNER_TEMP/models" --fail-on-miss
+
+      - name: Save the bench images and model
+        if: github.event_name == 'push' && steps.touched.outputs.touched == 'true' && steps.bench-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            bench/search/.cache
+            ${{ runner.temp }}/models
+          key: search-bench-${{ hashFiles('bench/search/manifest.json', 'bench/search/inventory-full.csv', 'packages/assetgrove-search/src/model-manifest.json') }}
 
   ci:
     needs: [check, test, packs, pack, search-bench]
