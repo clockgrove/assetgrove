@@ -68,7 +68,7 @@ after(async () => {
   await Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-const spec = { kind: "still", assetId: "den" };
+const spec = { kind: "still", assetId: "den", animationFamily: "idle" };
 const runOptions = { candidates: 1 };
 function scripted(
   options: {

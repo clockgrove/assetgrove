@@ -311,7 +311,10 @@ test("plan refuses a layout path it could never write before any paid call", asy
   const files = doc(init)["files"] as Array<{ path: string; role: string }>;
   const bible = files.find((f) => f.role === "bible")?.path as string;
   const spec = join(dir, "spec.json");
-  await writeFile(spec, JSON.stringify({ kind: "still", assetId: "con", subject: "icon" }));
+  await writeFile(
+    spec,
+    JSON.stringify({ kind: "still", assetId: "con", animationFamily: "idle", subject: "icon" }),
+  );
   const profile = join(dir, "profile.json");
   await writeFile(profile, JSON.stringify(syntheticProfile()));
   const plan = join(dir, "plan.json");

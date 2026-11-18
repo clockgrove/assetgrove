@@ -147,19 +147,22 @@ test("plan: a strip kind plans an edit per frame and needs a key pose, a single 
     strip.map((j) => [j.operation, j.count]),
     core.map((j) => [j.operation, j.count]),
   );
-  const single = await jobsOf({ kind: "fx:single", assetId: "den" }, registry);
+  const single = await jobsOf(
+    { kind: "fx:single", assetId: "den", animationFamily: "idle" },
+    registry,
+  );
   assert.equal(single.find((j) => j.operation === "still")?.count, 1);
   assert.equal(
     single.some((j) => j.operation === "edit"),
     false,
   );
   await assert.rejects(
-    jobsOf({ kind: "fx:strip", assetId: "den" }, registry),
+    jobsOf({ kind: "fx:strip", assetId: "den", animationFamily: "idle" }, registry),
     (e: unknown) =>
       e instanceof InputError && /fx:strip requires an approved keyPose/.test(e.message),
   );
   await assert.rejects(
-    jobsOf({ kind: "fx:strip", assetId: "den" }, undefined),
+    jobsOf({ kind: "fx:strip", assetId: "den", animationFamily: "idle" }, undefined),
     /no planned generator handles asset kind fx:strip/,
   );
 });
@@ -207,7 +210,12 @@ test("plan: the plan command's context saves a plan for a strip kind of the load
 async function stageKind(kind: string) {
   const world = await syntheticWorld();
   temporary.push(world.dir);
-  const spec: AssetSpec = { kind, assetId: "fx", frames: { count: COUNT, width: W, height: H } };
+  const spec: AssetSpec = {
+    kind,
+    assetId: "fx",
+    animationFamily: "idle",
+    frames: { count: COUNT, width: W, height: H },
+  };
   const options = {
     spec,
     specDir: world.dir,

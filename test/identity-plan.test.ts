@@ -19,7 +19,7 @@ after(async () => {
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-const spec = { kind: "still", assetId: "den" };
+const spec = { kind: "still", assetId: "den", animationFamily: "idle" };
 
 /** The identity mode a saved plan's operations imply; undefined when it plans no scoring. */
 function modeOf(operations: readonly string[]): string | undefined {

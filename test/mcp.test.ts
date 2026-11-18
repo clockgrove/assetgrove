@@ -610,7 +610,12 @@ const rows: Row[] = [
       const stills = join(dir, "still-runs");
       await writeFile(
         join(dir, "still.json"),
-        JSON.stringify({ kind: "still", assetId: "fern", fields: { description: "a fern" } }),
+        JSON.stringify({
+          kind: "still",
+          assetId: "fern",
+          animationFamily: "idle",
+          fields: { description: "a fern" },
+        }),
       );
       const staged = await cli([
         ...["stage", "--spec", join(dir, "still.json")],
