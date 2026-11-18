@@ -7,7 +7,6 @@
  * image drawn in a different art style from the rest? `find --outliers` lists the yes answers.
  */
 import { readFileSync } from "node:fs";
-import { extname } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { doDontSection, splitFrontMatter } from "../bible.ts";
 import type { Caller } from "../calls.ts";
@@ -48,7 +47,7 @@ export function selectMembers(ranking: readonly SearchRankedMember[]): {
 
 /**
  * The bible's style text: its world, its style axes and its Do's and Don'ts, read leniently from
- * a Markdown (front matter) or JSON bible. Empty when there is no bible or it cannot be read.
+ * its front matter and prose. Empty when there is no bible or it cannot be read.
  */
 export function bibleStyleText(path: string): string {
   let source: string;
@@ -60,13 +59,9 @@ export function bibleStyleText(path: string): string {
   let data: Record<string, unknown>;
   let prose = "";
   try {
-    if (extname(path).toLowerCase() === ".json")
-      data = JSON.parse(source) as Record<string, unknown>;
-    else {
-      const split = splitFrontMatter(source);
-      data = (parseYaml(split.front) as Record<string, unknown> | null) ?? {};
-      prose = split.prose;
-    }
+    const split = splitFrontMatter(source);
+    data = (parseYaml(split.front) as Record<string, unknown> | null) ?? {};
+    prose = split.prose;
   } catch {
     data = {};
   }

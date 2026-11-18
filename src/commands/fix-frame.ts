@@ -211,10 +211,7 @@ limits, and needs no key.`,
         plan,
       );
     }
-    const bible =
-      args.bible !== undefined
-        ? (await loadStyleBible(args.bible, { log: ctx.log })).value
-        : undefined;
+    const bible = args.bible !== undefined ? (await loadStyleBible(args.bible)).value : undefined;
     const result = await runFixFrame({
       target,
       index,

@@ -28,7 +28,7 @@ import { recordOf, writeConfirmation } from "../src/confirm/index.ts";
 import { runCommand } from "../src/commands/runner.ts";
 import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { loadSettings } from "../src/settings.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 // These tests ask a person: attended settings, where an approval record counts.
 beforeEach(() => {
@@ -69,10 +69,10 @@ async function stagedWorld(validator: string[]) {
   gitTarget(world.targetDir);
   world.profile.validator = { command: validator };
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   const base = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
   // Staged under the base (headless) settings; the pick is asked under attended ones.
@@ -213,10 +213,10 @@ test("pick with an unapproved validator exits 8 carrying the command; approved i
 test("--provider-script without an approval exits 8; under headless settings only a settings approval counts", async () => {
   const world = await syntheticWorld();
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   // A copy of the passing script in another place is another command.
   const copy = join(world.dir, "unapproved-script.ts");

@@ -34,7 +34,12 @@ import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { loadSettings } from "../src/settings.ts";
-import { syntheticProfile, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  syntheticProfile,
+  shelterSpec,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -150,10 +155,10 @@ async function stageRequest() {
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   const flags = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
   return { world, flags };

@@ -57,9 +57,9 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
       `the matte limit --max-halo must be a fraction from 0 to 1, not ${args.maxHalo}`,
     );
   const spec = await readJson<AssetSpec>(args.spec);
-  const bible = await loadStyleBible(args.bible, { log: ctx.log });
+  const bible = await loadStyleBible(args.bible);
   // A BIBLE.md holds the identity locks too: it is the lock bible unless --lock-bible names another.
-  const lockBible = args.lockBible ?? (bible.markdown ? args.bible : undefined);
+  const lockBible = args.lockBible ?? args.bible;
   const profile = await loadProfile(args.profile);
   const brief =
     args.brief === undefined
@@ -179,7 +179,7 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.
       lockBible: {
         type: "string",
         description:
-          "score the sheet against the subject's identity lock in this art bible (default: --bible when it is a BIBLE.md)",
+          "score the sheet against the subject's identity lock in this art bible (default: --bible)",
         placeholder: "<BIBLE.md>",
       },
       identityMode: {

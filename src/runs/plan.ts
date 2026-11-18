@@ -366,7 +366,7 @@ async function hashIfReadable(path: string): Promise<string | undefined> {
   }
 }
 
-/** The files a JSON style bible names (references and perspective sample), as `<arg>/<path>`. */
+/** The files a style view names (its references and perspective sample), as `<arg>/<path>`. */
 export function styleBibleReads(
   arg: string,
   bible: { value: { references?: { path: string }[]; perspective?: unknown }; dir: string },

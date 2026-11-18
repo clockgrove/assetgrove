@@ -37,6 +37,7 @@ import {
   shelterSpec,
   syntheticProfile,
   syntheticWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -334,10 +335,10 @@ async function stagedPick(change: (profile: TargetProfile) => void) {
   change(world.profile);
   approveProfile(world.profile, { targetDir: world.targetDir });
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   const base = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
   const staged = await cli([

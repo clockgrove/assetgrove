@@ -16,7 +16,12 @@ import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import type { Provenance, TargetProfile } from "../src/types.ts";
-import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  shelterSpec,
+  syntheticProfile,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -268,10 +273,10 @@ test("a profile selecting atlas-json hands off a sprite-strip pick with the scri
   approveProfile(world.profile, { targetDir: world.targetDir });
   gitTarget(world.targetDir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   const cli = (args: string[]) =>
     new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {

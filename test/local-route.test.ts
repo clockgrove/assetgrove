@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { AssetSpec, Provenance } from "../src/types.ts";
 import { approveProfile, writeSettings } from "./fixtures/env.ts";
 import { startOpenAiCompatibleServer } from "./fixtures/openai-compatible-server.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 // A file URL, not a path: on Windows `--import D:\\...` is read as a URL with the scheme `d:`.
@@ -77,10 +77,10 @@ async function stageArgs(spec: AssetSpec): Promise<string[]> {
   const world = await syntheticWorld();
   approveProfile(world.profile, { targetDir: world.targetDir });
   const specPath = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(specPath, JSON.stringify(spec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   return [
     "stage",

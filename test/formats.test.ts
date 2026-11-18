@@ -25,6 +25,7 @@ import {
   shelterSpec,
   syntheticProfile,
   syntheticWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 
 function refusal(reason: string) {
@@ -138,11 +139,6 @@ test("each shared kind without a format line exits 2 format_unsupported, reason 
   await writeFile(join(dir, "profile.json"), JSON.stringify(world.profile));
   await writeFile(join(dir, "profile-old.json"), JSON.stringify(withoutFormat(world.profile)));
   await writeFile(join(dir, "spec.json"), JSON.stringify(shelterSpec));
-  await writeFile(join(world.bibleDir, "bible.json"), JSON.stringify(world.bible));
-  await writeFile(
-    join(world.bibleDir, "bible-old.json"),
-    JSON.stringify(withoutFormat(world.bible)),
-  );
 
   // target-profile
   assertMissing(
@@ -162,16 +158,7 @@ test("each shared kind without a format line exits 2 format_unsupported, reason 
     await cli("recipe", join(dir, "recipe-old.json"), png, "--out", join(dir, "out")),
     formatLine("recipe"),
   );
-  // style-bible, the JSON bible
-  assertMissing(
-    await cli(
-      "stage",
-      ...["--spec", join(dir, "spec.json"), "--bible", join(world.bibleDir, "bible-old.json")],
-      ...["--profile", join(dir, "profile.json"), "--runs", join(dir, "runs"), "--dry-run"],
-    ),
-    formatLine("style-bible"),
-  );
-  // style-bible, BIBLE.md front matter
+  // style-bible: BIBLE.md front matter
   const init = join(dir, "init");
   const biblePath = (
     await writeProjectFiles({
@@ -199,14 +186,14 @@ test("each shared kind without a format line exits 2 format_unsupported, reason 
 test("every fixture under test/fixtures, every preset and every file in docs/examples loads", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "assetgrove-formats-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  // test/fixtures: the synthetic profile and JSON bible, and the bird cast's BIBLE.md files.
+  // test/fixtures: the synthetic profile and BIBLE.md, and the bird cast's BIBLE.md files.
   const world = await syntheticWorld();
   t.after(() => rm(world.dir, { recursive: true, force: true }));
   await writeFile(join(dir, "profile.json"), JSON.stringify(syntheticProfile()));
   assert.equal((await loadProfile(join(dir, "profile.json"))).value.name, "synthetic-grove");
-  await writeFile(join(world.bibleDir, "bible.json"), JSON.stringify(world.bible));
+  await writeStyleBible(join(world.bibleDir, "BIBLE.md"), world.bible);
   assert.equal(
-    (await loadStyleBible(join(world.bibleDir, "bible.json"))).value.version,
+    (await loadStyleBible(join(world.bibleDir, "BIBLE.md"))).value.version,
     "synthetic-1",
   );
   const birds = await buildBirdCastSet(join(dir, "birds"));

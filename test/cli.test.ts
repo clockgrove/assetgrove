@@ -9,7 +9,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { shelterSpec, syntheticBibleMd, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  shelterSpec,
+  syntheticBibleMd,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -49,10 +54,10 @@ function doc(result: Result): Record<string, any> {
 async function files() {
   const world = await syntheticWorld();
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
   const base = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
@@ -163,19 +168,18 @@ test("a full run through a provider script stages candidates", async () => {
   assert.match(JSON.stringify(d["candidates"][0].provenance), /scripted:/);
 });
 
-test("stage and generate-sheet read BIBLE.md, the one style bible; a JSON bible loads with a deprecation notice", async () => {
+test("stage and generate-sheet read BIBLE.md, the one style bible; a JSON style bible is refused naming it", async () => {
   const { world, base } = await files();
   const md = await syntheticBibleMd(world);
   const withBible = (path: string) =>
     base.map((arg, i) => (base[i - 1] === "--bible" ? path : arg));
-  // stage, end to end on BIBLE.md: no notice.
+  // stage, end to end on BIBLE.md.
   const staged = await cli(
     ["stage", ...withBible(md), "--candidates", "1", "--provider-script", passingScript, "--json"],
     noKey(),
   );
   assert.equal(staged.code, 0, staged.stdout + staged.stderr);
   assert.equal(doc(staged)["candidates"].length, 1);
-  assert.doesNotMatch(staged.stderr, /deprecated/);
   // The prompt carries the constitution: its axes and audience, as style notes.
   const record = await readFile(join(doc(staged)["runDir"], "run.json"), "utf8");
   assert.match(record, /rendering: painterly/);
@@ -198,30 +202,43 @@ test("stage and generate-sheet read BIBLE.md, the one style bible; a JSON bible 
     noKey(),
   );
   assert.equal(sheet.code, 0, sheet.stdout + sheet.stderr);
-  assert.doesNotMatch(sheet.stderr, /deprecated/);
-  // The JSON bible still plans, and says it is deprecated.
-  const legacy = await cli(["stage", ...base, "--dry-run", "--json"], noKey());
-  assert.equal(legacy.code, 0, legacy.stdout + legacy.stderr);
-  assert.match(legacy.stderr, /the JSON style bible is deprecated/);
+  // A JSON style bible is refused before anything runs, naming BIBLE.md.
+  const json = join(world.bibleDir, "bible.json");
+  await writeFile(json, JSON.stringify(world.bible));
+  const legacy = await cli(["stage", ...withBible(json), "--dry-run", "--json"], noKey());
+  assert.equal(legacy.code, 2, legacy.stdout + legacy.stderr);
+  assert.equal(doc(legacy)["error"].code, "invalid_input");
+  assert.match(doc(legacy)["error"].message, /is JSON; Assetgrove reads only BIBLE\.md/);
 });
 
 test("a style bible missing a field is refused with exit 2 naming it, never a crash", async () => {
   const { world, base } = await files();
   const biblePath = base[base.indexOf("--bible") + 1] as string;
-  const without = (...fields: string[]) =>
-    Object.fromEntries(Object.entries(world.bible).filter(([key]) => !fields.includes(key)));
-  for (const [bible, message] of [
+  const written = await readFile(biblePath, "utf8");
+  const edited = (from: RegExp, to: string) => async () => {
+    assert.match(written, from);
+    await writeFile(biblePath, written.replace(from, to));
+  };
+  for (const [write, message] of [
     // No safe default: refused when the bible loads.
-    [without("version"), /style bible .* is invalid: version/],
-    [without("palette"), /style bible .* is invalid: palette/],
-    [{ ...world.bible, palette: ["red"] }, /palette\.0: must be a six-digit hex colour/],
-    [{ ...world.bible, references: [{ role: "sheet" }] }, /references\.0\.path/],
-    // References default to none, and a request that needs them names the subject.
-    [without("references"), /no reference images for subject "fern"/],
+    [edited(/^version: .*\n/m, ""), /version must be a nonempty string/],
+    [
+      edited(/components:\n(\s*)- 0\.149\d*/, "components:\n$1- 7"),
+      /palette\.swatch-0 RGB components must be 0\.\.1/,
+    ],
+    [edited(/- path: refs\/den\.png\n\s*role/, "- role"), /anchor\.path must be a nonempty string/],
+    // A subject with no references: a request that needs them names the subject.
+    [
+      () => writeStyleBible(biblePath, { ...world.bible, references: [] }),
+      /no reference images for subject "fern"/,
+    ],
     // A request that sends the perspective sample names the missing field.
-    [without("perspective"), /names no perspective sample: set `perspective`/],
+    [
+      () => writeStyleBible(biblePath, { ...world.bible, perspective: undefined }),
+      /names no perspective sample: set `perspective`/,
+    ],
   ] as const) {
-    await writeFile(biblePath, JSON.stringify(bible));
+    await write();
     const r = await cli(
       ["stage", ...base, "--candidates", "1", "--provider-script", passingScript, "--json"],
       noKey(),
@@ -420,7 +437,7 @@ test("no command takes a routes file: --routes is invalid_input", async () => {
   await writeFile(routes, "{}");
   for (const args of [
     ["stage", ...base, "--dry-run"],
-    ["identity-check", "--bible", join(world.bibleDir, "bible.json")],
+    ["identity-check", "--bible", join(world.bibleDir, "BIBLE.md")],
   ]) {
     const r = await cli([...args, "--routes", routes, "--json"], noKey());
     assert.equal(r.code, 2, args[0]);

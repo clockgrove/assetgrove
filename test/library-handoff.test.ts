@@ -37,7 +37,13 @@ import { importSheet, writeFamilies } from "../src/sheet/import.ts";
 import type { Grouping } from "../src/sheet/types.ts";
 import type { AssetSpec, TargetProfile } from "../src/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { PALETTE, drawSubject, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  PALETTE,
+  drawSubject,
+  shelterSpec,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 import { bareGitTarget, gitTarget } from "./fixtures/git.ts";
 
@@ -101,10 +107,10 @@ async function gitWorld(): Promise<World> {
 /** Writes the world's inputs and stages one candidate through the CLI. */
 async function stage(world: World, spec: AssetSpec = shelterSpec) {
   const specPath = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(specPath, JSON.stringify(spec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   return cli([
     "stage",
@@ -420,7 +426,7 @@ test("a 3D hand-off (stage character-3d, then pick) writes the library beside th
   }
   const files = {
     spec: join(dir, "spec.json"),
-    bible: join(dir, "bible.json"),
+    bible: join(dir, "BIBLE.md"),
     profile: join(dir, "profile.json"),
   };
   await writeFile(
@@ -434,25 +440,21 @@ test("a 3D hand-off (stage character-3d, then pick) writes the library beside th
       heightM: 0.5,
     }),
   );
-  await writeFile(
-    files.bible,
-    JSON.stringify({
-      format: "assetgrove-style-bible/1",
-      referenceLicense: "NOASSERTION",
-      version: "2026-11-10",
-      palette: PALETTE,
-      references: roles.map((role) => ({
-        path: `refs/${role}.png`,
-        role,
-        subject: "fern",
-        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
-          role
-        ],
-      })),
-      perspective: "refs/turnaround-front.png",
-      subjects: { fern: { description: "a lean grey fox with a dark mask and a ringed tail" } },
-    }),
-  );
+  await writeStyleBible(files.bible, {
+    referenceLicense: "NOASSERTION",
+    version: "2026-11-10",
+    palette: PALETTE,
+    references: roles.map((role) => ({
+      path: `refs/${role}.png`,
+      role,
+      subject: "fern",
+      view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+        role
+      ],
+    })),
+    perspective: "refs/turnaround-front.png",
+    subjects: { fern: { description: "a lean grey fox with a dark mask and a ringed tail" } },
+  });
   await writeFile(files.profile, JSON.stringify(profile3d()));
   const target = join(dir, "target");
   gitInit(target);

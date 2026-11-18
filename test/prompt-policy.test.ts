@@ -35,6 +35,7 @@ import {
   shelterSpec,
   syntheticProfile,
   syntheticWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -112,7 +113,7 @@ async function stageFiles(term: string) {
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(
     spec,
@@ -121,7 +122,7 @@ async function stageFiles(term: string) {
       fields: { ...shelterSpec.fields, accessibilityLabel: `Fern sheltering ${term}` },
     }),
   );
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
   return { world, spec, bible, profile };
@@ -179,25 +180,21 @@ async function lookDevFiles(dir: string, term: string) {
       heightM: 0.45,
     }),
   );
-  await writeFile(
-    files.bible,
-    JSON.stringify({
-      format: "assetgrove-style-bible/1",
-      referenceLicense: "NOASSERTION",
-      version: "2026-11-10",
-      palette: PALETTE,
-      references: roles.map((role) => ({
-        path: `refs/${role}.png`,
-        role,
-        subject: "kit",
-        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
-          role
-        ],
-      })),
-      perspective: "refs/turnaround-front.png",
-      subjects: { kit: { description: "a small synthetic quadruped" } },
-    }),
-  );
+  await writeStyleBible(files.bible, {
+    referenceLicense: "NOASSERTION",
+    version: "2026-11-10",
+    palette: PALETTE,
+    references: roles.map((role) => ({
+      path: `refs/${role}.png`,
+      role,
+      subject: "kit",
+      view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+        role
+      ],
+    })),
+    perspective: "refs/turnaround-front.png",
+    subjects: { kit: { description: "a small synthetic quadruped" } },
+  });
   await writeFile(
     files.profile,
     JSON.stringify({

@@ -14,7 +14,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { RunInProgressError, acquireRunLock, type RunLock } from "../src/runs/lock.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -144,10 +144,10 @@ async function stageRequest() {
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
   const flags = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];

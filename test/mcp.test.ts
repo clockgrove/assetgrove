@@ -29,6 +29,7 @@ import {
   shelterSpec,
   syntheticProfile,
   syntheticWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 
 type Args = Record<string, unknown>;
@@ -241,7 +242,7 @@ async function world() {
   await rm(w.dir, { recursive: true, force: true });
   const dir = paths.world();
   await writeFile(join(dir, "spec.json"), JSON.stringify(shelterSpec));
-  await writeFile(join(dir, "bible", "bible.json"), JSON.stringify(w.bible));
+  await writeStyleBible(join(dir, "bible", "BIBLE.md"), w.bible);
   await writeFile(join(dir, "profile.json"), JSON.stringify(w.profile));
 }
 
@@ -293,7 +294,7 @@ async function quadrupedWorld() {
   const files = {
     dir,
     spec: join(dir, "spec.json"),
-    bible: join(dir, "bible.json"),
+    bible: join(dir, "BIBLE.md"),
     profile: join(dir, "profile.json"),
     model: join(dir, "model.glb"),
     provenance: join(dir, "provenance.json"),
@@ -309,25 +310,21 @@ async function quadrupedWorld() {
       heightM: 0.45,
     }),
   );
-  await writeFile(
-    files.bible,
-    JSON.stringify({
-      format: "assetgrove-style-bible/1",
-      referenceLicense: "NOASSERTION",
-      version: "2026-11-10",
-      palette: PALETTE,
-      references: roles.map((role) => ({
-        path: `refs/${role}.png`,
-        role,
-        subject: "kit",
-        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
-          role
-        ],
-      })),
-      perspective: "refs/turnaround-front.png",
-      subjects: { kit: { description: "a small synthetic quadruped" } },
-    }),
-  );
+  await writeStyleBible(files.bible, {
+    referenceLicense: "NOASSERTION",
+    version: "2026-11-10",
+    palette: PALETTE,
+    references: roles.map((role) => ({
+      path: `refs/${role}.png`,
+      role,
+      subject: "kit",
+      view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+        role
+      ],
+    })),
+    perspective: "refs/turnaround-front.png",
+    subjects: { kit: { description: "a small synthetic quadruped" } },
+  });
   await writeFile(
     files.profile,
     JSON.stringify({
@@ -542,7 +539,7 @@ const rows: Row[] = [
       const dir = paths.world();
       return {
         spec: join(dir, "spec.json"),
-        bible: join(dir, "bible", "bible.json"),
+        bible: join(dir, "bible", "BIBLE.md"),
         profile: join(dir, "profile.json"),
         runs: join(dir, "runs"),
         candidates: 1,
@@ -557,7 +554,7 @@ const rows: Row[] = [
         command: "stage",
         args: {
           spec: join(dir, "spec.json"),
-          bible: join(dir, "bible", "bible.json"),
+          bible: join(dir, "bible", "BIBLE.md"),
           profile: join(dir, "profile.json"),
           runs: join(dir, "runs"),
           candidates: 1,
@@ -614,7 +611,7 @@ const rows: Row[] = [
       );
       const staged = await cli([
         ...["stage", "--spec", join(dir, "still.json")],
-        ...["--bible", join(dir, "bible", "bible.json"), "--profile", join(dir, "profile.json")],
+        ...["--bible", join(dir, "bible", "BIBLE.md"), "--profile", join(dir, "profile.json")],
         ...["--runs", stills, "--candidates", "1", "--provider-script", script, "--json"],
       ]);
       assert.equal(staged.code, 0, staged.stderr + staged.stdout);
@@ -738,7 +735,7 @@ export default {
       );
       return {
         spec: join(dir, "sheet-spec.json"),
-        bible: join(dir, "bible", "bible.json"),
+        bible: join(dir, "bible", "BIBLE.md"),
         profile: join(dir, "profile.json"),
         imports: join(dir, "imports"),
       };
@@ -770,7 +767,7 @@ export default {
         model: join(rigged["runDir"] as string, candidate!.file),
         provenance,
         spec: join(dir, "spec.json"),
-        bible: join(dir, "bible.json"),
+        bible: join(dir, "BIBLE.md"),
         profile: join(dir, "profile.json"),
         runs: join(dir, "runs"),
       };

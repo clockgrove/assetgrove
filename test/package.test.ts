@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { machineProxyEnv } from "./fixtures/env.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -194,11 +194,11 @@ test(
       const world = await syntheticWorld();
       temps.push(world.dir);
       const spec = join(install, "spec.json");
-      const bible = join(world.bibleDir, "bible.json");
+      const bible = join(world.bibleDir, "BIBLE.md");
       const profile = join(install, "profile.json");
       const script = join(install, "script.mjs");
       await writeFile(spec, JSON.stringify(shelterSpec));
-      await writeFile(bible, JSON.stringify(world.bible));
+      await writeStyleBible(bible, world.bible);
       await writeFile(profile, JSON.stringify(world.profile));
       await writeFile(
         script,

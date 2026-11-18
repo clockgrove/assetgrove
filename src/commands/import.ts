@@ -106,9 +106,9 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   const capUsd = runCap(args.cap, ctx.settings);
   const slice = sliceOptions(args.grid, args.components, args.frames);
   const profile = await loadProfile(args.profile);
-  const bible = args.bible ? await loadStyleBible(args.bible, { log: ctx.log }) : undefined;
+  const bible = args.bible ? await loadStyleBible(args.bible) : undefined;
   // A BIBLE.md holds the identity locks too: it is the lock bible unless --lock-bible names another.
-  const lockBible = args.lockBible ?? (bible?.markdown ? args.bible : undefined);
+  const lockBible = args.lockBible ?? args.bible;
   const subject = args.subject ?? args.asset;
   const sheet = await readBytes(args.sheet, "sheet");
   const digitalSourceType = declarationOption(args.digitalSourceType);
@@ -257,7 +257,7 @@ below the threshold, off skips scoring.`,
       lockBible: {
         type: "string",
         description:
-          "score the sheet against the subject's identity lock in this art bible (default: --bible when it is a BIBLE.md)",
+          "score the sheet against the subject's identity lock in this art bible (default: --bible)",
         placeholder: "<BIBLE.md>",
       },
       identityMode: {

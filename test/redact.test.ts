@@ -11,7 +11,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { ProviderError } from "../src/errors.ts";
 import { redact } from "../src/redact.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const errorsModule = pathToFileURL(join(root, "src", "errors.ts")).href;
@@ -45,10 +45,10 @@ function assertRedacted(text: string, where: string): void {
 async function leakingStage() {
   const world = await syntheticWorld();
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   const script = join(world.dir, "leak.mjs");
   await writeFile(

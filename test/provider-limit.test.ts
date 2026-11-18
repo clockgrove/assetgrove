@@ -18,7 +18,7 @@ import { providerFailure } from "../src/gateway/failure.ts";
 import { ScriptedProvider } from "../src/gateway/scripted.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { SCRIPTED_LIMIT, approve, approveProfile, writeSettings } from "./fixtures/env.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -72,10 +72,10 @@ export default {
 async function stageArgs(): Promise<{ args: string[]; dir: string }> {
   const world = await syntheticWorld();
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
   const args = [

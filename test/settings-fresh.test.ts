@@ -161,7 +161,7 @@ test("a settings file inside the project of --target or of an input file is refu
   const show = await cli(["settings", "show"], env);
   assert.equal(show["exitCode"], 0, JSON.stringify(show["error"]));
 
-  const bible = join(project, "bible.json");
+  const bible = join(project, "BIBLE.md");
   writeFileSync(bible, "{}");
   const described = await cli(["bible", "describe", "--bible", bible], env);
   assert.equal(described["exitCode"], 2);

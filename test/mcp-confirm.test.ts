@@ -25,7 +25,7 @@ import { REFUSED_VARIABLES } from "../src/env.ts";
 import { decodeImage, encodePng } from "../src/image/raster.ts";
 import { loadSettings } from "../src/settings.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Doc = Record<string, any>;
@@ -119,10 +119,10 @@ async function stageWorld() {
   temporary.push(world.dir);
   gitTarget(world.targetDir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   return {
     world,

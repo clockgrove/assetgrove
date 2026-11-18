@@ -19,7 +19,12 @@ import { importSheet, writeFamilies } from "../src/sheet/import.ts";
 import type { Grouping } from "../src/sheet/types.ts";
 import type { TargetProfile } from "../src/types.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  shelterSpec,
+  syntheticProfile,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 import { gitTarget } from "./fixtures/git.ts";
 
@@ -61,10 +66,10 @@ async function tree(dir: string): Promise<string[]> {
 /** Writes the world's inputs and stages one candidate through the CLI. */
 async function stage(world: World, spec = shelterSpec): Promise<Result> {
   const specPath = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(specPath, JSON.stringify(spec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   return cli([
     "stage",

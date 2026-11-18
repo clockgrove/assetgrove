@@ -20,7 +20,11 @@ import { loadSettings } from "../src/settings.ts";
 import type { Settings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
 import { approve, approveProfile, writeSettings } from "./fixtures/env.ts";
-import { shelterSpec, syntheticWorld as plainWorld } from "./fixtures/synthetic.ts";
+import {
+  shelterSpec,
+  syntheticWorld as plainWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
 async function syntheticWorld(): Promise<World> {
@@ -54,10 +58,10 @@ function cli(args: string[], env: Record<string, string> = {}): Promise<Result> 
 async function stageArgs(): Promise<string[]> {
   const world = await syntheticWorld();
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   return [
     "stage",

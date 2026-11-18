@@ -36,6 +36,7 @@ import {
   shelterSpec,
   syntheticProfile,
   syntheticWorld as plainWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
@@ -395,10 +396,10 @@ test("a validator rejection is reported, not hidden", async () => {
 test("the CLI takes the gateway key from the environment only, and refuses without it", async () => {
   const world = await syntheticWorld();
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   writeSettings({ providers: { "vercel-ai-gateway": { limit: { kind: "prepaid", usd: 5 } } } });
   const env = { ...process.env };

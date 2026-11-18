@@ -13,7 +13,7 @@ import { parseGlb } from "../src/model3d/glb.ts";
 import { InputError } from "../src/errors.ts";
 import { appendAnimation, clips as clipsOf, samplePose } from "../src/model3d/scene.ts";
 import { syntheticCharacter } from "./fixtures/glb.ts";
-import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
+import { PALETTE, drawSubject, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const VALIDATOR = fileURLToPath(new URL("./fixtures/validator-3d.ts", import.meta.url));
@@ -76,7 +76,6 @@ async function stage(mode: string) {
     await writeFile(join(dir, "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
   }
   const bible = {
-    format: "assetgrove-style-bible/1",
     referenceLicense: "NOASSERTION",
     version: "2026-11-10",
     palette: PALETTE,
@@ -129,7 +128,7 @@ async function stage(mode: string) {
   };
   const files = {
     spec: join(dir, "spec.json"),
-    bible: join(dir, "bible.json"),
+    bible: join(dir, "BIBLE.md"),
     profile: join(dir, "profile.json"),
   };
   await writeFile(
@@ -143,7 +142,7 @@ async function stage(mode: string) {
       heightM: 0.5,
     }),
   );
-  await writeFile(files.bible, JSON.stringify(bible));
+  await writeStyleBible(files.bible, bible);
   await writeFile(files.profile, JSON.stringify(profile));
   const target = join(dir, "target");
   gitTarget(target);

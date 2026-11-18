@@ -21,7 +21,7 @@ import { StalenessCache } from "../src/library/stale.ts";
 import { READ_LIMIT } from "../src/tree/thumbs.ts";
 import { GAME, RUN_ID, fixtureLibrary, libraryProfile } from "./fixtures/library.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { syntheticWorld } from "./fixtures/synthetic.ts";
+import { syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const script = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -218,10 +218,10 @@ test("a subscribed run folder is updated after staging; a subscribed asset after
 
   const world = await syntheticWorld();
   const spec = join(world.dir, "still.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify({ kind: "still", assetId: "lantern", subject: "fern" }));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(libraryProfile()));
   const runs = join(lib.dir, ".assetgrove", "runs");
   await mkdir(runs, { recursive: true });

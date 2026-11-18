@@ -28,7 +28,12 @@ import { imageGenerators } from "../src/generators/image.ts";
 import { stage } from "../src/loop.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import type { AssetSpec, StyleBible } from "../src/types.ts";
-import { scriptedProvider, shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  scriptedProvider,
+  shelterSpec,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 
 function base() {
   const data = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
@@ -349,16 +354,16 @@ async function cli(...args: string[]): Promise<{ code: number; doc: Record<strin
 const errorOf = (run: { doc: Record<string, unknown> }) =>
   run.doc["error"] as { code: string; message: string };
 
-/** A synthetic world written to disk: spec, JSON bible and profile beside it. */
+/** A synthetic world written to disk: spec, BIBLE.md and profile beside it. */
 async function worldFiles(bible: Partial<StyleBible> = {}) {
   const world = await syntheticWorld();
   const files = {
     spec: join(world.dir, "spec.json"),
-    bible: join(world.bibleDir, "bible.json"),
+    bible: join(world.bibleDir, "BIBLE.md"),
     profile: join(world.dir, "profile.json"),
   };
   await writeFile(files.spec, JSON.stringify(shelterSpec));
-  await writeFile(files.bible, JSON.stringify({ ...world.bible, ...bible }));
+  await writeStyleBible(files.bible, { ...world.bible, ...bible });
   await writeFile(files.profile, JSON.stringify(world.profile));
   return { world, files };
 }
@@ -375,22 +380,21 @@ async function recordingProvider(dir: string, marker: string): Promise<string> {
 }
 
 test("a bible with references and no referenceLicense exits 2", async (t) => {
-  // The JSON bible a stage reads.
+  // The BIBLE.md a stage reads, its referenceLicense line removed.
   const { world, files } = await worldFiles();
   t.after(() => rm(world.dir, { recursive: true, force: true }));
   const { referenceLicense: _dropped, ...unlicensed } = world.bible;
   void _dropped;
-  await writeFile(files.bible, JSON.stringify(unlicensed));
+  const written = await readFile(files.bible, "utf8");
+  assert.match(written, /^referenceLicense: .*\n/m);
+  await writeFile(files.bible, written.replace(/^referenceLicense: .*\n/m, ""));
   const stageArgs = ["--spec", files.spec, "--bible", files.bible, "--profile", files.profile];
   const run = await cli("stage", ...stageArgs, "--runs", world.runsDir, "--dry-run");
   assert.equal(run.code, 2);
   assert.equal(errorOf(run).code, "invalid_input");
   assert.match(errorOf(run).message, /referenceLicense/);
-  // Without references, no licence is needed.
-  await writeFile(
-    files.bible,
-    JSON.stringify({ ...unlicensed, references: [], perspective: "refs/perspective.png" }),
-  );
+  // Without reference images (anchors or a perspective sample), no licence is needed.
+  await writeStyleBible(files.bible, { ...unlicensed, references: [], perspective: undefined });
   assert.equal((await cli("stage", ...stageArgs, "--runs", world.runsDir, "--dry-run")).code, 0);
 
   // BIBLE.md front matter: anchors are references.
@@ -492,13 +496,10 @@ test("a reference path outside the project root exits 2 invalid_input before any
   ];
   await symlink(secret, join(world.bibleDir, "refs/link.png"));
   for (const path of escapes) {
-    await writeFile(
-      files.bible,
-      JSON.stringify({
-        ...world.bible,
-        references: [...world.bible.references, { path, role: "prop", subject: "fern" }],
-      }),
-    );
+    await writeStyleBible(files.bible, {
+      ...world.bible,
+      references: [...world.bible.references, { path, role: "prop", subject: "fern" }],
+    });
     const run = await cli(
       "stage",
       ...stageArgs,
@@ -539,15 +540,15 @@ test("the project root stops below the home directory and falls back to the shar
   // No marker below the home directory: the root is the bible's own directory.
   assert.equal(projectRoot(art, home), await realpath(art));
   assert.throws(
-    () => requireInsideProject(["../refs/x.png"], art, "bible.json", home),
+    () => requireInsideProject(["../refs/x.png"], art, "BIBLE.md", home),
     /outside the project root/,
   );
   assert.throws(
-    () => requireInsideProject([join(home, ".ssh", "id.png")], art, "bible.json", home),
+    () => requireInsideProject([join(home, ".ssh", "id.png")], art, "BIBLE.md", home),
     /outside the project root/,
   );
   // With a project marker above the bible, a sibling reference inside the project loads.
   await mkdir(join(home, "work", ".assetgrove"));
-  assert.doesNotThrow(() => requireInsideProject(["../refs/x.png"], art, "bible.json", home));
+  assert.doesNotThrow(() => requireInsideProject(["../refs/x.png"], art, "BIBLE.md", home));
   assert.match(projectRoot(art, home), /work$/);
 });

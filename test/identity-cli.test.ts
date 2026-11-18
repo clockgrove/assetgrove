@@ -11,7 +11,12 @@ import { promisify } from "node:util";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, encodePng, setPixel } from "../src/image/raster.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  shelterSpec,
+  syntheticProfile,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 
 const exec = promisify(execFile);
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -526,9 +531,9 @@ test("import and generate-sheet hash the identity threshold record they filter a
   const world = await syntheticWorld();
   roots.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   await writeFile(spec, JSON.stringify({ ...shelterSpec, subject: "bram" }));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(join(world.dir, "profile.json"), JSON.stringify(world.profile));
   const lock = ["--lock-bible", f.bible, "--identity-mode", "enforce", "--dry-run", "--json"];
   const requests = {
