@@ -27,6 +27,10 @@ Phaser reads both: `load.atlas` takes `atlas-json` in either shape, and `load.as
 
 Every preset's `write` is async and gets `read`, which reads a file of the target, such as an engine's `.import` file, under the rule every hand-off write follows: a path outside the target, in `.git`, or in the settings or state is refused (exit 2). A preset returns its files and core writes them: it checks each path, writes them with the media, reads them back through the preset's check and lists them under `handoff` in the result. A preset may declare `scope: "families"`: it then writes once for every animation family handed off for the asset so far, read from the library, not only the families of this run, so rewriting one family keeps the others in its output. `manifest`, `atlas-json` and `aseprite-json` write for one hand-off. See [extensions.md](extensions.md#engine-presets).
 
+## Godot
+
+The optional Godot pack, `@clockgrove/assetgrove-godot`, adds the preset `godot:sprite-frames` (families scope): one SpriteFrames per asset holding every animation family handed off so far, each frame an AtlasTexture region of its strip. A pinned Godot 4.7.2 builds it headless in a scratch project, saves it and loads it back, and the preset returns the resource and the `.import` of each new strip, so the UIDs match. Any `ERROR` line from Godot fails the hand-off (exit 6). See [its README](../packages/assetgrove-godot/README.md).
+
 ## Writer
 
 The writers are hand-written: no maintained library writes these formats, and the output is a few fixed-shape JSON objects. See [decisions.md](decisions.md#atlas-writers-are-hand-written).

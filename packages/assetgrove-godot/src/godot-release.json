@@ -1,0 +1,38 @@
+{
+  "version": "4.7.2",
+  "release": "4.7.2-stable",
+  "sums": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/SHA512-SUMS.txt",
+  "urls": ["https://github.com/godotengine/godot/releases/download/4.7.2-stable/"],
+  "platforms": {
+    "linux-x64": {
+      "archive": "Godot_v4.7.2-stable_linux.x86_64.zip",
+      "sha512": "9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65",
+      "binary": "Godot_v4.7.2-stable_linux.x86_64"
+    },
+    "linux-arm64": {
+      "archive": "Godot_v4.7.2-stable_linux.arm64.zip",
+      "sha512": "dd59918da086bd49bde2f5450b5e567ff8650cbde9abbd7b8f4ca1197ff8c609baa38834666d032deafb47099078d7822279e2a0e06e5665745468f26533e7e2",
+      "binary": "Godot_v4.7.2-stable_linux.arm64"
+    },
+    "darwin-x64": {
+      "archive": "Godot_v4.7.2-stable_macos.universal.zip",
+      "sha512": "38aa16e5bba2083941fc5b3e54be0089bd4cc35e32415f5b9fd9a8a6a7b9818255d44532ea8ef94b5aef56c4b407c2d634fa4f657e4ebe681ebbf59b7bac69ca",
+      "binary": "Godot.app/Contents/MacOS/Godot"
+    },
+    "darwin-arm64": {
+      "archive": "Godot_v4.7.2-stable_macos.universal.zip",
+      "sha512": "38aa16e5bba2083941fc5b3e54be0089bd4cc35e32415f5b9fd9a8a6a7b9818255d44532ea8ef94b5aef56c4b407c2d634fa4f657e4ebe681ebbf59b7bac69ca",
+      "binary": "Godot.app/Contents/MacOS/Godot"
+    },
+    "win32-x64": {
+      "archive": "Godot_v4.7.2-stable_win64.exe.zip",
+      "sha512": "83decd58fdf67b9d657958a1ae6bf1929c20785315a81effe245874cdc57acb709bf868e00778a96984338c1b29dafdb453c6847747694621c6ecf5da2259993",
+      "binary": "Godot_v4.7.2-stable_win64_console.exe"
+    },
+    "win32-arm64": {
+      "archive": "Godot_v4.7.2-stable_windows_arm64.exe.zip",
+      "sha512": "683f8dd9fb087db79dfbbc52d5b2209df98218a4fef0d10d8478ec2230ae8db6032a36929677479b9f9c5a6aa0c51ee359d7e57eb5abbcb6cef4998526dec5a6",
+      "binary": "Godot_v4.7.2-stable_windows_arm64_console.exe"
+    }
+  }
+}

@@ -42,7 +42,7 @@ This plan delivers [the 1.0 PRD](PRD.md) in four phases, taken from its [Scope o
 
 **Work areas:**
 
-- The Godot pack, checked in CI by a headless Godot import on a pinned version.
+- The Godot pack, checked in CI by a headless Godot import on a pinned version: built ([`packages/assetgrove-godot`](../packages/assetgrove-godot/README.md), #422).
 - Asset-kind packs: tile sets, UI icon families, and pixel art proven first by a spike with its pass numbers set in advance.
 - Route packs: ComfyUI, one specialist pixel-art vendor, image-to-3D through fal, and a free local pre-check for vision QA.
 

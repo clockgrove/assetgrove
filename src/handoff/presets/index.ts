@@ -55,6 +55,11 @@ export interface HandedOffFamily {
   media: string;
   /** The sha256 of its current media. */
   sha256: string;
+  /**
+   * The bytes of its current media: this hand-off's own for its families. Core always sets it;
+   * optional so a hand-made context compiles.
+   */
+  content?: Uint8Array;
 }
 
 /** What a `scope: "families"` preset reads: every family handed off for one asset so far. */

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -241,4 +249,27 @@ test("release builds core and every pack whose version is not on the registry", 
     releasePlan(root, run).map((t) => t.short),
     ["assetgrove"],
   );
+});
+
+// Release's verify job runs `node --test test/package.test.ts` in each target's directory, and the
+// gate's publish entry names each tarball the owner publishes (docs/release.md, issue #422).
+test("every pack in this repository has its own test/package.test.ts and its tarball in the publish entry", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const { entries } = JSON.parse(readFileSync(join(root, "scripts/gate-entries.json"), "utf8")) as {
+    entries: { id: string; evidence?: string }[];
+  };
+  const publish = entries.find((e) => e.id === "publish");
+  assert.ok(publish?.evidence, "the gate has a publish entry with its evidence");
+  const packs = listPacks(root);
+  assert.ok(packs.some((p) => p.short === "assetgrove-godot"));
+  for (const pack of packs) {
+    assert.ok(
+      existsSync(join(root, pack.dir, "test", "package.test.ts")),
+      `${pack.dir} has no test/package.test.ts for release's verify job`,
+    );
+    assert.ok(
+      publish.evidence.includes(`${pack.name}@${pack.version}`),
+      `the publish entry does not name ${pack.name}@${pack.version}`,
+    );
+  }
 });
