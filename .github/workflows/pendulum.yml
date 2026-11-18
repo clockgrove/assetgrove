@@ -51,6 +51,14 @@ env:
   PENDULUM_CI_CHECKS: ci
   PENDULUM_NODE_VERSION: 24.21.0 # the Node.js your CI uses
   PENDULUM_TIME_ZONE: America/Los_Angeles # the IANA zone visible times are written in (America/Los_Angeles); empty: the machine's own in local mode, UTC on Actions and in the cloud sandbox
+  PENDULUM_CROSS_OS_WORKFLOW: ci.yml # the work stage runs these legs before review; the merge queue no longer finds them first
+  PENDULUM_CROSS_OS_CHECKS: |
+    test (macos-26, 1/3)
+    test (macos-26, 2/3)
+    test (macos-26, 3/3)
+    test (windows-2025, 1/3)
+    test (windows-2025, 2/3)
+    test (windows-2025, 3/3)
   PENDULUM_LOCAL_MAX_CONCURRENT: 8 # local runs on the 24-thread box
   PENDULUM_SIBLING_HOLD: "off" # reviews of Objectives that share files run side by side; each rebases after a sibling merges
   PENDULUM_WORKER_SECRETS: AI_GATEWAY_API_KEY=WORKER_AI_GATEWAY_API_KEY # the worker's own capped gateway key (assetforge-worker, $25/month); values in the PENDULUM_WORKER_SECRET_VALUES secret, or the local shell

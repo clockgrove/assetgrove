@@ -8,6 +8,9 @@ on:
   merge_group:
   push:
     branches: [main]
+  # Pendulum's work stage dispatches this on pendulum/<issue> to run the macOS and Windows test legs before
+  # review (PENDULUM_CROSS_OS_* in pendulum.yml). Not a pull request, so the matrix is the full three systems.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
