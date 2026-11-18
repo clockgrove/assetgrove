@@ -27,7 +27,7 @@ import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import { checkLayout, checkWrites, safeFileName, safeSegment } from "./paths.ts";
 import type { IdentityAgreement, IdentityRecordCheck } from "./identity.ts";
-import { applyStability, mergeFiltering, qaRegistry } from "./qa/stability.ts";
+import { applyStability, kindQaRegistry, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { checkFrameLayout, withLayoutParameters } from "./frames.ts";
@@ -267,7 +267,7 @@ export interface RunRecord {
   /**
    * Whether each model-backed check filtered: `filtering` only where it is measured stable on the
    * run's model (src/qa/stability.json, or the kind's own entries); otherwise `advisory`, its
-   * reasons marked `shadow`, with the cause. A check no loaded kind or core declares is `advisory`
+   * reasons marked `shadow`, with the cause. A check neither its kind nor core declares is `advisory`
    * with cause `undeclared`. Absent when no model-backed or undeclared check ran.
    */
   filtering?: FilteringState[];
@@ -354,8 +354,13 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   const plan = planStage(options);
   const { requested, capUsd, estimateUsd } = plan;
   const generator = options.generators.find((g) => g.kind === spec.kind) as Generator;
-  // The QA checks and stability entries every loaded kind declares, core's among them.
-  const registry = qaRegistry(options.generators, options.stability);
+  // The QA checks and stability entries this kind's reasons are judged by: core's kinds' (ids
+  // without an extension prefix) and the kind's own, never another pack's.
+  const registry = kindQaRegistry(
+    generator,
+    options.generators.filter((g) => extensionOf(g.kind) === undefined),
+    options.stability,
+  );
   // Artifacts go in `c<n>-<kind as a slug>/`, so an extension kind's ":" never names a directory;
   // the name is checked here, before any paid call.
   const artifactDir = safeSegment(generator.kind);
@@ -460,7 +465,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         await writeFile(join(runDir, name), artifact.bytes);
       }
       // A model-backed check filters only where it is measured stable on the run's model, and a
-      // check no loaded kind or core declares never filters.
+      // check neither its kind nor core declares never filters.
       const qa = applyStability(generated.qa.reasons, routes, {
         checks: registry.checks,
         entries: registry.entries,

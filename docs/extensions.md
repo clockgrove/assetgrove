@@ -53,7 +53,7 @@ A kind declares every check its reasons name in `checks: [{ name, mode, version?
 
 - `mode: "exact"` is deterministic and free, and filters. Core runs it under a `Caller` that refuses every call (exit 2 `invalid_input` if it tries), and conformance runs it twice.
 - `mode: "model"` means a model's answer decides it (`judged`, api 2's earlier name, still means `model`); it may call a model through the candidate's `Caller`, so list its calls in `planCandidate`. It filters only with a qualifying stability entry for its name, `version` (default `"1"`) and the model its `operation`'s route resolves to on the run. Without an `operation` it never filters.
-- A declaration without `run` covers the reasons `generate` returns. A `name` ending in `*` declares a family (`clip-*`). `source` (`deterministic`, `vision` or `decision`) is optional: absent, the declaration covers every source. Where a pack's and core's declarations both cover a reason, the model-backed one wins.
+- A declaration without `run` covers the reasons `generate` returns. A `name` ending in `*` declares a family (`clip-*`). `source` (`deterministic`, `vision` or `decision`) is optional: absent, the declaration covers every source. Where two of a kind's declarations cover a reason, the model-backed one wins. A pack declares only its own checks: one whose name is a check core declares, or a family covering one (`pal*`, `clip-*`), is refused at load, so a pack never changes how core's checks filter.
 
 A kind ships `stability: [entries]` for its model checks: the fields of core's `src/qa/stability.json` entries plus a required `measuredBy` (who or what measured it) and `labelledSetSha256` (the sha256 of the labelled set, 64 lower-case hex). Core validates them when the pack loads and refuses (exit 2 `extension_refused`) a malformed entry, one missing either field, or one naming a check that is not a `model` check of the kind. Malformed check declarations are refused too, and `gated` (a mode core uses for its own model decisions) is not available to a pack.
 
@@ -86,7 +86,7 @@ const kind: AssetKind = {
 };
 ```
 
-A reason naming a check no loaded kind or core declares is recorded advisory (`shadow`), its run's `filtering` state is `{check, state: "advisory", cause: "undeclared"}`, `stage`'s text output shows it as "(undeclared check)", and it never filters. Core's own kinds declare their checks through the same field: `still` and `sprite-strip` the image QA and `cutout`, `character-3d` its deterministic checks and families, and `facing` and `identity-lock` with mode `gated`, which only core may use (core gates those model decisions by its own rules). Their filtering is unchanged.
+A kind's reasons are judged by core's declarations and entries and its own, never another pack's. A reason naming a check neither its kind nor core declares is recorded advisory (`shadow`), its run's `filtering` state is `{check, state: "advisory", cause: "undeclared"}`, `stage`'s text output shows it as "(undeclared check)", and it never filters. Core's own kinds declare their checks through the same field: `still` and `sprite-strip` the image QA and `cutout`, `character-3d` its deterministic checks and families, and `facing` and `identity-lock` with mode `gated`, which only core may use (core gates those model decisions by its own rules). Their filtering is unchanged.
 
 ## Operations and roles
 

@@ -228,7 +228,7 @@ test("an undeclared reason never filters: advisory, shadow, named in the review 
   assert.deepEqual(run.filtering, [{ check: "tile-mood", state: "advisory", cause: "undeclared" }]);
   const text = formatRun(run, runDir);
   assert.match(text, /undeclared/);
-  assert.match(text, /tile-mood is declared by no loaded kind or core/);
+  assert.match(text, /tile-mood is declared by neither its kind nor core/);
 });
 
 test("the conformance suite fails a kind whose generate returns an undeclared reason", async () => {
@@ -328,4 +328,87 @@ test("a pack re-declaring a core model check as exact does not make it filter", 
   assert.equal(result.passed, false, "no counted reason passed");
   assert.equal(result.reasons[0]?.shadow, true);
   assert.deepEqual(result.filtering, [{ check: "identity", state: "advisory", cause: "no-entry" }]);
+});
+
+/** A pack kind that declares core's checks as its own: what loading refuses, handed to `stage`. */
+const intruder = (checks: KindCheck[], stability: StabilityEntry[] = []): Generator =>
+  fixtureKind({ checks, stability });
+
+async function stageStill(
+  generators: Generator[],
+  provider: Parameters<typeof scriptedProvider>[0] = {},
+) {
+  const world = await syntheticWorld();
+  return stage({
+    spec: { ...shelterSpec, kind: "still", frames: { count: 1 } },
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: world.profile,
+    routes: defaultRoutes,
+    provider: scriptedProvider(provider),
+    providerName: "scripted",
+    generators,
+    runsDir: world.runsDir,
+    candidates: 2,
+  });
+}
+
+test("a pack's entries for core's vision checks leave core's still advisory", async () => {
+  const ids = ["transparency", "frame-count", "identity", "perspective"];
+  const pack = intruder(
+    ids.map((name) => ({ name, mode: "model", operation: "vision", source: "vision" })),
+    ids.map((checkId) => entry({ checkId })),
+  );
+  const { run } = await stageStill([...imageGenerators, pack], { failIdentity: [0] });
+  assert.equal(run.filtered, 0);
+  assert.equal(run.candidates.length, 2);
+  for (const id of ids)
+    assert.deepEqual(
+      run.filtering?.find((f) => f.check === id),
+      { check: id, state: "advisory", cause: "no-entry" },
+      id,
+    );
+});
+
+test("a pack's model declaration of palette leaves core's palette check filtering", async () => {
+  // Core's still kind, its candidates failing core's deterministic palette check.
+  const still = imageGenerators.find((g) => g.kind === "still") as Generator;
+  const offPalette: Generator = {
+    ...still,
+    generate: async (...args) => {
+      const generated = await still.generate(...args);
+      const bad = reason("palette", false, "deterministic");
+      return { ...generated, qa: { passed: false, reasons: [...generated.qa.reasons, bad] } };
+    },
+  };
+  const others = imageGenerators.filter((g) => g !== still);
+  const alone = await stageStill([offPalette, ...others]);
+  assert.equal(alone.run.filtered, 2, "core's palette check filters both");
+  for (const pack of [
+    intruder([{ name: "palette", mode: "model" }]),
+    intruder([{ name: "pal*", mode: "model" }]),
+  ]) {
+    const { run } = await stageStill([offPalette, ...others, pack]);
+    assert.equal(run.filtered, 2);
+    assert.equal(
+      run.filtering?.find((f) => f.check === "palette"),
+      undefined,
+    );
+  }
+});
+
+test("loading a pack refuses a kind that declares a check core declares", () => {
+  for (const name of ["palette", "identity", "clip-*", "clip-walk", "c*"]) {
+    const kind = fixtureKind({ checks: [{ name, mode: "model" }] });
+    assert.throws(
+      () => checkExtension(packOf(kind), "probe"),
+      (error: unknown) =>
+        error instanceof ExtensionError &&
+        error.code === "extension_refused" &&
+        /overlaps core's check/.test(error.message),
+      name,
+    );
+  }
+  checkExtension(packOf(fixtureKind({ checks: [{ name: "tile-*", mode: "model" }] })), "probe");
 });

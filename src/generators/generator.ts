@@ -80,7 +80,7 @@ export interface KindCheckInput {
 /**
  * One QA check a kind declares (design section 11). Every check a kind's reasons name, from
  * `generate` or from a check's `run`, is declared here: core judges each reason by its
- * declaration, and a reason no loaded kind or core declares is advisory (`cause: "undeclared"`)
+ * declaration, and a reason neither its kind nor core declares is advisory (`cause: "undeclared"`)
  * and never filters.
  *
  * - `exact`: deterministic and free. With `run`, core runs it under a `Caller` that refuses every

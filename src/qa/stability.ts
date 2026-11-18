@@ -68,7 +68,7 @@ export interface FilteringState {
   state: "filtering" | "advisory";
   /**
    * Why an advisory check is advisory: no entry for its id and version, none for this model, or
-   * no loaded kind or core declares the check at all.
+   * neither the reason's kind nor core declares the check.
    */
   cause?: "no-entry" | "model-differs" | "undeclared";
 }
@@ -432,6 +432,43 @@ export function qaRegistry(
     checks: kinds.flatMap((k) => (k.checks ?? []).map(qaCheckOf)),
     entries: [...entries, ...kinds.flatMap((k) => k.stability ?? [])],
   };
+}
+
+/** Whether two declarations cover a common check id: the same id, or a family over the other. */
+export function overlaps(a: QaCheck, b: QaCheck): boolean {
+  if (a.family && b.family) {
+    const pa = a.id.slice(0, -1);
+    const pb = b.id.slice(0, -1);
+    return pa.startsWith(pb) || pb.startsWith(pa);
+  }
+  return covers(a, b.id) || covers(b, a.id);
+}
+
+/**
+ * The registry one kind's reasons are judged by: core's kinds' checks and the entries core ships
+ * (`entries`), with the kind's own declarations and entries. A pack kind's declaration that
+ * overlaps a check core declares, or its entry for a check id core declares, is left out, so no
+ * pack changes how core's checks filter, and one pack's declarations and entries never reach
+ * another kind's reasons. Loading a pack refuses both (src/extensions/registry.ts); this holds
+ * for kinds handed to `stage` directly too.
+ */
+export function kindQaRegistry(
+  kind: { checks?: readonly CheckDeclaration[]; stability?: readonly StabilityEntry[] },
+  core: ReadonlyArray<{
+    checks?: readonly CheckDeclaration[];
+    stability?: readonly StabilityEntry[];
+  }>,
+  entries: readonly StabilityEntry[] = STABILITY,
+): QaRegistry {
+  const base = qaRegistry(core, entries);
+  if (core.includes(kind)) return base;
+  const own = (kind.checks ?? [])
+    .map(qaCheckOf)
+    .filter((c) => !base.checks.some((b) => overlaps(b, c)));
+  const ownEntries = (kind.stability ?? []).filter(
+    (e) => !base.checks.some((b) => covers(b, e.checkId)),
+  );
+  return { checks: [...base.checks, ...own], entries: [...base.entries, ...ownEntries] };
 }
 
 /** Merges filtering states across candidates: one per check, advisory over filtering. */

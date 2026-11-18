@@ -194,13 +194,13 @@ export function formatRun(run: RunRecord, runDir: string): string {
     `staged in ${runDir}`,
   ];
   if (run.stopped) lines.push(`stopped early: ${run.stopped}`);
-  // A check no loaded kind or core declares is recorded, never filters, and is named here.
+  // A check neither its kind nor core declares is recorded, never filters, and is named here.
   const undeclared = new Set(
     (run.filtering ?? []).filter((s) => s.cause === "undeclared").map((s) => s.check),
   );
   for (const check of undeclared)
     lines.push(
-      `check ${check} is declared by no loaded kind or core: its reasons are shown, never filter`,
+      `check ${check} is declared by neither its kind nor core: its reasons are shown, never filter`,
     );
   for (const c of run.candidates) {
     lines.push(

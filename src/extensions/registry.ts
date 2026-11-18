@@ -23,7 +23,7 @@ import type {
 import { SettingsError } from "../env.ts";
 import { FRAMES_TRAITS } from "../frames.ts";
 import { checkKindSchemas } from "../kind-schemas.ts";
-import { parseStability } from "../qa/stability.ts";
+import { overlaps, parseStability, qaCheckOf, qaRegistry } from "../qa/stability.ts";
 import { OPERATION_ROLES, ROLE_CAPABILITY } from "../routes.ts";
 import type { Settings } from "../settings.ts";
 import { CORE_EXTENSION_NAME, coreExtension } from "./core.ts";
@@ -355,8 +355,10 @@ async function loadOne(
   };
 }
 
-/** The entry's extension, refused unless its shape and every id hold. */
 const CHECK_SOURCES: readonly unknown[] = ["deterministic", "vision", "decision"];
+
+/** The checks core's kinds declare; a pack kind may not declare one that overlaps them. */
+const CORE_QA_CHECKS = qaRegistry(coreExtension.kinds ?? []).checks;
 
 /**
  * A pack kind's QA declarations and stability entries, refused with a message naming the problem:
@@ -391,6 +393,12 @@ function checkKindQa(kind: AssetKind, refuse: (why: string) => ExtensionError): 
         throw refuse(
           `check "${name}" of kind ${kind.kind} has source ${JSON.stringify(check["source"])}; a source is "deterministic", "vision" or "decision"`,
         );
+      const declared = qaCheckOf({ name, mode });
+      const core = CORE_QA_CHECKS.find((c) => overlaps(c, declared));
+      if (core !== undefined)
+        throw refuse(
+          `check "${name}" of kind ${kind.kind} overlaps core's check "${core.id}"; a pack declares only its own checks, and core's filter as core declares them`,
+        );
       if (mode !== "exact") models.add(name);
     }
   }
@@ -409,6 +417,7 @@ function checkKindQa(kind: AssetKind, refuse: (why: string) => ExtensionError): 
       );
 }
 
+/** The entry's extension, refused unless its shape and every id hold. */
 export function checkExtension(value: unknown, line: string): Extension {
   const refuse = (why: string) => new ExtensionError("extension_refused", `${line}: ${why}`);
   if (value === null || typeof value !== "object")
