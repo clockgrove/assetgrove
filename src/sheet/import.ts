@@ -727,6 +727,30 @@ export function familyHandoff(
   return { spec, fields };
 }
 
+/**
+ * The spec a family of a sheet generated for `spec` hands off with, as `familyHandoff` builds it,
+ * with the values only known once the sheet is sliced (the family's name, frames and anchor)
+ * standing in. `generate-sheet` checks the layout against it before the sheet is paid for. The
+ * requesting spec's target fields count as set: they go to the family it asked for.
+ */
+export function familyHandoffStandIn(spec: AssetSpec, profile: TargetProfile): AssetSpec {
+  return {
+    kind: "sprite-strip",
+    assetId: spec.assetId,
+    ...(spec.subject !== undefined && { subject: spec.subject }),
+    ...(spec.gait !== undefined && { gait: spec.gait }),
+    animationFamily: spec.animationFamily ?? "family",
+    ...(spec.fields !== undefined && { fields: spec.fields }),
+    frames: {
+      count: 1,
+      width: profile.frames.width,
+      height: profile.frames.height,
+      ...(profile.frames.durationMs !== undefined && { durationMs: profile.frames.durationMs }),
+    },
+    anchor: { x: 0, y: 0 },
+  };
+}
+
 export interface WriteFamiliesOptions {
   importDir: string;
   /** The author's confirmed grouping (the parsed `grouping.json`). */

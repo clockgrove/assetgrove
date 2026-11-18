@@ -11,6 +11,8 @@ import { templatesFor } from "../animation/templates.ts";
 import { InputError } from "../errors.ts";
 import { knownTemplate } from "../animation/template-choice.ts";
 import { SliceError } from "../sheet/slice.ts";
+import { familyHandoffStandIn } from "../sheet/import.ts";
+import { checkSpecValues } from "../paths.ts";
 import type { AssetSpec } from "../types.ts";
 import { sharedTexts, subjectOf, withSharedText } from "../request.ts";
 import { formatImport } from "./import.ts";
@@ -61,6 +63,8 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   // A BIBLE.md holds the identity locks too: it is the lock bible unless --lock-bible names another.
   const lockBible = args.lockBible ?? (bible.markdown ? args.bible : undefined);
   const profile = await loadProfile(args.profile);
+  // Before the sheet is paid for: every spec value the layout names is one its families hand off with.
+  checkSpecValues(profile.value, familyHandoffStandIn(spec.value, profile.value));
   const brief =
     args.brief === undefined
       ? undefined

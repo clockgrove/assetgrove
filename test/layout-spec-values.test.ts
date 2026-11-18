@@ -43,15 +43,25 @@ function doc(result: Result): Record<string, any> {
 
 const stillSpec = { kind: "still", assetId: "fern", subject: "icon" } as unknown as AssetSpec;
 
-/** A provider script that records every call it is asked to answer in `calls`. */
+/**
+ * A provider script that records every call it is asked to answer in `calls`, a file beside it.
+ * The script's source is fixed text: the log path is found from the module's own URL.
+ */
 async function recordingScript(dir: string): Promise<{ script: string; calls: string }> {
   const calls = join(dir, "calls.log");
   const script = join(dir, "recording-script.mjs");
-  const record = (name: string) =>
-    `${name}: () => { appendFileSync(${JSON.stringify(calls)}, "${name}\\n"); throw new Error("no paid call expected"); }`;
   await writeFile(
     script,
-    `import { appendFileSync } from "node:fs";\nexport default { ${["image", "vision", "decide"].map(record).join(", ")} };\n`,
+    [
+      'import { appendFileSync } from "node:fs";',
+      'const log = new URL("./calls.log", import.meta.url);',
+      "const record = (name) => () => {",
+      "  appendFileSync(log, `${name}\\n`);",
+      '  throw new Error("no paid call expected");',
+      "};",
+      'export default { image: record("image"), vision: record("vision"), decide: record("decide") };',
+      "",
+    ].join("\n"),
   );
   approve(script);
   return { script, calls };
@@ -179,4 +189,52 @@ test("checkSpecValues passes a whole-string optional value and counts spec.field
     manifest: {},
   });
   checkSpecValues(fromFields, { ...shelterSpec, fields: { family: "idle" } });
+});
+
+test("checkSpecValues checks the manifest template only when the hand-off renders it", () => {
+  const spec = { ...shelterSpec } as Partial<AssetSpec>;
+  delete spec.animationFamily;
+  const layout = { media: "a/{{spec.assetId}}.{{output.extension}}", manifest: "a/m.json" };
+  // The synthetic manifest names spec.animationFamily; only the manifest preset renders it.
+  const atlasOnly = syntheticProfile({ layout, handoff: [{ preset: "atlas-json" }] });
+  checkSpecValues(atlasOnly, spec as AssetSpec);
+  const withManifest = syntheticProfile({
+    layout,
+    handoff: [{ preset: "atlas-json" }, { preset: "manifest" }],
+  });
+  assert.throws(
+    () => checkSpecValues(withManifest, spec as AssetSpec),
+    /manifest\.animationFamily needs spec\.animationFamily/,
+  );
+});
+
+test("generate-sheet refuses a spec its families could not hand off with, before the sheet is paid for", async () => {
+  const world = await syntheticWorld();
+  world.profile = syntheticProfile({
+    layout: {
+      media: "assets/{{spec.fields.slot}}/{{spec.animationFamily}}.{{output.extension}}",
+      manifest: "assets/{{spec.assetId}}/manifest.json",
+    },
+  });
+  approveProfile(world.profile, { targetDir: world.targetDir });
+  const { script, calls } = await recordingScript(world.dir);
+  const sheet = async (spec: AssetSpec, extra: string[]) => {
+    const { specPath, bible, profile } = await writeInputs(world, spec);
+    return cli([
+      "generate-sheet",
+      ...["--spec", specPath, "--bible", bible, "--profile", profile],
+      ...["--runs", world.runsDir, "--provider-script", script, ...extra, "--json"],
+    ]);
+  };
+  for (const extra of [["--dry-run"], []]) {
+    const r = await sheet(shelterSpec, extra);
+    assert.equal(r.code, 2, r.stderr);
+    assert.equal(doc(r)["error"].code, "invalid_input");
+    assert.match(doc(r)["error"].message, /layout\.media needs spec\.fields\.slot/);
+    assert.equal(existsSync(calls), false, "the provider was consulted");
+  }
+  // A spec that sets every value the layout names passes.
+  const complete = { ...shelterSpec, fields: { ...shelterSpec.fields, slot: "fern" } };
+  const r = await sheet(complete, ["--dry-run"]);
+  assert.equal(r.code, 0, r.stderr);
 });

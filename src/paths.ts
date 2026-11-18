@@ -8,6 +8,7 @@
  */
 import { posix, relative, sep } from "node:path";
 import { InputError } from "./errors.ts";
+import { DEFAULT_HANDOFF } from "./handoff/presets/index.ts";
 import { lookup } from "./template.ts";
 import type { AssetSpec, TargetProfile } from "./types.ts";
 
@@ -115,8 +116,9 @@ const WHOLE_OPTIONAL = /^\{\{\s*[\w.-]+\?\s*\}\}$/;
 
 /**
  * Refuses a profile whose layout (`media`, `manifest`, `provenance`) or manifest template names a
- * spec value this spec does not set, as `layout.media needs spec.animationFamily`. A whole-string
- * `"{{spec.x?}}"` in the manifest is optional and passes. The hand-off renders the same values, so
+ * spec value this spec does not set, as `layout.media needs spec.animationFamily`. The manifest
+ * template is checked only when the profile's hand-off lists the `manifest` preset, the one preset
+ * that renders it. A whole-string `"{{spec.x?}}"` in the manifest is optional and passes. The hand-off renders the same values, so
  * this refusal comes before any paid call instead of as a render error at pick.
  */
 export function checkSpecValues(profile: TargetProfile, spec: AssetSpec): void {
@@ -140,7 +142,16 @@ export function checkSpecValues(profile: TargetProfile, spec: AssetSpec): void {
   for (const key of ["media", "manifest", "provenance"] as const) {
     if (typeof layout?.[key] === "string") check(`layout.${key}`, layout[key]);
   }
-  check("manifest", profile.manifest);
+  const handoff: unknown = profile.handoff ?? DEFAULT_HANDOFF;
+  const rendersManifest =
+    Array.isArray(handoff) &&
+    handoff.some(
+      (entry: unknown) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        (entry as { preset?: unknown }).preset === "manifest",
+    );
+  if (rendersManifest) check("manifest", profile.manifest);
 }
 
 /**
