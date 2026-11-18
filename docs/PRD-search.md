@@ -68,7 +68,7 @@ Swapping the backend changes nothing to the left of the adapter or below it; del
 
 ## Asset cards
 
-Every picked asset gets a card, and the card is a concept in the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) (OKF, v0.2, Apache-2.0): a Markdown file with YAML front matter, built for files that agents write and people review in Git. A game's asset folder is an OKF bundle. Assetgrove writes the card when the asset is picked, and anyone can edit it after.
+Every picked asset gets a card, and the card is a concept in the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) (OKF, v0.2, Apache-2.0): a Markdown file with YAML front matter, built for files that agents write and people review in Git. A game's asset folder is an OKF bundle. Assetgrove writes the card when the asset is picked, and anyone can edit it after. Its `description` and `tags` start as a model-written summary of the media unless a person wrote them ([Model-written summaries](#model-written-summaries)).
 
 ```markdown
 ---
@@ -110,6 +110,17 @@ Used beside the front door; the warm glow should match the window light.
 - **Other tools can read the library.** Anything that reads OKF, such as Obsidian, MkDocs or Google's Knowledge Catalog, can browse a developer's assets; Assetgrove search is one more reader.
 - **The version is recorded:** the bundle's root `index.md` carries `okf_version: 0.2`. OKF is a draft, so Assetgrove uses its core fields and keeps everything else in its own.
 - **Without the add-on,** cards, indexes and logs are still written and committed. They are part of core Assetgrove.
+
+### Model-written summaries
+
+Search indexes a card's `title`, `description`, `tags` and body, and the image vector covers what a picture shows. Purpose, the scene an asset is for, and media the image model can't see well (3D beyond its turntable views) are findable by words only through card text, so a card carries a model-written summary of its media unless a person wrote one ([library.md](library.md#summaries)):
+
+- **Picked assets:** staging's per-candidate `vision` QA call also returns a summary (one or two plain sentences: subject, materials, colours, style, apparent use, and a few tags), so staging makes no extra call and its spend form shows the same jobs; `pick` writes the picked candidate's summary to the card.
+- **Other media and old cards:** `assetgrove card describe <address>` and `card describe --missing` write it for adopted or imported media, 3D assets (from their turntable views) and cards with no description: a paid command with a plan step (`--dry-run`), one spend confirmation, the caps and every call journalled. Media with no image view, such as audio, is skipped and listed, not guessed.
+- **Marked machine-written:** the card's `verified` list gains a `process:assetgrove-summary:<operation>:<model>` entry, so its trust tier reads as machine-confirmed until a person edits the text.
+- **People win:** a description or tags a person wrote, or changed through `card edit`, is never overwritten; `card describe` skips such a card and lists it with the reason.
+- **Routing:** the summary goes through the `vision` operation (role `vision`), so a developer routes it to any vision-capable provider, and `init`'s data flows list where the media goes.
+- **Search:** a summary is ordinary card text: `find` by words finds a word that appears only in it, and a rebuilt index matches. It is stored and shown as data, never as instructions, like all card prose. The bench measured no gain from card text on the labelled image library (0.736 against 0.745 for the image vector alone, 2026-11-16), so the ranking and the bench bars are unchanged; the value is in what pixels don't carry and in browsing cards in OKF readers.
 
 ## What gets indexed and how it stays fresh
 

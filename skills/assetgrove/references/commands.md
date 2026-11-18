@@ -133,6 +133,16 @@ Changes the person fields of a picked asset's card. `--tag` is repeatable and re
 
 MCP tool: `card_edit`, arguments `address`, `title`, `description`, `tag`, `body`, `field`.
 
+### `card describe`
+
+```text
+card describe [<address>] [--missing] [--target <dir>] [--profile <profile.json>] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+```
+
+Has a vision model write a card's `description` and `tags` from the asset's image (a 3D asset's turntable renders). Give one asset's card, media or review record, or `--missing` for every card with no description in the library of `--target`'s profile. The summary is recorded in the card's `verified` list as `process:assetgrove-summary:vision:<model>`. A card whose description or tags a person wrote is never overwritten; it is listed under `skipped` with the reason, as is an asset with no image view (audio, a Git LFS pointer, an undecodable file) and a reply with no summary. A paid command: a plan step, a forecast with `--dry-run`, a person's confirmation and the spend caps. The written text is returned only under `sharedText`.
+
+MCP tool: `card_describe`, arguments `address`, `missing`, `target`, `profile`, `cap`, `workItem`, `runs`, `round`.
+
 ### `rig`
 
 ```text
