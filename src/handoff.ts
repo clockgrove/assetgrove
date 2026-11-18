@@ -522,21 +522,19 @@ function byAsset(prepared: readonly PreparedTargetWrite[]): PreparedTargetWrite[
 }
 
 /**
- * Every family handed off for the asset of `group` so far: each library card of the asset's
- * families (id `<assetId>-<family>`, the spec's kind and subject, a locked version), with the
+ * Every family handed off for the asset of `group` so far: each library card that records an
+ * `animationFamily` and whose id is `<the spec's assetId>-<that family>` (the id a hand-off of that
+ * asset and family gives it; the library holds one card per id), with a locked version; the
  * group's own families in place of theirs, sorted by name.
  */
 function handedOffFamilies(group: readonly PreparedTargetWrite[]): HandedOffFamily[] {
   const last = group.at(-1) as PreparedTargetWrite;
   const { spec } = last.write;
-  const prefix = `${spec.assetId}-`;
-  const subject = spec.subject ?? spec.assetId;
   const families = new Map<string, HandedOffFamily>();
   for (const card of last.library.cards) {
-    if (!card.id.startsWith(prefix) || card.id.length === prefix.length) continue;
-    if (card.kind !== spec.kind || card.subject !== subject) continue;
+    const name = card.animationFamily;
+    if (name === undefined || card.id !== `${spec.assetId}-${name}`) continue;
     if (card.sha256 === undefined || card.resource === undefined) continue;
-    const name = card.id.slice(prefix.length);
     families.set(name, {
       name,
       id: card.id,
@@ -959,13 +957,15 @@ async function commitWritten(
   const { write } = prepared;
   for (const [i, { preset, options }] of presets.entries()) {
     const files = presetFiles[i] ?? [];
-    let found: string[];
-    if (preset.scope === "families") {
-      // It ran on another hand-off of this asset, which checks what it wrote.
-      const families = prepared.familyContexts[i];
-      if (families === undefined) continue;
-      found = await preset.check(families, options, files, read);
-    } else found = await preset.check(presetContext, options, files, read);
+    // A families preset that ran on another hand-off of this asset is checked there; this
+    // hand-off's media is still read back for its mark below.
+    const families = prepared.familyContexts[i];
+    const found =
+      preset.scope !== "families"
+        ? await preset.check(presetContext, options, files, read)
+        : families === undefined
+          ? []
+          : await preset.check(families, options, files, read);
     problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
     // The mark is read back from the media and from every file this preset wrote that can carry it.
     const expected = {

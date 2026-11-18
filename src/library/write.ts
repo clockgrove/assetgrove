@@ -164,9 +164,10 @@ export interface FoundCard {
   resource?: string;
   /** The card's `lock.sha256`. */
   sha256?: string;
-  /** The card's `kind` and `subject`. */
+  /** The card's `kind`, `subject` and `animationFamily`. */
   kind?: string;
   subject?: string;
+  animationFamily?: string;
 }
 
 const SKIP_DIR = (name: string) =>
@@ -236,6 +237,7 @@ export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: Unr
           lock?: { bible?: string; sha256?: unknown };
           kind?: unknown;
           subject?: unknown;
+          animationFamily?: unknown;
         };
         found.push({
           dir,
@@ -249,6 +251,9 @@ export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: Unr
           ...(typeof data.lock?.sha256 === "string" && { sha256: data.lock.sha256 }),
           ...(typeof data.kind === "string" && { kind: data.kind }),
           ...(typeof data.subject === "string" && { subject: data.subject }),
+          ...(typeof data.animationFamily === "string" && {
+            animationFamily: data.animationFamily,
+          }),
         });
       } catch {
         // Not a card this build reads; `library check` reports it, and its folder's projections keep
@@ -802,6 +807,9 @@ export async function commitLibraryWrite(
     reviewResource: `${assetId}.review.json`,
     kind: input.spec.kind,
     subject: input.spec.subject ?? input.spec.assetId,
+    ...(input.spec.animationFamily !== undefined && {
+      animationFamily: input.spec.animationFamily,
+    }),
     assetgrove: input.assetgrove,
   });
   const existing = await readOwnCard(plan.cardPath, config.root, dir);

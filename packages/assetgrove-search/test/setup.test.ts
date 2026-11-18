@@ -113,6 +113,31 @@ describe("search setup", () => {
     await rm(dir, { recursive: true });
   });
 
+  it("gives up a primary that stalls mid-file and takes the file from the mirror", async () => {
+    const { manifest, dir, m } = await fixture(fromPrimary, fromMirror);
+    const held: Array<import("node:http").ServerResponse> = [];
+    const stalling = createServer((req, res) => {
+      const body = fromPrimary(req.url ?? "");
+      if (!req.url?.includes("text_model")) return void res.end(body);
+      // Headers and a first chunk, then nothing, as the CI download that hung for 30 minutes.
+      res.writeHead(200, { "content-length": String(1 << 20) });
+      res.write("text");
+      held.push(res);
+    });
+    servers.push(stalling);
+    await new Promise<void>((resolve) => stalling.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(stalling.address() as AddressInfo).port}`;
+    await setupModel({
+      modelsDir: dir,
+      manifest: { ...manifest, primaryBase: base },
+      stallMs: 200,
+    });
+    assert.equal(await modelIsInstalled(dir, manifest), true);
+    assert.deepEqual(m.hits, ["/onnx__text_model_int8.onnx"]);
+    held.forEach((res) => res.destroy());
+    await rm(dir, { recursive: true });
+  });
+
   it("leaves nothing when both hosts fail", async () => {
     const { manifest, dir } = await fixture(
       () => undefined,

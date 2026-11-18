@@ -17,7 +17,14 @@ export interface SetupOptions {
   manifest?: ModelManifest;
   fetch?: typeof fetch;
   onProgress?: (message: string) => void;
+  /**
+   * How long a download may go without a byte before it is given up and the next host tried;
+   * defaults to 60 seconds. Tests shorten it.
+   */
+  stallMs?: number;
 }
+
+const STALL_MS = 60_000;
 
 export function modelFolder(modelsDir: string, manifest: ModelManifest = MODEL_MANIFEST): string {
   return join(modelsDir, manifest.id);
@@ -45,10 +52,41 @@ export async function modelIsInstalled(
   return true;
 }
 
-async function download(doFetch: typeof fetch, url: string): Promise<Buffer> {
-  const res = await doFetch(url, { redirect: "follow" });
-  if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
-  return Buffer.from(await res.arrayBuffer());
+/**
+ * One file's bytes. A host that sends nothing for `stallMs` (before the response or between two
+ * chunks) is given up, so a stalled connection falls back to the next host instead of hanging.
+ */
+async function download(doFetch: typeof fetch, url: string, stallMs: number): Promise<Buffer> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => controller.abort(new Error(`no data from ${new URL(url).host} for ${stallMs} ms`)),
+      stallMs,
+    );
+  };
+  arm();
+  try {
+    const res = await doFetch(url, { redirect: "follow", signal: controller.signal });
+    if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
+    if (!res.body) return Buffer.from(await res.arrayBuffer());
+    const chunks: Uint8Array[] = [];
+    const reader = res.body.getReader();
+    for (;;) {
+      arm();
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks);
+  } catch (error) {
+    throw controller.signal.aborted && controller.signal.reason instanceof Error
+      ? controller.signal.reason
+      : error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -95,7 +133,7 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
       for (const a of attempts) {
         say(`${file.path} from ${a.host}`);
         try {
-          const bytes = await download(doFetch, a.url);
+          const bytes = await download(doFetch, a.url, options.stallMs ?? STALL_MS);
           const got = createHash("sha256").update(bytes).digest("hex");
           if (got !== file.sha256) {
             mismatch = true;

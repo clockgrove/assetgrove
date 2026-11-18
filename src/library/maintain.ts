@@ -244,10 +244,14 @@ async function expectedFields(
     ...(bibleResource !== undefined && { bibleResource }),
     kind: typeof data["kind"] === "string" ? data["kind"] : "",
     subject: typeof data["subject"] === "string" ? data["subject"] : "",
+    ...(typeof data["animationFamily"] === "string" && {
+      animationFamily: data["animationFamily"],
+    }),
     assetgrove: byMatch?.[1] ?? assetgroveVersion(),
   });
-  // kind and subject have no record besides the card: they stay as the card has them.
-  for (const key of ["kind", "subject"]) if (typeof data[key] !== "string") delete fields[key];
+  // kind, subject and animationFamily have no record besides the card: they stay as it has them.
+  for (const key of ["kind", "subject", "animationFamily"])
+    if (typeof data[key] !== "string") delete fields[key];
   return fields;
 }
 

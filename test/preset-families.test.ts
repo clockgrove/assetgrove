@@ -63,9 +63,15 @@ function registry(...extra: HandoffPreset[]): PresetRegistry {
   return { presets: new Map([...PRESETS, ...extra.map((p) => [p.name, p] as const)]) };
 }
 
-/** A target and an imported sheet of `fern`, its families written by `write(families)`. */
-async function imported(presets: HandoffPreset[]) {
-  const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-families-")));
+/**
+ * A target and an imported sheet of `fern` (or `asset.assetId`, into `asset.dir`), its families
+ * written by `write(families)`.
+ */
+async function imported(
+  presets: HandoffPreset[],
+  asset: { assetId?: string; subject?: string; dir?: string } = {},
+) {
+  const dir = asset.dir ?? realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-families-")));
   const targetDir = join(dir, "target");
   const profile = syntheticProfile({
     handoff: [{ preset: "manifest" }, ...presets.map((p) => ({ preset: p.name }))],
@@ -91,10 +97,11 @@ async function imported(presets: HandoffPreset[]) {
     sheet: syntheticSheet().png,
     sheetPath: "sheets/synthetic.png",
     tool: "synthetic",
-    assetId: "fern",
+    assetId: asset.assetId ?? "fern",
+    ...(asset.subject !== undefined && { subject: asset.subject }),
     profile,
     importsDir: join(dir, "imports"),
-    importId: "imp1",
+    importId: `imp-${asset.assetId ?? "fern"}`,
     propose: { call },
   });
   const write = (families: Grouping["families"]) =>
@@ -164,6 +171,29 @@ test("rewriting one family keeps the other in the families preset's output", asy
     walk.families[0]!.result.library!.sha256,
   );
   assert.equal(after.families[1].sha256, again.families[0]!.result.library!.sha256);
+});
+
+test("another asset of the same subject is not one of the asset's families", async () => {
+  const { dir, targetDir, write } = await imported([familiesPreset], { subject: "fern" });
+  // `fern-armored-idle` and `fern-portrait` share the subject and the `fern-` id prefix.
+  const armored = await imported([familiesPreset], {
+    assetId: "fern-armored",
+    subject: "fern",
+    dir,
+  });
+  await armored.write([IDLE]);
+  const portrait = await imported([familiesPreset], {
+    assetId: "fern-portrait",
+    subject: "fern",
+    dir,
+  });
+  await portrait.write([{ ...WALK, name: "pose" }]);
+  await write([IDLE]);
+  const doc = await readOut(targetDir);
+  assert.deepEqual(
+    doc.families.map((f: { name: string; media: string }) => [f.name, f.media]),
+    [["idle", "assets/source/fern/idle.png"]],
+  );
 });
 
 test("one write-families run of two families runs the families preset once, with both", async () => {
