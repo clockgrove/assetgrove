@@ -86,7 +86,7 @@ export interface KindCheckInput {
  * - `exact`: deterministic and free. With `run`, core runs it under a `Caller` that refuses every
  *   call, and the conformance suite runs it twice and fails it when it calls or answers
  *   differently. Its reasons filter.
- * - `model`: a model's answer decides it (`judged` is api 2's earlier name for the same). With
+ * - `model`: a model's answer decides it. With
  *   `run`, it may call a model through the candidate's `Caller`; its calls belong in the kind's
  *   `planCandidate`. Its reasons filter only with a qualifying stability entry (core's
  *   src/qa/stability.json, or the kind's own `stability`) for its name, its version and the model
@@ -100,7 +100,7 @@ export interface KindCheck {
    * starts with what precedes the `*` (`clip-*` covers `clip-walk`).
    */
   name: string;
-  mode: "exact" | "model" | "judged" | "gated";
+  mode: "exact" | "model" | "gated";
   /** Bumped when what the check asks or measures changes; a stability entry holds for one. "1" when absent. */
   version?: string;
   /** The `source` of the reasons it covers; absent: every source. */

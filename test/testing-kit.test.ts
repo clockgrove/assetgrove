@@ -159,17 +159,21 @@ test("an exact check that answers differently the second time fails the suite", 
   );
 });
 
-test("a judged check is not run by the suite, and a kind without a sample fails", async () => {
-  const judged: KindCheck = {
+test("a model check that throws on the scripted provider fails the suite, and a kind without a sample fails", async () => {
+  const model: KindCheck = {
     ...opaque,
     name: "looks-right",
-    mode: "judged",
+    mode: "model",
     run: () => {
       throw new Error("ran");
     },
   };
-  const report = await runConformance(packWith(judged), probeSample);
-  assert.deepEqual(report.failures, []);
+  const report = await runConformance(packWith(model), probeSample);
+  assert.equal(report.failures.length, 1);
+  assert.match(
+    report.failures[0]!,
+    /^kind probe:dot model check looks-right threw on the scripted provider: ran/,
+  );
   const missing = await runConformance(packWith(opaque), {});
   assert.deepEqual(missing.failures, [
     "kind probe:dot has no sample: give options.kinds[<kind>] a spec",
@@ -204,7 +208,7 @@ test("a preset whose check passes with nothing written fails the suite", async (
   ]);
 });
 
-test("core runs a kind's exact checks under a refusing Caller and judged ones under the candidate's", async () => {
+test("core runs a kind's exact checks under a refusing Caller and model ones under the candidate's", async () => {
   const seen: string[] = [];
   const probe = (name: string, mode: KindCheck["mode"]): KindCheck => ({
     name,
@@ -220,7 +224,7 @@ test("core runs a kind's exact checks under a refusing Caller and judged ones un
     routes: defaultRoutes,
   });
   const reasons = await runKindChecks(
-    [probe("exact-one", "exact"), probe("judged-one", "judged")],
+    [probe("exact-one", "exact"), probe("model-one", "model")],
     {
       spec: { kind: "probe:dot" } as KindSample["spec"],
       profile: sampleProfile(),
@@ -230,7 +234,7 @@ test("core runs a kind's exact checks under a refusing Caller and judged ones un
     call,
     () => new RefusingCaller(),
   );
-  assert.deepEqual(seen, ["exact-one:refusing", "judged-one:candidate"]);
+  assert.deepEqual(seen, ["exact-one:refusing", "model-one:candidate"]);
   assert.equal(reasons.length, 2);
 });
 

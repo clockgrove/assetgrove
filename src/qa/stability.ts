@@ -388,18 +388,18 @@ export interface QaRegistry {
 /** One kind's check declaration as the registry holds it. */
 export interface CheckDeclaration {
   name: string;
-  mode: "exact" | "model" | "judged" | "gated";
+  mode: "exact" | "model" | "gated";
   version?: string;
   source?: Reason["source"];
   operation?: string;
 }
 
-/** A declaration as a `QaCheck`: `model` (or `judged`) is model-backed; `exact` and `gated` are not. */
+/** A declaration as a `QaCheck`: `model` is model-backed; `exact` and `gated` are not. */
 export function qaCheckOf(declaration: CheckDeclaration): QaCheck {
   return {
     id: declaration.name,
     version: declaration.version ?? "1",
-    modelBacked: declaration.mode === "model" || declaration.mode === "judged",
+    modelBacked: declaration.mode === "model",
     ...(declaration.source !== undefined && { source: declaration.source }),
     ...(declaration.operation !== undefined && { operation: declaration.operation }),
     ...(declaration.name.endsWith("*") && { family: true as const }),

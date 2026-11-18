@@ -362,9 +362,8 @@ const CORE_QA_CHECKS = qaRegistry(coreExtension.kinds ?? []).checks;
 
 /**
  * A pack kind's QA declarations and stability entries, refused with a message naming the problem:
- * each check needs a name (a trailing `*` declares a family), a mode `exact` or `model` (`judged`,
- * api 2's earlier name for `model`), and optionally a string `version` and `operation`, a reason
- * `source` and a `run` function; each entry must pass core's validation (`parseStability`, with
+ * each check needs a name (a trailing `*` declares a family), a mode `exact` or `model`, and
+ * optionally a string `version` and `operation`, a reason `source` and a `run` function; each entry must pass core's validation (`parseStability`, with
  * `measuredBy` and `labelledSetSha256`) and name a `model` check of the kind.
  */
 function checkKindQa(kind: AssetKind, refuse: (why: string) => ExtensionError): void {
@@ -380,11 +379,11 @@ function checkKindQa(kind: AssetKind, refuse: (why: string) => ExtensionError): 
         name === "" ||
         name === "*" ||
         name.slice(0, -1).includes("*") ||
-        (mode !== "exact" && mode !== "model" && mode !== "judged") ||
+        (mode !== "exact" && mode !== "model") ||
         (check?.["run"] !== undefined && typeof check["run"] !== "function")
       )
         throw refuse(
-          `every check of kind ${kind.kind} must have a name (a "*" only at its end, after a prefix), a mode "exact" or "model" ("judged" is the same as "model") and, if it runs, a run function; got ${JSON.stringify({ name, mode })}`,
+          `every check of kind ${kind.kind} must have a name (a "*" only at its end, after a prefix), a mode "exact" or "model" and, if it runs, a run function; got ${JSON.stringify({ name, mode })}`,
         );
       for (const field of ["version", "operation"])
         if (check?.[field] !== undefined && typeof check[field] !== "string")

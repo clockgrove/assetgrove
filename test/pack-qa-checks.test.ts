@@ -219,6 +219,17 @@ test("loading a pack refuses a kind's entries that name no measurer, hash or mod
   );
 });
 
+test("loading a pack refuses a check with the removed mode judged", () => {
+  const judged = { ...modelCheck, mode: "judged" } as unknown as KindCheck;
+  assert.throws(
+    () => checkExtension(packOf(fixtureKind({ checks: [judged] })), "the pack"),
+    (error: unknown) =>
+      error instanceof ExtensionError &&
+      error.code === "extension_refused" &&
+      /a mode "exact" or "model"/.test(error.message),
+  );
+});
+
 test("an undeclared reason never filters: advisory, shadow, named in the review output", async () => {
   const kind = fixtureKind({}, [reason("tile-mood", false, "vision")]);
   const { run, runDir } = await stageProbe(kind);
@@ -264,6 +275,60 @@ test("the conformance suite fails an exact check that returns an undeclared reas
   });
   assert.equal(report.passed, false);
   assert.ok(report.failures.some((f) => f.includes("tile-extra")));
+});
+
+test("the conformance suite judges each kind by its own and core's checks, as stage does", async () => {
+  // probe:a returns a failing "shared" reason that only probe:b declares.
+  const a = fixtureKind({ kind: "probe:a" }, [reason("shared", false, "deterministic")]);
+  const b = fixtureKind({
+    kind: "probe:b",
+    checks: [{ name: "shared", mode: "exact", source: "deterministic" }],
+  });
+  const sample = (kind: string) => ({ spec: { ...shelterSpec, kind }, profile: sampleProfile() });
+  const report = await runConformance(
+    { api: EXTENSION_API, name: "probe", kinds: [a, b] },
+    { kinds: { "probe:a": sample("probe:a"), "probe:b": sample("probe:b") } },
+  );
+  assert.equal(report.passed, false);
+  assert.deepEqual(
+    report.failures.filter((f) => f.includes('"shared"')).map((f) => f.split(" ")[1]),
+    ["probe:a"],
+  );
+
+  // stage records the same reason undeclared and does not filter on it.
+  const world = await syntheticWorld();
+  const { run } = await stage({
+    spec: { ...shelterSpec, kind: "probe:a" },
+    specDir: world.dir,
+    bible: world.bible,
+    bibleDir: world.bibleDir,
+    profile: world.profile,
+    routes: defaultRoutes,
+    provider: scriptedProvider(),
+    providerName: "scripted",
+    generators: [...(coreExtension.kinds ?? []), a, b],
+    runsDir: world.runsDir,
+    candidates: 1,
+  });
+  assert.equal(run.candidates.length, 1);
+  assert.deepEqual(run.filtering, [{ check: "shared", state: "advisory", cause: "undeclared" }]);
+});
+
+test("the conformance suite fails a model check that returns an undeclared reason", async () => {
+  const sample = {
+    kinds: { [KIND]: { spec: { ...shelterSpec, kind: KIND }, profile: sampleProfile() } },
+  };
+  const stray = fixtureKind({
+    checks: [{ ...modelCheck, run: () => [reason("tile-stray", false, "vision")] }],
+  });
+  const report = await runConformance(packOf(stray), sample);
+  assert.equal(report.passed, false);
+  assert.ok(
+    report.failures.some((f) => f.includes("model check tile-look") && f.includes("tile-stray")),
+  );
+
+  const clean = await runConformance(packOf(fixtureKind({ checks: [modelCheck] })), sample);
+  assert.deepEqual(clean.failures, []);
 });
 
 test("core's still kind leaves no undeclared state when staged", async () => {
