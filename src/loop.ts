@@ -30,6 +30,7 @@ import type { IdentityAgreement, IdentityRecordCheck } from "./identity.ts";
 import { applyStability, mergeFiltering } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
+import { checkFrameLayout, withLayoutParameters } from "./frames.ts";
 import { runKindChecks } from "./generators/generator.ts";
 import type { Generator, PlannedCall } from "./generators/generator.ts";
 import { loadBibleInputs, sha256, sniffMediaType } from "./request.ts";
@@ -432,6 +433,14 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
           },
         };
       }
+      if (generator.frames === "strip") {
+        // A strip kind's output carries core's frame layout; its provenance records the frames.
+        const layout = checkFrameLayout(generator.kind, generated.output);
+        generated = {
+          ...generated,
+          parameters: withLayoutParameters(generator.kind, generated.parameters, layout),
+        };
+      }
       const id = `c${index + 1}`;
       // Record paths use "/"; the candidate's writes are checked before the first one.
       const { artifacts, artifactNames } = artifactPaths(
@@ -551,7 +560,9 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   } catch {
     // A spec with no bible references (a 3D character from its turnaround) has none to show.
   }
-  const contact = await writeContact(runDir, spec, run.candidates, references, profile);
+  const contact = await writeContact(runDir, spec, run.candidates, references, profile, {
+    kinds: options.generators,
+  });
   if (contact !== undefined) run.contactSheet = contact;
   await writeRun(runDir, run);
   return { run, runDir };

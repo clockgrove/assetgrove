@@ -56,6 +56,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     provider: providers,
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
+    ...(ctx.extensions && { kinds: ctx.extensions }),
   });
   // The apply after this plan runs its own prompt-policy check first: buildWorkPlan forecasts it
   // too, with its readings, and its second call when the compiler can write model-written text.

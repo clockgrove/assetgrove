@@ -8,6 +8,7 @@
 import type { z } from "zod";
 import { InputError } from "../../errors.ts";
 import { extensionOf, unavailableId } from "../../extensions/errors.ts";
+import type { FramesTrait, KindTraits } from "../../frames.ts";
 import type { TargetProfile } from "../../types.ts";
 import { asepriteJsonPreset } from "./aseprite-json.ts";
 import { atlasJsonPreset } from "./atlas-json.ts";
@@ -20,6 +21,8 @@ export interface PresetContext {
   context: Record<string, unknown>;
   /** The rendered `layout.manifest`, relative to the target directory. */
   manifestRel: string;
+  /** The `frames` trait the hand-off's kind declares; absent when it declares none. */
+  frames?: FramesTrait;
 }
 
 /** One file a preset writes, relative to the target directory. */
@@ -69,6 +72,8 @@ export interface PresetRegistry {
   settingsPath?: string | undefined;
   /** Every operation with its role, core's and the loaded kinds' (`ExtensionRegistry.operations`). */
   operations?: Readonly<Record<string, string>>;
+  /** The loaded kinds with their declared `frames` trait. */
+  kinds?: KindTraits["kinds"];
 }
 
 /**

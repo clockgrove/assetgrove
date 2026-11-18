@@ -3,6 +3,7 @@ import type { Caller } from "../calls.ts";
 import type { CallParameters } from "../call-parameters.ts";
 import type { ReferenceViewCache } from "../model3d/views.ts";
 import type { ClipMapCache } from "../model3d/clip-map.ts";
+import type { FramesTrait } from "../frames.ts";
 import type { Routes } from "../routes.ts";
 import type {
   AssetSpec,
@@ -92,6 +93,13 @@ export interface KindCheck {
 export interface Generator {
   /** The `kind` of asset spec this generator handles. */
   kind: string;
+  /**
+   * How the kind's output is cut into frames. A `strip` kind's output carries core's frame layout
+   * as `output.fields.frames` (`FrameLayout`, src/frames.ts), which core checks after `generate`,
+   * and gets core's frame features: plan/apply, contact-sheet key frames, strip thumbnails and
+   * staleness, the atlas presets. `single`: one image. Absent: the kind has no frames.
+   */
+  frames?: FramesTrait;
   /**
    * The calls one candidate makes, from the routes; their estimates are reserved before the run
    * starts. Throws `InputError` for a spec that cannot be generated, before any spend.

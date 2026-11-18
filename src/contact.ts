@@ -10,6 +10,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { animationQa } from "./animation/qa.ts";
 import { splitStrip } from "./animation/strip.ts";
+import { CORE_REGISTRY } from "./extensions/registry.ts";
+import { frameLayoutOf, isStripKind } from "./frames.ts";
+import type { KindTraits } from "./frames.ts";
 import { drawDigits, textWidth } from "./image/digits.ts";
 import { createRaster, decodeImage, encodePng } from "./image/raster.ts";
 import type { Raster } from "./image/raster.ts";
@@ -219,12 +222,13 @@ export function candidateNumber(id: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** The images of one staged candidate by its kind. */
+/** The images of one staged candidate: a 3D character's turntable, a strip kind's key frames. */
 async function candidateImages(
   runDir: string,
   spec: AssetSpec,
   candidate: ContactCandidate,
   profile: TargetProfile | undefined,
+  traits: KindTraits,
 ): Promise<Raster[]> {
   if (spec.kind === "character-3d") {
     // Turntable frames are the view renders; the clip frames are not part of the turntable.
@@ -239,10 +243,11 @@ async function candidateImages(
   if (!candidate.mediaType.startsWith("image/")) return [];
   const image = tryDecode(new Uint8Array(await readFile(join(runDir, candidate.file))));
   if (!image) return [];
-  if (spec.kind !== "sprite-strip") return [image];
-  const frames = candidate.fields["frames"] as { width?: number; height?: number } | undefined;
-  const width = frames?.width ?? spec.frames?.width;
-  const height = frames?.height ?? spec.frames?.height ?? image.height;
+  if (!isStripKind(spec.kind, traits)) return [image];
+  // The frame layout the strip kind's output carries; a record without one is cut by its spec.
+  const layout = frameLayoutOf(candidate.fields);
+  const width = layout?.width ?? spec.frames?.width;
+  const height = layout?.height ?? spec.frames?.height ?? image.height;
   if (width === undefined || height !== image.height || image.width % width !== 0) return [image];
   const all = splitStrip(image, { width, height });
   const flagged = [...flaggedFrames(candidate.reasons), ...stripQaFlags(all, spec, profile)];
@@ -273,10 +278,12 @@ export async function writeContact(
   references: Uint8Array[],
   /** The run's profile: a staged strip's row then always shows the frames animation QA flags. */
   profile?: TargetProfile,
+  /** The kinds' `frames` traits: a strip kind's candidate is shown as its key frames. */
+  traits: KindTraits = CORE_REGISTRY,
 ): Promise<string | undefined> {
   const rows: ContactRow[] = [];
   for (const [index, candidate] of candidates.entries()) {
-    const images = await candidateImages(runDir, spec, candidate, profile);
+    const images = await candidateImages(runDir, spec, candidate, profile, traits);
     if (images.length > 0) rows.push({ number: candidateNumber(candidate.id, index + 1), images });
   }
   const refs = references.map(tryDecode).filter((r): r is Raster => r !== undefined);

@@ -19,6 +19,8 @@ import { changed, fingerprint, listTree } from "./list.ts";
 import { openProject } from "./project.ts";
 import type { Project } from "./project.ts";
 import { canonicalAddress, readTree } from "./read.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
+import type { KindTraits } from "../frames.ts";
 import { parseSearchPath, searchTemplates } from "./search.ts";
 import type { PathQuery } from "./search.ts";
 
@@ -66,12 +68,20 @@ export class TreeServer {
   private queue: Promise<void> = Promise.resolve();
 
   private readonly search: SearchRunner | undefined;
+  /** The loaded kinds' `frames` traits, which a strip kind's thumbnails read; core's when absent. */
+  private readonly traits: KindTraits;
 
   /** `search` is given only while a loaded extension fills the search slot. */
-  constructor(dir: string, stateDir: string, search?: SearchRunner) {
+  constructor(
+    dir: string,
+    stateDir: string,
+    search?: SearchRunner,
+    traits: KindTraits = CORE_REGISTRY,
+  ) {
     this.dir = dir;
     this.stateDir = stateDir;
     this.search = search;
+    this.traits = traits;
   }
 
   /** The project, opened fresh for each request, so a change on disk shows at the next read. */
@@ -146,7 +156,7 @@ export class TreeServer {
             ],
           };
         }
-        const result = await readTree(await this.project(), uri);
+        const result = await readTree(await this.project(), uri, this.traits);
         return { contents: result.contents };
       } catch (error) {
         throw readError(error, uri);

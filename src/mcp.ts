@@ -43,6 +43,7 @@ import { projectDir } from "./tree/project.ts";
 import { runFind } from "./commands/search.ts";
 import { TreeServer } from "./tree/serve.ts";
 import type { SearchRunner } from "./tree/serve.ts";
+import type { KindTraits } from "./frames.ts";
 
 export interface ToolContext {
   provider?: GenerationProvider;
@@ -57,6 +58,8 @@ export interface ToolContext {
   promptAllow?: readonly string[];
   /** The plan command's request digest, recorded in the saved plan. */
   requestDigest?: string;
+  /** The loaded kinds' `frames` traits (the settings' extensions); core's own kinds when absent. */
+  kinds?: KindTraits;
 }
 
 type Arguments = Record<string, unknown>;
@@ -117,6 +120,7 @@ export async function generationTool(
       ...(context.log && { log: context.log }),
       ...(context.runCapUsd !== undefined && { runCapUsd: context.runCapUsd }),
       ...(context.promptAllow && { promptAllow: context.promptAllow }),
+      ...(context.kinds && { kinds: context.kinds }),
       ...(stringArg(args, "out", false) && { outDir: args["out"] as string }),
     });
     return result;
@@ -531,7 +535,7 @@ export async function serveMcp(
       createServer(
         ctx,
         codec,
-        new TreeServer(dir, ctx.settings.stateDir, searchRunner(ctx, dir)),
+        new TreeServer(dir, ctx.settings.stateDir, searchRunner(ctx, dir), ctx.extensions),
         era,
       ),
     {

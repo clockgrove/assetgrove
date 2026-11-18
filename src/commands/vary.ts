@@ -10,6 +10,8 @@ import { writeContactRows } from "../contact.ts";
 import { InputError } from "../errors.ts";
 import { decodeImage } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
+import { framesOf } from "../frames.ts";
 import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
 import { readRun } from "../loop.ts";
@@ -52,7 +54,10 @@ function extensionOf(mediaType: string): string {
 }
 
 /** The source run's record and the candidate to vary; refused unless it is an image. */
-async function source(args: VaryArgs): Promise<{ run: RunRecord; candidate: StagedCandidate }> {
+async function source(
+  args: VaryArgs,
+  ctx: RunContext,
+): Promise<{ run: RunRecord; candidate: StagedCandidate }> {
   const run = await readRun(resolve(args.run)).catch((error: unknown) => {
     throw new InputError(`cannot read the run ${args.run}: it needs a run.json from stage`, {
       cause: error,
@@ -63,7 +68,7 @@ async function source(args: VaryArgs): Promise<{ run: RunRecord; candidate: Stag
     throw new InputError(`run ${args.run} has no candidate "${args.candidate}"`);
   if (!candidate.mediaType.startsWith("image/"))
     throw new InputError(`candidate ${candidate.id} is ${candidate.mediaType}; vary edits images`);
-  if (run.spec.kind !== "still")
+  if (framesOf(run.spec.kind, ctx.extensions ?? CORE_REGISTRY) !== "single")
     throw new InputError(
       `candidate ${candidate.id} is a ${run.spec.kind} candidate; vary edits still candidates`,
     );
@@ -74,7 +79,7 @@ async function source(args: VaryArgs): Promise<{ run: RunRecord; candidate: Stag
 async function prepare(args: VaryArgs, ctx: RunContext) {
   const count = args.count ?? DEFAULT_VARIATIONS;
   if (!Number.isInteger(count) || count < 1) throw new InputError(`invalid count: ${count}`);
-  const { run, candidate } = await source(args);
+  const { run, candidate } = await source(args, ctx);
   const providers = await providerSet(args.providerScript, ctx);
   const route = providers.routes["edit"];
   if (!route) throw new InputError('no model route for operation "edit"');

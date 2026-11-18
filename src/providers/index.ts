@@ -65,5 +65,6 @@ export async function planningContext(
     ledger: spendLedger(ctx, workItem),
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
+    ...(ctx.extensions && { kinds: ctx.extensions }),
   };
 }

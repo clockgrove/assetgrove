@@ -1,4 +1,5 @@
 /** A candidate of a request_change run answers its requests when picked (issue #238). */
+import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";

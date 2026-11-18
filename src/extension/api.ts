@@ -24,6 +24,8 @@ export const EXTENSION_APIS: readonly number[] = [EXTENSION_API];
 /** The zod core validates preset options with, the same instance the context hands a pack. */
 export { z };
 
+export type { FrameLayout, FramesTrait } from "../frames.ts";
+
 /** An asset kind: one spec `kind`, its planned calls and how one candidate is made. */
 export type AssetKind = Generator;
 
