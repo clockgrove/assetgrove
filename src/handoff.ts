@@ -34,6 +34,7 @@ import { shapeModelHandoff } from "./model3d/handoff.ts";
 import { readRun, writeRun } from "./loop.ts";
 import type { StagedCandidate } from "./loop.ts";
 import {
+  checkSpecValues,
   checkWrites,
   embedsProvenance,
   inGitDir,
@@ -454,7 +455,10 @@ export function provenanceLayout(write: TargetWrite, mediaRel: string): string |
 /** Everything `writeToTarget` checks and renders before its first write; writes nothing. */
 export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTargetWrite> {
   const { profile, spec } = write;
-  // First: the profile's hand-off presets and their options.
+  // First: every spec value the layout and manifest name is set (a run staged before stage
+  // checked this reaches here with a spec that lacks one).
+  checkSpecValues(profile, spec);
+  // Then: the profile's hand-off presets and their options.
   const presets = resolveHandoff(profile, write.registry);
   // Before anything is written: the output must be declarable under a licence the target takes.
   const licensed = requireLicensable(profile, write.provenance, write.registry?.operations);

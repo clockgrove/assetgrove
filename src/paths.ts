@@ -110,12 +110,46 @@ export function embedsProvenance(template: unknown): boolean {
   return false;
 }
 
+const SPEC_VALUE = /\{\{\s*spec\.([\w.-]+)(\?)?\s*\}\}/g;
+const WHOLE_OPTIONAL = /^\{\{\s*[\w.-]+\?\s*\}\}$/;
+
+/**
+ * Refuses a profile whose layout (`media`, `manifest`, `provenance`) or manifest template names a
+ * spec value this spec does not set, as `layout.media needs spec.animationFamily`. A whole-string
+ * `"{{spec.x?}}"` in the manifest is optional and passes. The hand-off renders the same values, so
+ * this refusal comes before any paid call instead of as a render error at pick.
+ */
+export function checkSpecValues(profile: TargetProfile, spec: AssetSpec): void {
+  const values = { ...spec.fields, ...spec };
+  const check = (field: string, template: unknown): void => {
+    if (typeof template === "string") {
+      if (WHOLE_OPTIONAL.test(template)) return;
+      // Inline, `{{spec.x?}}` is not a template value and renders as written.
+      for (const [, path, optional] of template.matchAll(SPEC_VALUE)) {
+        if (path !== undefined && !optional && lookup(values, path) === undefined) {
+          throw new InputError(`${field} needs spec.${path}, which the spec does not set`);
+        }
+      }
+    } else if (Array.isArray(template)) {
+      template.forEach((item, i) => check(`${field}.${i}`, item));
+    } else if (template !== null && typeof template === "object") {
+      for (const [key, item] of Object.entries(template)) check(`${field}.${key}`, item);
+    }
+  };
+  const layout = profile.layout as Partial<TargetProfile["layout"]> | undefined;
+  for (const key of ["media", "manifest", "provenance"] as const) {
+    if (typeof layout?.[key] === "string") check(`layout.${key}`, layout[key]);
+  }
+  check("manifest", profile.manifest);
+}
+
 /**
  * Refuses, before any paid call, a profile layout whose paths for this spec could never be written:
  * `media`, `manifest` and `provenance` are rendered from the spec and the profile, with each value
  * only known at hand-off standing in as its own name, and checked as the hand-off checks them.
  */
 export function checkLayout(profile: TargetProfile, spec: AssetSpec): void {
+  checkSpecValues(profile, spec);
   const layout = profile.layout as Partial<TargetProfile["layout"]> | undefined;
   if (typeof layout?.media !== "string" || typeof layout.manifest !== "string") return;
   const context = {
