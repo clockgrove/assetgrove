@@ -25,7 +25,7 @@ permissions:
 # directory under packages/ whose package.json has an `assetgrove` field, scripts/packs.ts), and pack runs
 # one leg per pack and system, on the same systems as test; each pack has its own install, and its leg does
 # its work only when the change touches the pack or what it reads of core and the repository. No pack is
-# named here: a new pack gets its legs with no edit to this file. search-bench runs the search bench on a
+# named here but in the Godot pack's Godot setup: a new pack gets its legs with no edit to this file. search-bench runs the search bench on a
 # pull request that touches search. The roll-up `ci`, the one required check, needs check, test, every pack
 # leg and the bench when it ran.
 #
@@ -216,6 +216,31 @@ jobs:
         if: matrix.pack.touched
         working-directory: ${{ matrix.pack.dir }}
         run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # The Godot pack's tests run Godot itself (issue #422): Godot 4.7.2, without .NET, pinned by the
+      # setup-godot action, outside the checkout. The action joins path, downloads-path and bin-path onto
+      # the home folder (os.homedir(): $HOME, on Windows %USERPROFILE%), so they are relative to it. The
+      # tests run the Godot 4.7.2 on PATH; the action puts its link `godot` there, which on Windows has no
+      # .exe, so there the console executable's folder goes on PATH too. Without Godot on PATH those tests
+      # skip.
+      - name: Set up Godot
+        if: matrix.pack.touched && matrix.pack.short == 'assetgrove-godot'
+        uses: chickensoft-games/setup-godot@ac93246ea68518a384c1c280a496e5989341f2f6 # v2.4.3
+        with:
+          version: 4.7.2
+          use-dotnet: false
+          include-templates: false
+          path: assetgrove-godot
+          downloads-path: assetgrove-godot-downloads
+          bin-path: assetgrove-godot-bin
+
+      - name: Put the Godot console executable on PATH on Windows
+        if: matrix.pack.touched && matrix.pack.short == 'assetgrove-godot' && runner.os == 'Windows'
+        shell: bash
+        run: |
+          exe=$(find "$(cygpath -u "$USERPROFILE")/assetgrove-godot" -name 'Godot_v4.7.2-stable_win64_console.exe' | head -n 1)
+          test -n "$exe"
+          cygpath -w "$(dirname "$exe")" >> "$GITHUB_PATH"
 
       - name: Check
         if: matrix.pack.touched
