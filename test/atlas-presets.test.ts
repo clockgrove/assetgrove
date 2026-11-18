@@ -3,6 +3,7 @@ import { gitTarget } from "./fixtures/git.ts";
 import { approve, approveProfile } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +116,25 @@ test("hash and array outputs pass the checks; the animation and frameTags cover 
   );
   assert.equal(Array.isArray(a.frames), false);
   assert.equal(Array.isArray(b.frames), true);
+});
+
+/** The sha256 of each atlas file this fixture wrote before presets became async (#420). */
+const BASE_ATLAS = {
+  "atlas-json hash": "6dadf28fd6adcc128e806606a92891735b808eb346a99001226f4041dd67a86c",
+  "atlas-json array": "6a128eafbd965bcd9629cc3d4578bfd1709adb449ef6a7d7bf1074d87300e884",
+  "aseprite-json hash": "388fc34f5136f2c3fbda0c5fa05ce2e92f6b7617f2869ac054678066856b26a1",
+  "aseprite-json array": "21ae67267651105c2adc6a55dbafaae2e3bd201ea27d9c7b4495e3a27b816e9b",
+} as const;
+
+test("the async atlas presets write the same bytes as before", async () => {
+  for (const [key, want] of Object.entries(BASE_ATLAS)) {
+    const [preset, shape] = key.split(" ") as ["atlas-json" | "aseprite-json", "hash" | "array"];
+    const target = await dir();
+    await writeToTarget(stripWrite(target, [{ preset, options: { shape } }]));
+    const file = preset === "atlas-json" ? "shelter.atlas.json" : "shelter.aseprite.json";
+    const bytes = await readFile(join(target, "assets/source/fern", file));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), want, key);
+  }
 });
 
 /** A registry whose atlas presets write the document `corrupt` has changed. */

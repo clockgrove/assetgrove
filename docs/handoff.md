@@ -23,6 +23,10 @@ Each preset reads the JSON and the PNG back. A problem exits 6 `handoff_check_fa
 
 Phaser reads both: `load.atlas` takes `atlas-json` in either shape, and `load.aseprite` takes `aseprite-json` (`array` shape, with its `frameTags`). PixiJS's `Spritesheet` reads `atlas-json` with the `hash` shape and its `animations`.
 
+## Presets and the target
+
+Every preset's `write` is async and gets `read`, which reads a file of the target, such as an engine's `.import` file, under the rule every hand-off write follows: a path outside the target, in `.git`, or in the settings or state is refused (exit 2). A preset returns its files and core writes them: it checks each path, writes them with the media, reads them back through the preset's check and lists them under `handoff` in the result. A preset may declare `scope: "families"`: it then writes once for every animation family handed off for the asset so far, read from the library, not only the families of this run, so rewriting one family keeps the others in its output. `manifest`, `atlas-json` and `aseprite-json` write for one hand-off. See [extensions.md](extensions.md#engine-presets).
+
 ## Writer
 
 The writers are hand-written: no maintained library writes these formats, and the output is a few fixed-shape JSON objects. See [decisions.md](decisions.md#atlas-writers-are-hand-written).
