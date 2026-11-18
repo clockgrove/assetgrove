@@ -14,6 +14,7 @@ test("every ERROR line counts, with or without colour, and nothing else does", (
     "   at: _reimport_file (editor/file_system/editor_file_system.cpp:3201)",
     "SCRIPT ERROR: Parse Error: Unexpected identifier.",
     "USER ERROR: assetgrove-godot: res://fern.tres did not load",
+    "SHADER ERROR: Unknown identifier in expression: 'albedo'.",
     'WARNING: 36 RIDs of type "CanvasItem" were leaked.',
     "an ERROR inside a line is not an error line",
   ].join("\r\n");
@@ -21,6 +22,7 @@ test("every ERROR line counts, with or without colour, and nothing else does", (
     "ERROR: Error importing 'res://assets/fern-walk.png'.",
     "SCRIPT ERROR: Parse Error: Unexpected identifier.",
     "USER ERROR: assetgrove-godot: res://fern.tres did not load",
+    "SHADER ERROR: Unknown identifier in expression: 'albedo'.",
   ]);
   assert.deepEqual(errorLines("[ DONE ] reimport\n"), []);
 });
