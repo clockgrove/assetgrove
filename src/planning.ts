@@ -69,6 +69,9 @@ import { filteringState, mergeFiltering, STYLE_SCORE_CHECK } from "./qa/stabilit
 import type { StabilityEntry } from "./qa/stability.ts";
 import type { RunRecord } from "./loop.ts";
 import { writeContact } from "./contact.ts";
+import { framesOf, isStripKind } from "./frames.ts";
+import type { KindTraits } from "./frames.ts";
+import { CORE_REGISTRY } from "./extensions/registry.ts";
 import { writeRun } from "./loop.ts";
 import { canonicalJson, jobOf } from "./runs/plan.ts";
 import type { PlanJob } from "./runs/plan.ts";
@@ -255,6 +258,8 @@ export interface CreatePlanOptions {
   requestDigest?: string;
   /** The stability entries the style verdict filters by (src/qa/stability.json by default). */
   stability?: readonly StabilityEntry[];
+  /** The kinds' `frames` traits; core's own kinds when absent. */
+  kinds?: KindTraits;
 }
 
 /** The run cap when no developer settings give one. */
@@ -437,7 +442,9 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
   // Before any paid call: the paths the hand-off will write for this spec can be written.
   checkLayout(profile, spec);
   const routes = routesOf(options);
-  const generationOperation = spec.kind === "sprite-strip" ? "edit" : "still";
+  const kinds = options.kinds ?? CORE_REGISTRY;
+  const strip = isStripKind(spec.kind, kinds);
+  const generationOperation = strip ? "edit" : "still";
   const generationRoute = route(routes[generationOperation], "generation");
   const compilerRoute = route(optionalRoute(routes, "compiler") ?? routes.vision, "compiler");
   const verdictRoute = route(routes[STYLE_VERDICT_OPERATION], STYLE_VERDICT_OPERATION);
@@ -487,11 +494,11 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
     width: spec.frames?.width ?? profile.frames.width,
     height: spec.frames?.height ?? profile.frames.height,
   };
-  const frameCount = spec.kind === "sprite-strip" ? (spec.frames?.count ?? 1) : 1;
-  if (!["still", "sprite-strip"].includes(spec.kind))
+  const frameCount = strip ? (spec.frames?.count ?? 1) : 1;
+  if (framesOf(spec.kind, kinds) === undefined)
     throw new InputError(`no planned generator handles asset kind ${spec.kind}`);
-  if (spec.kind === "sprite-strip" && (!spec.keyPose || !spec.animationFamily))
-    throw new InputError("sprite-strip requires an approved keyPose and animationFamily");
+  if (strip && (!spec.keyPose || !spec.animationFamily))
+    throw new InputError(`${spec.kind} requires an approved keyPose and animationFamily`);
   if (
     !Number.isInteger(frameCount) ||
     frameCount < 1 ||
@@ -1204,6 +1211,8 @@ export interface ResolveOptions {
   runCapUsd?: number;
   /** The settings' prompt-policy allow terms (`promptPolicy.allow`). */
   promptAllow?: readonly string[];
+  /** The kinds' `frames` traits; core's own kinds when absent. */
+  kinds?: KindTraits;
 }
 
 export interface ApplyPlanOptions extends ResolveOptions {
@@ -1341,6 +1350,7 @@ async function checkedPlan(
       ...(plan.inputs["brief"] && { briefPath: plan.inputs["brief"].path }),
       ...(plan.inputs["runOptions"] && { runOptionsPath: plan.inputs["runOptions"].path }),
       identityMode: identityModeOf(plan.operations),
+      ...(options.kinds && { kinds: options.kinds }),
       provider: options.provider,
       ...(options.routes && { routes: options.routes }),
       ...(options.runCapUsd !== undefined && { runCapUsd: options.runCapUsd }),
@@ -1744,6 +1754,7 @@ export async function applyPlan(
       run.candidates,
       contactSheetReferences(refs).map((r) => r.bytes),
       prepared.profile,
+      options.kinds ?? CORE_REGISTRY,
     );
     if (contact !== undefined) run.contactSheet = contact;
     await writeRun(runDir, run);

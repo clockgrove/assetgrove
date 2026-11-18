@@ -36,7 +36,7 @@ interface BrowseArgs {
 export async function browse(args: BrowseArgs, ctx: RunContext): Promise<ReadResult> {
   if (args.address === undefined) throw new InputError("missing <address>");
   const project = await openProject(projectDir(args.target), ctx.settings.stateDir);
-  return readTree(project, args.address);
+  return readTree(project, args.address, ctx.extensions);
 }
 
 function describe(result: ReadResult): string {

@@ -17,6 +17,9 @@ import { splitFrontMatter } from "../bible.ts";
 import type { Caller } from "../calls.ts";
 import { turntableViews } from "../compare.ts";
 import { ProviderError } from "../errors.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
+import { isStripKind } from "../frames.ts";
+import type { KindTraits } from "../frames.ts";
 import { STALENESS_OPERATION } from "../routes.ts";
 import { stripShape, thumbnail } from "../tree/thumbs.ts";
 import type { ThumbShape } from "../tree/thumbs.ts";
@@ -199,18 +202,21 @@ export interface StaleSubject {
 }
 
 /** How a strip is cut, as the tree's thumbnail cuts it: the frames its provenance records. */
-function stalenessShape(subject: StaleSubject): ThumbShape {
-  if (subject.kind !== "sprite-strip" || subject.provenance === undefined) return "image";
+function stalenessShape(subject: StaleSubject, traits: KindTraits): ThumbShape {
+  if (!isStripKind(subject.kind, traits) || subject.provenance === undefined) return "image";
   try {
     const record = findProvenance(JSON.parse(readFileSync(subject.provenance, "utf8")));
-    return stripShape(subject.kind, record?.parameters);
+    return stripShape(subject.kind, record?.parameters, traits);
   } catch {
     return "image";
   }
 }
 
 /** The thumbnail the call is shown: 512 px at most, a strip's key frames, a 3D asset's turntable. */
-export async function stalenessThumbnail(subject: StaleSubject): Promise<LoadedReference[]> {
+export async function stalenessThumbnail(
+  subject: StaleSubject,
+  traits: KindTraits = CORE_REGISTRY,
+): Promise<LoadedReference[]> {
   const budget = 4 * 1024 * 1024;
   let png: Uint8Array | undefined;
   if (extname(subject.media).toLowerCase() === ".glb") {
@@ -232,7 +238,7 @@ export async function stalenessThumbnail(subject: StaleSubject): Promise<LoadedR
     try {
       const media = await readMedia(subject.media);
       if (media.kind !== "lfs-pointer")
-        png = thumbnail([media.bytes], stalenessShape(subject), budget);
+        png = thumbnail([media.bytes], stalenessShape(subject, traits), budget);
     } catch {
       png = undefined;
     }

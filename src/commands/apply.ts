@@ -57,6 +57,7 @@ async function prepare(plan: string, args: ApplyArgs, ctx: RunContext) {
     provider: providers,
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
+    ...(ctx.extensions && { kinds: ctx.extensions }),
   });
   const near = await savedPlanNearMatches(plan, ctx);
   const work: WorkPlan = await buildWorkPlan(applyCommand, args, {
@@ -182,6 +183,7 @@ confirmation authorizes this generation spend; resulting assets remain pending r
       ...(args.note !== undefined && { note: args.note }),
       ...(ctx.run?.promptPolicy !== undefined && { promptPolicy: ctx.run.promptPolicy }),
       runId: basename(dir),
+      ...(ctx.extensions && { kinds: ctx.extensions }),
     });
     const bible = await loadBible(
       (JSON.parse(await readFile(args.plan, "utf8")) as SavedPlan).inputs["bible"]!.path,

@@ -56,7 +56,9 @@ import type { CandidateReview, LibraryPlan } from "./library/write.ts";
 import { WriteJournal } from "./library/undo.ts";
 import type { VersionStatus } from "./library/review.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
-import type { PresetRegistry, ResolvedPreset } from "./handoff/presets/index.ts";
+import type { PresetContext, PresetRegistry, ResolvedPreset } from "./handoff/presets/index.ts";
+import { CORE_REGISTRY } from "./extensions/registry.ts";
+import { framesOf } from "./frames.ts";
 import type { HandoffProblem, PresetFile } from "./handoff/presets/index.ts";
 import type { AssetSpec, ConfirmationRecord, Provenance, TargetProfile } from "./types.ts";
 
@@ -349,7 +351,7 @@ export interface PreparedTargetWrite {
   gate: ApprovalGate;
   guard: TargetGuard;
   presets: ResolvedPreset[];
-  presetContext: { profile: TargetProfile; context: Record<string, unknown>; manifestRel: string };
+  presetContext: PresetContext;
   presetFiles: PresetFile[][];
   mediaRel: string;
   manifestRel: string;
@@ -569,7 +571,14 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   // the manifest, the provenance file and the template context carry the binding.
   provenance.binding = bindingOf(provenance, output.bytes);
 
-  const presetContext = { profile, context, manifestRel };
+  const kinds = write.registry?.kinds ?? CORE_REGISTRY.kinds;
+  const frames = framesOf(spec.kind, { kinds });
+  const presetContext: PreparedTargetWrite["presetContext"] = {
+    profile,
+    context,
+    manifestRel,
+    ...(frames !== undefined && { frames }),
+  };
   const presetFiles: PresetFile[][] = presets.map(({ preset, options }) =>
     preset.write(presetContext, options),
   );

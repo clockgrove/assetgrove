@@ -8,6 +8,9 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { splitStrip } from "../animation/strip.ts";
 import { keyIndexes } from "../contact.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
+import { isStripKind } from "../frames.ts";
+import type { KindTraits } from "../frames.ts";
 import { createRaster, decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { resampleTo } from "../image/resample.ts";
@@ -96,8 +99,12 @@ export function keyFrames(strip: Raster, frame: StripFrame): Raster[] {
 export type ThumbShape = "image" | "row" | { strip: StripFrame };
 
 /** A strip's frame from provenance parameters (`frame`, `frameCount`); the whole image when absent. */
-export function stripShape(kind: unknown, parameters: unknown): ThumbShape {
-  if (kind !== "sprite-strip" || parameters === null || typeof parameters !== "object") {
+export function stripShape(
+  kind: unknown,
+  parameters: unknown,
+  traits: KindTraits = CORE_REGISTRY,
+): ThumbShape {
+  if (!isStripKind(kind, traits) || parameters === null || typeof parameters !== "object") {
     return "image";
   }
   // An import records them at the top of its parameters; a generated strip under `postprocess`.

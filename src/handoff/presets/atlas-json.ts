@@ -37,7 +37,7 @@ export function stripGeometry(ctx: PresetContext, preset: string): StripGeometry
   const media = lookup(ctx.context, "output.path");
   const assetId = spec["assetId"];
   if (
-    spec["kind"] !== "sprite-strip" ||
+    ctx.frames !== "strip" ||
     frames === undefined ||
     frames === null ||
     !posInt(frames["width"]) ||

@@ -12,6 +12,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 import { turntableViews } from "../compare.ts";
 import { InputError } from "../errors.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
+import type { KindTraits } from "../frames.ts";
 import { BIBLE_PATH } from "../init.ts";
 import { findProvenance } from "../library/adopt.ts";
 import { MACHINE_FIELDS } from "../library/card.ts";
@@ -24,6 +26,7 @@ import type { ReviewRecord } from "../library/review.ts";
 import { sniffMediaType } from "../request.ts";
 import { readRunState } from "../runs/execute.ts";
 import { runLockLive } from "../runs/lock.ts";
+import { isStripKind } from "../frames.ts";
 import { VIEWS, formatAddress, pageAddress, parseAddress } from "./address.ts";
 import type { Address } from "./address.ts";
 import {
@@ -211,6 +214,7 @@ interface View {
   bible: string | undefined;
   /** Carded ids that are view names, so have no address; the root reports them. */
   reserved: string[];
+  traits: KindTraits;
 }
 
 function assetChild(view: View, asset: Asset): Child {
@@ -360,12 +364,13 @@ function readBytes(path: string | undefined): Uint8Array | undefined {
 }
 
 /** How a library asset's image is cut for its thumbnail, from its own provenance record. */
-function shapeOf(project: Project, asset: Asset): ThumbShape {
-  if (asset.kind !== "sprite-strip") return "image";
+function shapeOf(view: View, asset: Asset): ThumbShape {
+  const { project, traits } = view;
+  if (!isStripKind(asset.kind, traits)) return "image";
   const path = sourcePath(project, asset, "provenance");
   // The record may be the file itself or embedded in a manifest, as `library check` finds it.
   const record = path === undefined ? undefined : findProvenance(readJsonObject(path));
-  return stripShape(asset.kind, record?.parameters);
+  return stripShape(asset.kind, record?.parameters, traits);
 }
 
 function stillAsset(view: View, id: string): Asset {
@@ -572,7 +577,7 @@ async function readRuns(view: View, at: Address, r: Reader): Promise<void> {
     ...(found.artifacts.length > 0 && { artifacts: found.artifacts }),
   });
   const bytes = readBytes(file);
-  const shape = stripShape(spec["kind"], found.parameters);
+  const shape = stripShape(spec["kind"], found.parameters, view.traits);
   if (bytes && found.mediaType?.startsWith("image/")) {
     r.thumb([bytes], shape);
   } else {
@@ -687,7 +692,7 @@ async function readImage(
     if (images.length > 0) r.thumb(images, "row");
     return media.bytes;
   }
-  if (!r.thumb([media.bytes], shapeOf(view.project, asset))) {
+  if (!r.thumb([media.bytes], shapeOf(view, asset))) {
     r.json({ address: r.address, kind: "file", ...where, bytes: media.bytes.length });
   }
   return media.bytes;
@@ -728,18 +733,25 @@ async function readVersions(
     current: n === versions.length,
     image: found?.from ?? null,
   });
-  if (found && !is3d(path)) r.thumb([found.bytes], shapeOf(view.project, asset));
+  if (found && !is3d(path)) r.thumb([found.bytes], shapeOf(view, asset));
   return undefined;
 }
 
 /** The library as it is now, for one read. */
-function viewOf(project: Project, game: string): View {
+function viewOf(project: Project, game: string, traits: KindTraits): View {
   if (game !== project.library.game) {
     throw new InputError(`this project's game is "${project.library.game}", not "${game}"`);
   }
   const reserved: string[] = [];
   const assets = loadAssets(project, reserved);
-  return { project, game, assets, reserved, bible: bibleVersionOf(join(project.dir, BIBLE_PATH)) };
+  return {
+    project,
+    game,
+    assets,
+    reserved,
+    traits,
+    bible: bibleVersionOf(join(project.dir, BIBLE_PATH)),
+  };
 }
 
 /** Whether segments below a game root name a folder (views, runs, an asset, its versions). */
@@ -757,9 +769,13 @@ export function canonicalAddress(text: string): string {
 }
 
 /** Reads one address of the project's tree; an unknown address exits 2 `invalid_input`. */
-export async function readTree(project: Project, address: string): Promise<ReadResult> {
+export async function readTree(
+  project: Project,
+  address: string,
+  traits: KindTraits = CORE_REGISTRY,
+): Promise<ReadResult> {
   const at = parseAddress(address);
-  const view = viewOf(project, at.game);
+  const view = viewOf(project, at.game, traits);
   const [first] = at.segments;
   const folder = isFolder(at.segments);
   if (!folder && at.after !== undefined) {

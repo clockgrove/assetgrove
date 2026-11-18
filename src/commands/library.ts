@@ -307,7 +307,7 @@ async function prepareJudge(args: JudgeStaleArgs, ctx: RunContext) {
       noHistory.push(subject.asset);
       continue;
     }
-    const images = await stalenessThumbnail(subject);
+    const images = await stalenessThumbnail(subject, ctx.extensions);
     if (images.length === 0) noThumbnail.push(subject.asset);
     else pending.push({ subject, images, change });
   }
