@@ -31,23 +31,64 @@ export interface PresetFile {
   content: Uint8Array | string;
 }
 
-export interface HandoffPreset<Options = unknown> {
+/**
+ * Reads a file in the target by its path relative to the target: its bytes, or undefined when it
+ * is missing. A path core's target-path rule refuses (outside the target, through a link out of it,
+ * in `.git`, in the settings or state, a file the validator names) is refused (exit 2).
+ */
+export type TargetRead = (path: string) => Promise<Uint8Array | undefined>;
+
+/** One animation family of an asset that has been handed off (a family scope preset's input). */
+export interface HandedOffFamily {
+  /** The animation family. */
+  name: string;
+  /** Its library id, `<assetId>-<family>`. */
+  id: string;
+  /** Its media, relative to the target, with `/`. */
+  media: string;
+  /** The sha256 of its current media. */
+  sha256: string;
+}
+
+/** What a `scope: "families"` preset reads: every family handed off for one asset so far. */
+export interface FamiliesContext {
+  profile: TargetProfile;
+  /** The spec's `assetId` the families share. */
+  assetId: string;
+  /** The library's families of the asset with this hand-off's in place of their own, by name. */
+  families: HandedOffFamily[];
+}
+
+interface PresetShape<Options, Context> {
   name: string;
   /** Validates the profile entry's `options`; anything it refuses is invalid input (exit 2). */
   optionsSchema: z.ZodType<Options>;
-  /** The files this preset writes. Core writes them, after checking every path. */
-  write(ctx: PresetContext, options: Options): PresetFile[];
+  /**
+   * The files this preset writes. `read` reads the target as it is before this hand-off writes.
+   * Core writes the files, after checking every path.
+   */
+  write(ctx: Context, options: Options, read: TargetRead): Promise<PresetFile[]>;
   /**
    * Reads back what was written and returns its problems; empty when it holds. `read` reads a
    * written file by its relative path, or undefined when it is missing.
    */
-  check(
-    ctx: PresetContext,
-    options: Options,
-    files: PresetFile[],
-    read: (path: string) => Promise<Uint8Array | undefined>,
-  ): Promise<string[]>;
+  check(ctx: Context, options: Options, files: PresetFile[], read: TargetRead): Promise<string[]>;
 }
+
+/** A preset that writes for one hand-off: one asset, or one family of it. */
+export interface AssetPreset<Options = unknown> extends PresetShape<Options, PresetContext> {
+  scope?: undefined;
+}
+
+/**
+ * A preset that writes for every family handed off for an asset so far, read from the library,
+ * not only the families of this run: rewriting one family keeps the others in its files.
+ */
+export interface FamiliesPreset<Options = unknown> extends PresetShape<Options, FamiliesContext> {
+  scope: "families";
+}
+
+export type HandoffPreset<Options = unknown> = AssetPreset<Options> | FamiliesPreset<Options>;
 
 /** Core's presets by name; the registry (src/extensions/registry.ts) adds the extensions'. */
 export const PRESETS: ReadonlyMap<string, HandoffPreset> = new Map<string, HandoffPreset>(

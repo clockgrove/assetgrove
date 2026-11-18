@@ -10,7 +10,7 @@ import { writeToTarget } from "../src/handoff.ts";
 import { markProblems } from "../src/handoff/mark-check.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { PRESETS } from "../src/handoff/presets/index.ts";
-import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
+import type { AssetPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import {
   DIGITAL_SOURCE_TYPES,
@@ -64,11 +64,11 @@ function stripWrite(targetDir: string, handoff: unknown): TargetWrite {
 
 const unmarked = encodePng(createRaster(2, 2));
 function withExtra(content: Uint8Array): PresetRegistry {
-  const manifest = PRESETS.get("manifest") as HandoffPreset;
-  const extra: HandoffPreset = {
+  const manifest = PRESETS.get("manifest") as AssetPreset;
+  const extra: AssetPreset = {
     ...manifest,
     name: "extra-image",
-    write: () => [{ path: "assets/extra.png", content }],
+    write: async () => [{ path: "assets/extra.png", content }],
     check: async () => [],
   };
   return { presets: new Map([...PRESETS, ["extra-image", extra]]) };

@@ -228,7 +228,7 @@ export async function checkAtlas(
 export const atlasJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
   name: "atlas-json",
   optionsSchema: atlasOptions("hash") as z.ZodType<{ shape: AtlasShape }>,
-  write(ctx, { shape }) {
+  async write(ctx, { shape }) {
     const g = stripGeometry(ctx, "atlas-json");
     const doc = buildAtlas(g, shape, false);
     doc.animations = animationsOf(g);

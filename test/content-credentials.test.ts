@@ -14,7 +14,7 @@ import { disclose } from "../src/disclosure.ts";
 import { DEVELOPMENT_SIGNER_WARNING, writeToTarget } from "../src/handoff.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { PRESETS } from "../src/handoff/presets/index.ts";
-import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
+import type { AssetPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { encodeWebpLossless } from "../src/image/webp.ts";
 import {
@@ -164,11 +164,11 @@ for (const format of FORMATS) {
 
 /** A preset that, at check time, replaces the written media with `replace(bytes)`. */
 function tampering(replace: (bytes: Uint8Array) => Promise<Uint8Array>): PresetRegistry {
-  const manifest = PRESETS.get("manifest") as HandoffPreset;
-  const tamper: HandoffPreset = {
+  const manifest = PRESETS.get("manifest") as AssetPreset;
+  const tamper: AssetPreset = {
     ...manifest,
     name: "tamper",
-    write: () => [],
+    write: async () => [],
     check: async (context) => {
       const run = context.context["run"] as { targetDir: string };
       const file = join(run.targetDir, `${MEDIA}.png`);

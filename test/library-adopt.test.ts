@@ -374,7 +374,7 @@ test("a failed read-back records no version and puts back every file the adopt w
   const broken: HandoffPreset = {
     name: "broken",
     optionsSchema: PRESETS.get("manifest")!.optionsSchema,
-    write: () => [{ path: "assets/broken.txt", content: "written\n" }],
+    write: async () => [{ path: "assets/broken.txt", content: "written\n" }],
     check: async () => ["the broken preset always finds a problem"],
   };
   const runFile = join(targetDir, ".assetgrove/runs/r1/run.json");

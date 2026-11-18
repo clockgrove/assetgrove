@@ -25,6 +25,7 @@ export const MACHINE_FIELDS = [
   "sources",
   "kind",
   "subject",
+  "animationFamily",
   "state",
   "version",
   "bible",
@@ -74,6 +75,7 @@ const cardSchema = z.looseObject({
   sources: z.array(z.looseObject({ id: z.string(), resource: nonEmpty })).optional(),
   kind: z.string().optional(),
   subject: z.string().optional(),
+  animationFamily: z.string().optional(),
   state: z.enum(["approved", "rejected", "changes-requested", "pending"]).optional(),
   version: z.number().int().positive().optional(),
   bible: z.string().optional(),
@@ -175,6 +177,8 @@ export interface MachineInput {
   bibleResource?: string;
   kind: string;
   subject: string;
+  /** The spec's animation family, for a strip of one; the card id is `<assetId>-<family>`. */
+  animationFamily?: string;
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
 }
@@ -247,6 +251,7 @@ export function machineFields(input: MachineInput): Record<string, unknown> {
     sources,
     kind: input.kind,
     subject: input.subject,
+    ...(input.animationFamily !== undefined && { animationFamily: input.animationFamily }),
     state: versionStatus(review, current.sha256),
     version: versionNumber(review, current.sha256),
     bible: provenance.bibleVersion,
