@@ -62,7 +62,7 @@ Core refuses, with a message naming the problem:
 - at load (exit 2 `extension_refused`), a pack operation not named `<pack>:<op>`, or one whose role is not in the table;
 - at load (exit 2 `extension_conflict`), two kinds that declare one operation with different roles, or a core kind that declares a core operation under another role;
 - when the extensions load (exit 2 `settings_invalid`), a settings `routes` entry for an operation of a loaded pack that its kinds do not declare;
-- at plan (exit 2 `invalid_input`), a pack kind that plans a call on an operation it does not declare. A call on an operation with no route exits 2 `route_unavailable`.
+- at plan (exit 2 `invalid_input`), a pack kind that plans a call on a `<pack>:<op>` operation it does not declare. A pack's kind may still call core's own operations (`still`, `vision`, ...) without declaring them, on their core routes. A call on an operation with no route exits 2 `route_unavailable`.
 
 ## Typed call parameters
 
