@@ -33,7 +33,7 @@ env:
   PENDULUM_HARNESS: claude # claude | codex | copilot
   PENDULUM_MODEL: claude-opus-5-5
   PENDULUM_SUBAGENT_MODEL: claude-sonnet-5-5
-  PENDULUM_REVIEWER_MODEL: claude-fable-5-2
+  PENDULUM_REVIEWER_MODEL: claude-opus-5-5
   PENDULUM_CREDENTIAL: plan # api; plan only for your own repository
   PENDULUM_MAX_CONCURRENT: 8
   PENDULUM_DAILY_USD: 500
