@@ -19,7 +19,7 @@ import { createRaster, decodePng, encodePng, setPixel } from "../src/image/raste
 import type { Raster } from "../src/image/raster.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { parseRegion } from "../src/regions.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -280,10 +280,10 @@ async function stageWorld(kind: "still" | "strip" = "strip") {
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(kind === "still" ? stillSpec : shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
   const flags = ["--spec", spec, "--bible", bible, "--profile", profile, "--runs", world.runsDir];

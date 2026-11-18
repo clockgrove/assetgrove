@@ -23,7 +23,7 @@ import { defaultRoutes } from "../src/routes.ts";
 import { forecastOf, requestDigest } from "../src/runs/plan.ts";
 import type { PlanJob } from "../src/runs/plan.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -95,10 +95,10 @@ async function stageArgs(script: string): Promise<{ args: string[]; runs: string
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
   return {
@@ -294,10 +294,10 @@ test("import --no-propose --bible makes the one prompt-policy call, and without 
   const { script, events } = await recorder(ALLOW);
   const world = await syntheticWorld();
   temporary.push(world.dir);
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   const sheet = join(world.dir, "sheet.png");
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   await writeFile(sheet, syntheticSheet().png);
   approveProfile(world.profile, { targetDir: world.targetDir });

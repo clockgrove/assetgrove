@@ -13,7 +13,7 @@ import { parseGlb } from "../src/model3d/glb.ts";
 import { clips as clipsOf } from "../src/model3d/scene.ts";
 import { sha256 } from "../src/request.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
+import { PALETTE, drawSubject, writeStyleBible } from "./fixtures/synthetic.ts";
 import {
   quadrupedIdle,
   quadrupedPaw,
@@ -73,7 +73,7 @@ async function world(options: { template?: string; reference?: boolean; motions?
   }
   const files = {
     spec: join(dir, "spec.json"),
-    bible: join(dir, "bible.json"),
+    bible: join(dir, "BIBLE.md"),
     profile: join(dir, "profile.json"),
   };
   await writeFile(
@@ -87,25 +87,21 @@ async function world(options: { template?: string; reference?: boolean; motions?
       heightM: 0.45,
     }),
   );
-  await writeFile(
-    files.bible,
-    JSON.stringify({
-      format: "assetgrove-style-bible/1",
-      referenceLicense: "NOASSERTION",
-      version: "2026-11-10",
-      palette: PALETTE,
-      references: roles.map((role) => ({
-        path: `refs/${role}.png`,
-        role,
-        subject: "kit",
-        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
-          role
-        ],
-      })),
-      perspective: "refs/turnaround-front.png",
-      subjects: { kit: { description: "a small synthetic quadruped" } },
-    }),
-  );
+  await writeStyleBible(files.bible, {
+    referenceLicense: "NOASSERTION",
+    version: "2026-11-10",
+    palette: PALETTE,
+    references: roles.map((role) => ({
+      path: `refs/${role}.png`,
+      role,
+      subject: "kit",
+      view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+        role
+      ],
+    })),
+    perspective: "refs/turnaround-front.png",
+    subjects: { kit: { description: "a small synthetic quadruped" } },
+  });
   await writeFile(
     files.profile,
     JSON.stringify({

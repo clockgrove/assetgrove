@@ -9,10 +9,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { encodePng } from "../src/image/raster.ts";
+import { loadStyleBible } from "../src/inputs.ts";
 import { parseGlb } from "../src/model3d/glb.ts";
 import { sha256 } from "../src/request.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
+import { PALETTE, drawSubject, writeStyleBible } from "./fixtures/synthetic.ts";
 import { quadrupedIdle, quadrupedPaw, quadrupedTemplate, walkGait } from "./fixtures/quadruped.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -82,7 +83,7 @@ async function world(
   await writeFile(join(dir, "rig", "quadruped.json"), JSON.stringify(quadrupedTemplate()));
   const files = {
     spec: join(dir, "spec.json"),
-    bible: join(dir, "bible.json"),
+    bible: join(dir, "BIBLE.md"),
     profile: join(dir, "profile.json"),
   };
   await writeFile(
@@ -96,23 +97,19 @@ async function world(
       heightM: 0.45,
     }),
   );
-  await writeFile(
-    files.bible,
-    JSON.stringify({
-      format: "assetgrove-style-bible/1",
-      referenceLicense: "NOASSERTION",
-      version: "2026-11-10",
-      palette: PALETTE,
-      references: roles.map((role) => ({
-        path: `refs/${role}.png`,
-        role,
-        subject: "kit",
-        ...(declared[role] !== undefined && { view: declared[role] }),
-      })),
-      perspective: `refs/${roles[0]}.png`,
-      subjects: { kit: { description: "a small synthetic quadruped" } },
-    }),
-  );
+  await writeStyleBible(files.bible, {
+    referenceLicense: "NOASSERTION",
+    version: "2026-11-10",
+    palette: PALETTE,
+    references: roles.map((role) => ({
+      path: `refs/${role}.png`,
+      role,
+      subject: "kit",
+      ...(declared[role] !== undefined && { view: declared[role] }),
+    })),
+    perspective: `refs/${roles[0]}.png`,
+    subjects: { kit: { description: "a small synthetic quadruped" } },
+  });
   const groom = options.groom === undefined ? GROOM : options.groom;
   await writeFile(
     files.profile,
@@ -717,12 +714,12 @@ test("look-dev judges views a role does not name, keeps left and right apart, an
   assert.equal(checksOf(c)["lookdev-compare"]!.passed, true);
 
   // Declared to show no front view, the references refuse the look-dev before its first restyle.
-  const bible = JSON.parse(await readFile(w.files.bible, "utf8"));
-  bible.references = bible.references.map((ref: Doc) => ({
+  const bible = (await loadStyleBible(w.files.bible)).value;
+  bible.references = bible.references.map((ref) => ({
     ...ref,
     view: ref.role === "character sheet" ? "sheet" : ref.role === "left side" ? "left" : "right",
   }));
-  await writeFile(w.files.bible, JSON.stringify(bible));
+  await writeStyleBible(w.files.bible, bible);
   const before = await restyledViews(w.runs);
   const refused = await cli(lookDevArgs(w, input), env);
   assert.equal(refused.code, 2, refused.stdout + refused.stderr);

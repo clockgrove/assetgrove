@@ -8,7 +8,7 @@ import { join, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { InputError } from "../src/errors.ts";
-import { scriptedProvider } from "./fixtures/synthetic.ts";
+import { scriptedProvider, writeStyleBible } from "./fixtures/synthetic.ts";
 import type { Generator } from "../src/generators/generator.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { stage } from "../src/loop.ts";
@@ -63,10 +63,10 @@ async function tree(dir: string): Promise<string[]> {
 /** Writes the world's inputs and stages one candidate through the CLI into `runsDir`. */
 async function stageOne(world: World, runsDir = world.runsDir): Promise<string> {
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   const r = await cli([
     "stage",

@@ -29,6 +29,7 @@ import {
   shelterSpec,
   syntheticProfile,
   syntheticWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
@@ -280,9 +281,11 @@ test("the sheet is pixel-identical when only bible text changes", async () => {
 test("the MCP stage result includes an image content block equal to contact.png, and bible text appears only under sharedText", async () => {
   const w = await world();
   const NOTE = "Moonlit-note-7731 keeps every edge soft";
-  const bible: StyleBible = { ...w.bible, notes: [NOTE] };
   await writeFile(join(w.dir, "spec.json"), JSON.stringify(stillSpec));
-  await writeFile(join(w.bibleDir, "bible.json"), JSON.stringify(bible));
+  // A content limit is one of the style notes every prompt carries.
+  await writeStyleBible(join(w.bibleDir, "BIBLE.md"), w.bible, (bible) => {
+    bible.tone.contentLimits.push(NOTE);
+  });
   await writeFile(join(w.dir, "profile.json"), JSON.stringify(syntheticProfile()));
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
@@ -306,7 +309,7 @@ test("the MCP stage result includes an image content block equal to contact.png,
     name: "stage",
     arguments: {
       spec: join(w.dir, "spec.json"),
-      bible: join(w.bibleDir, "bible.json"),
+      bible: join(w.bibleDir, "BIBLE.md"),
       profile: join(w.dir, "profile.json"),
       runs: w.runsDir,
       candidates: 2,

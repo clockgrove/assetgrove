@@ -28,7 +28,12 @@ import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { planDigest } from "../src/planning.ts";
 import { loadSettings } from "../src/settings.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  shelterSpec,
+  syntheticProfile,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
 const synthetic = fileURLToPath(new URL("./fixtures/synthetic.ts", import.meta.url));
@@ -100,10 +105,10 @@ async function stageArgs(round: number) {
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(spec, JSON.stringify(shelterSpec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   const provider = await paidScript(world.dir);
   const args = [

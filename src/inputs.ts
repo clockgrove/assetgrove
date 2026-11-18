@@ -1,13 +1,7 @@
 import { checkDeclaredView } from "./model3d/views.ts";
 import { readFile } from "node:fs/promises";
-import { extname, resolve } from "node:path";
-import { z } from "zod";
-import {
-  checkReferenceLicense,
-  loadBible,
-  referenceLicenses,
-  requireInsideProject,
-} from "./bible.ts";
+import { resolve } from "node:path";
+import { loadBible } from "./bible.ts";
 import { styleBibleOf } from "./bible-view.ts";
 import { InputError } from "./errors.ts";
 import { readFormat } from "./formats.ts";
@@ -25,7 +19,7 @@ import { validateProfile } from "./profile.ts";
 import { resolveStyle } from "./style.ts";
 import { readRecipe } from "./transform/run.ts";
 import type { Recipe } from "./transform/types.ts";
-import type { AssetSpec, ReferenceLicense, StyleBible, TargetProfile } from "./types.ts";
+import type { AssetSpec, StyleBible, TargetProfile } from "./types.ts";
 
 export { readJson } from "./json.ts";
 
@@ -42,105 +36,28 @@ export async function loadProfile(path: string): Promise<{ value: TargetProfile;
   return { value: validateProfile(current, path), dir };
 }
 
-// A JSON style bible's fields, checked when it loads so a missing or mistyped field is a named
-// refusal (exit 2 `invalid_input`), never a crash mid-run. `version` and `palette` have no safe
-// default and are required. `references` defaults to none: a request that needs a subject's
-// references refuses then, naming the subject. `perspective` may be absent: a request that sends
-// the perspective sample refuses then, naming the field. Fields this schema does not name are kept.
-const hexColour = z.string().regex(/^\s*#?[0-9a-f]{6}\s*$/i, "must be a six-digit hex colour");
-const styleBibleSchema = z.looseObject({
-  format: z.string(),
-  version: z.string().min(1),
-  referenceLicense: z.string().optional(),
-  palette: z.array(hexColour).min(1, "must list at least one colour"),
-  references: z
-    .array(
-      z.looseObject({
-        path: z.string().min(1),
-        role: z.string().min(1),
-        subject: z.string().optional(),
-        look: z.string().optional(),
-        view: z.string().optional(),
-        license: z.string().optional(),
-      }),
-    )
-    .default([]),
-  perspective: z.string().min(1).optional(),
-  perspectiveDescription: z.string().optional(),
-  subjects: z.record(z.string(), z.looseObject({ description: z.string() })).optional(),
-  mood: z.array(z.string()).optional(),
-  notes: z.array(z.string()).optional(),
-  looks: z.record(z.string(), z.looseObject({ notes: z.array(z.string()).optional() })).optional(),
-});
-
-/** Checks a JSON style bible's fields; `source` names the file in the message. */
-export function validateStyleBible(value: unknown, source: string): StyleBible {
-  const parsed = styleBibleSchema.safeParse(value);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => {
-      const field = issue.path.join(".");
-      return field ? `${field}: ${issue.message}` : issue.message;
-    });
-    throw new InputError(`style bible ${source} is invalid: ${issues.join("; ")}`, {
-      cause: parsed.error,
-    });
-  }
-  return parsed.data as unknown as StyleBible;
-}
-
-/** Whether a style bible file is the Markdown BIBLE.md: a `.md` name or YAML front matter first. */
-export function isMarkdownBible(path: string, source: string): boolean {
-  return extname(path).toLowerCase() === ".md" || /^---\r?\n/.test(source);
-}
-
-/** Said once per load of a JSON style bible: it still loads, and BIBLE.md is the format to keep. */
-export const JSON_BIBLE_NOTICE =
-  "the JSON style bible is deprecated: every command reads BIBLE.md, the one style bible (docs/target-profile.md#style-bible)";
-
 /**
- * The style bible every generation command reads. A BIBLE.md (the one style bible, as `init`
- * writes it) is loaded and validated as `plan` loads it, and its style view (`styleBibleOf`) is
- * returned. A JSON style bible still loads, deprecated, with `JSON_BIBLE_NOTICE` passed to `log`:
- * format line `assetgrove-style-bible/<n>`, its fields (`validateStyleBible`), `referenceLicense`
- * when it lists references. Either way every reference's declared view is checked and every path
- * must lie inside the project root (exit 2 before any provider call). `markdown` says which it was:
- * a BIBLE.md also holds the identity locks, so commands read it for `--lock-bible` when none is given.
+ * The style bible every generation command reads: BIBLE.md, the one style bible, as `init` writes
+ * it. It is loaded and validated as `plan` loads it, and its style view (`styleBibleOf`) is
+ * returned with every reference's declared view checked (exit 2 before any provider call). A JSON
+ * file is refused, naming BIBLE.md: there is no other style bible format.
  */
-export async function loadStyleBible(
-  path: string,
-  options: { log?: (message: string) => void } = {},
-): Promise<{ value: StyleBible; dir: string; markdown: boolean }> {
+export async function loadStyleBible(path: string): Promise<{ value: StyleBible; dir: string }> {
   let source: string;
   try {
     source = await readFile(resolve(path), "utf8");
   } catch (error) {
     throw new InputError(`cannot read style bible ${resolve(path)}`, { cause: error });
   }
-  if (isMarkdownBible(path, source)) {
-    const doc = await loadBible(path);
-    const bible = styleBibleOf(doc);
-    for (const reference of bible.references) checkDeclaredView(reference, doc.path);
-    return { value: bible, dir: doc.dir, markdown: true };
+  if (/^\s*[{[]/.test(source)) {
+    throw new InputError(
+      `style bible ${resolve(path)} is JSON; Assetgrove reads only BIBLE.md, the Markdown style bible that \`assetgrove init\` writes (docs/target-profile.md#style-bible)`,
+    );
   }
-  const { value, dir } = await readJson<unknown>(path);
-  const bible = validateStyleBible(readFormat("style-bible", value, path).value, path);
-  options.log?.(JSON_BIBLE_NOTICE);
-  checkReferenceLicense(bible.referenceLicense, bible.references, path);
-  for (const reference of bible.references) checkDeclaredView(reference, path);
-  requireInsideProject(
-    [
-      ...bible.references.map((reference) => reference.path),
-      ...(bible.perspective === undefined ? [] : [bible.perspective]),
-    ],
-    dir,
-    path,
-  );
-  return { value: bible, dir, markdown: false };
-}
-
-/** The licence of each reference a JSON style bible lists, for provenance; empty when none. */
-export function styleBibleLicenses(bible: StyleBible): ReferenceLicense[] {
-  return referenceLicenses(bible.referenceLicense, bible.references ?? []);
+  const doc = await loadBible(path);
+  const bible = styleBibleOf(doc);
+  for (const reference of bible.references) checkDeclaredView(reference, doc.path);
+  return { value: bible, dir: doc.dir };
 }
 
 /** A recipe file: format line `assetgrove-recipe/<n>`, then the recipe's own validation. */

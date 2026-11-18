@@ -15,7 +15,7 @@ import { writeSettings } from "./fixtures/env.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { parseGlb } from "../src/model3d/glb.ts";
 import { clips as clipsOf, measure } from "../src/model3d/scene.ts";
-import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
+import { PALETTE, drawSubject, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = fileURLToPath(new URL("./fixtures/model3d-script.ts", import.meta.url));
@@ -106,7 +106,6 @@ async function world(
     await writeFile(join(dir, "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
   }
   const bible = {
-    format: "assetgrove-style-bible/1",
     referenceLicense: "NOASSERTION",
     version: "2026-11-10",
     palette: PALETTE,
@@ -123,7 +122,7 @@ async function world(
   };
   const files = {
     spec: join(dir, "spec.json"),
-    bible: join(dir, "bible.json"),
+    bible: join(dir, "BIBLE.md"),
     profile: join(dir, "profile.json"),
   };
   await writeFile(
@@ -139,7 +138,7 @@ async function world(
       ...spec,
     }),
   );
-  await writeFile(files.bible, JSON.stringify(bible));
+  await writeStyleBible(files.bible, bible);
   await writeFile(files.profile, JSON.stringify(profile3d(profileOverrides)));
   const runs = join(dir, "runs");
   const target = join(dir, "target");

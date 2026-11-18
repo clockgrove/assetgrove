@@ -23,6 +23,7 @@ import {
   scriptedProvider,
   shelterSpec,
   syntheticWorld as plainWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 import { gitTarget } from "./fixtures/git.ts";
@@ -234,10 +235,10 @@ function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: st
 /** The spec, bible and profile of a world, written to files for the CLI. */
 async function worldFiles(world: World, spec: AssetSpec = shelterSpec): Promise<string[]> {
   const specPath = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(specPath, JSON.stringify(spec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   return ["--spec", specPath, "--bible", bible, "--profile", profile, "--runs", world.runsDir];
 }

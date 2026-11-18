@@ -17,6 +17,11 @@ Assetgrove is a public repository. These rules apply to every contributor, human
 - Approval is human. Assetgrove filters and presents candidates; it never marks an asset approved.
 - Media is format-agnostic: each output declares its own media type, and `.gitattributes` decides Git LFS storage. Code never lists allowed formats.
 
+## Replacing something
+
+- When a file format, flag, command or code path is replaced, remove the old one in the change that moves its last user over, not in a later release. Don't ship a deprecation notice with the removal left for later. A known user outside this repository (another Clockgrove repository) moves first, in its own pull request, then the removal lands.
+- Reason: a deprecated path left for later is code nobody exercises and a decision nobody comes back to, so it stays.
+
 ## Dependencies
 
 - Use an existing SDK or library before writing your own. For a protocol, a file format, a codec or a provider's API, look first for the official SDK, then for a maintained library whose licence this repository can take. Reason: hand-written protocol code falls behind its standard, and every line of it is ours to maintain.

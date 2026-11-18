@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { CORE_REGISTRY } from "../src/extensions/registry.ts";
-import { syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import { syntheticProfile, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const fixture = fileURLToPath(new URL("./fixtures/extension-package", import.meta.url));
@@ -76,13 +76,13 @@ function settings(extensions: string[], withEcho = false): void {
 async function inputs(dir: string): Promise<string[]> {
   const world = await syntheticWorld();
   const spec = join(dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(dir, "profile.json");
   await writeFile(
     spec,
     JSON.stringify({ kind: "fixture:tile", assetId: "tile-1", animationFamily: "idle" }),
   );
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   const p = syntheticProfile({
     manifest: { assetId: "{{spec.assetId}}", review: { status: "pending" } },
     handoff: [{ preset: "manifest" }, { preset: "fixture:list", options: { file: "tiles.txt" } }],

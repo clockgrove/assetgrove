@@ -24,7 +24,7 @@ import type { ReviewRecord } from "../src/library/review.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { AssetSpec } from "../src/types.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { PALETTE, drawSubject, syntheticWorld } from "./fixtures/synthetic.ts";
+import { PALETTE, drawSubject, syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const STILL_SCRIPT = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -130,8 +130,8 @@ test("a library of stills, a strip and a 3D asset takes four requested changes, 
   });
   delete world.profile.validator;
   await writeFile(profilePath, JSON.stringify(world.profile));
-  const bible = join(world.bibleDir, "bible.json");
-  await writeFile(bible, JSON.stringify(world.bible));
+  const bible = join(world.bibleDir, "BIBLE.md");
+  await writeStyleBible(bible, world.bible);
 
   // A bible for the 3D asset: three turnaround references that each declare their view.
   const roles = ["turnaround-front", "turnaround-side", "turnaround-back"];
@@ -143,24 +143,20 @@ test("a library of stills, a strip and a 3D asset takes four requested changes, 
   await mkdir(join(dir, "bible3d", "refs"), { recursive: true });
   for (const [i, role] of roles.entries())
     await writeFile(join(dir, "bible3d", "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
-  const bible3d = join(dir, "bible3d", "bible.json");
-  await writeFile(
-    bible3d,
-    JSON.stringify({
-      format: "assetgrove-style-bible/1",
-      referenceLicense: "NOASSERTION",
-      version: "2026-11-10",
-      palette: PALETTE,
-      references: roles.map((role) => ({
-        path: `refs/${role}.png`,
-        role,
-        subject: "fern",
-        view: views[role],
-      })),
-      perspective: "refs/turnaround-front.png",
-      subjects: { fern: { description: "a lean grey fox" } },
-    }),
-  );
+  const bible3d = join(dir, "bible3d", "BIBLE.md");
+  await writeStyleBible(bible3d, {
+    referenceLicense: "NOASSERTION",
+    version: "2026-11-10",
+    palette: PALETTE,
+    references: roles.map((role) => ({
+      path: `refs/${role}.png`,
+      role,
+      subject: "fern",
+      view: views[role],
+    })),
+    perspective: "refs/turnaround-front.png",
+    subjects: { fern: { description: "a lean grey fox" } },
+  });
 
   const lib = (command: string, ...extra: string[]) =>
     cli(["library", command, "--target", target, "--profile", profilePath, ...extra, "--json"]);

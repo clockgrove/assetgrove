@@ -24,7 +24,7 @@ import { DIGITAL_SOURCE_TYPES, readDigitalSourceType } from "../src/metadata.ts"
 import { loadSettings } from "../src/settings.ts";
 import type { AssetSpec, TargetProfile } from "../src/types.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { syntheticWorld } from "./fixtures/synthetic.ts";
+import { syntheticWorld, writeStyleBible } from "./fixtures/synthetic.ts";
 import type { World } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -118,10 +118,10 @@ async function pickedStill(
     approveProfile(world.profile, { targetDir: world.targetDir });
   }
   const specPath = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profilePath = join(world.dir, "profile.json");
   await writeFile(specPath, JSON.stringify(spec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profilePath, JSON.stringify(world.profile));
   const staged = await cli([
     "stage",

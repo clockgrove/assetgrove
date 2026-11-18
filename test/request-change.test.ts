@@ -25,10 +25,10 @@ import { parseReview, versionStatus } from "../src/library/review.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { loadSettings } from "../src/settings.ts";
-import type { AssetSpec, Provenance, TargetProfile } from "../src/types.ts";
+import type { AssetSpec, Provenance, StyleBible, TargetProfile } from "../src/types.ts";
 import { libraryProfile } from "./fixtures/library.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { PALETTE, drawSubject } from "./fixtures/synthetic.ts";
+import { PALETTE, drawSubject, writeStyleBible } from "./fixtures/synthetic.ts";
 
 const RASTER = new URL("../src/image/raster.ts", import.meta.url).href;
 
@@ -689,26 +689,23 @@ test("a view region on a 3D asset runs another round of the 3D kind with the not
   const roles = ["turnaround-front", "turnaround-side", "turnaround-back"];
   for (const [i, role] of roles.entries())
     await writeFile(join(dir, "refs", `${role}.png`), encodePng(drawSubject(64, i * 4)));
-  const bible = join(dir, "bible.json");
-  await writeFile(
-    bible,
-    JSON.stringify({
-      format: "assetgrove-style-bible/1",
-      referenceLicense: "NOASSERTION",
-      version: "2026-11-10",
-      palette: PALETTE,
-      references: roles.map((role) => ({
-        path: `refs/${role}.png`,
-        role,
-        subject: "fern",
-        view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
-          role
-        ],
-      })),
-      perspective: "refs/turnaround-front.png",
-      subjects: { fern: { description: "a lean grey fox" } },
-    }),
-  );
+  const bible = join(dir, "BIBLE.md");
+  const view: StyleBible = {
+    referenceLicense: "NOASSERTION",
+    version: "2026-11-10",
+    palette: PALETTE,
+    references: roles.map((role) => ({
+      path: `refs/${role}.png`,
+      role,
+      subject: "fern",
+      view: { "turnaround-front": "front", "turnaround-side": "left", "turnaround-back": "back" }[
+        role
+      ],
+    })),
+    perspective: "refs/turnaround-front.png",
+    subjects: { fern: { description: "a lean grey fox" } },
+  };
+  await writeStyleBible(bible, view);
   const profile = {
     format: "assetgrove-target-profile/1",
     name: "synthetic-grove-3d",
@@ -797,10 +794,13 @@ test("a view region on a 3D asset runs another round of the 3D kind with the not
 
     // A round on a bible whose side reference declares no view judges that view: the call is in
     // the confirmed forecast, and its answer lands in the sha256 cache under the state directory.
-    const judged = join(dir, "bible-judged.json");
-    const declared = JSON.parse(await readFile(bible, "utf8"));
-    for (const r of declared.references) if (r.role === "turnaround-side") delete r.view;
-    await writeFile(judged, JSON.stringify(declared));
+    const judged = join(dir, "bible-judged.md");
+    await writeStyleBible(judged, {
+      ...view,
+      references: view.references.map(({ view: v, ...r }) =>
+        r.role === "turnaround-side" ? r : { ...r, view: v },
+      ),
+    });
     const stateDir = await mkdtemp(join(tmpdir(), "assetgrove-request-change-state-"));
     const judging = (): RunContext => ({ ...context(), settings: { ...loadSettings(), stateDir } });
     const before = process.env["SCRIPT_REFERENCE_VIEWS"];

@@ -66,13 +66,14 @@ function styleNotesOf(bible: ArtBible): { notes: string[]; looks: StyleBible["lo
 }
 
 /**
- * Each subject's references: the positive anchors that name a subject (the perspective sample
- * left out), then each identity lock's approved turnaround and references not already listed for
- * that subject. Negative anchors are planning's alone and are not sent here.
+ * The references: the positive anchors, less the perspective sample when it names no subject (one
+ * that names a subject is that subject's reference too), then each identity lock's approved
+ * turnaround and references not already listed for that subject. Negative anchors are planning's
+ * alone and are not sent here.
  */
 function referencesOf(bible: ArtBible): BibleReference[] {
   const anchors = bible.anchors.positive
-    .filter((anchor) => anchor.path !== bible.perspective)
+    .filter((anchor) => anchor.path !== bible.perspective || anchor.subject !== undefined)
     .map(({ path, role, subject, look, view, license }) => ({
       path,
       role,

@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BIBLE_PRESETS, loadBible } from "../src/bible.ts";
+import { loadBible } from "../src/bible.ts";
 import { styleBibleOf } from "../src/bible-view.ts";
-import { JSON_BIBLE_NOTICE, loadStyleBible } from "../src/inputs.ts";
+import { loadStyleBible } from "../src/inputs.ts";
 import { PALETTE, syntheticBibleMd, syntheticWorld } from "./fixtures/synthetic.ts";
 
 async function world(t: { after: (fn: () => Promise<void>) => void }) {
@@ -29,7 +29,7 @@ test("a BIBLE.md's style view: palette, subject references without the perspecti
   );
   assert.equal(view.perspective, "refs/perspective.png");
   assert.deepEqual(view.subjects, w.bible.subjects);
-  assert.deepEqual(view.mood, BIBLE_PRESETS["cozy-storybook"]?.tone.moodRange);
+  assert.deepEqual(view.mood, w.bible.mood);
   assert.ok(view.notes?.includes("rendering: painterly"), String(view.notes));
   assert.ok(view.notes?.includes("audience: all-ages"), String(view.notes));
 });
@@ -91,20 +91,14 @@ test("an identity lock adds its turnaround and references once, and describes a 
   assert.equal(view.subjects?.["fern"]?.description, w.bible.subjects?.["fern"]?.description);
 });
 
-test("loadStyleBible reads a BIBLE.md as its style view, and a JSON bible with the deprecation notice", async (t) => {
+test("loadStyleBible reads a BIBLE.md as its style view, and refuses a JSON file naming BIBLE.md", async (t) => {
   const w = await world(t);
-  const notices: string[] = [];
-  const log = (message: string) => notices.push(message);
-  const md = await loadStyleBible(await syntheticBibleMd(w), { log });
-  assert.equal(md.markdown, true);
+  const md = await loadStyleBible(await syntheticBibleMd(w));
   assert.deepEqual(md.value.palette, PALETTE);
   assert.equal(md.dir, w.bibleDir);
-  assert.deepEqual(notices, []);
   const jsonPath = join(w.bibleDir, "bible.json");
-  await writeFile(jsonPath, JSON.stringify(w.bible));
-  const json = await loadStyleBible(jsonPath, { log });
-  assert.equal(json.markdown, false);
-  assert.deepEqual(notices, [JSON_BIBLE_NOTICE]);
+  await writeFile(jsonPath, JSON.stringify({ format: "assetgrove-style-bible/1", ...w.bible }));
+  await assert.rejects(loadStyleBible(jsonPath), /is JSON; Assetgrove reads only BIBLE\.md/);
 });
 
 test("a BIBLE.md's perspective and subjects are validated when it loads", async (t) => {
@@ -122,4 +116,16 @@ test("a BIBLE.md's perspective and subjects are validated when it loads", async 
     Object.assign(bible, { perspective: "../../outside.png" }),
   );
   await assert.rejects(loadBible(outside), /outside|project/i);
+});
+
+test("a perspective sample that names a subject stays that subject's reference", async (t) => {
+  const w = await world(t);
+  const path = await syntheticBibleMd(w, (bible) => {
+    bible.perspective = "refs/fern-turnaround.png";
+  });
+  const view = styleBibleOf(await loadBible(path));
+  assert.equal(view.perspective, "refs/fern-turnaround.png");
+  assert.ok(
+    view.references.some((r) => r.path === "refs/fern-turnaround.png" && r.subject === "fern"),
+  );
 });

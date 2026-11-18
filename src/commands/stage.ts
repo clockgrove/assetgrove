@@ -45,7 +45,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const candidates = args.candidates ?? DEFAULT_CANDIDATES;
   const capUsd = runCap(args.cap, ctx.settings);
   const spec = await readJson<AssetSpec>(args.spec);
-  const bible = await loadStyleBible(args.bible, { log: ctx.log });
+  const bible = await loadStyleBible(args.bible);
   const profile = await loadProfile(args.profile);
   // Every asset kind of the registry: core's (still, sprite-strip, character-3d) and the loaded
   // extensions'.

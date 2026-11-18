@@ -1,5 +1,6 @@
 /**
- * A synthetic world for tests: a style bible whose reference images are drawn in code, a target
+ * A synthetic world for tests: a style bible (its style view, written as a BIBLE.md by
+ * `writeStyleBible`) whose reference images are drawn in code, a target
  * profile with a typical asset manifest, and a scripted provider
  * that "generates" opaque images of a blob on a plain background. Nothing here is private art.
  */
@@ -7,11 +8,11 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BIBLE_PRESETS, serializeBible } from "../../src/bible.ts";
 import type { ArtBible } from "../../src/bible.ts";
 import { ScriptedProvider } from "../../src/gateway/scripted.ts";
 import type { ImageRequest } from "../../src/gateway/provider.ts";
 import { createRaster, encodePng, setPixel } from "../../src/image/raster.ts";
+import { bibleMarkdown } from "../../src/testing/samples.ts";
 import type { Raster } from "../../src/image/raster.ts";
 import type { AssetSpec, StyleBible, TargetProfile } from "../../src/types.ts";
 
@@ -111,7 +112,6 @@ export async function syntheticWorld(): Promise<World> {
     encodePng(drawSubject(48, 0, [200, 220, 200])),
   );
   const bible: StyleBible = {
-    format: "assetgrove-style-bible/1",
     version: "synthetic-1",
     referenceLicense: "NOASSERTION",
     palette: PALETTE,
@@ -232,47 +232,20 @@ export function scriptedProvider(options: ScriptOptions = {}): ScriptedProvider 
   });
 }
 
-/**
- * The synthetic world's bible as a BIBLE.md (the one style bible): the cozy-storybook preset with
- * the world's palette as tokens, its subject references as positive anchors, the perspective
- * sample and the subject descriptions. Written beside the JSON bible; returns its path.
- */
+/** Writes `view` as a BIBLE.md at `path` (`bibleMarkdown`, the pack test kit's); returns `path`. */
+export async function writeStyleBible(
+  path: string,
+  view: StyleBible,
+  edit: (bible: ArtBible) => void = () => {},
+): Promise<string> {
+  await writeFile(path, bibleMarkdown(view, edit));
+  return path;
+}
+
+/** The synthetic world's bible as `bible/BIBLE.md` (`writeStyleBible`); returns its path. */
 export async function syntheticBibleMd(
   world: World,
   edit: (bible: ArtBible) => void = () => {},
 ): Promise<string> {
-  const bible = structuredClone(BIBLE_PRESETS["cozy-storybook"]) as ArtBible;
-  bible.version = world.bible.version;
-  bible.world = "Synthetic Grove";
-  bible.referenceLicense = "NOASSERTION";
-  const palette: Record<string, unknown> = { $type: "color" };
-  PALETTE.forEach((hex, i) => {
-    palette[`swatch-${i}`] = {
-      $value: {
-        colorSpace: "srgb",
-        components: [1, 3, 5].map((n) => parseInt(hex.slice(n, n + 2), 16) / 255),
-      },
-    };
-  });
-  bible.tokens = { ...bible.tokens, palette };
-  bible.anchors = {
-    positive: world.bible.references.map(({ path, role, subject }) => ({
-      path,
-      role,
-      ...(subject !== undefined && { subject }),
-    })),
-    negative: [],
-  };
-  bible.perspective = world.bible.perspective;
-  bible.subjects = world.bible.subjects;
-  edit(bible);
-  const path = join(world.bibleDir, "BIBLE.md");
-  await writeFile(
-    path,
-    serializeBible(
-      bible,
-      "# Synthetic Grove art direction\n\n## Do's and Don'ts\n\n- Do keep it plain.\n",
-    ),
-  );
-  return path;
+  return writeStyleBible(join(world.bibleDir, "BIBLE.md"), world.bible, edit);
 }

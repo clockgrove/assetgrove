@@ -38,7 +38,7 @@ interface LookDevArgs {
 /** Look-dev's plan step: its inputs, providers, look-dev plan and WorkPlan, with no call. */
 async function prepare(args: LookDevArgs, ctx: RunContext) {
   const spec = await readJson<AssetSpec>(args.spec);
-  const bible = await loadStyleBible(args.bible, { log: ctx.log });
+  const bible = await loadStyleBible(args.bible);
   const profile = await loadProfile(args.profile);
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;

@@ -216,7 +216,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       throw new InputError(
         "a view region asks for another round of the 3D kind, which reads the style bible: give it with --bible",
       );
-    bible = await loadStyleBible(args.bible, { log: ctx.log });
+    bible = await loadStyleBible(args.bible);
     promptText.push(source.spec.subject ?? source.spec.assetId ?? asset.assetId);
     const plan = planStage({
       spec: source.spec,

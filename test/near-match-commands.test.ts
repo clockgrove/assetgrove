@@ -23,6 +23,7 @@ import {
   shelterSpec,
   syntheticProfile,
   syntheticWorld,
+  writeStyleBible,
 } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -133,10 +134,10 @@ test("the plan step of plan, stage, apply and generate-sheet lists the near matc
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   writeFileSync(spec, JSON.stringify(shelterSpec));
-  writeFileSync(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   writeFileSync(profile, JSON.stringify(world.profile));
   approveProfile(world.profile, { targetDir: world.targetDir });
   const files = ["--spec", spec, "--bible", bible, "--profile", profile];

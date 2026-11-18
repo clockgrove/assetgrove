@@ -75,8 +75,12 @@ export interface BibleLook {
   notes?: string[];
 }
 
+/**
+ * The style view of the project's BIBLE.md (`styleBibleOf`): what the generation commands read. It
+ * is derived on every load and never written; BIBLE.md is the only style bible file.
+ */
 export interface StyleBible {
-  /** `assetgrove-style-bible/<n>`; required in a file, optional in memory. */
+  /** The BIBLE.md's format line, `assetgrove-style-bible/<n>`. */
   format?: string;
   version: string;
   /** The licence of the listed references (SPDX, `LicenseRef-*` or `NOASSERTION`); required when it lists any. */
@@ -84,8 +88,8 @@ export interface StyleBible {
   palette: string[];
   references: BibleReference[];
   /**
-   * Path (relative to the bible file) of the perspective sample. Optional in the file; a request
-   * that sends the sample refuses without it (exit 2), naming the field.
+   * Path (relative to the bible file) of the perspective sample. Optional; a request that sends
+   * the sample refuses without it (exit 2), naming the field.
    */
   perspective?: string;
   /** How the perspective sample's view is described, for example `isometric, three-quarter view`. */

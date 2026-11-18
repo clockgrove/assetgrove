@@ -332,10 +332,10 @@ export function requireInsideProject(
 }
 
 /**
- * Checks the licence fields of a bible that lists `references`: the bible needs `referenceLicense`
+ * Checks the licence fields of a bible's reference images: the bible needs `referenceLicense`
  * when it lists any, and each reference's own `license`, when set, must be text.
  */
-export function checkReferenceLicense(
+function checkReferenceLicense(
   referenceLicense: unknown,
   references: { path: string; license?: unknown }[],
   source: string,
