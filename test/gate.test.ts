@@ -407,7 +407,7 @@ test("the search bars entry reads the newest run with a bench report and fails o
   assert.equal(none.ok, false);
 });
 
-test("the skills step installs assetgrove and assetgrove-search from the repository into a temporary folder", () => {
+test("the skills step installs assetgrove and every pack's skill from the repository into a temporary folder", () => {
   const skills = readEntries().find((e) => e.check === "skill-install")!;
   const calls: { argv: string[]; cwd: string }[] = [];
   const sources = Object.fromEntries(
@@ -429,15 +429,17 @@ test("the skills step installs assetgrove and assetgrove-search from the reposit
     calls.map((c) => c.argv.slice(0, 5).concat(c.argv[c.argv.indexOf("--skill") + 1]!)),
     [
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove"],
+      ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-godot"],
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-search"],
     ],
   );
-  assert.equal(calls[0]!.cwd, calls[1]!.cwd);
+  for (const call of calls) assert.equal(call.cwd, calls[0]!.cwd);
   assert.ok(!calls[0]!.cwd.startsWith(root), "installs into a temporary folder");
 
   const half = runGate({ entries: [skills], run: installing("assetgrove"), commit: COMMIT });
   assert.equal(half.entries[0]!.status, "fail");
-  assert.match(half.entries[0]!.detail, /assetgrove-search: missing or changed after install/);
+  // The first pack skill not installed is named.
+  assert.match(half.entries[0]!.detail, /assetgrove-godot: missing or changed after install/);
 });
 
 const temporary: string[] = [];

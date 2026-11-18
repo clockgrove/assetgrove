@@ -25,7 +25,7 @@ A poor fit when:
 
 - you want a hosted product with accounts, credits or an editor. There is none ([non-goals](docs/PRD.md#non-goals));
 - you want art accepted automatically because a check passed. Nothing is picked or approved without a person;
-- you need engine import files today. Hand-off writes a manifest from your own template, or sprite-atlas JSON ([docs/handoff.md](docs/handoff.md)). A Godot pack, tile sets and icon families are planned, not built ([docs/PLAN.md](docs/PLAN.md));
+- you need engine import files for an engine other than Godot. Hand-off writes a manifest from your own template, or sprite-atlas JSON ([docs/handoff.md](docs/handoff.md)); the optional Godot pack builds SpriteFrames with Godot itself. Tile sets and icon families are planned, not built ([docs/PLAN.md](docs/PLAN.md));
 - you need video or audio. Neither is generated;
 - you want to hide that art is AI-made. Hand-off marks each file as AI-made where its format allows, and stripping that is a [non-goal](docs/PRD.md#non-goals) ([docs/disclosure.md](docs/disclosure.md)).
 
@@ -222,6 +222,7 @@ Exit 1 is an unexpected internal error; please [report it](https://github.com/cl
 - **Changes and variations.** `request-change` edits marked regions of a picked asset, `vary` makes variations of a candidate, `compare` measures a candidate against the version before, and `audit` scores a set for style and identity.
 - **Local image operations.** `op` and `recipe` matte, trim, scale, slice and convert any image, generated or not, with a provenance record and no model call ([docs/transform.md](docs/transform.md)).
 - **Search.** The optional [`@clockgrove/assetgrove-search`](packages/assetgrove-search/README.md) package finds picked assets and lists near matches before a paid run.
+- **Godot.** The optional [`@clockgrove/assetgrove-godot`](packages/assetgrove-godot/README.md) pack hands strips off to a Godot project as one SpriteFrames per character, every animation family in it, built, saved and reloaded by a pinned headless Godot 4.7.2 so its UIDs match the project's imports.
 
 `assetgrove --help` lists every command and `assetgrove <command> --help` its options. The [command reference](skills/assetgrove/references/commands.md) says what each one spends and writes.
 
@@ -250,7 +251,7 @@ Exit 1 is an unexpected internal error; please [report it](https://github.com/cl
 
 ## Status
 
-Pre-1.0 and under active design: commands, file formats and defaults can change between versions, and there is no supported release line yet. Both packages are at 0.2.0, a release candidate that its owner has not yet published to npm ([docs/release.md](docs/release.md)). Once it is, a game pins it as a dev dependency (`pnpm add -D --save-exact @clockgrove/assetgrove@<version>`, then `pnpm exec assetgrove`) or runs it once with `npx @clockgrove/assetgrove@<version> --help`. Until then, use a checkout at a pinned commit, as the quick start does. It runs on Node 24, and its test suite runs on Linux, macOS and Windows.
+Pre-1.0 and under active design: commands, file formats and defaults can change between versions, and there is no supported release line yet. Core and its packs are at 0.2.0, a release candidate that its owner has not yet published to npm ([docs/release.md](docs/release.md)). Once it is, a game pins it as a dev dependency (`pnpm add -D --save-exact @clockgrove/assetgrove@<version>`, then `pnpm exec assetgrove`) or runs it once with `npx @clockgrove/assetgrove@<version> --help`. Until then, use a checkout at a pinned commit, as the quick start does. It runs on Node 24, and its test suite runs on Linux, macOS and Windows.
 
 ## Develop
 

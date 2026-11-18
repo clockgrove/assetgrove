@@ -68,7 +68,7 @@ export interface Extension {
   tools?: ToolDeclaration[];
   /**
    * Installs what the pack needs, when a person runs `assetgrove extensions setup <name>`: every
-   * download goes through `ctx.download`, pinned to a version and a sha256 the pack ships.
+   * download goes through `ctx.download`, pinned to a version and a sha256 or sha512 the pack ships.
    */
   setup?(ctx: SetupContext): Promise<Record<string, unknown>>;
 }
