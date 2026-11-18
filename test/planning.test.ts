@@ -48,6 +48,8 @@ function stableStyle(model: string = defaultRoutes[STYLE_VERDICT_OPERATION]!.mod
       repeats: 3,
       agreement: 0.95,
       measuredAt: "2026-11-14T00:00:00.000Z",
+      measuredBy: "a synthetic fixture",
+      labelledSetSha256: "0".repeat(64),
     },
   ];
 }

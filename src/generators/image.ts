@@ -22,6 +22,10 @@ import { CUTOUT_OPERATION } from "../routes.ts";
 import type { Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, Point, Reason } from "../types.ts";
 import type { GeneratedCandidate, Generator, GeneratorContext, PlannedCall } from "./generator.ts";
+import { CUTOUT_CHECK, declarationOf, IMAGE_QA_CHECKS } from "../qa/stability.ts";
+
+/** The checks an image kind's reasons name: image QA's and the cut-out's (src/qa/stability.ts). */
+const IMAGE_KIND_CHECKS = [...IMAGE_QA_CHECKS, CUTOUT_CHECK].map(declarationOf);
 
 function plannedCall(routes: Routes, operation: string): PlannedCall {
   const route = routes[operation];
@@ -171,6 +175,7 @@ async function finish(
 /** A still image: one text-and-reference generation, post-processed to a single frame. */
 export const stillGenerator: Generator = {
   kind: "still",
+  checks: IMAGE_KIND_CHECKS,
   frames: "single",
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,
@@ -217,6 +222,7 @@ function requireAnimationFamily(spec: AssetSpec): void {
 
 export const spriteStripGenerator: Generator = {
   kind: "sprite-strip",
+  checks: IMAGE_KIND_CHECKS,
   frames: "strip",
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,

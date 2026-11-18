@@ -248,6 +248,8 @@ test("the advisory shadow follows the stability rule on the marking route's mode
     repeats: 3,
     agreement: 0.95,
     measuredAt: "2026-11-14T00:00:00.000Z",
+    measuredBy: "a synthetic fixture",
+    labelledSetSha256: "0".repeat(64),
   };
   assert.equal(filteringState(LOOKDEV_MARKINGS_CHECK, model, []).state, "advisory");
   const state = filteringState(LOOKDEV_MARKINGS_CHECK, model, [entry]);

@@ -7,9 +7,15 @@
  */
 import { CORE_PROFILE_SCHEMA, CORE_SPEC_SCHEMA } from "../generators/spec-schema.ts";
 import { InputError, ProviderError } from "../errors.ts";
-import type { Generator, GeneratorContext, PlannedCall } from "../generators/generator.ts";
+import type {
+  Generator,
+  GeneratorContext,
+  KindCheck,
+  PlannedCall,
+} from "../generators/generator.ts";
 import {
   IDENTITY_CAST_OPERATION,
+  IDENTITY_CHECK,
   identitySettings3d,
   identityReason,
   scoreIdentity,
@@ -144,8 +150,35 @@ function prompt(spec: AssetSpec, bible: StyleBible, character: CharacterSpec): s
   ].join("\n");
 }
 
+/**
+ * The checks a 3D character's reasons name. The model's and rig's are deterministic measures, most
+ * of them one per budget, clip family or foot (`clip-*`). `facing` and `identity-lock` are model
+ * decisions core gates by its own rules: without a known facing there is no rig to check, and the
+ * identity lock scores a 3D character in shadow mode (docs/target-profile.md).
+ */
+export const CHARACTER_3D_CHECKS: KindCheck[] = [
+  ...[
+    "gltf-validator",
+    "mesh-hierarchy",
+    "skeleton",
+    "turntable",
+    "budget-*",
+    "clip-*",
+    "loop-*",
+    "ends-*",
+    "contact-*",
+    "joint-limits-*",
+    "skinning-*",
+    "compare-*",
+    "reference-*",
+  ].map((name): KindCheck => ({ name, mode: "exact", source: "deterministic" })),
+  { name: "facing", mode: "gated", source: "decision" },
+  { name: IDENTITY_CHECK, mode: "gated", source: "decision" },
+];
+
 export const character3dGenerator: Generator = {
   kind: CHARACTER_3D_KIND,
+  checks: CHARACTER_3D_CHECKS,
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,
   operations: {

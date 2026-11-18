@@ -23,6 +23,7 @@ import type {
 import { SettingsError } from "../env.ts";
 import { FRAMES_TRAITS } from "../frames.ts";
 import { checkKindSchemas } from "../kind-schemas.ts";
+import { parseStability } from "../qa/stability.ts";
 import { OPERATION_ROLES, ROLE_CAPABILITY } from "../routes.ts";
 import type { Settings } from "../settings.ts";
 import { CORE_EXTENSION_NAME, coreExtension } from "./core.ts";
@@ -355,6 +356,59 @@ async function loadOne(
 }
 
 /** The entry's extension, refused unless its shape and every id hold. */
+const CHECK_SOURCES: readonly unknown[] = ["deterministic", "vision", "decision"];
+
+/**
+ * A pack kind's QA declarations and stability entries, refused with a message naming the problem:
+ * each check needs a name (a trailing `*` declares a family), a mode `exact` or `model` (`judged`,
+ * api 2's earlier name for `model`), and optionally a string `version` and `operation`, a reason
+ * `source` and a `run` function; each entry must pass core's validation (`parseStability`, with
+ * `measuredBy` and `labelledSetSha256`) and name a `model` check of the kind.
+ */
+function checkKindQa(kind: AssetKind, refuse: (why: string) => ExtensionError): void {
+  const checks = (kind as { checks?: unknown }).checks;
+  const models = new Set<string>();
+  if (checks !== undefined) {
+    if (!Array.isArray(checks)) throw refuse(`the checks of kind ${kind.kind} must be a list`);
+    for (const check of checks as Array<Record<string, unknown> | null>) {
+      const name = check?.["name"];
+      const mode = check?.["mode"];
+      if (
+        typeof name !== "string" ||
+        name === "" ||
+        name === "*" ||
+        name.slice(0, -1).includes("*") ||
+        (mode !== "exact" && mode !== "model" && mode !== "judged") ||
+        (check?.["run"] !== undefined && typeof check["run"] !== "function")
+      )
+        throw refuse(
+          `every check of kind ${kind.kind} must have a name (a "*" only at its end, after a prefix), a mode "exact" or "model" ("judged" is the same as "model") and, if it runs, a run function; got ${JSON.stringify({ name, mode })}`,
+        );
+      for (const field of ["version", "operation"])
+        if (check?.[field] !== undefined && typeof check[field] !== "string")
+          throw refuse(`check "${name}" of kind ${kind.kind} has a ${field} that is not a string`);
+      if (check?.["source"] !== undefined && !CHECK_SOURCES.includes(check["source"]))
+        throw refuse(
+          `check "${name}" of kind ${kind.kind} has source ${JSON.stringify(check["source"])}; a source is "deterministic", "vision" or "decision"`,
+        );
+      if (mode !== "exact") models.add(name);
+    }
+  }
+  const stability = (kind as { stability?: unknown }).stability;
+  if (stability === undefined) return;
+  let entries;
+  try {
+    entries = parseStability(stability);
+  } catch (error) {
+    throw refuse(`the stability of kind ${kind.kind} is refused: ${messageOf(error)}`);
+  }
+  for (const entry of entries)
+    if (!models.has(entry.checkId))
+      throw refuse(
+        `the stability of kind ${kind.kind} has an entry for "${entry.checkId}", which is not a "model" check the kind declares`,
+      );
+}
+
 export function checkExtension(value: unknown, line: string): Extension {
   const refuse = (why: string) => new ExtensionError("extension_refused", `${line}: ${why}`);
   if (value === null || typeof value !== "object")
@@ -386,21 +440,7 @@ export function checkExtension(value: unknown, line: string): Extension {
         );
     }
   }
-  for (const kind of ext.kinds ?? []) {
-    const checks = (kind as { checks?: unknown }).checks;
-    if (checks === undefined) continue;
-    if (!Array.isArray(checks)) throw refuse(`the checks of kind ${kind.kind} must be a list`);
-    for (const check of checks as Array<Record<string, unknown> | null>) {
-      if (
-        typeof check?.["name"] !== "string" ||
-        (check["mode"] !== "exact" && check["mode"] !== "judged") ||
-        typeof check["run"] !== "function"
-      )
-        throw refuse(
-          `every check of kind ${kind.kind} must have a name, a mode "exact" or "judged" and a run function`,
-        );
-    }
-  }
+  for (const kind of ext.kinds ?? []) checkKindQa(kind, refuse);
   for (const kind of ext.kinds ?? []) {
     const frames = (kind as { frames?: unknown }).frames;
     if (frames !== undefined && !(FRAMES_TRAITS as readonly unknown[]).includes(frames))

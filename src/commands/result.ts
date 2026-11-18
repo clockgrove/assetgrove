@@ -194,6 +194,14 @@ export function formatRun(run: RunRecord, runDir: string): string {
     `staged in ${runDir}`,
   ];
   if (run.stopped) lines.push(`stopped early: ${run.stopped}`);
+  // A check no loaded kind or core declares is recorded, never filters, and is named here.
+  const undeclared = new Set(
+    (run.filtering ?? []).filter((s) => s.cause === "undeclared").map((s) => s.check),
+  );
+  for (const check of undeclared)
+    lines.push(
+      `check ${check} is declared by no loaded kind or core: its reasons are shown, never filter`,
+    );
   for (const c of run.candidates) {
     lines.push(
       "",
@@ -202,7 +210,7 @@ export function formatRun(run: RunRecord, runDir: string): string {
     for (const r of c.reasons) {
       // A shadow check is recorded beside QA: its verdict is shown, but it filtered nothing.
       const tag = r.shadow
-        ? `${r.source}; ${r.passed ? "passed" : "failed"}, not filtered`
+        ? `${r.source}; ${r.passed ? "passed" : "failed"}, not filtered${undeclared.has(r.check) ? " (undeclared check)" : ""}`
         : r.source;
       lines.push(`    ${r.check} [${tag}]: ${r.reason}`);
     }
@@ -213,7 +221,7 @@ export function formatRun(run: RunRecord, runDir: string): string {
       lines.push(`candidate ${rejection.candidate} filtered: ${r.check}: ${r.reason}`);
     for (const r of rejection.reasons.filter((reason) => !reason.passed && reason.shadow))
       lines.push(
-        `candidate ${rejection.candidate} also failed, not filtered: ${r.check}: ${r.reason}`,
+        `candidate ${rejection.candidate} also failed, not filtered${undeclared.has(r.check) ? " (undeclared check)" : ""}: ${r.check}: ${r.reason}`,
       );
     if (rejection.costUsd !== undefined)
       lines.push(`candidate ${rejection.candidate} cost ${usd(rejection.costUsd)}`);

@@ -24,10 +24,15 @@ export interface QaCheck {
   version: string;
   /** Whether a model's answer decides the verdict. */
   modelBacked: boolean;
-  /** The `source` of the reasons this declaration covers (one id can have a deterministic twin). */
-  source: Reason["source"];
+  /**
+   * The `source` of the reasons this declaration covers (one id can have a deterministic twin);
+   * absent: every source.
+   */
+  source?: Reason["source"];
   /** Model-backed checks: the route whose model runs the check. */
   operation?: string;
+  /** The id ends in `*`: the declaration covers every check whose id starts with what precedes it. */
+  family?: true;
 }
 
 /** A measured stability entry. */
@@ -51,14 +56,21 @@ export interface StabilityEntry {
   agreement: number;
   /** ISO time of the measurement. */
   measuredAt: string;
+  /** Who or what measured it (a person, or the script that ran the measurement). */
+  measuredBy: string;
+  /** The sha256 (64 lower-case hex) of the labelled set it was measured on. */
+  labelledSetSha256: string;
 }
 
 /** How one check took part in a result's verdict. */
 export interface FilteringState {
   check: string;
   state: "filtering" | "advisory";
-  /** Why an advisory check is advisory: no entry for its id and version, or none for this model. */
-  cause?: "no-entry" | "model-differs";
+  /**
+   * Why an advisory check is advisory: no entry for its id and version, none for this model, or
+   * no loaded kind or core declares the check at all.
+   */
+  cause?: "no-entry" | "model-differs" | "undeclared";
 }
 
 export const MIN_REPEATS = 3;
@@ -198,6 +210,8 @@ export const QA_CHECKS: readonly QaCheck[] = [
 /** The model the coverage rule measures against: the core default vision model. */
 export const DEFAULT_VISION_MODEL = defaultRoutes.vision.model;
 
+const SHA256 = /^[0-9a-f]{64}$/;
+
 function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
@@ -217,7 +231,11 @@ function isEntry(value: unknown): value is StabilityEntry {
     isCount(e["falseFails"]) &&
     typeof e["repeats"] === "number" &&
     typeof e["agreement"] === "number" &&
-    typeof e["measuredAt"] === "string"
+    typeof e["measuredAt"] === "string" &&
+    typeof e["measuredBy"] === "string" &&
+    e["measuredBy"].trim() !== "" &&
+    typeof e["labelledSetSha256"] === "string" &&
+    SHA256.test(e["labelledSetSha256"])
   );
 }
 
@@ -225,9 +243,20 @@ function isEntry(value: unknown): value is StabilityEntry {
 export function parseStability(value: unknown): StabilityEntry[] {
   if (!Array.isArray(value)) throw new Error("stability entries must be a JSON array");
   for (const [i, entry] of value.entries()) {
+    const e = entry as Record<string, unknown> | null;
+    if (e !== null && typeof e === "object") {
+      if (typeof e["measuredBy"] !== "string" || e["measuredBy"].trim() === "")
+        throw new Error(
+          `stability entry ${i + 1} has no measuredBy: an entry names who or what measured it`,
+        );
+      if (typeof e["labelledSetSha256"] !== "string" || !SHA256.test(e["labelledSetSha256"]))
+        throw new Error(
+          `stability entry ${i + 1} has no labelledSetSha256: an entry names the sha256 (64 lower-case hex) of the labelled set it was measured on`,
+        );
+    }
     if (!isEntry(entry)) {
       throw new Error(
-        `stability entry ${i + 1} needs checkId, version, model, measuredAt (strings), cases, passCases, failCases, falsePasses, falseFails (counts) and repeats, agreement (numbers)`,
+        `stability entry ${i + 1} needs checkId, version, model, measuredAt, measuredBy (strings), labelledSetSha256 (the labelled set's sha256, 64 lower-case hex), cases, passCases, failCases, falsePasses, falseFails (counts) and repeats, agreement (numbers)`,
       );
     }
     if (
@@ -291,32 +320,53 @@ export function filteringState(
   };
 }
 
-/** The declaration a reason falls under, if any. */
+/** Whether a declaration covers a check id: the same id, or a family's prefix. */
+function covers(check: QaCheck, id: string): boolean {
+  return check.family ? id.startsWith(check.id.slice(0, -1)) : check.id === id;
+}
+
+/**
+ * The declaration a reason falls under, if any: one whose id (or family) and source cover it.
+ * Where several do, a model-backed one wins, so redeclaring a model-backed check never makes its
+ * reasons filter.
+ */
 export function checkOf(
   reason: Pick<Reason, "check" | "source">,
   checks: readonly QaCheck[] = QA_CHECKS,
 ): QaCheck | undefined {
-  return checks.find((c) => c.id === reason.check && c.source === reason.source);
+  const found = checks.filter(
+    (c) => covers(c, reason.check) && (c.source === undefined || c.source === reason.source),
+  );
+  return found.find((c) => c.modelBacked) ?? found[0];
 }
 
 /**
  * Applies stability to a candidate's reasons: each model-backed check without a qualifying entry
- * for the model its route resolves to in `routes` has its reasons marked `shadow`. Returns the
- * reasons, whether every filtering reason passed, and one `filtering` state per model-backed check
- * among them.
+ * for the model its route resolves to in `routes` has its reasons marked `shadow`. With
+ * `undeclared: "advisory"`, a reason no declaration in `checks` covers is marked `shadow` too, its
+ * state `advisory` with cause `undeclared`. Returns the reasons, whether every filtering reason
+ * passed, and one `filtering` state per model-backed or undeclared check among them.
  */
 export function applyStability<R extends Reason>(
   reasons: R[],
   routes: Readonly<Record<string, Pick<Route, "model"> | undefined>>,
-  options: { entries?: readonly StabilityEntry[]; checks?: readonly QaCheck[] } = {},
+  options: {
+    entries?: readonly StabilityEntry[];
+    checks?: readonly QaCheck[];
+    undeclared?: "advisory";
+  } = {},
 ): { reasons: R[]; passed: boolean; filtering: FilteringState[] } {
   const states = new Map<string, FilteringState>();
   const out = reasons.map((reason) => {
     const check = checkOf(reason, options.checks);
+    if (check === undefined && options.undeclared === "advisory") {
+      states.set(reason.check, { check: reason.check, state: "advisory", cause: "undeclared" });
+      return reason.shadow ? reason : { ...reason, shadow: true as const };
+    }
     if (!check?.modelBacked) return reason;
     const model = check.operation === undefined ? undefined : routes[check.operation]?.model;
-    const state = filteringState(check, model, options.entries);
-    states.set(check.id, state);
+    const state = { ...filteringState(check, model, options.entries), check: reason.check };
+    states.set(reason.check, state);
     return state.state === "advisory" && !reason.shadow
       ? { ...reason, shadow: true as const }
       : reason;
@@ -326,6 +376,61 @@ export function applyStability<R extends Reason>(
     reasons: out,
     passed: counted.length > 0 && counted.every((r) => r.passed),
     filtering: [...states.values()],
+  };
+}
+
+/** The QA checks and stability entries of a set of kinds: what they declare and ship. */
+export interface QaRegistry {
+  checks: QaCheck[];
+  entries: StabilityEntry[];
+}
+
+/** One kind's check declaration as the registry holds it. */
+export interface CheckDeclaration {
+  name: string;
+  mode: "exact" | "model" | "judged" | "gated";
+  version?: string;
+  source?: Reason["source"];
+  operation?: string;
+}
+
+/** A declaration as a `QaCheck`: `model` (or `judged`) is model-backed; `exact` and `gated` are not. */
+export function qaCheckOf(declaration: CheckDeclaration): QaCheck {
+  return {
+    id: declaration.name,
+    version: declaration.version ?? "1",
+    modelBacked: declaration.mode === "model" || declaration.mode === "judged",
+    ...(declaration.source !== undefined && { source: declaration.source }),
+    ...(declaration.operation !== undefined && { operation: declaration.operation }),
+    ...(declaration.name.endsWith("*") && { family: true as const }),
+  };
+}
+
+/** A core `QaCheck` as a kind's declaration, so core's kinds register through the same field. */
+export function declarationOf(check: QaCheck): CheckDeclaration {
+  return {
+    name: check.id,
+    mode: check.modelBacked ? "model" : "exact",
+    version: check.version,
+    ...(check.source !== undefined && { source: check.source }),
+    ...(check.operation !== undefined && { operation: check.operation }),
+  };
+}
+
+/**
+ * The registry of the loaded kinds (core's among them): every check each declares, and the
+ * entries core ships (`entries`, src/qa/stability.json by default) with those each kind ships.
+ */
+export function qaRegistry(
+  kinds: ReadonlyArray<{
+    checks?: readonly CheckDeclaration[];
+    stability?: readonly StabilityEntry[];
+  }>,
+  entries: readonly StabilityEntry[] = STABILITY,
+): QaRegistry {
+  return {
+    checks: kinds.flatMap((k) => (k.checks ?? []).map(qaCheckOf)),
+    entries: [...entries, ...kinds.flatMap((k) => k.stability ?? [])],
   };
 }
 

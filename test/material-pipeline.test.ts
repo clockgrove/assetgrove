@@ -201,6 +201,8 @@ const FLICKER_ENTRY = {
   repeats: 3,
   agreement: 0.95,
   measuredAt: "2026-11-17T00:00:00.000Z",
+  measuredBy: "a synthetic fixture",
+  labelledSetSha256: "0".repeat(64),
 };
 
 test("material pipeline emits aligned native 1x/2x maps, provenance and lit review", async () => {
@@ -297,6 +299,8 @@ test("lit QA rejects bad normal orientation with a qualifying entry for the run'
     repeats: 3,
     agreement: 0.95,
     measuredAt: "2026-11-14T00:00:00.000Z",
+    measuredBy: "a synthetic fixture",
+    labelledSetSha256: "0".repeat(64),
   }));
   const result = await runMaterials({ ...f.options, stability });
   assert.equal(result.passed, false);

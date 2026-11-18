@@ -27,7 +27,7 @@ import { licenseFields } from "./license.ts";
 import { parseJsonFile } from "./json.ts";
 import { checkLayout, checkWrites, safeFileName, safeSegment } from "./paths.ts";
 import type { IdentityAgreement, IdentityRecordCheck } from "./identity.ts";
-import { applyStability, mergeFiltering } from "./qa/stability.ts";
+import { applyStability, mergeFiltering, qaRegistry } from "./qa/stability.ts";
 import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { checkFrameLayout, withLayoutParameters } from "./frames.ts";
@@ -80,7 +80,10 @@ export interface StageOptions {
   promptPolicy?: PromptPolicyRecord;
   /** The author's note of this round, appended to each candidate's generation prompt. */
   note?: string;
-  /** The measured stability entries model-backed checks filter by; src/qa/stability.json by default. */
+  /**
+   * The measured stability entries model-backed checks filter by; src/qa/stability.json by default.
+   * The kinds' own entries are added to them.
+   */
   stability?: readonly StabilityEntry[];
   /** The settings' state directory; judged reference views are cached under it. */
   stateDir?: string;
@@ -263,8 +266,9 @@ export interface RunRecord {
   };
   /**
    * Whether each model-backed check filtered: `filtering` only where it is measured stable on the
-   * run's model (src/qa/stability.json); otherwise `advisory`, its reasons marked `shadow`, with
-   * the cause. Absent when no model-backed check ran.
+   * run's model (src/qa/stability.json, or the kind's own entries); otherwise `advisory`, its
+   * reasons marked `shadow`, with the cause. A check no loaded kind or core declares is `advisory`
+   * with cause `undeclared`. Absent when no model-backed or undeclared check ran.
    */
   filtering?: FilteringState[];
   /** The numbered contact sheet in the run directory (`contact.png`), when a candidate has an image. */
@@ -350,6 +354,8 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
   const plan = planStage(options);
   const { requested, capUsd, estimateUsd } = plan;
   const generator = options.generators.find((g) => g.kind === spec.kind) as Generator;
+  // The QA checks and stability entries every loaded kind declares, core's among them.
+  const registry = qaRegistry(options.generators, options.stability);
   // Artifacts go in `c<n>-<kind as a slug>/`, so an extension kind's ":" never names a directory;
   // the name is checked here, before any paid call.
   const artifactDir = safeSegment(generator.kind);
@@ -453,15 +459,21 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
         await mkdir(join(runDir, posix.dirname(name)), { recursive: true });
         await writeFile(join(runDir, name), artifact.bytes);
       }
-      // A model-backed check filters only where it is measured stable on the run's model.
+      // A model-backed check filters only where it is measured stable on the run's model, and a
+      // check no loaded kind or core declares never filters.
       const qa = applyStability(generated.qa.reasons, routes, {
-        ...(options.stability !== undefined && { entries: options.stability }),
+        checks: registry.checks,
+        entries: registry.entries,
+        undeclared: "advisory",
       });
       if (qa.filtering.length > 0)
         run.filtering = mergeFiltering(run.filtering ?? [], qa.filtering);
       // The generator's own verdict stands unless stability made one of its reasons advisory.
       const advised = qa.reasons.some((r, i) => r !== generated.qa.reasons[i] && !r.passed);
-      if (!(advised ? qa.passed : generated.qa.passed)) {
+      const passed = advised
+        ? qa.reasons.every((r) => r.shadow === true || r.passed)
+        : generated.qa.passed;
+      if (!passed) {
         run.filtered++;
         if (generated.artifacts) {
           // Recorded per candidate, with what it cost, so the filtered ones can be reviewed too.

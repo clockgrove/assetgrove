@@ -26,6 +26,8 @@ const measured = (checkId: string, version: string, model: string): StabilityEnt
   repeats: 3,
   agreement: 0.95,
   measuredAt: "2026-11-17T00:00:00.000Z",
+  measuredBy: "a synthetic fixture",
+  labelledSetSha256: "0".repeat(64),
 });
 
 const VISION = VISION_CHECKS.map((id) => measured(id, "1", defaultRoutes.vision.model));

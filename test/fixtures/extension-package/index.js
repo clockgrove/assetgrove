@@ -28,6 +28,8 @@ export default function extension({ z }) {
     kinds: [
       {
         kind: "fixture:tile",
+        // The check its generate's reasons name: declared, so they filter.
+        checks: [{ name: "tile", mode: "exact" }],
         planCandidate(_spec, _profile, routes) {
           const route = routes.still;
           return [

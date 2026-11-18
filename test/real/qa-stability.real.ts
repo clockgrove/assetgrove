@@ -35,6 +35,7 @@ import {
   IMAGE_QA_CHECKS,
   MIN_CLASS_CASES,
   MIN_REPEATS,
+  parseStability,
   qualifies,
   type StabilityEntry,
 } from "../../src/qa/stability.ts";
@@ -215,6 +216,22 @@ test(
     }
     await rm(statePath, { force: true });
     const measuredAt = new Date().toISOString();
+    // The labelled set: each case's images and frame count with what every check should answer.
+    const labelledSetSha256 = sha256(
+      new TextEncoder().encode(
+        JSON.stringify(
+          Array.from({ length: completed }, (_, i) => {
+            const c = drawCase(i);
+            return {
+              candidate: c.candidate.sha256,
+              reference: c.reference.sha256,
+              frameCount: c.frameCount,
+              shouldPass: Object.fromEntries(checks.map((k) => [k.id, shouldPass(i, k.id)])),
+            };
+          }),
+        ),
+      ),
+    );
     const entries: StabilityEntry[] = checks.map((check) => {
       const should = Array.from({ length: completed }, (_, i) => shouldPass(i, check.id));
       const miss = (label: boolean) =>
@@ -232,6 +249,8 @@ test(
         // Rounded down, so rounding never lifts a check over the bar.
         agreement: Math.floor((agreed[check.id]!.filter(Boolean).length / completed) * 1000) / 1000,
         measuredAt,
+        measuredBy: "test/real/qa-stability.real.ts",
+        labelledSetSha256,
       };
     });
     for (const e of entries) {
@@ -241,6 +260,7 @@ test(
       assert.ok(e.agreement >= 0 && e.agreement <= 1);
       assert.ok(!Number.isNaN(Date.parse(e.measuredAt)));
     }
+    parseStability(entries);
     const out = process.env["QA_STABILITY_OUT"];
     if (out) await writeFile(out, `${JSON.stringify(entries, null, 2)}\n`);
   },
