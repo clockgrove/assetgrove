@@ -9,7 +9,7 @@ import { compareCommand } from "./compare.ts";
 import { confirmCommand } from "./confirm.ts";
 import { disclosureCommand } from "./disclosure.ts";
 import { estimateCommand } from "./estimate.ts";
-import { extensionsCommand } from "./extensions.ts";
+import { extensionsCommand, extensionsSetupCommand } from "./extensions.ts";
 import { fixFrameCommand } from "./fix-frame.ts";
 import { generateSheetCommand } from "./generate-sheet.ts";
 import { identityCheckCommand } from "./identity-check.ts";
@@ -38,12 +38,7 @@ import { rigCommand } from "./rig.ts";
 import { runsListCommand, runsShowCommand } from "./runs.ts";
 import { settingsChangeCommand, settingsCommand } from "./settings.ts";
 import { spendCommand, spendReconcileCommand } from "./spend.ts";
-import {
-  findCommand,
-  searchIndexCommand,
-  searchSetupCommand,
-  searchStatusCommand,
-} from "./search.ts";
+import { findCommand, searchIndexCommand, searchStatusCommand } from "./search.ts";
 import { requestChangeCommand } from "./request-change.ts";
 import { stageCommand } from "./stage.ts";
 import type { CommandSpec } from "./types.ts";
@@ -90,6 +85,7 @@ export const commands: readonly CommandSpec[] = [
   settingsCommand,
   settingsChangeCommand,
   extensionsCommand,
+  extensionsSetupCommand,
   spendCommand,
   spendReconcileCommand,
   runsListCommand,
@@ -99,7 +95,6 @@ export const commands: readonly CommandSpec[] = [
   findCommand,
   searchIndexCommand,
   searchStatusCommand,
-  searchSetupCommand,
   estimateCommand,
   disclosureCommand,
   confirmCommand,

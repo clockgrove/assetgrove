@@ -206,7 +206,7 @@ test("the reference check fails when a command has no section or a section lacks
 test("the search package's skill describes every search-only command with exactly its flags", async () => {
   assert.deepEqual(
     searchCommands.map((c) => c.name),
-    ["find", "search index", "search status", "search setup"],
+    ["find", "search index", "search status"],
   );
   await checkSkill(join(searchSkillDir, "SKILL.md"));
   const skill = await shippedSkill(searchSkillDir);

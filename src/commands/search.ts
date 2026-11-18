@@ -1,5 +1,5 @@
 /**
- * `find`, `search index`, `search status` and `search setup` (design section 7): core declares
+ * `find`, `search index` and `search status` (design section 7): core declares
  * them with `requires: "search"` and calls the search slot of the extension that fills it, handing
  * it the library reader (src/search/reader.ts). While no loaded extension fills the slot, help and
  * the tool list leave them out and a call exits 2 `extension_unavailable` (src/commands/runner.ts).
@@ -12,7 +12,7 @@ import { Budget, runCap } from "../budget.ts";
 import { Caller } from "../calls.ts";
 import { keyValue } from "../env.ts";
 import type { Env } from "../env.ts";
-import { InputError, ProviderError } from "../errors.ts";
+import { InputError } from "../errors.ts";
 import { registerKeyEnv } from "../redact.ts";
 import { EXIT } from "../errors.ts";
 import type {
@@ -146,15 +146,12 @@ function noProject(cause: unknown): LibraryReader {
 }
 
 /**
- * A slot error as core's exit table has it: a code of the table keeps its exit; a failed model
- * download is a provider error (exit 4); any other code is `invalid_input` naming that code.
+ * A slot error as core's exit table has it: a code of the table keeps its exit; any other code is `invalid_input` naming that code.
  */
 export function slotError(error: unknown): unknown {
   const code = (error as { code?: unknown } | null)?.code;
   if (!(error instanceof Error) || typeof code !== "string" || Object.hasOwn(EXIT, code))
     return error;
-  if (code === "setup_failed" || code === "hash_mismatch")
-    return new ProviderError(`${code}: ${error.message}`, { cause: error });
   return new InputError(`${code}: ${error.message}`, { cause: error });
 }
 
@@ -800,23 +797,6 @@ work tree's HEAD. Reads only.`,
     const embedder = hosted(ctx) ? (await embedRoute(undefined, ctx)).embedder : undefined;
     const { slot, context } = await searchCall("search status", args.target, ctx, true, embedder);
     const fields = await calling(() => slot.status(context));
-    return { exitCode: 0, fields, human: JSON.stringify(fields, null, 2) };
-  },
-});
-
-export const searchSetupCommand = defineCommand<{ target?: string }>({
-  name: "search setup",
-  tool: "search_setup",
-  requires: "search",
-  summary: "download the search model and check it against its pinned hashes",
-  details: `Needs the search package. Downloads the pinned model to <stateDir>/models from its
-fixed host, else its fixed mirror, and checks every file against the sha256 values the package
-ships; a failed download or a mismatch exits 4. Free; writes only under the state directory.`,
-  input: { type: "object", properties: { target: TARGET }, additionalProperties: false },
-  effect: { readOnly: false, spends: "never", writes: "state" },
-  async run(args, ctx) {
-    const { slot, context } = await searchCall("search setup", args.target, ctx, false);
-    const fields = await calling(() => slot.setup(context));
     return { exitCode: 0, fields, human: JSON.stringify(fields, null, 2) };
   },
 });

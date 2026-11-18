@@ -5,7 +5,7 @@ description: Load when you need to search an Assetgrove game library by words, b
 
 # Assetgrove search
 
-`@clockgrove/assetgrove-search` adds search to Assetgrove: `find`, `search index`, `search status` and `search setup`, on the CLI and as MCP tools. Core declares the commands; they work only once a person lists the package under `extensions` in the developer settings. Installing it alone loads nothing, and `assetgrove init` reports a step when it is installed but not listed. Until it is listed, help and the tool list leave the commands out and a call exits 2 `extension_unavailable`, naming the settings file.
+`@clockgrove/assetgrove-search` adds search to Assetgrove: `find`, `search index`, and `search status` on the CLI and as MCP tools; its model setup runs as `assetgrove extensions setup search`. Core declares the commands; they work only once a person lists the package under `extensions` in the developer settings. Installing it alone loads nothing, and `assetgrove init` reports a step when it is installed but not listed. Until it is listed, help and the tool list leave the commands out and a call exits 2 `extension_unavailable`, naming the settings file.
 
 ## Find, paths and outliers
 
@@ -21,7 +21,7 @@ The library reader core supplies lists picks (each card's fields and text), the 
 
 ## Setup
 
-`search setup` downloads the pinned SigLIP2 model (about 655 MB) to `<stateDir>/models`, from Hugging Face and else the project's release mirror, and checks every file against shipped hashes. Queries run with remote models off, so a missing model exits 2 `invalid_input` until setup runs. `search index` brings the index up to date (`--rebuild` starts afresh), `search status` reports it. The index is a projection: deleting the store is safe, the next query rebuilds it.
+`assetgrove extensions setup search` downloads the pinned SigLIP2 model (about 655 MB) to `<stateDir>/models`, from Hugging Face and else the project's release mirror, and checks every file against shipped hashes. Queries run with remote models off, so a missing model exits 2 `invalid_input` until setup runs. `search index` brings the index up to date (`--rebuild` starts afresh), `search status` reports it. The index is a projection: deleting the store is safe, the next query rebuilds it.
 
 ## Near matches
 
@@ -35,7 +35,7 @@ With `search.store` in the settings, pick and reference rows go to the team's ow
 
 - Exit 2 `extension_unavailable`: the package is not listed, or the platform is an Intel Mac.
 - Exit 2 `settings_invalid`: an AWS variable that could redirect index data (`AWS_ENDPOINT_URL`, `AWS_PROFILE` and the others the settings document lists) is set and `environment.allow` does not list it.
-- Exit 2 `invalid_input`: an unknown `--where` field, a shared build with uncommitted changes under the library root, or a missing model (`model_missing`: run `search setup`).
+- Exit 2 `invalid_input`: an unknown `--where` field, a shared build with uncommitted changes under the library root, or a missing model (`model_missing`: run `assetgrove extensions setup search`).
 - Exit 4 `provider_error`: the model download failed or did not match its pinned hashes.
 
 Only a person edits the settings file; never list the package or change `search` yourself.

@@ -37,6 +37,7 @@ import type { Routes } from "../routes.ts";
 import type { ProviderSettings } from "../settings.ts";
 import type { AssetSpec, MediaOutput, Reason, StyleBible, TargetProfile } from "../types.ts";
 import { sampleBible, sampleProfile, sampleScript } from "./samples.ts";
+import { refusingToolRunner } from "../extension/tools.ts";
 
 /** One kind's sample: what the suite plans, generates and checks it with. */
 export interface KindSample {
@@ -302,10 +303,13 @@ async function checkPreset(
     fail(`optionsSchema refused the sample options: ${messageOf(error)}`);
     return;
   }
+  // The suite runs no program: a preset's tool run is refused here (sample.context may give one).
+  const noTools = refusingToolRunner("the conformance suite runs no program");
   const assetCtx = (): PresetContext => ({
     profile: sampleProfile(),
     context: { spec: { assetId: "conformance-1", kind: "still" }, output: {}, provenance: {} },
     manifestRel: "assets/manifests/conformance-1.json",
+    run: noTools,
     ...(sample?.context as Partial<PresetContext> | undefined),
   });
   const familiesCtx = (): FamiliesContext => ({
@@ -319,6 +323,7 @@ async function checkPreset(
         sha256: "0".repeat(64),
       },
     ],
+    run: noTools,
     ...(sample?.context as Partial<FamiliesContext> | undefined),
   });
   // The sample target is empty: `read` finds nothing there.

@@ -24,12 +24,15 @@ export const COMMAND_KINDS = [
   "material-compression",
   "material-preview",
   "provider-script",
+  "tool",
 ] as const;
 export type CommandKind = (typeof COMMAND_KINDS)[number];
 
 /** What a command's hash covers, and the hash. */
 export interface CommandIdentity {
   kind: CommandKind;
+  /** For kind `tool`, the pack's tool id (`<name>:<id>`), inside the hash; absent otherwise. */
+  tool?: string;
   /** The argv template, before placeholders are filled. */
   argv: string[];
   /** Relative to the Git top level with `/` (`.` for the top level), or absolute outside one. */
@@ -51,6 +54,8 @@ export type ApprovalMethod = "settings" | "tty" | "terminal" | "elicitation";
 /** A command step as provenance records it. */
 export interface CommandStep {
   kind: CommandKind;
+  /** For kind `tool`, the pack's tool id. */
+  tool?: string;
   hash: string;
   method: ApprovalMethod;
 }
@@ -64,6 +69,7 @@ export interface ApprovalGate {
 /** An approval record as written to `<configDir>/approvals/<hex>.json`. */
 export interface ApprovalRecord {
   kind: CommandKind;
+  tool?: string;
   hash: string;
   argv: string[];
   cwd: string;
@@ -151,12 +157,26 @@ function isFile(path: string): boolean {
   }
 }
 
-/** The canonical JSON of an identity: fixed key order, files sorted by path. */
+/**
+ * The canonical JSON of an identity: fixed key order, files sorted by path. A `tool` identity adds
+ * its tool id, so every other kind's hash is what it always was.
+ */
 function canonical(identity: Omit<CommandIdentity, "hash" | "root">): string {
   const files = Object.fromEntries(
     Object.entries(identity.files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
   );
-  return JSON.stringify({ kind: identity.kind, argv: identity.argv, cwd: identity.cwd, files });
+  const { kind, argv, cwd } = identity;
+  return JSON.stringify(
+    kind === "tool" ? { kind, tool: identity.tool, argv, cwd, files } : { kind, argv, cwd, files },
+  );
+}
+
+/** The identity of `{kind, tool?, argv, cwd, files}` in the project `root`, its hash computed. */
+export function identityOf(
+  identity: Omit<CommandIdentity, "hash" | "root">,
+  root: string,
+): CommandIdentity {
+  return { ...identity, hash: sha256Hex(canonical(identity)), root };
 }
 
 /**
@@ -177,8 +197,10 @@ export function verifiedIdentity(details: unknown, hash: string): CommandIdentit
   const files = d.files as Record<string, unknown>;
   if (!Object.values(files).every((v) => typeof v === "string")) return undefined;
   if (typeof d.root !== "string" || d.root === "") return undefined;
+  if (kind === "tool" && typeof d.tool !== "string") return undefined;
   const identity = {
     kind: kind as CommandKind,
+    ...(kind === "tool" && { tool: d.tool as string }),
     argv: [...(d.argv as string[])],
     cwd: d.cwd,
     files: { ...(files as Record<string, string>) },
@@ -187,7 +209,7 @@ export function verifiedIdentity(details: unknown, hash: string): CommandIdentit
 }
 
 /** The project of a cwd: the real path of its Git top level, or of the cwd outside one. */
-function projectOf(cwd: string): string {
+export function projectOf(cwd: string): string {
   const full = real(resolve(cwd));
   return gitTopLevel(full) ?? full;
 }
@@ -239,14 +261,20 @@ export function scriptIdentity(modulePath: string): CommandIdentity {
   return commandIdentity("provider-script", [basename(full)], dirname(full));
 }
 
+/** What a command is called in a message: `the validator command`, `the tool godot:engine`. */
+function named(identity: Pick<CommandIdentity, "kind" | "tool">): string {
+  return identity.kind === "tool" ? `the tool ${identity.tool}` : `the ${identity.kind} command`;
+}
+
 function confirmation(identity: CommandIdentity): CommandConfirmation {
   return {
     kind: "command",
     id: identity.hash,
-    summary: `run the ${identity.kind} command ${JSON.stringify(identity.argv)} in ${identity.cwd}`,
+    summary: `run ${named(identity)} ${JSON.stringify(identity.argv)} in ${identity.cwd}`,
     confirmCommand: `assetgrove confirm ${identity.hash}`,
     command: {
       kind: identity.kind,
+      ...(identity.tool !== undefined && { tool: identity.tool }),
       hash: identity.hash,
       argv: identity.argv,
       cwd: identity.cwd,
@@ -261,9 +289,13 @@ export function commandRequest(identity: CommandIdentity): ConfirmRequest {
   return {
     kind: "command",
     id: identity.hash,
-    summary: `Assetgrove wants to run a ${identity.kind} command a file names:`,
+    summary:
+      identity.kind === "tool"
+        ? `Assetgrove wants to run the tool ${identity.tool} a pack declares, in scratch:`
+        : `Assetgrove wants to run a ${identity.kind} command a file names:`,
     details: {
       kind: identity.kind,
+      ...(identity.tool !== undefined && { tool: identity.tool }),
       argv: identity.argv,
       cwd: identity.cwd,
       files: identity.files,
@@ -290,6 +322,7 @@ export async function writeApproval(
   const earlier = await readRecord(configDir, identity.hash);
   const record: ApprovalRecord = {
     kind: identity.kind,
+    ...(identity.tool !== undefined && { tool: identity.tool }),
     hash: identity.hash,
     argv: identity.argv,
     cwd: identity.cwd,
@@ -342,6 +375,7 @@ export async function requireApproval(
   const { settings } = gate;
   const step = (method: ApprovalMethod): CommandStep => ({
     kind: identity.kind,
+    ...(identity.tool !== undefined && { tool: identity.tool }),
     hash: identity.hash,
     method,
   });
@@ -351,7 +385,7 @@ export async function requireApproval(
   if (settings.mode === "headless") {
     throw new ConfirmationError(
       "confirmation_required",
-      `the ${identity.kind} command ${JSON.stringify(identity.argv)} (hash ${identity.hash}) is not in settings.commands.approved; headless settings run only commands listed there`,
+      `${named(identity)} ${JSON.stringify(identity.argv)} (hash ${identity.hash}) is not in settings.commands.approved; headless settings run only commands listed there`,
       asked,
     );
   }
@@ -362,7 +396,7 @@ export async function requireApproval(
     if (!(await gate.prompt.confirm(request))) {
       throw new ConfirmationError(
         "confirmation_declined",
-        `the ${identity.kind} command ${JSON.stringify(identity.argv)} was declined`,
+        `${named(identity)} ${JSON.stringify(identity.argv)} was declined`,
         asked,
       );
     }
@@ -372,7 +406,7 @@ export async function requireApproval(
   await savePending(settings.stateDir, request);
   throw new ConfirmationError(
     "confirmation_required",
-    `the ${identity.kind} command ${JSON.stringify(identity.argv)} in ${identity.cwd} needs approval; run: ${asked.confirmCommand}`,
+    `${named(identity)} ${JSON.stringify(identity.argv)} in ${identity.cwd} needs approval; run: ${asked.confirmCommand}`,
     asked,
   );
 }

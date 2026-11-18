@@ -73,6 +73,15 @@ const installed = project.install(pack, NAME);
 symlinkSync(join(pkgRoot, "node_modules"), join(installed, "node_modules"), "junction");
 project.writeSettings({ extensions: [NAME], search: { embedder: "scripted" } });
 
+test("the search package's setup runs through extensions setup", async () => {
+  const result = await project.cli(["extensions", "setup", "search", "--json"]);
+  assert.equal(result.code, 0, result.stderr + result.stdout);
+  const fields = result.json as Record<string, unknown>;
+  assert.equal(fields["extension"], "search");
+  assert.equal(fields["model"], "scripted");
+  assert.equal(fields["installed"], true);
+});
+
 test("the listed package fills core's slot: find returns the same JSON on the CLI and as a tool", async () => {
   const indexed = await project.cli(["search", "index", "--json"]);
   assert.equal(indexed.code, 0, indexed.stderr + indexed.stdout);
@@ -83,7 +92,7 @@ test("the listed package fills core's slot: find returns the same JSON on the CL
   sessions.push(mcp);
   const listed = (await mcp.request("tools/list", {}))["result"] as { tools: { name: string }[] };
   const tools = listed.tools.map((t) => t.name);
-  for (const name of ["find", "search_index", "search_status", "search_setup"])
+  for (const name of ["find", "search_index", "search_status", "extensions_setup"])
     assert.ok(tools.includes(name), name);
 
   const lantern = `asset://${GAME}/lantern`;

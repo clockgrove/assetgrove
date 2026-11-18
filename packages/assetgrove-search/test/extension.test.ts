@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { extensionContext } from "@clockgrove/assetgrove/testing";
 import extension from "../src/extension.ts";
@@ -101,6 +102,14 @@ describe("the search extension", () => {
     const ctx = p.context();
     const s = await slot.status(ctx);
     assert.equal((s.embedder as { id: string }).id, "scripted");
-    assert.deepEqual(await slot.setup(ctx), { model: "scripted", installed: true });
+    const setup = extension(context).setup!;
+    const setupContext = {
+      stateDir: p.stateDir,
+      dir: join(p.stateDir, "models"),
+      search: ctx.settings,
+      download: async () => assert.fail("the scripted embedder downloads nothing"),
+      log: () => {},
+    };
+    assert.deepEqual(await setup(setupContext), { model: "scripted", installed: true });
   });
 });

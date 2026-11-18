@@ -412,6 +412,16 @@ Lists what loaded: core first, then each extension the developer settings' `exte
 
 MCP tool: `extensions`, no arguments.
 
+### `extensions setup`
+
+```text
+extensions setup <name> [--json]
+```
+
+Runs the `setup` of the loaded extension `<name>` (a name from `extensions`; the search package's is its model download). Every file it downloads is pinned to a version and a sha256 the extension ships and is checked before use, landing under `<stateDir>/models`; a mismatch deletes the file and exits 4 `provider_error` (`hash_mismatch`), and when every host fails it exits 4 (`setup_failed`). An unknown name, or an extension that declares no setup, exits 2. Returns `extension` and what the setup returned. Free; writes only under the state directory.
+
+MCP tool: `extensions_setup`, argument `name`.
+
 ### `spend`
 
 ```text

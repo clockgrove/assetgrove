@@ -29,6 +29,8 @@ import type { ApprovalGate, CommandStep } from "./approvals.ts";
 import { requireLicensable } from "./license.ts";
 import { bindingOf, callsSha256 } from "./provenance-binding.ts";
 import { keyFreeEnv, redact } from "./redact.ts";
+import { presetToolRunner } from "./extension/tools.ts";
+import type { ToolRunner, ToolStep } from "./extension/tools.ts";
 import { GLB_MEDIA_TYPE } from "./model3d/glb.ts";
 import { shapeModelHandoff } from "./model3d/handoff.ts";
 import { readRun, writeRun } from "./loop.ts";
@@ -108,6 +110,8 @@ export interface PickResult {
 export interface PresetResult {
   preset: string;
   files: string[];
+  /** Each tool run the preset made through its context's `run`, approved, in order; absent when none. */
+  tools?: ToolStep[];
 }
 
 /** What the target's validator said, and the approved command step that ran it. */
@@ -387,6 +391,10 @@ export interface PreparedTargetWrite {
    * is absent and the preset wrote nothing here.
    */
   familyContexts: Array<FamiliesContext | undefined>;
+  /** The tool runner the preset at each index is handed: its own pack's tools only. */
+  runnerOf: (i: number) => ToolRunner;
+  /** Each preset's approved tool runs, by the preset's index. */
+  toolSteps: ToolStep[][];
   /** Signs an image a preset writes, when the hand-off signs; records it in `credentials`. */
   signImage?: (rel: string, bytes: Uint8Array, mediaType: string) => Promise<Uint8Array>;
   mediaRel: string;
@@ -575,6 +583,7 @@ async function runFamilyPresets(prepared: readonly PreparedTargetWrite[]): Promi
         profile: last.write.profile,
         assetId: last.write.spec.assetId,
         families: handedOffFamilies(group),
+        run: last.runnerOf(i),
       };
       const files = await preset.write(ctx, options, targetRead(last.guard));
       // An image a preset writes is signed like the media.
@@ -733,12 +742,23 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     manifestRel,
     ...(frames !== undefined && { frames }),
   };
-  // A preset reads the target as it is before this hand-off writes.
+  // A preset reads the target as it is before this hand-off writes, and runs only its own pack's
+  // tools, in scratch, under the approval rules, with the game project as the approval's project.
   const read = targetRead(guard);
+  const toolSteps: ToolStep[][] = presets.map(() => []);
+  const runnerOf = (i: number): ToolRunner =>
+    presetToolRunner(presets[i]?.preset.name ?? "", {
+      tools: write.registry?.tools,
+      gate,
+      projectDir: targetDir,
+      onStep: (step) => toolSteps[i]?.push(step),
+    });
   const presetFiles: PresetFile[][] = [];
-  for (const { preset, options } of presets) {
+  for (const [i, { preset, options }] of presets.entries()) {
     presetFiles.push(
-      preset.scope === "families" ? [] : await preset.write(presetContext, options, read),
+      preset.scope === "families"
+        ? []
+        : await preset.write({ ...presetContext, run: runnerOf(i) }, options, read),
     );
   }
   // An image a preset writes is signed like the media.
@@ -820,6 +840,8 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     presetContext,
     presetFiles,
     familyContexts: presets.map(() => undefined),
+    runnerOf,
+    toolSteps,
     ...(signImage && { signImage }),
     mediaRel,
     manifestRel,
@@ -936,6 +958,9 @@ async function commitWritten(
       files: (presetFiles[i] ?? []).map((file) =>
         relativeRecordPath(targetDir, inside(targetDir, file.path)),
       ),
+      ...((prepared.toolSteps[i]?.length ?? 0) > 0 && {
+        tools: [...(prepared.toolSteps[i] as ToolStep[])],
+      }),
     })),
   };
   if (prepared.credentials && prepared.credentials.rels.length > 0) {
@@ -962,7 +987,7 @@ async function commitWritten(
     const families = prepared.familyContexts[i];
     const found =
       preset.scope !== "families"
-        ? await preset.check(presetContext, options, files, read)
+        ? await preset.check({ ...presetContext, run: prepared.runnerOf(i) }, options, files, read)
         : families === undefined
           ? []
           : await preset.check(families, options, files, read);

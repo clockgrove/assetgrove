@@ -15,6 +15,7 @@ import type { Generator } from "../generators/generator.ts";
 import type { AdapterContext, ProviderAdapter } from "../providers/adapter.ts";
 import type { SearchSettings } from "../settings.ts";
 import type { prompt, qa, raster } from "./helpers.ts";
+import type { SetupContext } from "./setup.ts";
 
 /** The extension API version this build of Assetgrove speaks. */
 export const EXTENSION_API = 2;
@@ -57,6 +58,27 @@ export interface Extension {
    * when the settings list it. Core declares `find` and the `search` commands and calls the slot.
    */
   search?: SearchSlot;
+  /**
+   * The programs the pack may run, each `{ id: "<name>:<id>", setting }`: `setting` names the
+   * top-level field of the pack's own settings that holds the executable's absolute path, so the
+   * program comes from the developer settings, never from a profile. A preset runs one only through
+   * its context's `run` (`ToolRunner`), under core's approval rules; an id it does not declare is
+   * refused.
+   */
+  tools?: ToolDeclaration[];
+  /**
+   * Installs what the pack needs, when a person runs `assetgrove extensions setup <name>`: every
+   * download goes through `ctx.download`, pinned to a version and a sha256 the pack ships.
+   */
+  setup?(ctx: SetupContext): Promise<Record<string, unknown>>;
+}
+
+/** A program a pack declares (`Extension.tools`). */
+export interface ToolDeclaration {
+  /** `<name>:<id>`. */
+  id: string;
+  /** The top-level field of the pack's settings holding the executable's absolute path. */
+  setting: string;
 }
 
 /** Where a search row comes from (design section 7.3). */
@@ -244,7 +266,6 @@ export interface SearchSlot {
   outliers(addresses: string[], ctx: SearchContext): Promise<SearchOutliersResult>;
   index(options: { rebuild?: boolean }, ctx: SearchContext): Promise<Record<string, unknown>>;
   status(ctx: SearchContext): Promise<Record<string, unknown>>;
-  setup(ctx: SearchContext): Promise<Record<string, unknown>>;
   /**
    * The free plan step of a hosted embedder's paid request (design section 7.7): what `index` or
    * `find` would embed, counted from the index and the library without calling the embedder.
@@ -319,6 +340,8 @@ export type {
   PlannedCall,
 } from "../generators/generator.ts";
 export type { Caller } from "../calls.ts";
+export type { ToolOutputFile, ToolResult, ToolRunOptions, ToolRunner, ToolStep } from "./tools.ts";
+export type { PinnedDownload, SetupContext } from "./setup.ts";
 export type { FilteringState, StabilityEntry } from "../qa/stability.ts";
 export type {
   CallParameterName,

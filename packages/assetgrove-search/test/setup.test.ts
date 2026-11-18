@@ -9,6 +9,7 @@ import { after, describe, it } from "node:test";
 import { MODEL_MANIFEST, isPinned } from "../src/model-manifest.ts";
 import type { ModelManifest } from "../src/model-manifest.ts";
 import { SearchError } from "../src/errors.ts";
+import type { PinnedDownload } from "@clockgrove/assetgrove/extension";
 import { loadSiglip2 } from "../src/siglip2.ts";
 import { modelFolder, modelIsInstalled, setupModel } from "../src/setup.ts";
 
@@ -71,6 +72,37 @@ describe("search setup", () => {
     await setupModel({ modelsDir: dir, manifest });
     assert.equal(await modelIsInstalled(dir, manifest), true);
     assert.equal(m.hits.length, 0);
+    await rm(dir, { recursive: true });
+  });
+
+  it("hands each missing file to the download port, pinned, and skips an installed one", async () => {
+    const { manifest, dir, p, m } = await fixture(fromPrimary, fromMirror);
+    const installed = manifest.files[0]!;
+    await mkdir(dirname(join(dir, "fixture", installed.path)), { recursive: true });
+    await writeFile(join(dir, "fixture", installed.path), contents[installed.path]!);
+    const calls: PinnedDownload[] = [];
+    const result = await setupModel({
+      modelsDir: dir,
+      manifest,
+      download: async (file) => {
+        calls.push(file);
+        return join(dir, file.path);
+      },
+    });
+    assert.equal(result.dir, modelFolder(dir, manifest));
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      manifest.files.slice(1).map((f) => `fixture/${f.path}`),
+    );
+    for (const [i, call] of calls.entries()) {
+      const file = manifest.files[i + 1]!;
+      assert.equal(call.version, REV);
+      assert.equal(call.sha256, file.sha256);
+      assert.equal(call.urls.length, 2);
+      assert.ok(call.urls[0]!.startsWith(p.base));
+      assert.ok(call.urls[1]!.startsWith(m.base));
+    }
+    assert.deepEqual([p.hits, m.hits], [[], []], "the package fetched nothing itself");
     await rm(dir, { recursive: true });
   });
 
@@ -191,7 +223,7 @@ describe("stale staging folders", () => {
 });
 
 describe("offline loading", () => {
-  it("fails with an error naming search setup and makes no network call", async () => {
+  it("fails with an error naming extensions setup search and makes no network call", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ag-search-"));
     const real = globalThis.fetch;
     let calls = 0;
@@ -208,7 +240,7 @@ describe("offline loading", () => {
       await assert.rejects(loadSiglip2(dir), (e: unknown) => {
         assert.ok(e instanceof SearchError);
         assert.equal(e.code, "model_missing");
-        assert.match(e.message, /search setup/);
+        assert.match(e.message, /extensions setup search/);
         return true;
       });
     } finally {

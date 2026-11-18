@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { SetupContext } from "@clockgrove/assetgrove/extension";
 import { SearchError } from "./errors.ts";
 import {
   MODEL_MANIFEST,
@@ -17,6 +18,11 @@ export interface SetupOptions {
   manifest?: ModelManifest;
   fetch?: typeof fetch;
   onProgress?: (message: string) => void;
+  /**
+   * Core's pinned download (`SetupContext.download`): it hashes, deletes on mismatch and fails.
+   * Without it (only the CI bench's direct call) the package fetches and verifies the files itself.
+   */
+  download?: SetupContext["download"];
   /**
    * How long a download may go without a byte before it is given up and the next host tried;
    * defaults to 60 seconds. Tests shorten it.
@@ -110,6 +116,23 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
   const final = modelFolder(options.modelsDir, manifest);
   if (await modelIsInstalled(options.modelsDir, manifest)) return { dir: final };
 
+  if (options.download) {
+    for (const file of manifest.files) {
+      if ((await sha256File(join(final, file.path))) === file.sha256) continue;
+      say(file.path);
+      await options.download({
+        urls: [
+          primaryUrl(manifest, manifest.primaryBase, file),
+          mirrorUrl(manifest.mirrorBase, file),
+        ],
+        version: manifest.revision,
+        sha256: file.sha256,
+        path: `${manifest.id}/${file.path}`,
+      });
+    }
+    return { dir: final };
+  }
+
   await mkdir(options.modelsDir, { recursive: true });
   // A killed or interrupted setup cannot run its `finally`: sweep what earlier runs left behind.
   for (const name of await readdir(options.modelsDir)) {
@@ -153,7 +176,10 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
         throw new SearchError(
           mismatch ? "hash_mismatch" : "setup_failed",
           `Could not fetch ${file.path}: ${failures.join("; ")}`,
-          { hint: "Run `assetgrove search setup` again.", details: { file: file.path, failures } },
+          {
+            hint: "Run `assetgrove extensions setup search` again.",
+            details: { file: file.path, failures },
+          },
         );
       }
     }

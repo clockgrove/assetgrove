@@ -74,9 +74,6 @@ const slot: SearchSlot = {
   async status() {
     return {};
   },
-  async setup() {
-    return {};
-  },
 };
 
 function context(

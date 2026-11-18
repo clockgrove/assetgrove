@@ -46,6 +46,23 @@ export interface LoadedExtension {
   adapters: string[];
   /** True when the extension fills the search slot. */
   search?: true;
+  /** The tools it declares, when it declares any. */
+  tools?: string[];
+  /** True when it declares a setup (`assetgrove extensions setup <name>`). */
+  setup?: true;
+}
+
+/** A tool a loaded pack declares, with the pack's validated settings its executable is read from. */
+export interface RegisteredTool {
+  id: string;
+  /** The extension name of the pack that declares it. */
+  pack: string;
+  /** The package it came from. */
+  package: string;
+  /** The field of the pack's settings holding the executable's absolute path. */
+  setting: string;
+  /** The pack's validated settings. */
+  settings: Readonly<Record<string, unknown>>;
 }
 
 /** What one loaded entry brings: its extension, its package, and its validated settings. */
@@ -77,6 +94,13 @@ export class ExtensionRegistry {
   readonly operations: Readonly<Record<string, string>>;
   /** Each loaded pack's validated settings (its defaults filled), by package name. */
   readonly packSettings: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
+  /** Every tool the loaded packs declare, by id. */
+  readonly tools: ReadonlyMap<string, RegisteredTool>;
+  /** Each loaded extension by name, with its package and validated settings. */
+  readonly extensions: ReadonlyMap<
+    string,
+    { extension: Extension; package: string; settings: Readonly<Record<string, unknown>> }
+  >;
 
   constructor(extensions: ReadonlyArray<RegistryEntry>, settingsPath?: string) {
     const names = new Set<string>();
@@ -85,6 +109,11 @@ export class ExtensionRegistry {
     const adapters = new Map<string, ProviderAdapter>();
     const loaded: LoadedExtension[] = [];
     const packSettings = new Map<string, Readonly<Record<string, unknown>>>();
+    const tools = new Map<string, RegisteredTool>();
+    const byName = new Map<
+      string,
+      { extension: Extension; package: string; settings: Readonly<Record<string, unknown>> }
+    >();
     let search: { slot: SearchSlot; by: string } | undefined;
     const operations: Record<string, string> = { ...OPERATION_ROLES };
     const declared = new Map<string, { role: string; by: string }>();
@@ -104,6 +133,21 @@ export class ExtensionRegistry {
           `two extensions are named "${extension.name}" (the second from ${info.package})`,
         );
       names.add(extension.name);
+      byName.set(extension.name, { extension, package: info.package, settings: settings ?? {} });
+      for (const t of extension.tools ?? [])
+        add(
+          tools,
+          "tool",
+          t.id,
+          {
+            id: t.id,
+            pack: extension.name,
+            package: info.package,
+            setting: t.setting,
+            settings: settings ?? {},
+          },
+          extension.name,
+        );
       for (const k of extension.kinds ?? []) {
         add(kinds, "asset kind", k.kind, k, extension.name);
         for (const [op, role] of Object.entries(k.operations ?? {})) {
@@ -139,6 +183,9 @@ export class ExtensionRegistry {
         presets: (extension.presets ?? []).map((p) => p.name),
         adapters: (extension.adapters ?? []).map((a) => a.id),
         ...(extension.search !== undefined && { search: true as const }),
+        ...(extension.tools !== undefined &&
+          extension.tools.length > 0 && { tools: extension.tools.map((t) => t.id) }),
+        ...(extension.setup !== undefined && { setup: true as const }),
       });
     }
     this.loaded = loaded;
@@ -149,6 +196,8 @@ export class ExtensionRegistry {
     this.settingsPath = settingsPath;
     this.operations = operations;
     this.packSettings = packSettings;
+    this.tools = tools;
+    this.extensions = byName;
   }
 
   /**
@@ -528,6 +577,7 @@ export function checkExtension(value: unknown, line: string): Extension {
     ["kinds", ext.kinds, "kind"],
     ["presets", ext.presets, "name"],
     ["adapters", ext.adapters, "id"],
+    ["tools", ext.tools, "id"],
   ];
   for (const [field, list, key] of ids) {
     if (list === undefined) continue;
@@ -544,6 +594,15 @@ export function checkExtension(value: unknown, line: string): Extension {
         );
     }
   }
+  for (const tool of ext.tools ?? []) {
+    const setting = (tool as { setting?: unknown }).setting;
+    if (typeof setting !== "string" || setting === "")
+      throw refuse(
+        `tool ${tool.id} must name the field of its settings that holds the executable's path, as setting`,
+      );
+  }
+  if (ext.setup !== undefined && typeof ext.setup !== "function")
+    throw refuse("its setup must be a function");
   if (ext.settingsSchema !== undefined && !isZod(ext.settingsSchema))
     throw refuse("its settingsSchema must be a zod schema");
   for (const adapter of ext.adapters ?? []) {
@@ -586,7 +645,7 @@ export function checkExtension(value: unknown, line: string): Extension {
   }
   if (ext.search !== undefined) {
     const slot = ext.search as unknown as Record<string, unknown> | null;
-    for (const op of ["find", "index", "status", "setup"])
+    for (const op of ["find", "index", "status"])
       if (slot === null || typeof slot !== "object" || typeof slot[op] !== "function")
         throw refuse(`its search slot must have a ${op} function`);
   }
