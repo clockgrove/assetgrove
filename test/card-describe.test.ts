@@ -14,6 +14,10 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { SUMMARY } from "./fixtures/describe-script.ts";
 import { fixtureLibrary } from "./fixtures/library.ts";
+import { cardDescribeCommand } from "../src/commands/card.ts";
+import { parseCommandLine, runCommand } from "../src/commands/runner.ts";
+import type { ConfirmRequest } from "../src/confirm/prompt.ts";
+import { loadSettings } from "../src/settings.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const script = fileURLToPath(new URL("./fixtures/describe-script.ts", import.meta.url));
@@ -128,7 +132,7 @@ test("a person's description is skipped and listed, and card edit drops the summ
 });
 
 test("--dry-run forecasts one vision job per card and writes nothing; a declined confirmation spends nothing", async () => {
-  const { run, card } = library();
+  const { lib, run, card } = library();
   const before = readFileSync(card("rock"), "utf8");
   const calls = visionCalls();
   const dry = doc(await run("--missing", "--dry-run"));
@@ -139,9 +143,31 @@ test("--dry-run forecasts one vision job per card and writes nothing; a declined
   assert.equal(visionCalls(), calls);
   assert.equal(readFileSync(card("rock"), "utf8"), before);
 
+  // A person is asked through the terminal and says no.
   useAttended();
-  const refused = await run("--missing");
-  assert.equal(refused.code, 8, refused.stdout + refused.stderr);
+  const asked: ConfirmRequest[] = [];
+  const declined = await runCommand(
+    cardDescribeCommand,
+    parseCommandLine(cardDescribeCommand, [
+      ...["--missing", "--target", lib.dir, "--runs", join(lib.dir, ".assetgrove", "runs")],
+      ...["--provider-script", script],
+    ]).args,
+    {
+      settings: loadSettings(),
+      log: () => {},
+      prompt: {
+        method: "tty",
+        confirm: async (request) => {
+          asked.push(request);
+          return false;
+        },
+      },
+    },
+  );
+  assert.equal(declined.exitCode, 8, declined.error?.message);
+  assert.equal(declined.error?.code, "confirmation_declined");
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0]!.kind, "spend");
   assert.equal(visionCalls(), calls);
   assert.equal(readFileSync(card("rock"), "utf8"), before);
 });

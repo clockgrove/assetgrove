@@ -11,6 +11,7 @@ import { providerSet, spendLedger } from "../providers/index.ts";
 import { rigReads } from "../model3d/rig/template.ts";
 import type { AssetSpec, StyleBible } from "../types.ts";
 import { sharedTexts, subjectOf, withSharedText } from "../request.ts";
+import type { SharedText } from "../request.ts";
 import { dryRunOutcome, formatPlan, formatRun, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { Outcome, RunContext, WorkPlan } from "./types.ts";
@@ -226,7 +227,21 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
  * throws (a spend hold, a stopped job, bad input) is the runner's error outcome instead.
  */
 export function stageOutcome(run: RunRecord, runDir: string, bible: StyleBible): Outcome {
-  const fields = withSharedText({ runDir, ...run }, sharedTexts(bible));
+  // A candidate's model-written summary is data, never instructions: its text is returned only
+  // under `sharedText`, as `card describe` returns it; the candidate keeps the operation and model.
+  const summaries: SharedText[] = [];
+  const candidates = run.candidates.map(({ summary, ...candidate }) => {
+    if (summary === undefined) return candidate;
+    summaries.push({
+      source: `candidates.${candidate.id}.summary.description`,
+      text: summary.description,
+    });
+    for (const tag of summary.tags)
+      summaries.push({ source: `candidates.${candidate.id}.summary.tags`, text: tag });
+    return { ...candidate, summary: { operation: summary.operation, model: summary.model } };
+  });
+  const masked = withSharedText({ runDir, ...run, candidates }, sharedTexts(bible));
+  const fields = { ...masked, sharedText: [...masked.sharedText, ...summaries] };
   const human = formatRun(run, runDir);
   if (run.candidates.length > 0) return { exitCode: 0, fields, human };
   if (run.stopped) return refusal("cap_refused", run.stopped, fields, human);

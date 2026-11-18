@@ -7,9 +7,10 @@ import "./fixtures/env.ts";
 import { approve } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { parseCard } from "../src/library/card.ts";
 import { summaryDigest } from "../src/library/summary.ts";
@@ -125,9 +126,64 @@ test("a description the spec's fields gave is kept and gets no summary entry", a
   assert.ok(!verified.some((v) => String(v["by"]).startsWith("process:assetgrove-summary:")));
 });
 
-test("the summary adds no call: the dry-run plan is the same with either script", async () => {
+test("the summary adds no call: the stage's spend form lists the same jobs, and a real stage makes one vision call per candidate", async () => {
+  const jobs = (r: Result) =>
+    doc(r)["jobs"].map((j: Record<string, unknown>) => [j["operation"], j["count"]]);
+  const expected = [
+    ["prompt-policy", 1],
+    ["still", 1],
+    ["cutout", 1],
+    ["vision", 1],
+  ];
   const plain = await setup(still(), plainScript, ["--dry-run"]);
   const summary = await setup(still(), summaryScript, ["--dry-run"]);
   assert.equal(plain.stage.code, 0, plain.stage.stderr);
-  assert.deepEqual(doc(summary.stage)["plan"], doc(plain.stage)["plan"]);
+  assert.equal(summary.stage.code, 0, summary.stage.stderr);
+  assert.deepEqual(jobs(plain.stage), expected);
+  assert.deepEqual(jobs(summary.stage), expected);
+
+  // The real stage: the summary rides on the one QA call, so the provider sees one vision call
+  // for the one candidate, as the forecast said.
+  const dir = await mkdtemp(join(tmpdir(), "summary-count-"));
+  const events = join(dir, "vision.events");
+  const counting = join(dir, "counting.mjs");
+  await writeFile(
+    counting,
+    `import { appendFileSync } from "node:fs";
+import base from ${JSON.stringify(pathToFileURL(summaryScript).href)};
+export default {
+  ...base,
+  vision: (...args) => {
+    appendFileSync(${JSON.stringify(events)}, "vision\\n");
+    return base.vision(...args);
+  },
+};
+`,
+  );
+  approve(counting);
+  const real = await setup(still(), counting);
+  assert.equal(real.stage.code, 0, real.stage.stdout + real.stage.stderr);
+  assert.equal(doc(real.stage)["candidates"].length, 1);
+  assert.equal((await readFile(events, "utf8")).split("\n").filter(Boolean).length, 1);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("stage returns a candidate's summary text only under sharedText", async () => {
+  const { stage } = await setup(still(), summaryScript);
+  assert.equal(stage.code, 0, stage.stdout + stage.stderr);
+  const out = doc(stage);
+  const candidate = out["candidates"][0];
+  assert.deepEqual(Object.keys(candidate["summary"]).sort(), ["model", "operation"]);
+  assert.equal(candidate["summary"]["operation"], "vision");
+  assert.ok(!JSON.stringify(out["candidates"]).includes(SUMMARY.description));
+  assert.deepEqual(
+    out["sharedText"].filter((s: Record<string, string>) => s["source"].startsWith("candidates.")),
+    [
+      { source: "candidates.c1.summary.description", text: SUMMARY.description },
+      ...SUMMARY.tags.map((text) => ({ source: "candidates.c1.summary.tags", text })),
+    ],
+  );
+  // The run record on disk keeps the summary for pick.
+  const run = JSON.parse(await readFile(join(out["runDir"], "run.json"), "utf8"));
+  assert.equal(run.candidates[0].summary.description, SUMMARY.description);
 });
