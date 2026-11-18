@@ -2,32 +2,25 @@
  * The Godot pack through core (issue #422): built as a pack outside this repository is built and
  * installed in a temporary project, `write-families` hands a contact sheet's strips off with the
  * `godot:sprite-frames` preset, and a headless Godot loads what was written. These tests need
- * Godot 4.7.2: the `GODOT` environment variable names its executable, and without it each test
- * skips.
+ * Godot 4.7.2 on PATH (CI's setup-godot puts it there), and without it each test skips with the
+ * reason.
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import {
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { sampleProfile, tempProject } from "@clockgrove/assetgrove/testing";
 import type { CliResult } from "@clockgrove/assetgrove/testing";
+import { findGodot } from "./helpers/godot.ts";
 import { buildPack, packNodeModules } from "./helpers/pack.ts";
 import { contactSheet } from "./helpers/sheet.ts";
 
 const NAME = "@clockgrove/assetgrove-godot";
-const GODOT = process.env["GODOT"];
-const usable = GODOT !== undefined && statSync(GODOT, { throwIfNoEntry: false })?.isFile() === true;
-const SKIP = "GODOT does not name a Godot 4.7.2 executable";
+const { godot: GODOT, skip: SKIP } = findGodot();
+const usable = GODOT !== undefined;
 
 const stage = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-godot-")));
 const project = tempProject();
@@ -155,7 +148,7 @@ let idleImport = "";
 let walkImport = "";
 
 test("a strip handed off writes the SpriteFrames and each strip's .import, and Godot loads it", async (t) => {
-  if (!usable) return t.skip(SKIP);
+  if (!usable) return t.skip(SKIP!);
   const done = await importFamilies([
     { name: "idle", frames: [1, 2, 3, 4] },
     { name: "walk", frames: [5, 6, 7] },
@@ -183,21 +176,21 @@ test("a strip handed off writes the SpriteFrames and each strip's .import, and G
 });
 
 test("a later family keeps the earlier ones in one SpriteFrames", async (t) => {
-  if (!usable) return t.skip(SKIP);
+  if (!usable) return t.skip(SKIP!);
   const done = await importFamilies([{ name: "attack", frames: [6, 7, 8] }]);
   assert.equal(done.code, 0, done.stderr + done.stdout);
   assert.deepEqual(animations(loaded()), ["attack:3:true", "idle:4:true", "walk:3:true"]);
 });
 
 test("a replaced resource keeps its UID and an existing .import is never touched", async (t) => {
-  if (!usable) return t.skip(SKIP);
+  if (!usable) return t.skip(SKIP!);
   assert.equal(headerUid("characters/fern.tres"), firstUid);
   assert.equal(text("assets/fern-idle.png.import"), idleImport);
   assert.equal(text("assets/fern-walk.png.import"), walkImport);
 });
 
 test("an earlier strip Godot cannot decode fails the hand-off with exit 6 and leaves the resource as it was", async (t) => {
-  if (!usable) return t.skip(SKIP);
+  if (!usable) return t.skip(SKIP!);
   const before = text("characters/fern.tres");
   const path = join(project.dir, "assets", "fern-idle.png");
   const strip = readFileSync(path);

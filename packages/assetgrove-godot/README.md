@@ -63,4 +63,4 @@ The preset's check reads the written resource back: a SpriteFrames with a UID, r
 
 ## Tests
 
-`pnpm test` runs the conformance suite (with a scripted tool run), setup and the output readers anywhere. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI and needs Godot: it reads the executable from the `GODOT` environment variable, which CI's `chickensoft-games/setup-godot` step sets, and skips with that reason without it.
+`pnpm test` runs the conformance suite (with a scripted tool run), setup and the output readers anywhere. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI and needs Godot: it runs the first Godot 4.7.2 on `PATH` (as `godot`, or by the release's own executable name; on Windows only an `.exe`), which CI's `chickensoft-games/setup-godot` step puts there, and skips with the reason without one. The tests read no environment variable of their own: core allows a fixed list (`test/env-names.test.ts`).
