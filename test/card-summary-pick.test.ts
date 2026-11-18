@@ -177,7 +177,7 @@ test("stage returns a candidate's summary text only under sharedText", async () 
   assert.equal(candidate["summary"]["operation"], "vision");
   assert.ok(!JSON.stringify(out["candidates"]).includes(SUMMARY.description));
   assert.deepEqual(
-    out["sharedText"].filter((s: Record<string, string>) => s["source"].startsWith("candidates.")),
+    out["sharedText"].filter((s: Record<string, string>) => s["source"]!.startsWith("candidates.")),
     [
       { source: "candidates.c1.summary.description", text: SUMMARY.description },
       ...SUMMARY.tags.map((text) => ({ source: "candidates.c1.summary.tags", text })),
