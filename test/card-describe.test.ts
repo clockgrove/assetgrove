@@ -7,7 +7,7 @@ import "./fixtures/env.ts";
 import { approve, ledgerPath, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -160,6 +160,34 @@ test("an audio asset has no image view: it is skipped and listed, and no call is
   const out = doc(await run(card("sound")));
   assert.deepEqual(out["described"], []);
   assert.deepEqual(out["skipped"], [{ asset: "sound", reason: "no image view" }]);
+  assert.equal(visionCalls(), calls);
+});
+
+test("a 3D asset is described from its turntable views, and one with none is skipped", async () => {
+  const { lib, run, card } = library();
+  for (const id of ["boat", "raft"]) {
+    writeFileSync(join(lib.root, `${id}.glb`), Buffer.from("glTF\u0002\0\0\0"));
+    copyFileSync(join(lib.root, "rock.review.json"), join(lib.root, `${id}.review.json`));
+    writeFileSync(
+      card(id),
+      readFileSync(card("rock"), "utf8")
+        .replaceAll("rock.png", `${id}.glb`)
+        .replaceAll("rock.review.json", `${id}.review.json`),
+    );
+  }
+  // Only the boat has turntable renders beside it.
+  mkdirSync(join(lib.root, "boat-turntable"));
+  for (const view of ["front", "side"])
+    copyFileSync(join(lib.root, "rock.png"), join(lib.root, "boat-turntable", `${view}.png`));
+  const boat = doc(await run(card("boat")));
+  assert.deepEqual(
+    boat["described"].map((d: Doc) => d.asset),
+    ["boat"],
+  );
+  assert.match(readFileSync(card("boat"), "utf8"), /process:assetgrove-summary:vision:/);
+  const calls = visionCalls();
+  const raft = doc(await run(card("raft")));
+  assert.deepEqual(raft["skipped"], [{ asset: "raft", reason: "no image view" }]);
   assert.equal(visionCalls(), calls);
 });
 
