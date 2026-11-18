@@ -5,10 +5,10 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, realpathSync, symlinkSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -16,6 +16,11 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const pkgRoot = fileURLToPath(new URL("..", import.meta.url));
 const FIVE_MINUTES = 5 * 60 * 1000;
+/**
+ * The tarball the release workflow packed and attested, which its verify job downloads into out/;
+ * when out/ holds one, it is tested instead of a fresh pack.
+ */
+const prebuilt = releasedTarball(join(pkgRoot, "out"));
 
 /** npm's CLI script under the running Node when it is there (npm is a .cmd file on Windows). */
 function npm(args: string[], cwd: string) {
@@ -37,17 +42,10 @@ test(
   async () => {
     const temp = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-search-pack-")));
     try {
-      // Packed the way a publish packs: no dist/ beforehand, so it can only come from prepack.
-      await rm(join(pkgRoot, "dist"), { recursive: true, force: true });
-      const { stdout } = await npm(["pack", "--json", "--pack-destination", temp], pkgRoot);
-      const [packed] = JSON.parse(stdout.slice(stdout.indexOf("["))) as Array<{
-        filename: string;
-        version: string;
-        files: { path: string }[];
-      }>;
-      assert.ok(packed);
+      const packed =
+        prebuilt === undefined ? await packFresh(temp) : await listPrebuilt(prebuilt, temp);
       assert.equal(packed.version, "0.2.0");
-      const paths = packed.files.map((f) => f.path);
+      const paths = packed.files;
       assert.deepEqual(
         paths.filter(
           (p) => !SHIPPED_FILES.includes(p) && !SHIPPED_DIRS.some((d) => p.startsWith(d)),
@@ -95,8 +93,55 @@ console.log(typeof e.default, typeof m.SearchIndex);`;
       ]);
       assert.equal(run.stdout.trim(), "function function");
     } finally {
-      await rm(join(pkgRoot, "dist"), { recursive: true, force: true });
+      if (prebuilt === undefined) await rm(join(pkgRoot, "dist"), { recursive: true, force: true });
       await rm(temp, { recursive: true, force: true });
     }
   },
 );
+
+interface Packed {
+  /** The tarball's name in the temporary folder. */
+  filename: string;
+  version: string;
+  /** Its files, relative to the package. */
+  files: string[];
+}
+
+/** Packed the way a publish packs: no dist/ beforehand, so it can only come from prepack. */
+async function packFresh(temp: string): Promise<Packed> {
+  await rm(join(pkgRoot, "dist"), { recursive: true, force: true });
+  const { stdout } = await npm(["pack", "--json", "--pack-destination", temp], pkgRoot);
+  const [packed] = JSON.parse(stdout.slice(stdout.indexOf("["))) as Array<{
+    filename: string;
+    version: string;
+    files: { path: string }[];
+  }>;
+  assert.ok(packed);
+  return {
+    filename: packed.filename,
+    version: packed.version,
+    files: packed.files.map((f) => f.path),
+  };
+}
+
+/** The given tarball, copied into the temporary folder (tar is given a name, never a drive path). */
+async function listPrebuilt(tarball: string, temp: string): Promise<Packed> {
+  const filename = basename(tarball);
+  copyFileSync(tarball, join(temp, filename));
+  const { stdout } = await exec("tar", ["-tzf", filename], { cwd: temp });
+  const files = stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("package/") && !line.endsWith("/"))
+    .map((line) => line.slice("package/".length));
+  const version = /-(\d+\.\d+\.\d+[^/]*)\.tgz$/.exec(filename)?.[1] ?? "";
+  return { filename, version, files };
+}
+
+/** The one tarball in `dir`, or undefined when there is none; more than one is an error. */
+function releasedTarball(dir: string): string | undefined {
+  if (!existsSync(dir)) return undefined;
+  const tarballs = readdirSync(dir).filter((name) => name.endsWith(".tgz"));
+  if (tarballs.length > 1)
+    throw new Error(`${dir} holds more than one tarball: ${tarballs.join(", ")}`);
+  return tarballs[0] === undefined ? undefined : join(dir, tarballs[0]);
+}

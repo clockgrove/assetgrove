@@ -1,0 +1,15 @@
+{
+  "name": "assetgrove-fixture-keyed",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A synthetic Assetgrove extension for test/init-packs.test.ts: one provider adapter with a fixed host and a key variable.",
+  "license": "MIT",
+  "type": "module",
+  "peerDependencies": {
+    "@clockgrove/assetgrove": ">=0.2.0"
+  },
+  "assetgrove": {
+    "api": 2,
+    "entry": "./index.js"
+  }
+}

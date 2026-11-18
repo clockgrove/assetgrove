@@ -16,13 +16,13 @@
     {
       "id": "package",
       "kind": "automated",
-      "title": "Both package.json files are the 0.2.0 release candidate: core ships dist, skills and policy; search ships dist and skills",
+      "title": "Every package.json is the 0.2.0 release candidate: core ships dist, skills and policy; each pack (scripts/packs.ts) ships dist, and skills when it has a skill",
       "check": "package"
     },
     {
       "id": "skill-install",
       "kind": "automated",
-      "title": "`npx skills add` from the repository installs assetgrove and assetgrove-search, each SKILL.md with its references",
+      "title": "`npx skills add` from the repository installs assetgrove and every pack's skill, each SKILL.md with its references",
       "check": "skill-install"
     },
     {
@@ -40,7 +40,7 @@
     {
       "id": "ci-main",
       "kind": "automated",
-      "title": "CI is green on main for the commit, with the test and search jobs on Linux, macOS and Windows",
+      "title": "CI is green on main for the commit, with the test jobs and every pack's leg on Linux, macOS and Windows",
       "check": "ci-main",
       "workflow": "ci.yml",
       "jobs": [
@@ -54,11 +54,9 @@
         "test (windows-2025, 1/3)",
         "test (windows-2025, 2/3)",
         "test (windows-2025, 3/3)",
-        "search (ubuntu-26.04)",
-        "search (macos-26)",
-        "search (windows-2025)",
         "ci"
-      ]
+      ],
+      "packSystems": ["ubuntu-26.04", "macos-26", "windows-2025"]
     },
     {
       "id": "search-bars",
@@ -78,9 +76,9 @@
     {
       "id": "release-verify",
       "kind": "dispatch",
-      "title": "The release workflow packs, attests and verifies both 0.2.0 tarballs on three systems",
+      "title": "The release workflow packs, attests and verifies core's and every changed pack's 0.2.0 tarball on three systems",
       "workflow": "release.yml",
-      "evidence": "The release run on this commit: @clockgrove/assetgrove and @clockgrove/assetgrove-search 0.2.0 each packed once, its sha256 recorded, attested, installed and tested on Linux, macOS and Windows, with the core tested installed alone; both tarballs uploaded with their hashes and attestations."
+      "evidence": "The release run on this commit: @clockgrove/assetgrove and every pack whose 0.2.0 is not yet on the registry (its plan job lists them) each packed once, its sha256 recorded, attested, installed and tested on Linux, macOS and Windows, with the core tested installed alone; every tarball uploaded with its hash and attestation."
     },
     {
       "id": "r2-roundtrip",

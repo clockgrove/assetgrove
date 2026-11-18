@@ -1,15 +1,25 @@
 # Release
 
-Assetgrove is published to npm as `@clockgrove/assetgrove`, and from 0.2.0 its optional search as `@clockgrove/assetgrove-search` (`packages/assetgrove-search`). The release workflow (`release.yml`) builds, verifies and attests each tarball; the owner publishes those exact tarballs. Its decisions are under [Packaging](decisions.md#packaging).
+Assetgrove is published to npm as `@clockgrove/assetgrove`, and each of its packs under its own name (from 0.2.0, the optional search as `@clockgrove/assetgrove-search`). The release workflow (`release.yml`) builds, verifies and attests each tarball; the owner publishes those exact tarballs. Its decisions are under [Packaging](decisions.md#packaging).
+
+## Packs
+
+A pack is a directory under `packages/` whose `package.json` has an `assetgrove` field. `scripts/packs.ts` lists them, and CI, release and the gate read that list; none of them names a pack, so a new pack gets its CI legs, its release and its gate entries with no edit to any of them.
+
+- **CI** (`ci.yml`): the `packs` job lists the packs, and the `pack` job runs one leg per pack and system, named `pack (<directory>, <system>)`: Linux on a pull request; Linux, macOS and Windows in the merge queue and on `main`. A leg installs core's and the pack's locked dependencies and runs the pack's `pnpm check` and `pnpm test`, only when the change touches the pack, core's `src/`, the root manifests, or a file outside the pack that its sources reach by a relative path (`node scripts/packs.ts list <base>` says which). The required `ci` check needs every leg.
+- **Release**: below. A pack ships `dist/` (and `skills/` when it has a skill) and has its own `test/package.test.ts`, which tests the released tarball when verify has put it in the pack's `out/`, and otherwise packs fresh.
+- **Gate**: the `package` entry checks every pack's `package.json`, the `skill-install` entry installs each pack's skill (named by its `skills/<dir>/SKILL.md`), and `ci-main` requires every pack's leg on each system its `packSystems` lists.
 
 ## What the release workflow does
 
 The workflow is dispatched by hand on `main`; nothing triggers it otherwise.
 
-- **verify** packs the package once with `pnpm pack`, records the tarball's sha256, runs `npm publish --dry-run` and refuses a version or a Git tag that already exists. It attests the tarball, then installs and runs it on Linux, macOS and Windows with `ASSETGROVE_TEST_TARBALL=<tgz> node --test test/package.test.ts`. It uploads the tarball, its `.sha256` and its attestation as the run's artifact.
-- **publish** runs only when the dispatch asks to publish and the package is already on the registry. It needs the `npm-release` environment, whose only reviewer is the owner, and publishes the verified tarball.
+- **plan** lists what to release with `node scripts/packs.ts release`: every pack whose `name@version` is not yet on the registry (its version changed since it was last published), and core unless its `name@version` is already there while a pack is listed. A pack already published at its version is left out, and a pack released on its own goes through **verify** and **publish** without core. With no pack to release, core stays on the list, and its refusal of a published version stops the run.
+- **pack**, once per package on that list, with the same steps for core and each pack: it packs the package once with `pnpm pack` in its directory, records the tarball's sha256, runs `npm publish --dry-run` and refuses a version that already exists (and, for core, a Git tag `v<version>`). It attests the tarball and uploads the tarball, its `.sha256` and its attestation as the artifact `<directory>-<version>` (`assetgrove-<version>` for core).
+- **verify** installs and runs each tarball on Linux, macOS and Windows with `ASSETGROVE_TEST_TARBALL=<tgz> node --test test/package.test.ts` in the package's directory, the tarball downloaded into its `out/`: core's test reads the variable, a pack's reads `out/`.
+- **publish** runs only when the dispatch asks to publish, once for each package on the list that is already on the registry. It needs the `npm-release` environment, whose only reviewer is the owner, and publishes the verified tarball.
 
-The package does not exist on the registry before 0.1.0, so for 0.1.0 the workflow stops after **verify** and the owner publishes by hand, once.
+A package does not exist on the registry before its first version (core before 0.1.0, a new pack before its first release), so for that version the workflow stops after **verify** and the owner publishes it by hand, once.
 
 ## First publish (0.1.0), by the owner
 
@@ -48,14 +58,14 @@ A version on npm cannot be published again. If a step after 5 shows a fault, fix
 
 ## Later releases
 
-Raise `version` in `package.json` on `main`, then dispatch `release.yml` with publish. **verify** runs as above; **publish** waits for the owner's approval in the `npm-release` environment and publishes the verified tarball.
+Raise `version` in `package.json` on `main` (core's, and each pack's that should be released), then dispatch `release.yml` with publish. **verify** runs as above; **publish** waits for the owner's approval in the `npm-release` environment and publishes the verified tarball.
 
 ## The 0.2.0 release candidate (Phase 2)
 
 Both packages are at `0.2.0`. `pnpm gate --json` lists the Phase 2 gate: each entry's kind (`automated`, `dispatch` or `manual-owner`) and, for each entry that is not automated, the evidence it needs.
 
 - **Core** packs as above. Installed alone it passes `test/package.test.ts`, and its `find` exits 2 `extension_unavailable`: core works without search.
-- **Search** packs with `pnpm pack` in `packages/assetgrove-search`. Its `prepack` compiles `src/` to `dist/` (Node does not strip types under `node_modules`), and the tarball holds only `package.json`, `README.md`, `LICENSE`, `dist/` and `skills/`; `assetgrove.entry` is `./dist/extension.js`. `packages/assetgrove-search/test/package.test.ts` checks the listing and imports the packed entry with type stripping off.
-- **Skills:** the gate installs `assetgrove` and `assetgrove-search` with `npx skills add` from the repository into a temporary folder and checks every file arrived.
+- **Search** is a pack: it packs with `pnpm pack` in its directory. Its `prepack` compiles `src/` to `dist/` (Node does not strip types under `node_modules`), and the tarball holds only `package.json`, `README.md`, `LICENSE`, `dist/` and `skills/`; `assetgrove.entry` is `./dist/extension.js`. Its `test/package.test.ts` checks the listing and imports the packed entry with type stripping off, from a fresh pack or from the released tarball in `out/`.
+- **Skills:** the gate installs `assetgrove` and every pack's skill with `npx skills add` from the repository into a temporary folder and checks every file arrived.
 - **Search bars:** the gate reads the latest successful `search-bench.yml` run on `main` that uploaded `search-bench-report`. It fails unless the commit that last changed the bars table in [decisions.md](decisions.md#search-bars-design-section-79) is older than that run, and fails on any bar the report counts as missed; speed bars measured off the reference box are the `search-speed-bars` entry, checked by hand.
 - **Publish:** steps 2 to 7 above, once for each tarball (`clockgrove-assetgrove-0.2.0.tgz` and `clockgrove-assetgrove-search-0.2.0.tgz`), the search tarball's listing as the bullet above says, then one tag `v0.2.0`.

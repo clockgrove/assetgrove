@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseBars } from "../bench/search/bars.ts";
+import { listPacks } from "./packs.ts";
 
 export type Kind = "automated" | "dispatch" | "manual-owner";
 export type Status = "pass" | "fail" | "missing" | "pending" | "owed";
@@ -22,6 +23,8 @@ export interface GateEntry {
   check?: string;
   workflow?: string;
   jobs?: string[];
+  /** For `ci-main`: the systems each pack's CI leg must be green on. */
+  packSystems?: string[];
   evidence?: string;
 }
 
@@ -54,21 +57,56 @@ export const KINDS: readonly Kind[] = ["automated", "dispatch", "manual-owner"];
 export const SKILLS_CLI = "skills@1.8.1";
 export const VERSION = "0.2.0";
 
-/** The release candidate's packages: each manifest, its name and the files it ships. */
-export const PACKAGES = [
-  { dir: ".", name: "@clockgrove/assetgrove", files: ["dist", "policy", "skills"] },
-  {
-    dir: "packages/assetgrove-search",
-    name: "@clockgrove/assetgrove-search",
-    files: ["dist", "skills"],
-  },
-] as const;
+/** Core's manifest, its name and the files it ships. */
+export const CORE_PACKAGE = {
+  dir: ".",
+  name: "@clockgrove/assetgrove",
+  files: ["dist", "policy", "skills"],
+} as const;
 
-/** The skills the gate installs with `npx skills add` from the repository, and where each lives. */
-export const SKILLS = [
-  { name: "assetgrove", dir: "skills/assetgrove" },
-  { name: "assetgrove-search", dir: "packages/assetgrove-search/skills/assetgrove-search" },
-] as const;
+/** Core's skill. */
+export const CORE_SKILL = { name: "assetgrove", dir: "skills/assetgrove" } as const;
+
+export interface PackageWanted {
+  dir: string;
+  name: string;
+  /** The files it must ship, sorted. */
+  files: readonly string[];
+}
+
+/**
+ * The release candidate's packages: core, then every pack of the one list (scripts/packs.ts). A
+ * pack ships `dist`, and `skills` when it has a skill.
+ */
+export function releasePackages(root: string): PackageWanted[] {
+  return [
+    CORE_PACKAGE,
+    ...listPacks(root).map((pack) => ({
+      dir: pack.dir,
+      name: pack.name,
+      files: pack.skills.length > 0 ? ["dist", "skills"] : ["dist"],
+    })),
+  ];
+}
+
+/**
+ * The skills the gate installs with `npx skills add` from the repository, and where each lives:
+ * core's, then each pack's, named by its SKILL.md.
+ */
+export function gateSkills(root: string): { name: string; dir: string }[] {
+  return [CORE_SKILL, ...listPacks(root).flatMap((pack) => pack.skills)];
+}
+
+/**
+ * The jobs the `ci-main` entry requires: its own `jobs`, then `pack (<short>, <os>)` for every pack
+ * of the list on each of its `packSystems`.
+ */
+export function requiredJobs(root: string, entry: GateEntry): string[] {
+  const legs = listPacks(root).flatMap((pack) =>
+    (entry.packSystems ?? []).map((os) => `pack (${pack.short}, ${os})`),
+  );
+  return [...(entry.jobs ?? []), ...legs];
+}
 
 /** The bench report artifact the search bench's bench step uploads, and its file. */
 export const BENCH_ARTIFACT = "search-bench-report";
@@ -159,22 +197,23 @@ function runOutcome(run: WorkflowRun | undefined, workflow: string): Outcome {
 
 function checkPackage(ctx: Ctx): Outcome {
   const faults: string[] = [];
-  for (const wanted of PACKAGES) {
-    const pkg = JSON.parse(readFileSync(join(ctx.root, wanted.dir, "package.json"), "utf8")) as {
+  const wanted = releasePackages(ctx.root);
+  for (const want of wanted) {
+    const pkg = JSON.parse(readFileSync(join(ctx.root, want.dir, "package.json"), "utf8")) as {
       name?: string;
       version?: string;
       files?: string[];
     };
-    const where = `${wanted.dir}/package.json`;
-    if (pkg.name !== wanted.name) faults.push(`${where}: name is ${pkg.name}`);
+    const where = `${want.dir}/package.json`;
+    if (pkg.name !== want.name) faults.push(`${where}: name is ${pkg.name}`);
     if (pkg.version !== VERSION) faults.push(`${where}: version is ${pkg.version}, not ${VERSION}`);
     const files = JSON.stringify([...(pkg.files ?? [])].sort());
-    if (files !== JSON.stringify(wanted.files)) faults.push(`${where}: files is ${files}`);
+    if (files !== JSON.stringify(want.files)) faults.push(`${where}: files is ${files}`);
   }
   return faults.length === 0
     ? {
         status: "pass",
-        detail: PACKAGES.map((p) => `${p.name} ${VERSION}, files ${p.files.join(", ")}`).join("; "),
+        detail: wanted.map((p) => `${p.name} ${VERSION}, files ${p.files.join(", ")}`).join("; "),
       }
     : { status: "fail", detail: faults.join("; ") };
 }
@@ -190,7 +229,7 @@ function checkSkillInstall(ctx: Ctx): Outcome {
   const target = mkdtempSync(join(tmpdir(), "assetgrove-gate-skill-"));
   try {
     const arrived: string[] = [];
-    for (const skill of SKILLS) {
+    for (const skill of gateSkills(ctx.root)) {
       const source = join(ctx.root, skill.dir);
       const argv = ["npx", "-y", SKILLS_CLI, "add", ctx.root];
       argv.push("--skill", skill.name, "--agent", "claude-code", "--copy", "-y");
@@ -234,11 +273,12 @@ function checkCiMain(ctx: Ctx, entry: GateEntry): Outcome {
     ctx,
     `repos/${slugOf(ctx.root)}/actions/runs/${run.id}/jobs?per_page=100`,
   );
-  const failed = (entry.jobs ?? []).filter(
+  const required = requiredJobs(ctx.root, entry);
+  const failed = required.filter(
     (name) => jobs.find((job) => job.name === name)?.conclusion !== "success",
   );
   return failed.length === 0
-    ? { ...outcome, detail: `jobs succeeded: ${(entry.jobs ?? []).join(", ")}` }
+    ? { ...outcome, detail: `jobs succeeded: ${required.join(", ")}` }
     : { status: "fail", detail: `jobs not green: ${failed.join(", ")}`, run: run.html_url };
 }
 

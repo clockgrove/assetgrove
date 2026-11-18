@@ -14,9 +14,10 @@ import { formatLine } from "./formats.ts";
 import { libraryConfig } from "./library/write.ts";
 import { lfsHooksInstalled, lfsSize, lfsVersion, requireWorkTree, withBlock } from "./gitlfs.ts";
 import { checkTrackedKeys, KeyTrackedError } from "./guard.ts";
-import { HARNESSES, keyRecipe, type Harness } from "./keys.ts";
-import { resolvePackage, SEARCH_PACKAGE } from "./extensions/registry.ts";
-import { CORE_ADAPTERS } from "./providers/adapter.ts";
+import { adapterKeyEnv, HARNESSES, keyRecipe, type Harness } from "./keys.ts";
+import { resolvePackage, SEARCH_PACKAGE, type ExtensionRegistry } from "./extensions/registry.ts";
+import { CORE_PACKAGE } from "./extensions/version.ts";
+import { CORE_ADAPTERS, type ProviderAdapter } from "./providers/adapter.ts";
 import { suggestRoles, type SuggestedRole } from "./providers/set.ts";
 import type { Settings } from "./settings.ts";
 import type { TargetProfile } from "./types.ts";
@@ -120,8 +121,23 @@ export interface BibleQuestion {
   question: string;
 }
 
+/** One adapter a loaded extension pack brings, with where its data goes and the key it needs. */
+export interface PackAdapter {
+  adapter: string;
+  extension: string;
+  package: string;
+  hosts: string[];
+  endpointFromSettings: boolean;
+  /**
+   * The environment variable the adapter reads its key from: a configured provider's `keyEnv`,
+   * else the adapter's default; null when neither names one.
+   */
+  keyEnv: string | null;
+}
+
 export interface InitResult {
   steps: InitStep[];
+  adapters: PackAdapter[];
   bibleQuestions: BibleQuestion[];
   providers: RouteDataFlow[];
   files: InitFile[];
@@ -348,11 +364,11 @@ export class InitRefusedError extends KeyTrackedError {
 }
 
 /** Checks the options that do not touch the disk: the harness and the providers. */
-function checkOptions(options: InitOptions): Harness {
+function checkOptions(options: InitOptions, adapters: readonly ProviderAdapter[]): Harness {
   const harness = options.harness ?? "claude-code";
   if (!(HARNESSES as readonly string[]).includes(harness))
     throw new InputError(`unknown harness ${harness}; use one of ${HARNESSES.join(", ")}`);
-  const known = CORE_ADAPTERS.map((adapter) => adapter.id);
+  const known = adapters.map((adapter) => adapter.id);
   for (const id of options.providers ?? [])
     if (!known.includes(id))
       throw new InputError(`unknown provider adapter ${id}; use one of ${known.join(", ")}`);
@@ -391,9 +407,10 @@ export function searchSteps(directory: string, settings: Settings): InitStep[] {
  */
 export async function initProject(
   options: InitOptions,
-  context: { settings: Settings; env?: Env },
+  context: { settings: Settings; env?: Env; extensions?: ExtensionRegistry },
 ): Promise<InitResult> {
-  const harness = checkOptions(options);
+  const adapters = context.extensions?.adapters ?? CORE_ADAPTERS;
+  const harness = checkOptions(options, adapters);
   const directory = resolve(options.directory);
   requireWorkTree(directory);
   try {
@@ -409,10 +426,30 @@ export async function initProject(
   const root = libraryConfig(PROFILE_PRESETS[options.profilePreset]!(), directory).root;
   files.push(await writeGitattributes(root));
   const written = files.filter((f) => f.status !== "unchanged").length;
-  const recipe = keyRecipe(harness, {
-    configDir: context.settings.configDir,
-    stateDir: context.settings.stateDir,
-  });
+  const recipe = keyRecipe(
+    harness,
+    { configDir: context.settings.configDir, stateDir: context.settings.stateDir },
+    adapters,
+    context.settings.providers,
+  );
+  const packAdapters = (context.extensions?.loaded ?? [])
+    .filter((extension) => extension.package !== CORE_PACKAGE)
+    .flatMap((extension) =>
+      extension.adapters.flatMap((id): PackAdapter[] => {
+        const adapter = adapters.find((a) => a.id === id);
+        if (adapter === undefined) return [];
+        return [
+          {
+            adapter: id,
+            extension: extension.name,
+            package: extension.package,
+            hosts: [...adapter.fixedHosts],
+            endpointFromSettings: adapter.endpointFromSettings,
+            keyEnv: adapterKeyEnv(adapter, context.settings.providers, adapters) ?? null,
+          },
+        ];
+      }),
+    );
   const providers = options.providers ?? [];
   const steps: InitStep[] = [
     {
@@ -440,7 +477,7 @@ export async function initProject(
       tool: "settings_change",
       command: "settings change",
       detail: `The agent calls settings_change so the person declares the caps and the provider's limit; only their confirmation writes ${context.settings.path}. Provider endpoints and roles are hand edits per docs/settings.md${providers.length > 0 ? `; suggestedRoles lists the roles for ${providers.join(", ")}` : ""}.`,
-      ...(providers.length > 0 && { suggestedRoles: suggestRoles(providers) }),
+      ...(providers.length > 0 && { suggestedRoles: suggestRoles(providers, adapters) }),
     },
     ...gitSteps(root),
     {
@@ -467,8 +504,12 @@ export async function initProject(
   ];
   return {
     steps,
+    adapters: packAdapters,
     bibleQuestions: [...BIBLE_QUESTIONS],
-    providers: routeDataFlows(context.settings, context.env ? { env: context.env } : {}),
+    providers: routeDataFlows(context.settings, {
+      ...(context.env && { env: context.env }),
+      adapters,
+    }),
     files,
   };
 }

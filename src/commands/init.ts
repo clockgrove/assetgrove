@@ -28,7 +28,8 @@ identical file is left alone, and a differing one exits 2 invalid_input, writing
 Returns steps [{id, status, detail}]: guard (refused exits 2 key_tracked before anything is
 written), files, the key recipe's steps for --harness (needs-person), settings (needs-person: the
 agent calls settings_change), spend-check (to-run) and two notices; bibleQuestions to draft the
-bible with the developer; providers, each route's data flow; and files [{path, role, status}].
+bible with the developer; adapters, each adapter of a listed extension pack with its hosts and key
+variable; providers, each route's data flow; and files [{path, role, status}].
 
 Profile presets: ${Object.keys(PROFILE_PRESETS).join(", ")}.
 Style presets: ${Object.keys(BIBLE_PRESETS).join(", ")}.
@@ -59,7 +60,8 @@ Harnesses: ${HARNESSES.join(", ")} (default claude-code).`,
       },
       providers: {
         type: "string",
-        description: "comma-separated core adapter ids whose roles the settings step suggests",
+        description:
+          "comma-separated adapter ids (core's or a listed pack's) whose roles the settings step suggests",
         placeholder: "<adapterId,...>",
       },
       overwrite: {
@@ -88,7 +90,11 @@ Harnesses: ${HARNESSES.join(", ")} (default claude-code).`,
           }),
           ...(args.overwrite === true && { overwrite: true }),
         },
-        { settings: ctx.settings, ...(ctx.env && { env: ctx.env }) },
+        {
+          settings: ctx.settings,
+          ...(ctx.env && { env: ctx.env }),
+          ...(ctx.extensions && { extensions: ctx.extensions }),
+        },
       );
       const human = [
         ...result.steps.map((step) => `[${step.status}] ${step.id}: ${step.detail}`),
@@ -100,6 +106,12 @@ Harnesses: ${HARNESSES.join(", ")} (default claude-code).`,
         ...result.providers.map(
           (flow) =>
             `- ${flow.operation}: ${flow.providerId} (${flow.host ?? "no host"}${flow.upstream ? `, upstream ${flow.upstream}` : ""})`,
+        ),
+        ...result.adapters.map(
+          (a) =>
+            `- pack adapter ${a.adapter} (${a.package}): ${
+              a.hosts.length > 0 ? `hosts ${a.hosts.join(", ")}` : "no fixed host"
+            }${a.endpointFromSettings ? " or the settings baseURL" : ""}; ${a.keyEnv ? `key ${a.keyEnv}` : "no key"}`,
         ),
       ].join("\n");
       return { exitCode: 0, fields: { ...result }, human };
