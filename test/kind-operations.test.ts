@@ -1,4 +1,7 @@
 import "./fixtures/env.ts";
+import { resetSettings, writeSettings } from "./fixtures/env.ts";
+import { gitTarget } from "./fixtures/git.ts";
+import { shelterSpec, syntheticProfile } from "./fixtures/synthetic.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,7 +18,10 @@ import {
   loadExtensions,
 } from "../src/extensions/registry.ts";
 import { coreVersion } from "../src/extensions/version.ts";
-import { requireGrants } from "../src/license.ts";
+import { prepareTargetWrite } from "../src/handoff.ts";
+import { initProject } from "../src/init.ts";
+import { LicenseError, requireGrants } from "../src/license.ts";
+import { loadSettings } from "../src/settings.ts";
 import { providerSet, ProviderSet } from "../src/providers/index.ts";
 import { OPERATION_ROLES, RouteUnavailableError } from "../src/routes.ts";
 import type { Settings } from "../src/settings.ts";
@@ -308,5 +314,51 @@ test("a hand-off refused for a kind's operation with no grant names its role's s
   assert.throws(
     () => requireGrants([call], operations),
     /routes\.pixel:still\.outputGrant or roles\.image\.outputGrant/,
+  );
+});
+
+test("init lists a loaded pack's operation in its data flows, routed by its role", async () => {
+  writeSettings({
+    extensions: ["pixel-pack"],
+    providers: { gateway: { adapter: "vercel-ai-gateway", limit: LIMIT } },
+  });
+  try {
+    const settings = loadSettings();
+    const dir = pixelProject();
+    const extensions = await loadExtensions(settings, dir);
+    const result = await initProject(
+      {
+        directory: gitTarget(join(root, "init-target")),
+        profilePreset: "sprite-32",
+        stylePreset: "cozy-storybook",
+        world: "Testland",
+      },
+      { settings, env: {}, extensions },
+    );
+    const flow = result.providers.find((f) => f.operation === "pixel:still");
+    assert.ok(flow, "pixel:still is listed");
+    assert.equal(flow.providerId, "gateway");
+  } finally {
+    resetSettings();
+  }
+});
+
+test("the hand-off refuses a kind's operation with no grant, naming its role's settings field", async () => {
+  await assert.rejects(
+    prepareTargetWrite({
+      profile: syntheticProfile(),
+      spec: shelterSpec,
+      bibleVersion: "v1",
+      output: { bytes: new Uint8Array(), mediaType: "image/png", extension: "png", fields: {} },
+      provenance: {
+        calls: [{ operation: "pixel:still", route: "gateway:pixel:still:m" }],
+      } as never,
+      run: {},
+      targetDir: join(root, "handoff-target"),
+      registry: registryOf(pixel()),
+    }),
+    (error: unknown) =>
+      error instanceof LicenseError &&
+      /routes\.pixel:still\.outputGrant or roles\.image\.outputGrant/.test(error.message),
   );
 });
