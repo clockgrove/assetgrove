@@ -27,53 +27,55 @@ Assetgrove reads three files: the asset spec and the target profile (JSON) and t
 
 ## Format lines
 
-The shared files carry a `format` line as their first field, `assetgrove-<kind>/<n>`: `assetgrove-target-profile/2`, `assetgrove-style-bible/1` (the JSON style bible and the front matter of `BIBLE.md`), `assetgrove-style-preset/1` and `assetgrove-recipe/1`. A file with no line is refused with exit 2 (`format_unsupported`, `error.reason` `missing`) and the message names the line to add. A newer version is `too_new`, and a line that is unknown or belongs to another kind is `unknown`. An older version is migrated in memory. Specs, briefs, groupings and other request inputs carry no format line.
+The shared files carry a `format` line as their first field, `assetgrove-<kind>/<n>`: `assetgrove-target-profile/2`, `assetgrove-style-bible/1` (the front matter of `BIBLE.md`, and the deprecated JSON style bible), `assetgrove-style-preset/1` and `assetgrove-recipe/1`. A file with no line is refused with exit 2 (`format_unsupported`, `error.reason` `missing`) and the message names the line to add. A newer version is `too_new`, and a line that is unknown or belongs to another kind is `unknown`. An older version is migrated in memory. Specs, briefs, groupings and other request inputs carry no format line.
 
 `assetgrove migrate <file> --kind <kind>` adds the line to an unversioned file, as its first field (Markdown front matter is edited in place and the prose kept), and moves an older file forward; `--kind` is `target-profile`, `style-bible`, `style-preset`, `recipe` or `settings` (a developer settings file, moved from `/1` to `/2`). A file already current is reported as `current` and not written. Loaders still refuse an unversioned file until it is migrated.
 
 ## Style bible
 
-```json
-{
-  "format": "assetgrove-style-bible/1",
-  "version": "2026-11-07",
-  "palette": ["#26242c", "#5f6470", "#8d939e", "#c4c9d2"],
-  "referenceLicense": "CC-BY-4.0",
-  "references": [
-    {
-      "path": "refs/fern-sheet.png",
-      "role": "character sheet",
-      "subject": "fern",
-      "view": "sheet",
-      "license": "LicenseRef-studio-owned"
-    },
-    { "path": "refs/yard-perspective.png", "role": "perspective" }
-  ],
-  "perspective": "refs/yard-perspective.png",
-  "perspectiveDescription": "isometric, three-quarter view from above",
-  "subjects": { "fern": { "description": "a grey adult four-legged character with a dark mask" } },
-  "mood": ["quiet", "mature", "storybook realism"],
-  "notes": ["warm lantern light against cool dusk rain"]
-}
+`BIBLE.md` is the one style bible. `init` writes it to `.assetgrove/art-direction/BIBLE.md`, and every command that takes `--bible` reads it: `plan` and `apply` compile its constitution (axes, tone, tokens, anchors and identity locks; [generation-knobs.md](generation-knobs.md#four-layers)), and `stage`, `generate-sheet`, `import`, `look-dev`, `request-change` and `fix-frame` read the parts below from the same file. A part of its front matter:
+
+```yaml
+anchors:
+  positive:
+    - { path: refs/fern-sheet.png, role: character sheet, subject: fern, view: sheet }
+    - { path: refs/fern-front.png, role: turnaround, subject: fern, view: front, look: character }
+    - { path: refs/yard.png, role: world mockup and perspective sample }
+  negative: []
+perspective: refs/yard.png
+perspectiveDescription: isometric, three-quarter view from above
+subjects:
+  fern: { description: a grey adult four-legged character with a dark mask }
+  den: { description: a wooden den }
 ```
 
-`looks` (optional) gives each domain of a world its own style, for example characters in naturalistic fur within a lightly painted yard. Each look has its own `notes`. A reference with a `look` is sent only for specs of that look; one without is sent for every look. A spec with no `look` gets only the shared notes and untagged references. Assetgrove assumes no look names or styles: the target defines both.
+- **A subject's references** are the positive anchors that name it as `subject` (one with a `look` only for specs of that look), then its identity lock's approved turnaround and `references`, each once. The perspective sample is never sent as a subject reference, and negative anchors are `plan`'s alone. A request for a subject with no references is refused, naming the subject.
+- **`perspective`** (optional) is the image whose camera angle stills, strips and sheets match. A 2D request without it is refused, naming the field; 3D does not use it. **`perspectiveDescription`** (optional) tells vision QA what view the sample shows; without it QA compares against the sample alone.
+- **`subjects`** (optional) describes each subject in plain words for the prompt and QA. A subject with an identity lock and no description is described by its lock's proportions and signature features.
+- **The palette** is `tokens.palette`. Post-processing snaps every colour to it, and QA compares the candidate with the references.
+- **The style notes** in each prompt come from the constitution: every axis, the audience and each content limit. An axis that a look overrides is written "unless the asset's look sets it", and a spec with that `look` also gets the look's value. The mood is `tone.moodRange`.
+- **The identity locks** are in the same file, so `generate-sheet` and `import` read `--bible` for `--lock-bible` when it is a `BIBLE.md` and `--lock-bible` names no other.
 
-```json
-"notes": ["warm lantern light against cool dusk rain"],
-"looks": {
-  "character": { "notes": ["naturalistic illustrated fur, no visible brushwork"] },
-  "environment": { "notes": ["soft visible brushwork, never photo-accurate"] }
-}
-```
+The subject's references, the perspective sample and a swatch of the palette are sent to the model as image references; the prompt is composed from these fields and the spec, never typed freehand.
 
-`version` and `palette` (at least one six-digit hex colour) are required; a bible without either, or with a field of the wrong type, is refused when it loads (exit 2 `invalid_input`, naming the field). `references` may be left out and means none: a request for a subject with no references is then refused, naming the subject. `perspective` may be left out too: a request that sends the perspective sample is then refused, naming the field. Fields the bible does not define are kept as they are.
+A bible that lists references requires `referenceLicense`, the terms they were provided under: an SPDX identifier, a `LicenseRef-*` or `NOASSERTION`. It is checked as non-empty text and not parsed. It covers the anchors, the identity-lock turnarounds and references, and the perspective sample; each anchor may set its own `license`.
 
-A bible that lists references requires `referenceLicense`, the terms they were provided under: an SPDX identifier, a `LicenseRef-*` or `NOASSERTION`. It is checked as non-empty text and not parsed. Each reference may set its own `license`. In `BIBLE.md` the same rule covers the anchors and the identity-lock turnarounds and references.
+An anchor may set `view`, which says what it shows of its subject: `front`, `left`, `right`, `back`, `three-quarter`, `sheet` (several views on one sheet) or `detail` (not a full-body view). `left` and `right` are the character's own sides, not the viewer's. A value outside this list is refused when the bible loads (exit 2). `role` stays free text and is never read for the view. A 3D character request ([characters-3d.md](characters-3d.md#what-a-candidate-is)) uses `view`; when it is not set, a model judges the view, and the answer is cached by the image's hash. A request whose references show no `front` view is refused before the first expensive call; a `sheet` does not count as a front view.
 
-A reference may set `view`, which says what it shows of its subject: `front`, `left`, `right`, `back`, `three-quarter`, `sheet` (several views on one sheet) or `detail` (not a full-body view). `left` and `right` are the character's own sides, not the viewer's. A value outside this list is refused when the bible loads (exit 2). `role` stays free text and is never read for the view. A 3D character request ([characters-3d.md](characters-3d.md#what-a-candidate-is)) uses `view`; when it is not set, a model judges the view, and the answer is cached by the image's hash. A request whose references show no `front` view is refused before the first expensive call; a `sheet` does not count as a front view.
+### The JSON style bible (deprecated)
 
-`perspectiveDescription` (optional) tells the vision QA pass what view the perspective sample shows; without it QA compares against the sample alone. The subject's references, the perspective sample and a swatch of the palette are sent to the model as image references; the prompt is composed from these fields and the spec, never typed freehand. Post-processing snaps every colour to the palette, and QA compares the candidate with the references.
+Before `BIBLE.md`, `stage` and the commands after it read a JSON style bible. One still loads, with a notice on stderr, and is checked when it loads: `version` and `palette` (at least one six-digit hex colour) are required, a field of the wrong type is refused (exit 2 `invalid_input`, naming the field), and `references` left out means none. Its fields map onto `BIBLE.md` as follows:
+
+| JSON style bible                                                    | `BIBLE.md`                                |
+| ------------------------------------------------------------------- | ----------------------------------------- |
+| `version`, `referenceLicense`                                       | the same fields                           |
+| `palette`                                                           | `tokens.palette`                          |
+| `references` (`path`, `role`, `subject`, `look`, `view`, `license`) | `anchors.positive`                        |
+| `perspective`, `perspectiveDescription`, `subjects`                 | the same fields                           |
+| `mood`                                                              | `tone.moodRange`                          |
+| `notes`, `looks.<name>.notes`                                       | the axes, `looks` and the Do's and Don'ts |
+
+To move to `BIBLE.md`, run `init` for one from a preset (or `bible preset` on an existing one), then carry the fields over as the table shows and point `--bible` at it.
 
 ## Target profile
 
@@ -132,7 +134,7 @@ The paths are illustrative.
 - **Values available:** `spec.*` (the spec, with its `fields` also merged in), `profile.*` (`values`, `name`, `license`), `bible.version`, `output.*` (`path`, `mediaType`, `extension`, `sha256`, and what the generator adds: `frames`, `anchor`, `bounds`, `palette` for images; imported strips add `jitterPx` and set `palette` only under a palette colour rule), `provenance` (the full record) and `run.*` (`runId`, `candidateId`, `pickedAt`).
 - **Licences.** `license` is the target's own licence, declared for outputs whose provider grant lets the target relabel them (paid plans that give ownership). `acceptedLicenses` (optional, default none) lists licences the target takes on purpose beyond its own, such as `CC-BY-4.0` when it publishes the credit line (`{{provenance.outputGrant.attribution}}`). Hand-off (`pick`, `write-families`) re-derives the output grant from the provenance's calls and refuses, before writing anything, with exit 7 (`license_refused`) an output whose grant neither allows relabelling nor is listed, and every non-commercial grant. An output made by several calls on routes that do not allow relabelling carries every licence of the most restrictive of them, recorded as one SPDX expression joined with `AND` in sorted order (so the order the calls ran in never changes it); it is accepted when `acceptedLicenses` lists each of those licences, and a refusal names each one it does not list. In hand-off templates `{{profile.license}}` and `{{provenance.license}}` are the licence the output is declared under, so a template never relabels.
 - **Provenance.** Every pick carries its full provenance record into the target. `layout.provenance`, when set, writes it as its own file at that path; the template can also embed `"{{provenance}}"`; with neither, it is written beside the media file as `<media path>.provenance.json`. The record holds the models, route, prompt, parameters, reference hashes, seed where supported, request IDs, times, cost, provider terms, bible version and license, `referenceLicenses` (`path`, `role` and `license` of each reference, each the reference's own licence or the bible's; they record terms and gate nothing), the combined `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`; the most restrictive grant over all calls wins), plus every call with its own `outputGrant`. Each call marks `costSource` (`provider` or `estimate`) and `requestIdSource` (`provider`, or `local` when the gateway reported no ID and Assetgrove generated one).
-- **Project root.** Reference paths in shared files (the JSON bible's references and perspective, the anchors and identity images of `BIBLE.md`), and the images a request names (a spec's `keyPose`, an identity-eval case's `image`, fix-frame's `--key-pose`), must resolve inside the project root, with symlinks resolved. The root is the nearest ancestor of the naming file's directory (the cwd for `--key-pose`) holding `.git` or `.assetgrove`, else that directory. The walk stops below the home directory, which is never a project root (as in settings), so a dotfiles repository at the home directory does not open every file under it; a bible with no project marker may reference only files beside or below it. A path outside it is invalid input (exit 2) before any provider call.
+- **Project root.** Reference paths in shared files (the anchors, identity images and perspective sample of `BIBLE.md`, and the deprecated JSON bible's references and perspective), and the images a request names (a spec's `keyPose`, an identity-eval case's `image`, fix-frame's `--key-pose`), must resolve inside the project root, with symlinks resolved. The root is the nearest ancestor of the naming file's directory (the cwd for `--key-pose`) holding `.git` or `.assetgrove`, else that directory. The walk stops below the home directory, which is never a project root (as in settings), so a dotfiles repository at the home directory does not open every file under it; a bible with no project marker may reference only files beside or below it. A path outside it is invalid input (exit 2) before any provider call.
 - **Review.** Assetgrove always sets the field at `review.path` to `review.pending` and never writes another value there.
 - **Validator.** Run in the target directory after the pick is written, with `{{manifest}}` and `{{media}}` replaced by the written paths. A non-zero exit is reported as a rejection.
 - **Hand-off presets.** `handoff` lists the presets that write what the target reads, in order: `[{ "preset": "manifest" }]` when absent. See [Hand-off presets](#hand-off-presets).

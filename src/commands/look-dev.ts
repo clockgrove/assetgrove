@@ -38,7 +38,7 @@ interface LookDevArgs {
 /** Look-dev's plan step: its inputs, providers, look-dev plan and WorkPlan, with no call. */
 async function prepare(args: LookDevArgs, ctx: RunContext) {
   const spec = await readJson<AssetSpec>(args.spec);
-  const bible = await loadStyleBible(args.bible);
+  const bible = await loadStyleBible(args.bible, { log: ctx.log });
   const profile = await loadProfile(args.profile);
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
@@ -98,7 +98,11 @@ model3d.lookdev.capUsd or $3 and is reserved before any call (docs/look-dev.md).
         placeholder: "<provenance.json>",
       },
       spec: { type: "string", description: "the asset spec", placeholder: "<spec.json>" },
-      bible: { type: "string", description: "the style bible", placeholder: "<bible.json>" },
+      bible: {
+        type: "string",
+        description: "the style bible (BIBLE.md)",
+        placeholder: "<BIBLE.md>",
+      },
       profile: { type: "string", description: "the target profile", placeholder: "<profile.json>" },
       cap: {
         type: "number",

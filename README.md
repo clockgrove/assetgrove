@@ -157,7 +157,7 @@ A **run** is one request's directory under `.assetgrove/runs/`. It holds **candi
 | A person          | Confirms spend, picks, and approves (`assetgrove approve`).                                                                  |
 | The game          | Its own validator, run by `pick`, and its own review decide what ships. Media is stored as the game's `.gitattributes` says. |
 
-Two ways to generate lead to the same `pick`: `plan` then `apply` (a plan you can read first, from the Markdown bible `init` writes), and `stage` (one step, from a JSON style bible that lists reference images; [docs/target-profile.md](docs/target-profile.md#style-bible)).
+Two ways to generate lead to the same `pick`, both from the one style bible, the `BIBLE.md` that `init` writes: `plan` then `apply` (a plan you can read first), and `stage` (one step). `stage`, sheets and 3D also need reference images of the subject and a perspective sample in the bible ([docs/target-profile.md](docs/target-profile.md#style-bible)).
 
 ## What it records, and where to look
 

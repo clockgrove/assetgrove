@@ -1,5 +1,6 @@
 import { checkDeclaredView } from "./model3d/views.ts";
 import { readFile } from "node:fs/promises";
+import { extname, resolve } from "node:path";
 import { z } from "zod";
 import {
   checkReferenceLicense,
@@ -7,6 +8,7 @@ import {
   referenceLicenses,
   requireInsideProject,
 } from "./bible.ts";
+import { styleBibleOf } from "./bible-view.ts";
 import { InputError } from "./errors.ts";
 import { readFormat } from "./formats.ts";
 import {
@@ -86,14 +88,43 @@ export function validateStyleBible(value: unknown, source: string): StyleBible {
   return parsed.data as unknown as StyleBible;
 }
 
+/** Whether a style bible file is the Markdown BIBLE.md: a `.md` name or YAML front matter first. */
+export function isMarkdownBible(path: string, source: string): boolean {
+  return extname(path).toLowerCase() === ".md" || /^---\r?\n/.test(source);
+}
+
+/** Said once per load of a JSON style bible: it still loads, and BIBLE.md is the format to keep. */
+export const JSON_BIBLE_NOTICE =
+  "the JSON style bible is deprecated: every command reads BIBLE.md, the one style bible (docs/target-profile.md#style-bible)";
+
 /**
- * A JSON style bible file: format line `assetgrove-style-bible/<n>`, its fields
- * (`validateStyleBible`), `referenceLicense` when it lists references, and every reference path
- * inside the project root (exit 2 before any provider call).
+ * The style bible every generation command reads. A BIBLE.md (the one style bible, as `init`
+ * writes it) is loaded and validated as `plan` loads it, and its style view (`styleBibleOf`) is
+ * returned. A JSON style bible still loads, deprecated, with `JSON_BIBLE_NOTICE` passed to `log`:
+ * format line `assetgrove-style-bible/<n>`, its fields (`validateStyleBible`), `referenceLicense`
+ * when it lists references. Either way every reference's declared view is checked and every path
+ * must lie inside the project root (exit 2 before any provider call). `markdown` says which it was:
+ * a BIBLE.md also holds the identity locks, so commands read it for `--lock-bible` when none is given.
  */
-export async function loadStyleBible(path: string): Promise<{ value: StyleBible; dir: string }> {
+export async function loadStyleBible(
+  path: string,
+  options: { log?: (message: string) => void } = {},
+): Promise<{ value: StyleBible; dir: string; markdown: boolean }> {
+  let source: string;
+  try {
+    source = await readFile(resolve(path), "utf8");
+  } catch (error) {
+    throw new InputError(`cannot read style bible ${resolve(path)}`, { cause: error });
+  }
+  if (isMarkdownBible(path, source)) {
+    const doc = await loadBible(path);
+    const bible = styleBibleOf(doc);
+    for (const reference of bible.references) checkDeclaredView(reference, doc.path);
+    return { value: bible, dir: doc.dir, markdown: true };
+  }
   const { value, dir } = await readJson<unknown>(path);
   const bible = validateStyleBible(readFormat("style-bible", value, path).value, path);
+  options.log?.(JSON_BIBLE_NOTICE);
   checkReferenceLicense(bible.referenceLicense, bible.references, path);
   for (const reference of bible.references) checkDeclaredView(reference, path);
   requireInsideProject(
@@ -104,7 +135,7 @@ export async function loadStyleBible(path: string): Promise<{ value: StyleBible;
     dir,
     path,
   );
-  return { value: bible, dir };
+  return { value: bible, dir, markdown: false };
 }
 
 /** The licence of each reference a JSON style bible lists, for provenance; empty when none. */

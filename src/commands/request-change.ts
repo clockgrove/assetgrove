@@ -214,7 +214,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       throw new InputError(
         "a view region asks for another round of the 3D kind, which reads the style bible: give it with --bible",
       );
-    bible = await loadStyleBible(args.bible);
+    bible = await loadStyleBible(args.bible, { log: ctx.log });
     promptText.push(source.spec.subject ?? source.spec.assetId ?? asset.assetId);
     const plan = planStage({
       spec: source.spec,
@@ -519,7 +519,7 @@ version is appended with answers naming the requests. The run that made the asse
       bible: {
         type: "string",
         description: "the style bible, for view regions on a 3D asset",
-        placeholder: "<bible.json>",
+        placeholder: "<BIBLE.md>",
       },
       cap: {
         type: "number",

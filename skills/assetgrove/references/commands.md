@@ -74,7 +74,7 @@ MCP tool: `materials`, arguments `albedo`, `spec`, `profile`, `derivation`, `out
 ### `stage`
 
 ```text
-stage --spec <spec.json> --bible <bible.json> --profile <profile.json> [--candidates 4] [--note <text>] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
+stage --spec <spec.json> --bible <BIBLE.md> --profile <profile.json> [--candidates 4] [--note <text>] [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
 ```
 
 Generates candidates within the cap and stages only those that pass QA, with reasons and provenance, in a run directory under `--runs`. `--dry-run` prints the planned calls, the cost forecast and the spend left under the ledger's limits, writes nothing and needs no key. Image kinds make paid gateway calls. A `character-3d` spec makes rigged, animated `.glb` candidates from the subject's approved turnaround: its 3D calls go to Tripo (`TRIPO_API_KEY`) and its identity call to the gateway. A sprite-strip spec needs an approved `keyPose`. Never writes into the target.
@@ -116,7 +116,7 @@ MCP tool: `approve`, arguments `address`, `version`.
 ### `library adopt`
 
 ```text
-library adopt (<address> | --asset <id>) --original <file> [--target <dir>] [--profile <profile.json>] [--bible <bible.json>] [--json]
+library adopt (<address> | --asset <id>) --original <file> [--target <dir>] [--profile <profile.json>] [--bible <BIBLE.md>] [--json]
 ```
 
 Hands off a person's edit of a picked asset's file as its next version, the way `pick` hands off. The address is the asset's card, media or review record; `--asset <id>` names it in the library of `--target`'s profile instead. `--original` is the AI-made version the card locks (its sha256 must equal `lock.sha256`). Runs the free QA checks again on the edited file (transparency, the frame count its provenance records, and the palette of `--bible` when given); a failure exits 5 `qa_found_nothing`. A person then confirms it like a pick, over the asset id, the file's sha256, the version it replaces, the original, the run that made the asset, its profile's sha256 and the review record's head; under headless settings it exits 8 `confirmation_required` and writes nothing. The hand-off is rendered from the run that made the asset (`<target>/.assetgrove/runs/<run>`, or the import `<target>/.assetgrove/imports/<run>` of a family `write-families` handed off; the target is `--target`, else the Git top level of the asset's folder; a run id that is not one path segment, a missing run or a run without the version's candidate exits 2) in the version's media type (edited bytes of another type exit 2): the file is marked `compositeWithTrainedAlgorithmicMedia` and signed with C2PA credentials that name the original as a `parentOf` ingredient, its provenance gets a `human-edit` step and the confirmation, and every file the profile's hand-off presets write, the manifest included (review pending), is rendered again and read back. The profile's validator runs under pick's rules: an unapproved one exits 8 before any write. A failed read-back (6 `handoff_check_failed`) or a rejecting validator (6 `validator_rejected`) records no version and puts back every file it wrote. Otherwise it appends the version and an adopt annotation and rewrites the card, its lock, the indexes and `log.md`. A Git LFS pointer exits 2; a file equal to the current version or to an older one exits 2 `version_exists`. Calls no model and spends nothing. Only a person runs it.
@@ -157,7 +157,7 @@ MCP tool: `lod`, arguments `run`, `candidate`, `model`, `provenance`, `spec`, `p
 ### `look-dev`
 
 ```text
-look-dev --model <model.glb> --provenance <provenance.json> --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
+look-dev --model <model.glb> --provenance <provenance.json> --spec <spec.json> --bible <BIBLE.md> --profile <profile.json> [--cap <usd>] [--runs .assetgrove/runs] [--work-item <label>] [--provider-script <module>] [--round 1] [--dry-run] [--json]
 ```
 
 Repaints a picked 3D character's base colour on its own UVs in the look the bible's approved references define, writes fur groom maps and tint textures per season the profile declares (`model3d.groom`), gives the eyes a glossy material and mask, and checks them. Stages a one-candidate run with before-and-after renders under `--runs` for a person to pick. Paid gateway calls; the cap defaults to the profile's `model3d.lookdev.capUsd` or $3. Exits 5 when the result fails its checks.
@@ -169,7 +169,7 @@ MCP tool: `look_dev`, arguments `model`, `provenance`, `spec`, `bible`, `profile
 ### `import`
 
 ```text
-import --sheet <sheet.png> --profile <profile.json> --asset <id> --tool <name> [--bible <bible.json>] [--subject <name>] [--hints idle,walk-right,...] [--frames <count>] [--grid <columns>] [--components] [--max-halo <fraction>] [--no-propose] [--cap <usd>] [--work-item <label>] [--imports .assetgrove/imports] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+import --sheet <sheet.png> --profile <profile.json> --asset <id> --tool <name> [--bible <BIBLE.md>] [--subject <name>] [--hints idle,walk-right,...] [--frames <count>] [--grid <columns>] [--components] [--max-halo <fraction>] [--no-propose] [--cap <usd>] [--work-item <label>] [--imports .assetgrove/imports] [--digital-source-type <IPTC code or URI>] [--provider-script <module>] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Slices a contact sheet from any tool (`--tool` names it) into frames under `--imports`, removes the background to the profile's style, and has a vision model propose animation families in `<import>/grouping.json` with status `proposed`. `--no-propose` skips that paid call. With `--bible`, the bible's prompt text makes the run's first call the prompt policy's model check on the decisions role, `--no-propose` or not; it fails closed (exit 4, or 2 `route_unavailable` when nothing serves the role). Without `--bible` there is no prompt text and no check. With `--lock-bible`, a locked subject's sheet is also scored against its identity lock, one paid call unless `--identity-mode off`. With `--frames`, a sheet that does not slice into exactly that many figures is refused (exit 2) before any model call. `--max-halo` sets the matte checks' limit on halo and leftover background (default 0.005 of edge pixels). Never writes into the target.
@@ -181,7 +181,7 @@ MCP tool: `import`, arguments `sheet`, `profile`, `asset`, `tool`, `digitalSourc
 ### `generate-sheet`
 
 ```text
-generate-sheet --spec <spec.json> --bible <bible.json> --profile <profile.json> [--cap <usd>] [--imports .assetgrove/imports] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--brief <brief.json>] [--note <text>] [--max-halo <fraction>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+generate-sheet --spec <spec.json> --bible <BIBLE.md> --profile <profile.json> [--cap <usd>] [--imports .assetgrove/imports] [--lock-bible <BIBLE.md>] [--identity-mode <off|shadow|enforce>] [--brief <brief.json>] [--note <text>] [--max-halo <fraction>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Has the model draw a whole animation cycle as one sheet within the cap, then imports it as `import` does, with a proposed grouping for a person to confirm. A sheet that does not slice into the spec's `frames.count` figures exits 5; the sheet and its record are kept in the import directory. `--brief` adds the author's brief to the prompt; `--lock-bible` and `--identity-mode` score the sheet as `import` does, inside the forecast and the cap; `--max-halo` sets the matte limit as for `import`. Paid gateway calls. Never writes into the target.
@@ -239,7 +239,7 @@ MCP tool: `animation_qa`, arguments `strip`, `family`, `profile`, `import`, `out
 ### `fix-frame`
 
 ```text
-fix-frame --strip <strip.png> --family <name> --profile <profile.json> --frame <n> (--from <n> | --key-pose <image>) --out <directory> [--subject <name>] [--spec <spec.json>] [--note <text>] [--provenance <strip>.provenance.json] [--bible <bible.json>] [--anchor x,y] [--cap 2] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+fix-frame --strip <strip.png> --family <name> --profile <profile.json> --frame <n> (--from <n> | --key-pose <image>) --out <directory> [--subject <name>] [--spec <spec.json>] [--note <text>] [--provenance <strip>.provenance.json] [--bible <BIBLE.md>] [--anchor x,y] [--cap 2] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Regenerates one frame (1-based) of a strip with one paid reference-guided edit call, from an approved neighbour frame or the approved key pose, then, when its candidate scales (area, height, head box) register to different pixels and the strip has another frame to draw beside it, one paid `fix-scale` decision call that picks the scale at which the character matches the surrounding frames. Only that frame changes. Writes the fixed strip, its provenance with a fixes entry, and its QA report and previews into `--out`; never writes into the target or sets a review value. A provenance file that is not the strip's own record is refused (exit 2) before the call.

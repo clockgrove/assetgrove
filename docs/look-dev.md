@@ -10,7 +10,7 @@ It checks each of these, then writes before-and-after renders beside the approve
 
 ```sh
 assetgrove look-dev --model fern.glb --provenance fern.glb.provenance.json \
-  --spec art/fern/character-3d/spec.json --bible art/style-bible.json \
+  --spec art/fern/character-3d/spec.json --bible art/BIBLE.md \
   --profile art/target-profile-3d.json --dry-run
 assetgrove look-dev ... # AI_GATEWAY_API_KEY
 assetgrove pick --run .assetgrove/runs/<run> --candidate c1 --target ../my-game
