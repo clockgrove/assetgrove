@@ -1,0 +1,73 @@
+/**
+ * What the pack reads from Godot's text files as data: the UID in an `.import` file's `[remap]`
+ * section, the UID in a text resource's `[gd_resource ...]` header, and a text resource's
+ * `ext_resource` references. It reads them only to hand them to Godot and to check what Godot
+ * wrote; Godot writes every file the target receives.
+ */
+
+/** A Godot UID as text: `uid://` and its base-34 id. */
+const UID = /^uid:\/\/[a-z0-9]+$/;
+
+/** The value of `key="..."` inside one bracketed header line, or undefined. */
+function attribute(line: string, key: string): string | undefined {
+  const match = new RegExp(`\\b${key}="([^"]*)"`).exec(line);
+  return match?.[1];
+}
+
+const text = (content: Uint8Array | string) =>
+  typeof content === "string" ? content : new TextDecoder().decode(content);
+
+/** The UID an `.import` file gives its source file (`uid="uid://..."` under `[remap]`). */
+export function importUid(content: Uint8Array | string): string | undefined {
+  let section = "";
+  for (const raw of text(content).split(/\r?\n/)) {
+    const line = raw.trim();
+    const header = /^\[([^\]]+)\]$/.exec(line);
+    if (header) {
+      section = header[1] ?? "";
+      continue;
+    }
+    if (section !== "remap") continue;
+    const match = /^uid\s*=\s*"([^"]*)"$/.exec(line);
+    if (match && UID.test(match[1] ?? "")) return match[1];
+  }
+  return undefined;
+}
+
+/** A text resource's header: its type and UID. */
+export interface ResourceHeader {
+  type: string | undefined;
+  uid: string | undefined;
+}
+
+/** The `[gd_resource ...]` header of a text resource, or undefined when it has none. */
+export function resourceHeader(content: Uint8Array | string): ResourceHeader | undefined {
+  const first = text(content)
+    .split(/\r?\n/)
+    .find((line) => line.trim() !== "");
+  if (first === undefined || !first.startsWith("[gd_resource")) return undefined;
+  const uid = attribute(first, "uid");
+  return {
+    type: attribute(first, "type"),
+    uid: uid !== undefined && UID.test(uid) ? uid : undefined,
+  };
+}
+
+/** One `[ext_resource ...]` line of a text resource. */
+export interface ExternalReference {
+  type: string | undefined;
+  uid: string | undefined;
+  path: string | undefined;
+}
+
+/** Every external resource a text resource references. */
+export function externalReferences(content: Uint8Array | string): ExternalReference[] {
+  return text(content)
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("[ext_resource"))
+    .map((line) => ({
+      type: attribute(line, "type"),
+      uid: attribute(line, "uid"),
+      path: attribute(line, "path"),
+    }));
+}
