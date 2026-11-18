@@ -148,6 +148,11 @@ export interface TargetProfile {
   values?: Record<string, unknown>;
   frames: { width: number; height: number; maxEdge?: number; durationMs?: number };
   /**
+   * Per-kind settings, keyed by kind id (`kinds["pixel:tile"]`). `values` is free; any other field
+   * is checked against the kind's `profileSchema`, and a kind without one accepts only `values`.
+   */
+  kinds?: Record<string, { values?: Record<string, unknown>; [field: string]: unknown }>;
+  /**
    * Path templates relative to the target directory, with `{{a.b}}` placeholders (the same values
    * as the manifest template, for example `{{spec.assetId}}` and `{{output.extension}}`).
    * `provenance` writes the full provenance record as its own file; when it is unset and the

@@ -20,6 +20,9 @@ import type {
   ProviderAdapter,
   SearchSlot,
 } from "../extension/api.ts";
+import { SettingsError } from "../env.ts";
+import { checkKindSchemas } from "../kind-schemas.ts";
+import { OPERATION_ROLES, ROLE_CAPABILITY } from "../routes.ts";
 import type { Settings } from "../settings.ts";
 import { CORE_EXTENSION_NAME, coreExtension } from "./core.ts";
 import { compatibilityProblem, CORE_PACKAGE, coreVersion } from "./version.ts";
@@ -59,6 +62,8 @@ export class ExtensionRegistry {
   readonly search: SearchSlot | undefined;
   /** The settings file, named when an id's extension is not loaded. */
   readonly settingsPath: string | undefined;
+  /** Every operation with its role: core's table plus the operations the kinds declare. */
+  readonly operations: Readonly<Record<string, string>>;
 
   constructor(
     extensions: ReadonlyArray<{
@@ -73,6 +78,8 @@ export class ExtensionRegistry {
     const adapters = new Map<string, ProviderAdapter>();
     const loaded: LoadedExtension[] = [];
     let search: { slot: SearchSlot; by: string } | undefined;
+    const operations: Record<string, string> = { ...OPERATION_ROLES };
+    const declared = new Map<string, { role: string; by: string }>();
     const add = <T>(table: Map<string, T>, what: string, id: string, value: T, ext: string) => {
       if (table.has(id))
         throw new ExtensionError(
@@ -88,7 +95,24 @@ export class ExtensionRegistry {
           `two extensions are named "${extension.name}" (the second from ${info.package})`,
         );
       names.add(extension.name);
-      for (const k of extension.kinds ?? []) add(kinds, "asset kind", k.kind, k, extension.name);
+      for (const k of extension.kinds ?? []) {
+        add(kinds, "asset kind", k.kind, k, extension.name);
+        for (const [op, role] of Object.entries(k.operations ?? {})) {
+          if (extension.name === CORE_EXTENSION_NAME && OPERATION_ROLES[op] !== role)
+            throw new ExtensionError(
+              "extension_conflict",
+              `kind "${k.kind}" of core declares operation "${op}" with role "${role}", which core's operations do not have`,
+            );
+          const before = declared.get(op);
+          if (before !== undefined && before.role !== role)
+            throw new ExtensionError(
+              "extension_conflict",
+              `operation "${op}" is declared with role "${role}" by kind "${k.kind}" and role "${before.role}" by "${before.by}"`,
+            );
+          declared.set(op, { role, by: k.kind });
+          operations[op] = role;
+        }
+      }
       for (const p of extension.presets ?? []) add(presets, "preset", p.name, p, extension.name);
       for (const a of extension.adapters ?? []) add(adapters, "adapter", a.id, a, extension.name);
       if (extension.search !== undefined) {
@@ -114,6 +138,24 @@ export class ExtensionRegistry {
     this.adapters = [...adapters.values()];
     this.search = search?.slot;
     this.settingsPath = settingsPath;
+    this.operations = operations;
+  }
+
+  /**
+   * Throws `SettingsError` (exit 2 `settings_invalid`) for a `settings.routes` key of a loaded
+   * extension that no kind declares. A key of an extension that is not loaded is left alone.
+   */
+  checkRoutes(settings: Pick<Settings, "routes" | "path">): void {
+    for (const key of Object.keys(settings.routes)) {
+      const name = extensionOf(key);
+      if (name === undefined || name === CORE_EXTENSION_NAME) continue;
+      if (!this.loaded.some((l) => l.name === name) || Object.hasOwn(this.operations, key))
+        continue;
+      const declared = Object.keys(this.operations).filter((op) => extensionOf(op) === name);
+      throw new SettingsError(
+        `settings.routes[${JSON.stringify(key)}] of ${settings.path} routes an operation extension "${name}" does not declare; its kinds declare: ${declared.length > 0 ? declared.join(", ") : "none"}`,
+      );
+    }
   }
 
   /**
@@ -358,6 +400,23 @@ export function checkExtension(value: unknown, line: string): Extension {
         );
     }
   }
+  for (const kind of ext.kinds ?? []) {
+    checkKindSchemas(kind, refuse);
+    const operations = (kind as { operations?: unknown }).operations;
+    if (operations === undefined) continue;
+    if (operations === null || typeof operations !== "object" || Array.isArray(operations))
+      throw refuse(`the operations of kind ${kind.kind} must be an object of operation to role`);
+    for (const [op, role] of Object.entries(operations)) {
+      if (!op.startsWith(`${ext.name}:`) || op.length <= ext.name.length + 1)
+        throw refuse(
+          `the operations of kind ${kind.kind} must be named "${ext.name}:<op>", got ${JSON.stringify(op)}`,
+        );
+      if (typeof role !== "string" || !Object.hasOwn(ROLE_CAPABILITY, role))
+        throw refuse(
+          `operation "${op}" of kind ${kind.kind} has role ${JSON.stringify(role)}; the roles are ${Object.keys(ROLE_CAPABILITY).join(", ")}`,
+        );
+    }
+  }
   if (ext.search !== undefined) {
     const slot = ext.search as unknown as Record<string, unknown> | null;
     for (const op of ["find", "index", "status", "setup"])
@@ -373,7 +432,7 @@ export function checkExtension(value: unknown, line: string): Extension {
  * one core will not load (`extension_refused`), or a repeated name or id (`extension_conflict`).
  */
 export async function loadExtensions(
-  settings: Pick<Settings, "extensions" | "path">,
+  settings: Pick<Settings, "extensions" | "path"> & Partial<Pick<Settings, "routes">>,
   cwd: string = process.cwd(),
 ): Promise<ExtensionRegistry> {
   const listed = settings.extensions;
@@ -388,5 +447,8 @@ export async function loadExtensions(
   }
   const loaded = [];
   for (const [i, name] of listed.entries()) loaded.push(await loadOne(name, i, cwd, settings.path));
-  return new ExtensionRegistry([CORE_ENTRY, ...loaded], settings.path);
+  const registry = new ExtensionRegistry([CORE_ENTRY, ...loaded], settings.path);
+  if (settings.routes !== undefined)
+    registry.checkRoutes({ routes: settings.routes, path: settings.path });
+  return registry;
 }

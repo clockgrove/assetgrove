@@ -7,6 +7,7 @@
  * An adapter reads its key from the entry's `keyEnv` or its default variable and passes `apiKey`
  * and `baseURL` to its SDK explicitly, so no `*_BASE_URL` variable ever applies.
  */
+import { CALL_PARAMETERS } from "../call-parameters.ts";
 import type { CallParameterName } from "../call-parameters.ts";
 import type { Env } from "../env.ts";
 import { keyValue, SettingsError } from "../env.ts";
@@ -233,6 +234,7 @@ export const scriptedAdapter: ProviderAdapter = {
   fixedHosts: [],
   endpointFromSettings: false,
   defaultRoutes,
+  parameters: [...CALL_PARAMETERS],
   create: (c) =>
     new ScriptedProvider(c.script ?? NO_SCRIPT, {
       settle: "reported",

@@ -33,7 +33,10 @@ export async function providerSet(
     ...(ctx.env && { env: ctx.env }),
     promptAllow: ctx.settings.promptPolicy.allow,
     ...(script && { script }),
-    ...(ctx.extensions && { adapters: ctx.extensions.adapters }),
+    ...(ctx.extensions && {
+      adapters: ctx.extensions.adapters,
+      operations: ctx.extensions.operations,
+    }),
   });
 }
 

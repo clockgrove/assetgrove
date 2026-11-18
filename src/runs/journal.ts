@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { KeyedCallParameters } from "../call-parameters.ts";
 import type { PromptPolicyRecord } from "../policy/text.ts";
 import type { CallRecord } from "../types.ts";
 import { canonicalJson } from "./plan.ts";
@@ -37,6 +38,8 @@ export interface CallKeyInput {
   index?: number;
   /** The route's `keyedProviderOptions`; absent on default options, so the key is the one it always was. */
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** The typed per-call parameters the kind passed, the palette by path and hash; absent when none, so the key is the one it always was. */
+  parameters?: KeyedCallParameters;
 }
 
 /** One journaled call: its key, the record the `Caller` kept and the provider's result. */
@@ -92,7 +95,8 @@ function sha256Hex(data: string | Uint8Array): string {
 
 /**
  * sha256 hex of the canonical JSON of the call's operation, provider, model, prompt, references,
- * seed, index and, only where they differ from the default route's, its provider options.
+ * seed, index, the typed call parameters where any are passed and, only where they differ from the
+ * default route's, its provider options.
  */
 export function callKey(input: CallKeyInput & { occurrence?: number }): string {
   return sha256Hex(
@@ -105,6 +109,7 @@ export function callKey(input: CallKeyInput & { occurrence?: number }): string {
       seed: input.seed,
       index: input.index,
       providerOptions: input.providerOptions,
+      parameters: input.parameters,
       occurrence: input.occurrence,
     }),
   );

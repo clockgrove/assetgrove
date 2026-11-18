@@ -6,6 +6,8 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
+import { plannedCallParameters } from "../call-parameters.ts";
+import type { CallParameters, PlannedCallParameters } from "../call-parameters.ts";
 import { bibleReferences, loadBible } from "../bible.ts";
 import { InputError } from "../errors.ts";
 import type { JsonSchemaObject } from "../commands/types.ts";
@@ -35,6 +37,8 @@ export interface PlanJob {
   estimatedCostUsd: number;
   /** The route's options where they differ from its provider's default route, so they enter the request digest; absent otherwise. */
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** The typed per-call parameters the calls pass (the palette by path); absent when none, so the digest is unchanged. */
+  parameters?: PlannedCallParameters;
 }
 
 /** What a paid command would do and cost, computed before anything is spent. */
@@ -158,6 +162,7 @@ export interface PlannedCallLike {
   operation: string;
   model: string;
   estimatedCostUsd: number;
+  parameters?: CallParameters;
 }
 
 /** A job of `count` calls of an operation on its route. */
@@ -193,14 +198,18 @@ export function jobsOf(
   count = 1,
 ): PlanJob[] {
   return mergeJobs(
-    calls.map((c) => ({
-      operation: c.operation,
-      provider: providerOf(routes, c.operation),
-      model: c.model,
-      count,
-      estimatedCostUsd: c.estimatedCostUsd,
-      ...optionsOf(routes, c.operation),
-    })),
+    calls.map((c) => {
+      const parameters = plannedCallParameters(c.parameters);
+      return {
+        operation: c.operation,
+        provider: providerOf(routes, c.operation),
+        model: c.model,
+        count,
+        estimatedCostUsd: c.estimatedCostUsd,
+        ...optionsOf(routes, c.operation),
+        ...(parameters !== undefined && { parameters }),
+      };
+    }),
   );
 }
 
@@ -237,7 +246,8 @@ export function mergeJobs(jobs: readonly PlanJob[]): PlanJob[] {
         m.provider === job.provider &&
         m.model === job.model &&
         m.estimatedCostUsd === job.estimatedCostUsd &&
-        canonicalJson(m.providerOptions) === canonicalJson(job.providerOptions),
+        canonicalJson(m.providerOptions) === canonicalJson(job.providerOptions) &&
+        canonicalJson(m.parameters) === canonicalJson(job.parameters),
     );
     if (same) same.count += job.count;
     else merged.push({ ...job });

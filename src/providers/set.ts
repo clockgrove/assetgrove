@@ -93,12 +93,14 @@ export class ProviderSet implements GenerationProvider {
       script?: Script;
       adapters?: readonly ProviderAdapter[];
       promptAllow?: readonly string[];
+      /** Core's operation roles plus the loaded kinds' (`ExtensionRegistry.operations`). */
+      operations?: Readonly<Record<string, string>>;
     } = {},
   ): ProviderSet {
     const configured = createProviders(settings, options);
     const set = new ProviderSet(
       configured,
-      resolveRoutes(settings, configured),
+      resolveRoutes(settings, configured, options.operations),
       options.script !== undefined,
       options.promptAllow ?? [],
     );

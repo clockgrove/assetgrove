@@ -5,6 +5,7 @@
  * provider's library has, and an identity call on the rendered views; all are reserved against the
  * cap before the run's first call. QA runs before the pick and is recorded per candidate.
  */
+import { CORE_PROFILE_SCHEMA, CORE_SPEC_SCHEMA } from "../generators/spec-schema.ts";
 import { InputError, ProviderError } from "../errors.ts";
 import type { Generator, GeneratorContext, PlannedCall } from "../generators/generator.ts";
 import {
@@ -17,7 +18,11 @@ import type { IdentityRecord, IdentityScore } from "../identity.ts";
 import { createRaster, decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { sha256, subjectOf, withNote } from "../request.ts";
-import { CLIP_MAP_OPERATION, MODEL3D_FACING_OPERATION } from "../routes.ts";
+import {
+  CLIP_MAP_OPERATION,
+  MODEL3D_FACING_OPERATION,
+  REFERENCE_VIEW_OPERATION,
+} from "../routes.ts";
 import type { Routes } from "../routes.ts";
 import type { AssetSpec, LoadedReference, Reason, StyleBible, TargetProfile } from "../types.ts";
 import { ClipMapCache, familiesToMap, clipPlan, resolveClipPlan } from "./clip-map.ts";
@@ -141,6 +146,18 @@ function prompt(spec: AssetSpec, bible: StyleBible, character: CharacterSpec): s
 
 export const character3dGenerator: Generator = {
   kind: CHARACTER_3D_KIND,
+  specSchema: CORE_SPEC_SCHEMA,
+  profileSchema: CORE_PROFILE_SCHEMA,
+  operations: {
+    [MODEL_OPERATION]: "model3d",
+    [RIG_OPERATION]: "rig3d",
+    [CLIPS_OPERATION]: "clips3d",
+    [MODEL3D_FACING_OPERATION]: "decisions",
+    identity: "decisions",
+    [IDENTITY_CAST_OPERATION]: "vision",
+    [CLIP_MAP_OPERATION]: "decisions",
+    [REFERENCE_VIEW_OPERATION]: "decisions",
+  },
 
   planCandidate(spec: AssetSpec, profile: TargetProfile, routes: Routes): PlannedCall[] {
     const character = characterSpec(spec);
