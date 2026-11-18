@@ -55,7 +55,7 @@
     "check": "prettier --check . && eslint . && tsc --noEmit",
     "format": "prettier --write .",
     "prepack": "pnpm build",
-    "test": "node --test \"test/**/*.test.ts\"",
+    "test": "node scripts/test.ts",
     "test:real": "node --test --test-isolation=none \"test/real/**/*.real.ts\"",
     "gate": "node scripts/gate.ts"
   },

@@ -45,7 +45,7 @@ env:
   PENDULUM_NOTIFY: kirkmarple-clockgrove#318831919 # login#id: the id pins the account (setup writes it)
   PENDULUM_SETUP: corepack enable
   PENDULUM_INSTALL: auto # auto (from the lockfile), none, or your own command
-  PENDULUM_VALIDATION: pnpm check
+  PENDULUM_VALIDATION: pnpm check, pnpm test # a reviewer reply names `pnpm test` with one test file to settle a finding
   PENDULUM_BUDGET_COMMAND: ""
   PENDULUM_PROTECTED_PATHS: ""
   PENDULUM_CI_CHECKS: ci
