@@ -8,11 +8,11 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BIBLE_PRESETS, serializeBible } from "../../src/bible.ts";
 import type { ArtBible } from "../../src/bible.ts";
 import { ScriptedProvider } from "../../src/gateway/scripted.ts";
 import type { ImageRequest } from "../../src/gateway/provider.ts";
 import { createRaster, encodePng, setPixel } from "../../src/image/raster.ts";
+import { bibleMarkdown } from "../../src/testing/samples.ts";
 import type { Raster } from "../../src/image/raster.ts";
 import type { AssetSpec, StyleBible, TargetProfile } from "../../src/types.ts";
 
@@ -232,59 +232,13 @@ export function scriptedProvider(options: ScriptOptions = {}): ScriptedProvider 
   });
 }
 
-/**
- * Writes a BIBLE.md whose style view (`styleBibleOf`) carries `view`'s version, licence, palette,
- * references, perspective, subjects and mood: the cozy-storybook preset with the palette as
- * tokens and the references as positive anchors. Its notes are the preset's axes and tone, since a
- * BIBLE.md states style as axes. `edit` changes the bible before it is written. Returns `path`.
- */
+/** Writes `view` as a BIBLE.md at `path` (`bibleMarkdown`, the pack test kit's); returns `path`. */
 export async function writeStyleBible(
   path: string,
   view: StyleBible,
   edit: (bible: ArtBible) => void = () => {},
 ): Promise<string> {
-  const bible = structuredClone(BIBLE_PRESETS["cozy-storybook"]) as ArtBible;
-  bible.version = view.version;
-  bible.world = "Synthetic Grove";
-  if (view.referenceLicense !== undefined) bible.referenceLicense = view.referenceLicense;
-  const palette: Record<string, unknown> = { $type: "color" };
-  view.palette.forEach((hex, i) => {
-    const h = hex.trim().replace(/^#/, "");
-    palette[`swatch-${i}`] = {
-      $value: {
-        colorSpace: "srgb",
-        components: [0, 2, 4].map((n) => parseInt(h.slice(n, n + 2), 16) / 255),
-      },
-    };
-  });
-  bible.tokens = { ...bible.tokens, palette };
-  bible.anchors = {
-    positive: view.references.map(({ path, role, subject, look, view: v, license }) => ({
-      path,
-      role,
-      ...(subject !== undefined && { subject }),
-      ...(look !== undefined && { look }),
-      ...(v !== undefined && { view: v }),
-      ...(license !== undefined && { license }),
-    })),
-    negative: [],
-  };
-  if (view.perspective !== undefined) bible.perspective = view.perspective;
-  if (view.perspectiveDescription !== undefined)
-    bible.perspectiveDescription = view.perspectiveDescription;
-  if (view.subjects !== undefined) bible.subjects = view.subjects;
-  if (view.mood !== undefined) {
-    bible.tone = { ...bible.tone, moodRange: view.mood };
-    bible.adjustable = { ...bible.adjustable, mood: view.mood.slice(0, 1) };
-  }
-  edit(bible);
-  await writeFile(
-    path,
-    serializeBible(
-      bible,
-      "# Synthetic Grove art direction\n\n## Do's and Don'ts\n\n- Do keep it plain.\n",
-    ),
-  );
+  await writeFile(path, bibleMarkdown(view, edit));
   return path;
 }
 

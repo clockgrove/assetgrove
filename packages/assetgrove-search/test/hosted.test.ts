@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  bibleMarkdown,
   extensionContext,
   sampleBible,
   samplePng,
@@ -133,9 +134,11 @@ async function initFiles(): Promise<{ bible: string; profile: string; flows: unk
  */
 async function planStep(keyPose?: string): Promise<Outcome> {
   const dir = mkdtempSync(join(home, "stage-"));
-  const [spec, bible, profile] = ["spec", "bible", "profile"].map((n) =>
-    join(dir, `${n}.json`),
-  ) as [string, string, string];
+  const [spec, profile] = ["spec", "profile"].map((n) => join(dir, `${n}.json`)) as [
+    string,
+    string,
+  ];
+  const bible = join(dir, "BIBLE.md");
   writeFileSync(
     spec,
     JSON.stringify({
@@ -148,7 +151,7 @@ async function planStep(keyPose?: string): Promise<Outcome> {
     }),
   );
   writeFileSync(join(dir, "pose.png"), samplePng());
-  writeFileSync(bible, JSON.stringify(sampleBible()));
+  writeFileSync(bible, bibleMarkdown(sampleBible()));
   writeFileSync(profile, JSON.stringify(sampleProfile()));
   // The stage command finds the library from the working directory.
   const cwd = process.cwd();

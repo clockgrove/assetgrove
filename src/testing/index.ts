@@ -23,6 +23,13 @@ export type {
 } from "./conformance.ts";
 export { SCRIPTED_LIMIT, TEST_OPERATOR, tempProject } from "./project.ts";
 export type { CliResult, McpSession, RunOptions, TempProject } from "./project.ts";
-export { SAMPLE_PALETTE, sampleBible, sampleProfile, samplePng, sampleScript } from "./samples.ts";
+export {
+  SAMPLE_PALETTE,
+  bibleMarkdown,
+  sampleBible,
+  sampleProfile,
+  samplePng,
+  sampleScript,
+} from "./samples.ts";
 export type { ConfirmRequest } from "../confirm/prompt.ts";
 export type { Outcome } from "../commands/types.ts";

@@ -1,7 +1,10 @@
 /**
- * Synthetic inputs for pack tests (`@clockgrove/assetgrove/testing`): a style bible, a target
- * profile and a script for the scripted provider. Nothing here names a real game or its art.
+ * Synthetic inputs for pack tests (`@clockgrove/assetgrove/testing`): a style bible (its style
+ * view, and that view written as a BIBLE.md), a target profile and a script for the scripted
+ * provider. Nothing here names a real game or its art.
  */
+import { BIBLE_PRESETS, serializeBible } from "../bible.ts";
+import type { ArtBible } from "../bible.ts";
 import type { Script } from "../gateway/scripted.ts";
 import { createRaster, encodePng, setPixel } from "../image/raster.ts";
 import type { StyleBible, TargetProfile } from "../types.ts";
@@ -30,6 +33,58 @@ export function sampleBible(overrides: Partial<StyleBible> = {}): StyleBible {
     mood: ["calm"],
     ...overrides,
   };
+}
+
+/**
+ * A BIBLE.md whose style view (what `stage` and the other generation commands read) carries
+ * `view`'s version, licence, palette, references, perspective, subjects and mood: the
+ * cozy-storybook preset with the palette as tokens and the references as positive anchors. Its
+ * style notes are the preset's axes and tone, since a BIBLE.md states style as axes. `edit` changes
+ * the bible before it is written. Write it where a command's `--bible` will read it.
+ */
+export function bibleMarkdown(
+  view: StyleBible = sampleBible(),
+  edit: (bible: ArtBible) => void = () => {},
+): string {
+  const bible = structuredClone(BIBLE_PRESETS["cozy-storybook"]) as ArtBible;
+  bible.version = view.version;
+  bible.world = "Synthetic Grove";
+  if (view.referenceLicense !== undefined) bible.referenceLicense = view.referenceLicense;
+  const palette: Record<string, unknown> = { $type: "color" };
+  view.palette.forEach((hex, i) => {
+    const h = hex.trim().replace(/^#/, "");
+    palette[`swatch-${i}`] = {
+      $value: {
+        colorSpace: "srgb",
+        components: [0, 2, 4].map((n) => parseInt(h.slice(n, n + 2), 16) / 255),
+      },
+    };
+  });
+  bible.tokens = { ...bible.tokens, palette };
+  bible.anchors = {
+    positive: view.references.map(({ path, role, subject, look, view: shows, license }) => ({
+      path,
+      role,
+      ...(subject !== undefined && { subject }),
+      ...(look !== undefined && { look }),
+      ...(shows !== undefined && { view: shows }),
+      ...(license !== undefined && { license }),
+    })),
+    negative: [],
+  };
+  if (view.perspective !== undefined) bible.perspective = view.perspective;
+  if (view.perspectiveDescription !== undefined)
+    bible.perspectiveDescription = view.perspectiveDescription;
+  if (view.subjects !== undefined) bible.subjects = view.subjects;
+  if (view.mood !== undefined) {
+    bible.tone = { ...bible.tone, moodRange: view.mood };
+    bible.adjustable = { ...bible.adjustable, mood: view.mood.slice(0, 1) };
+  }
+  edit(bible);
+  return serializeBible(
+    bible,
+    "# Synthetic Grove art direction\n\n## Do's and Don'ts\n\n- Do keep it plain.\n",
+  );
 }
 
 export function sampleProfile(overrides: Partial<TargetProfile> = {}): TargetProfile {
