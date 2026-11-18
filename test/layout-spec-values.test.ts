@@ -11,7 +11,12 @@ import { fileURLToPath } from "node:url";
 import { checkSpecValues } from "../src/paths.ts";
 import type { AssetSpec, TargetProfile } from "../src/types.ts";
 import { gitTarget } from "./fixtures/git.ts";
-import { shelterSpec, syntheticProfile, syntheticWorld } from "./fixtures/synthetic.ts";
+import {
+  shelterSpec,
+  syntheticProfile,
+  syntheticWorld,
+  writeStyleBible,
+} from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -69,10 +74,10 @@ async function recordingScript(dir: string): Promise<{ script: string; calls: st
 
 async function writeInputs(world: Awaited<ReturnType<typeof syntheticWorld>>, spec: AssetSpec) {
   const specPath = join(world.dir, "spec.json");
-  const bible = join(world.bibleDir, "bible.json");
+  const bible = join(world.bibleDir, "BIBLE.md");
   const profile = join(world.dir, "profile.json");
   await writeFile(specPath, JSON.stringify(spec));
-  await writeFile(bible, JSON.stringify(world.bible));
+  await writeStyleBible(bible, world.bible);
   await writeFile(profile, JSON.stringify(world.profile));
   return { specPath, bible, profile };
 }
