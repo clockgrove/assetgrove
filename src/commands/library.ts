@@ -560,7 +560,7 @@ one path segment, a missing run or a run without the version's candidate exits 2
       bible: {
         type: "string",
         description: "the style bible whose palette the palette check uses",
-        placeholder: "<bible.json>",
+        placeholder: "<BIBLE.md>",
       },
     },
     required: ["original"],

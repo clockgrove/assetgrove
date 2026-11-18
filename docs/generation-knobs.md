@@ -25,7 +25,7 @@ This loads the preset from the target repository's sibling `presets/<preset>.md`
 
 ## Four layers
 
-The bible is the constitution. Its YAML front matter declares `version`, `world`, `preset`, `axes`, `tone`, `anchors`, `colorRule`, `tokens`, `adjustable` and `identities`. Markdown after the front matter preserves prose rationale and unknown sections. The Do's and Don'ts section describes how positive and negative image anchors should be interpreted.
+The bible is the constitution. Its YAML front matter declares `version`, `world`, `preset`, `axes`, `tone`, `anchors`, `colorRule`, `tokens`, `adjustable` and `identities`, and optionally `perspective`, `perspectiveDescription` and `subjects`. It is the one style bible: `stage`, `generate-sheet`, `import`, `look-dev`, `request-change` and `fix-frame` read the same file ([target-profile.md](target-profile.md#style-bible) says which parts). Markdown after the front matter preserves prose rationale and unknown sections. The Do's and Don'ts section describes how positive and negative image anchors should be interpreted.
 
 `axes` contains rendering (`painterly`, `naturalistic`, `flat-cartoon`, `pixel` or `stylised-3d`), realism, proportions, outline weight and colour, shading, detail density, texture and the lighting key. Saturation bounds and outline colour are DTCG tokens; the outline axis references its colour token. `tone` declares audience, allowed moods and content limits. `anchors.positive` and `anchors.negative` contain image paths, roles and optional subjects. References resolve relative to the bible.
 

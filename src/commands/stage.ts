@@ -44,7 +44,7 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const candidates = args.candidates ?? DEFAULT_CANDIDATES;
   const capUsd = runCap(args.cap, ctx.settings);
   const spec = await readJson<AssetSpec>(args.spec);
-  const bible = await loadStyleBible(args.bible);
+  const bible = await loadStyleBible(args.bible, { log: ctx.log });
   const profile = await loadProfile(args.profile);
   // Every asset kind of the registry: core's (still, sprite-strip, character-3d) and the loaded
   // extensions'.
@@ -127,7 +127,11 @@ of its staged candidates, and name that file as keyPose in the strip spec.`,
     type: "object",
     properties: {
       spec: { type: "string", description: "the asset spec", placeholder: "<spec.json>" },
-      bible: { type: "string", description: "the style bible", placeholder: "<bible.json>" },
+      bible: {
+        type: "string",
+        description: "the style bible (BIBLE.md)",
+        placeholder: "<BIBLE.md>",
+      },
       profile: { type: "string", description: "the target profile", placeholder: "<profile.json>" },
       candidates: {
         type: "number",

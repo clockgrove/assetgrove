@@ -161,7 +161,11 @@ limits, and needs no key.`,
         description: "the strip's own provenance record",
         placeholder: "<strip>.provenance.json",
       },
-      bible: { type: "string", description: "the style bible", placeholder: "<bible.json>" },
+      bible: {
+        type: "string",
+        description: "the style bible (BIBLE.md)",
+        placeholder: "<BIBLE.md>",
+      },
       anchor: { type: "string", description: "the anchor point of the frames", placeholder: "x,y" },
       cap: {
         type: "number",
@@ -207,7 +211,10 @@ limits, and needs no key.`,
         plan,
       );
     }
-    const bible = args.bible !== undefined ? (await loadStyleBible(args.bible)).value : undefined;
+    const bible =
+      args.bible !== undefined
+        ? (await loadStyleBible(args.bible, { log: ctx.log })).value
+        : undefined;
     const result = await runFixFrame({
       target,
       index,

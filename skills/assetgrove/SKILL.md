@@ -33,6 +33,8 @@ Only a person:
 
 ## Suggested flow
 
+`--bible` is the target's `BIBLE.md` (`.assetgrove/art-direction/BIBLE.md`), the one style bible every command reads. `stage`, `generate-sheet`, `import` and `look-dev` also need reference images of the subject (positive anchors naming its `subject`, or its identity lock) and, for 2D, a `perspective` sample; a bible straight from `init` has neither, so use `plan` and `apply` until the person adds them.
+
 1. `stage --dry-run --json` to check the planned calls and the cost forecast.
 2. `stage --json` to generate and stage candidates. A paid run exits 8 `confirmation_required` until a person confirms its spend (`assetgrove confirm <id>` at a terminal); give the person the id and run it again once they have.
 3. Hand the run directory and candidate IDs to the human.

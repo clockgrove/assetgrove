@@ -6,13 +6,13 @@ Animation starts as a whole contact sheet. A model can generate a whole cycle as
 
 ```sh
 # A sheet made elsewhere: slice, clean, and stage a grouping proposal.
-pnpm assetgrove import --sheet bram-sprite-sheet.png --profile profile.json --bible bible.json \
+pnpm assetgrove import --sheet bram-sprite-sheet.png --profile profile.json --bible .assetgrove/art-direction/BIBLE.md \
   --asset bram --tool "ChatGPT image generation" \
   --digital-source-type trainedAlgorithmicMedia --frames 57 \
   --hints idle,walk-right,walk-left,crouch-hop,look,sit-groom
 
 # Or have the model draw the cycle as one sheet (spec: assetId, animationFamily, frames.count).
-pnpm assetgrove generate-sheet --spec fern-walk.json --bible bible.json --profile profile.json
+pnpm assetgrove generate-sheet --spec fern-walk.json --bible .assetgrove/art-direction/BIBLE.md --profile profile.json
 
 # After reviewing and confirming grouping.json:
 pnpm assetgrove write-families --import .assetgrove/imports/<import> --target ../my-game
@@ -82,7 +82,7 @@ A family's provenance record (`generator: "sheet-import"`) holds:
 
 - the source sheet: path, SHA-256, media type, and the model or tool that made it;
 - the model calls Assetgrove made: the sheet generation, if any, and the grouping proposal, with their prompts, request IDs, times and costs;
-- the identity score of the contact sheet against the character's identity lock, when `--lock-bible` was given and the character has a lock (`identity`; see [generation-knobs.md](generation-knobs.md#identity-lock-scoring)). In enforce mode a sheet below the threshold is still imported, so the person sees it and why, but `write-families` refuses it;
+- the identity score of the contact sheet against the character's identity lock, when the character has a lock in `--lock-bible`, or in `--bible` when that is a `BIBLE.md` (`identity`; see [generation-knobs.md](generation-knobs.md#identity-lock-scoring)). In enforce mode a sheet below the threshold is still imported, so the person sees it and why, but `write-families` refuses it;
 - the parameters: style, frames, mirroring, the family's reason, the common scale and the measured jitter;
 - `steps`: the transformation steps from the sheet to the strip, each with its parameters, engine and version, and input and output pixel hashes;
 - one entry per strip frame: its frame number, sheet hash, cell, tool and every transform applied (`crop`, `strip-labels`, `matte`, `binarize` and `quantize` where the style asks, `mirror`, `normalize-scale`, `scale`, `place`).

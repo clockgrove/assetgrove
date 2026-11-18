@@ -57,7 +57,9 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
       `the matte limit --max-halo must be a fraction from 0 to 1, not ${args.maxHalo}`,
     );
   const spec = await readJson<AssetSpec>(args.spec);
-  const bible = await loadStyleBible(args.bible);
+  const bible = await loadStyleBible(args.bible, { log: ctx.log });
+  // A BIBLE.md holds the identity locks too: it is the lock bible unless --lock-bible names another.
+  const lockBible = args.lockBible ?? (bible.markdown ? args.bible : undefined);
   const profile = await loadProfile(args.profile);
   const brief =
     args.brief === undefined
@@ -66,7 +68,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
   const lock = await lockFor(
-    args.lockBible,
+    lockBible,
     args.identityMode,
     spec.value.subject ?? spec.value.assetId,
     profile.value,
@@ -98,7 +100,7 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
   const bibleFiles = styleBibleReads("bible", bible);
   const near = await nearMatchesFor(
     spec.value,
-    await subjectReferencePaths(spec, args.lockBible, bible),
+    await subjectReferencePaths(spec, lockBible, bible),
     ctx,
     args.brief === undefined ? undefined : (await readJson<GenerationBrief>(args.brief)).value,
   );
@@ -109,12 +111,8 @@ async function prepare(args: GenerateSheetArgs, ctx: RunContext) {
     reads: {
       ...bibleFiles,
       ...specReads("spec", spec),
-      ...(lock && args.lockBible !== undefined
-        ? await bibleReads(
-            "lockBible",
-            args.lockBible,
-            lock.cast ? undefined : [lock.record.subject],
-          )
+      ...(lock && lockBible !== undefined
+        ? await bibleReads("lockBible", lockBible, lock.cast ? undefined : [lock.record.subject])
         : {}),
       // The recorded threshold decides which candidates enforce mode drops.
       ...(lock?.recordPath !== undefined && { "lockBible/identity-thresholds": lock.recordPath }),
@@ -146,8 +144,8 @@ naming the cells or figures behind the difference; the sheet and its generation 
 kept in the import directory.
 --dry-run prints the planned calls, the cost forecast and the spend left under the daily and
 work-item limits, writes nothing and needs no key.
---lock-bible and --identity-mode score the generated sheet against the subject's identity lock
-as the import command does; the scoring call is part of the forecast and the cap.
+--lock-bible (by default --bible, when it is a BIBLE.md) and --identity-mode score the generated
+sheet against the subject's identity lock as the import command does; the scoring call is part of the forecast and the cap.
 The prompt states the family's motion template (its beats, a held pose, the loop). --brief adds
 the author's brief (purpose, setting, what happens), checked as plan checks it.
 --note adds the author's note to the sheet prompt (policy-checked, part of the request's digest); with
@@ -156,7 +154,11 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.
     type: "object",
     properties: {
       spec: { type: "string", description: "the asset spec", placeholder: "<spec.json>" },
-      bible: { type: "string", description: "the style bible", placeholder: "<bible.json>" },
+      bible: {
+        type: "string",
+        description: "the style bible (BIBLE.md)",
+        placeholder: "<BIBLE.md>",
+      },
       profile: { type: "string", description: "the target profile", placeholder: "<profile.json>" },
       brief: {
         type: "string",
@@ -176,7 +178,8 @@ the author's brief (purpose, setting, what happens), checked as plan checks it.
       },
       lockBible: {
         type: "string",
-        description: "score the sheet against the subject's identity lock in this art bible",
+        description:
+          "score the sheet against the subject's identity lock in this art bible (default: --bible when it is a BIBLE.md)",
         placeholder: "<BIBLE.md>",
       },
       identityMode: {

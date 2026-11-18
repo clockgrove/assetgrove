@@ -106,13 +106,15 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   const capUsd = runCap(args.cap, ctx.settings);
   const slice = sliceOptions(args.grid, args.components, args.frames);
   const profile = await loadProfile(args.profile);
-  const bible = args.bible ? await loadStyleBible(args.bible) : undefined;
+  const bible = args.bible ? await loadStyleBible(args.bible, { log: ctx.log }) : undefined;
+  // A BIBLE.md holds the identity locks too: it is the lock bible unless --lock-bible names another.
+  const lockBible = args.lockBible ?? (bible?.markdown ? args.bible : undefined);
   const subject = args.subject ?? args.asset;
   const sheet = await readBytes(args.sheet, "sheet");
   const digitalSourceType = declarationOption(args.digitalSourceType);
   const providers = await providerSet(args.providerScript, ctx);
   const lock = await lockFor(
-    args.lockBible,
+    lockBible,
     args.identityMode,
     subject,
     profile.value,
@@ -153,12 +155,8 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
     inputs: ["sheet", "profile", "bible", "lockBible"],
     reads: {
       ...(bible ? styleBibleReads("bible", bible) : {}),
-      ...(lock && args.lockBible !== undefined
-        ? await bibleReads(
-            "lockBible",
-            args.lockBible,
-            lock.cast ? undefined : [lock.record.subject],
-          )
+      ...(lock && lockBible !== undefined
+        ? await bibleReads("lockBible", lockBible, lock.cast ? undefined : [lock.record.subject])
         : {}),
       // The recorded threshold decides which candidates enforce mode drops.
       ...(lock?.recordPath !== undefined && { "lockBible/identity-thresholds": lock.recordPath }),
@@ -203,7 +201,8 @@ With --frames, the sheet must hold exactly that many figures: slicing another nu
 (exit 2) before any model call but the sheet-blob decisions, whose answers it counts after,
 naming the cells or figures behind the difference.
 
-With --lock-bible, a subject with an identity lock in that art bible has its contact sheet scored
+With --lock-bible, or a --bible that is a BIBLE.md (the lock bible unless --lock-bible names
+another), a subject with an identity lock in that art bible has its contact sheet scored
 against the lock by the identity decision model. --identity-mode overrides the profile's
 identity.mode: shadow (default) records the score, enforce makes write-families refuse a sheet
 below the threshold, off skips scoring.`,
@@ -219,7 +218,11 @@ below the threshold, off skips scoring.`,
         description: "the IPTC digital source type to declare",
         placeholder: "<IPTC code or URI>",
       },
-      bible: { type: "string", description: "the style bible", placeholder: "<bible.json>" },
+      bible: {
+        type: "string",
+        description: "the style bible (BIBLE.md)",
+        placeholder: "<BIBLE.md>",
+      },
       subject: {
         type: "string",
         description: "the subject, when not the asset id",
@@ -253,7 +256,8 @@ below the threshold, off skips scoring.`,
       noPropose: { type: "boolean", description: "skip the grouping model" },
       lockBible: {
         type: "string",
-        description: "score the sheet against the subject's identity lock in this art bible",
+        description:
+          "score the sheet against the subject's identity lock in this art bible (default: --bible when it is a BIBLE.md)",
         placeholder: "<BIBLE.md>",
       },
       identityMode: {

@@ -3,8 +3,8 @@
 Real-time 3D characters are made with the same `stage` and `pick` commands as other kinds. `stage` takes a `character-3d` spec and the bible's approved references of the character. It generates rigged, animated binary glTF (`.glb`) candidates within the cost cap and QA-filters them, then writes turntable renders for the person. `pick` writes the candidate the person chooses into a target whose profile declares `model3d`. Assetgrove never picks.
 
 ```sh
-assetgrove stage --spec fern-3d.json --bible bible.json --profile profile.json --dry-run
-assetgrove stage --spec fern-3d.json --bible bible.json --profile profile.json   # TRIPO_API_KEY
+assetgrove stage --spec fern-3d.json --bible .assetgrove/art-direction/BIBLE.md --profile profile.json --dry-run
+assetgrove stage --spec fern-3d.json --bible .assetgrove/art-direction/BIBLE.md --profile profile.json   # TRIPO_API_KEY
 assetgrove pick --run .assetgrove/runs/<run> --candidate c2 --target ../my-game
 ```
 

@@ -46,7 +46,7 @@ The agent calls `settings_change` with the caps and your provider's limit; you c
 
 ## 5. A first asset
 
-Ask the agent for an asset. It stages candidates with `stage` (a `--dry-run` first shows the cost), and hands you the run directory and candidate ids. You look at them and pick one:
+Ask the agent for an asset. Straight after `init`, it plans with `plan` and generates with `apply` (a `--dry-run` first shows the cost), and hands you the run directory and candidate ids. `stage`, sheets and 3D read the same `BIBLE.md`, and also need reference images of the subject (anchors naming its `subject`) and a `perspective` sample: add them to the bible first ([target-profile.md](target-profile.md#style-bible)). You look at the candidates and pick one:
 
 ```sh
 node /abs/path/to/assetgrove/src/cli.ts pick --run .assetgrove/runs/<run> --candidate <id> --target .

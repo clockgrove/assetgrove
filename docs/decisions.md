@@ -53,6 +53,12 @@ Art direction lives in a target-owned Markdown bible with validated YAML front m
 
 The target owns an Agent Skill that links the bible and starting presets. DESIGN.md contributes UI colour context only; Assetgrove does not extend its format with art direction. Prompt templates are copied into the target repository on explicit initialization (`assetgrove init`) and versioned there. `plan` records the compilation and model inputs; `apply` checks their hashes and authorizes generation spend without approving an asset.
 
+## One style bible
+
+`BIBLE.md` is the one style bible, and every command that takes `--bible` reads it. The JSON style bible came first, with the first generation loop. The constitution replaced it as the statement of a world's look, but `stage` and the commands built after it (`generate-sheet`, `import`, `look-dev`, `request-change`, `fix-frame`) kept reading the JSON file. A target then kept two bibles, derived one from the other and checked they matched, and those commands never saw the constitution's axes, tone or identity locks.
+
+`plan` and `apply` compile `BIBLE.md`; the other commands read its style view (`styleBibleOf`, `src/bible-view.ts`), derived on every load and never written, so the two cannot drift. Subject references are the positive anchors naming a `subject`, then each identity lock's turnaround and references. The perspective sample, its description and the subject descriptions are optional front-matter fields (`perspective`, `perspectiveDescription`, `subjects`). The palette is `tokens.palette`, and the style notes render every axis, the audience and the content limits, with an axis a look overrides marked so that a spec with no look keeps the world's style. `generate-sheet` and `import` read a `BIBLE.md` given as `--bible` for `--lock-bible` too, as `plan` attaches the lock. A JSON style bible still loads, deprecated, with a notice on stderr, until a later release removes it. `migrate` cannot convert one: a migration keeps a file's kind and type, and the JSON bible has no constitution to carry over, so [target-profile.md](target-profile.md#the-json-style-bible-deprecated) maps its fields instead.
+
 ## Media transformation core
 
 Operations are declared once, by name and parameter schema, in `src/transform/operations.ts`, and engines implement them behind the `ImageEngine` adapter. The in-house engine is `assetgrove-raster`; its version is bumped whenever an operation's output bytes change, so provenance names what made each file.

@@ -54,6 +54,15 @@ export interface ArtBible {
   tokens: Record<string, unknown>;
   adjustable: Record<string, string[] | { min: number; max: number }> & { mood: string[] };
   identities: Record<string, IdentityLock>;
+  /**
+   * Path (relative to the bible) of the perspective sample: the image whose camera angle every
+   * stage, sheet and still matches. Optional; a request that sends the sample refuses without it.
+   */
+  perspective?: string;
+  /** How the perspective sample's view is described, for vision QA (`isometric, three-quarter view`). */
+  perspectiveDescription?: string;
+  /** A plain description per subject (characters, props), keyed as specs name them. */
+  subjects?: Record<string, { description: string }>;
   [section: string]: unknown;
 }
 export interface BibleDocument {
@@ -342,6 +351,10 @@ export function checkReferenceLicense(
 }
 
 /** Every reference image a Markdown bible lists: its anchors and its identity locks' images. */
+/** The perspective sample as a reference, when the bible names one. */
+export function perspectiveReference(bible: ArtBible): BibleReference[] {
+  return bible.perspective === undefined ? [] : [{ path: bible.perspective, role: "perspective" }];
+}
 export function bibleReferences(bible: ArtBible): BibleReference[] {
   return [
     ...bible.anchors.positive,
@@ -388,11 +401,19 @@ export function validateBible(input: unknown): ArtBible {
       text(anchor["path"], "anchor.path");
       text(anchor["role"], "anchor.role");
       if (anchor["subject"] !== undefined) text(anchor["subject"], "anchor.subject");
+      if (anchor["view"] !== undefined) text(anchor["view"], "anchor.view");
+      if (anchor["license"] !== undefined) text(anchor["license"], "anchor.license");
       if (anchor["look"] !== undefined && !Object.hasOwn(looks, anchor["look"] as string))
         throw new InputError(`anchor ${anchor["path"]} names undeclared look ${anchor["look"]}`);
     }
   }
   choice(b["colorRule"], ["full", "palette"], "colorRule");
+  if (b["perspective"] !== undefined) text(b["perspective"], "perspective");
+  if (b["perspectiveDescription"] !== undefined)
+    text(b["perspectiveDescription"], "perspectiveDescription");
+  if (b["subjects"] !== undefined)
+    for (const [name, value] of Object.entries(object(b["subjects"], "subjects")))
+      text(object(value, `subjects.${name}`)["description"], `subjects.${name}.description`);
   validateTokens(b["tokens"]);
   const tokens = object(b["tokens"], "tokens");
   const outlineTokens = [outline, ...Object.values(looks).map((l) => (l as Obj)["outline"])]
@@ -473,7 +494,11 @@ export function validateBible(input: unknown): ArtBible {
   const bible = b as unknown as ArtBible;
   if (!biblePalette(bible).length)
     throw new InputError("palette must contain at least one colour token");
-  checkReferenceLicense(b["referenceLicense"], bibleReferences(bible), "bible");
+  checkReferenceLicense(
+    b["referenceLicense"],
+    [...bibleReferences(bible), ...perspectiveReference(bible)],
+    "bible",
+  );
   return bible;
 }
 /** The front matter of a Markdown bible, unparsed, and the prose after it. */
@@ -537,7 +562,9 @@ export async function loadBible(
   }
   const parsed = parseBible(source, kind, full);
   requireInsideProject(
-    bibleReferences(parsed.data).map((reference) => reference.path),
+    [...bibleReferences(parsed.data), ...perspectiveReference(parsed.data)].map(
+      (reference) => reference.path,
+    ),
     dirname(full),
     full,
   );

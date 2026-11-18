@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { syntheticSheet } from "./fixtures/sheet.ts";
-import { shelterSpec, syntheticWorld } from "./fixtures/synthetic.ts";
+import { shelterSpec, syntheticBibleMd, syntheticWorld } from "./fixtures/synthetic.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
@@ -161,6 +161,48 @@ test("a full run through a provider script stages candidates", async () => {
   assert.equal(d["candidates"].length, 2);
   assert.ok(d["runDir"].startsWith(world.runsDir));
   assert.match(JSON.stringify(d["candidates"][0].provenance), /scripted:/);
+});
+
+test("stage and generate-sheet read BIBLE.md, the one style bible; a JSON bible loads with a deprecation notice", async () => {
+  const { world, base } = await files();
+  const md = await syntheticBibleMd(world);
+  const withBible = (path: string) =>
+    base.map((arg, i) => (base[i - 1] === "--bible" ? path : arg));
+  // stage, end to end on BIBLE.md: no notice.
+  const staged = await cli(
+    ["stage", ...withBible(md), "--candidates", "1", "--provider-script", passingScript, "--json"],
+    noKey(),
+  );
+  assert.equal(staged.code, 0, staged.stdout + staged.stderr);
+  assert.equal(doc(staged)["candidates"].length, 1);
+  assert.doesNotMatch(staged.stderr, /deprecated/);
+  // The prompt carries the constitution: its axes and audience, as style notes.
+  const record = await readFile(join(doc(staged)["runDir"], "run.json"), "utf8");
+  assert.match(record, /rendering: painterly/);
+  assert.match(record, /audience: all-ages/);
+  // generate-sheet, end to end on BIBLE.md.
+  const png = Buffer.from(
+    syntheticSheet({ families: [{ name: "shelter", count: 6, facing: 1, walk: false }] }).png,
+  ).toString("base64");
+  const sheetScript = await script(
+    world.dir,
+    `{ image: () => ({ images: [{ mediaType: "image/png", bytes: Uint8Array.from(Buffer.from("${png}", "base64")) }] }),
+       vision: () => ({ text: JSON.stringify({ families: [{ name: "shelter", frames: [1, 2, 3, 4, 5, 6] }] }) }) }`,
+  );
+  const sheet = await cli(
+    [
+      "generate-sheet",
+      ...withBible(md),
+      ...["--imports", join(world.dir, "imports"), "--provider-script", sheetScript, "--json"],
+    ],
+    noKey(),
+  );
+  assert.equal(sheet.code, 0, sheet.stdout + sheet.stderr);
+  assert.doesNotMatch(sheet.stderr, /deprecated/);
+  // The JSON bible still plans, and says it is deprecated.
+  const legacy = await cli(["stage", ...base, "--dry-run", "--json"], noKey());
+  assert.equal(legacy.code, 0, legacy.stdout + legacy.stderr);
+  assert.match(legacy.stderr, /the JSON style bible is deprecated/);
 });
 
 test("a style bible missing a field is refused with exit 2 naming it, never a crash", async () => {
