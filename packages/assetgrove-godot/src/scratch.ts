@@ -59,6 +59,8 @@ export const GODOT_ARGS: readonly string[] = [
 
 /** What the build script reads. */
 export interface BuildInput {
+  /** The Godot release the run must be, `4.7.2-stable`: the script fails on any other. */
+  godot: string;
   /** The SpriteFrames to save, `res://...`. */
   resource: string;
   /** The UID the target's resource already has, kept on the new save. */

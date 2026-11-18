@@ -1,6 +1,7 @@
 # The Godot pack's build script (@clockgrove/assetgrove-godot): an editor plugin of the scratch
 # project the pack lays out for one hand-off. Godot's headless editor imports the media; this
-# script then builds the SpriteFrames through Godot's API from the input the pack wrote as data,
+# script first checks that it runs on the Godot release the input names (the pinned 4.7.2-stable),
+# then builds the SpriteFrames through Godot's API from the input the pack wrote as data,
 # saves it with ResourceSaver (keeping the target's UID when it had one), reloads it with
 # ResourceLoader and checks what came back. It writes `.assetgrove-godot/result.json` and quits:
 # 0 when everything held, 1 otherwise. Every failure is also printed as an ERROR line, which the
@@ -29,6 +30,8 @@ func _run() -> void:
 	var result := {}
 	var input = _read_input()
 	if input != null:
+		_check_version(input)
+	if input != null and _errors.is_empty():
 		await _wait_for_import(input)
 		if _errors.is_empty():
 			result = _build_frames(input)
@@ -50,6 +53,14 @@ func _read_input():
 		_fail("the input is not a JSON object")
 		return null
 	return input
+
+
+## Fails unless this Godot is the release the input names, such as `4.7.2-stable`.
+func _check_version(input: Dictionary) -> void:
+	var info := Engine.get_version_info()
+	var running := "%d.%d.%d-%s" % [info["major"], info["minor"], info["patch"], info["status"]]
+	if running != String(input.get("godot", "")):
+		_fail("this is Godot %s, not the pinned %s" % [running, input.get("godot", "")])
 
 
 ## Waits until the editor's file system has scanned and imported every animation's texture.

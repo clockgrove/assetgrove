@@ -1,6 +1,7 @@
 /**
  * `assetgrove extensions setup godot`: the Godot the pack runs. A binary at the path the pack's
- * settings give (`godot`) is used as it is. Otherwise setup downloads Godot 4.7.2 for this
+ * settings give (`godot`) is used as it is: setup does not run it, so it reports no version for it,
+ * and every hand-off's build script fails on a Godot that is not the pinned release. Otherwise setup downloads Godot 4.7.2 for this
  * platform through core's pinned download, checked against the SHA512 Godot publishes for it
  * (`src/godot-release.json`, from the release's `SHA512-SUMS.txt`), and unpacks it under the
  * state directory. Setup writes no settings: it returns the path to put in them.
@@ -75,7 +76,8 @@ async function unpack(zip: Uint8Array, dir: string): Promise<void> {
 export interface GodotSetupResult {
   /** The executable's absolute path. */
   godot: string;
-  version: string;
+  /** The pinned release's version, for a download; a binary the settings name reports none. */
+  version?: string;
   /** `settings` when the developer settings named it, else `download`. */
   source: "settings" | "download";
   /** Where the path goes in the developer settings. */
@@ -95,10 +97,11 @@ export async function setupGodot(
   if (settings.godot !== undefined && settings.godot !== "") {
     if (!isFile(settings.godot))
       throw new GodotSetupError(`${SETTING} names ${settings.godot}, which is not a file`);
-    ctx.log(`using the Godot at ${settings.godot} (${SETTING})`);
+    ctx.log(
+      `using the Godot at ${settings.godot} (${SETTING}); each hand-off fails unless it is Godot ${GODOT_RELEASE.release}`,
+    );
     return {
       godot: settings.godot,
-      version: GODOT_RELEASE.version,
       source: "settings",
       setting: SETTING,
     };

@@ -66,7 +66,6 @@ test("a binary the settings name is used without a download", async () => {
   const ctx = context(join(root, "settings"), new Uint8Array(), pins);
   assert.deepEqual(await setupGodot(ctx, { godot: binary }), {
     godot: binary,
-    version: "4.7.2",
     source: "settings",
     setting: SETTING,
   });

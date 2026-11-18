@@ -18,6 +18,7 @@ import type {
 } from "@clockgrove/assetgrove/extension";
 import { externalReferences, importUid, resourceHeader } from "./godot-text.ts";
 import { errorLines } from "./output.ts";
+import { GODOT_RELEASE } from "./setup.ts";
 import {
   GODOT_ARGS,
   INPUT_PATH,
@@ -175,6 +176,7 @@ async function write(
   const before = await read(resource);
   const uid = before === undefined ? undefined : resourceHeader(before)?.uid;
   const input: BuildInput = {
+    godot: GODOT_RELEASE.release,
     resource: `res://${inProject(project, resource, "the resource")}`,
     ...(uid !== undefined && { uid }),
     frameWidth: ctx.profile.frames.width,

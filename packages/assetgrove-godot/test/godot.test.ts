@@ -7,13 +7,21 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { sampleProfile, tempProject } from "@clockgrove/assetgrove/testing";
 import type { CliResult } from "@clockgrove/assetgrove/testing";
+import { GODOT_ARGS, INPUT_PATH, RESULT_PATH, projectFiles } from "../src/scratch.ts";
 import { findGodot } from "./helpers/godot.ts";
 import { buildPack, packNodeModules } from "./helpers/pack.ts";
 import { contactSheet } from "./helpers/sheet.ts";
@@ -203,4 +211,34 @@ test("an earlier strip Godot cannot decode fails the hand-off with exit 6 and le
   } finally {
     writeFileSync(path, strip);
   }
+});
+
+test("the build script fails on a Godot that is not the release the input names", (t) => {
+  if (!usable) return t.skip(SKIP!);
+  const scratch = join(stage, "other-release");
+  const files = {
+    ...projectFiles(),
+    [INPUT_PATH]: JSON.stringify({
+      godot: "4.6.0-stable",
+      resource: "res://empty.tres",
+      frameWidth: 32,
+      frameHeight: 40,
+      animations: [],
+    }),
+  };
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(scratch, path)), { recursive: true });
+    writeFileSync(join(scratch, path), content);
+  }
+  const run = spawnSync(GODOT!, GODOT_ARGS, { cwd: scratch, encoding: "utf8" });
+  const result = JSON.parse(readFileSync(join(scratch, RESULT_PATH), "utf8")) as {
+    ok: boolean;
+    errors: string[];
+  };
+  assert.equal(result.ok, false);
+  assert.match(
+    result.errors.join("\n"),
+    /this is Godot 4\.7\.2-stable, not the pinned 4\.6\.0-stable/,
+  );
+  assert.match(run.stdout + run.stderr, /ERROR: assetgrove-godot: this is Godot/);
 });
