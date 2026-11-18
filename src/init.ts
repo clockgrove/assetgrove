@@ -175,12 +175,16 @@ interface Desired {
   content: string;
 }
 
+/** Assetgrove's BIBLE.md reference, linked from the art-direction skill `init` writes. */
+const BIBLE_FORMAT_URL =
+  "https://github.com/clockgrove/assetgrove/blob/main/skills/art-direction/references/bible-format.md";
+
 function bibleProse(world: string): string {
   return `# ${world} art direction\n\nGenerate original work using the axes and tokens above. Add rationale and reference images here.\n\n## Do's and Don'ts\n\nDo follow the positive anchors. Don't reproduce the negative anchors or violate content limits.\n`;
 }
 
 function skillText(world: string): string {
-  return `---\n${stringify({ name: ART_DIRECTION_SKILL, description: `Load when generating or reviewing art for ${world}.` })}---\n# Art direction\n\nRead [the style bible](../../../${BIBLE_PATH}), including its positive and negative anchor paths and Do's and Don'ts.\nSee [starting presets](../../../.assetgrove/art-direction/presets/) for visual alternatives. The bible is a constitution; briefs cannot override it.\n`;
+  return `---\n${stringify({ name: ART_DIRECTION_SKILL, description: `Load when generating or reviewing art for ${world}.` })}---\n# Art direction\n\nRead [the style bible](../../../${BIBLE_PATH}), including its positive and negative anchor paths and Do's and Don'ts.\nSee [starting presets](../../../.assetgrove/art-direction/presets/) for visual alternatives. The bible is a constitution; briefs cannot override it.\nTo change the bible, follow [the BIBLE.md reference](${BIBLE_FORMAT_URL}): every field, which commands read it, and how to change it safely.\n`;
 }
 
 /** Every project file init wants and its content, apart from .gitignore. */
