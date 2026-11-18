@@ -297,7 +297,9 @@ jobs:
         run: >-
           node --input-type=module -e
           "const { setupModel } = await import('./packages/assetgrove-search/src/setup.ts');
-          const out = await setupModel({ modelsDir: process.env.RUNNER_TEMP + '/models', onProgress: (m) => console.log(m) });
+          const { pinnedDownload } = await import('./src/extension/setup.ts');
+          const modelsDir = process.env.RUNNER_TEMP + '/models';
+          const out = await setupModel({ modelsDir, onProgress: (m) => console.log(m), download: (file) => pinnedDownload(modelsDir, file, { log: (m) => console.log(m) }) });
           console.log('installed', out.dir);"
 
       - name: Run the bench
