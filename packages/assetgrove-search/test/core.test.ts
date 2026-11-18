@@ -95,6 +95,17 @@ test("the listed package fills core's slot: find returns the same JSON on the CL
   for (const name of ["find", "search_index", "search_status", "extensions_setup"])
     assert.ok(tools.includes(name), name);
 
+  // extensions_setup returns the same document as the CLI's `extensions setup search --json`.
+  const setupCli = await project.cli(["extensions", "setup", "search", "--json"]);
+  const setupTool = await mcp.request("tools/call", {
+    name: "extensions_setup",
+    arguments: { name: "search" },
+  });
+  assert.deepEqual(
+    (setupTool["result"] as { structuredContent: unknown }).structuredContent,
+    setupCli.json,
+  );
+
   const lantern = `asset://${GAME}/lantern`;
   const cases: Array<{ args: string[]; tool: Record<string, unknown>; first?: string }> = [
     { args: ["find", "lantern"], tool: { words: "lantern" }, first: lantern },

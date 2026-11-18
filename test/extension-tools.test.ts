@@ -8,7 +8,7 @@ import "./fixtures/env.ts";
 import { approveCommand, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
@@ -327,5 +327,4 @@ test("a preset's tool output reaches the target only through the hand-off's path
   assert.equal(outcome.exitCode, 2);
   assert.equal(outcome.error?.code, "invalid_input");
   assert.equal(existsSync(join(dirname(escape.targetDir), "escaped.json")), false);
-  await mkdir(escape.targetDir, { recursive: true });
 });
