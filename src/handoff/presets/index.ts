@@ -8,8 +8,10 @@
 import type { z } from "zod";
 import { InputError } from "../../errors.ts";
 import { extensionOf, unavailableId } from "../../extensions/errors.ts";
+import type { RegisteredTool } from "../../extensions/registry.ts";
 import type { FramesTrait, KindTraits } from "../../frames.ts";
 import type { TargetProfile } from "../../types.ts";
+import type { ToolRunner } from "../../extension/tools.ts";
 import { asepriteJsonPreset } from "./aseprite-json.ts";
 import { atlasJsonPreset } from "./atlas-json.ts";
 import { manifestPreset } from "./manifest.ts";
@@ -23,6 +25,11 @@ export interface PresetContext {
   manifestRel: string;
   /** The `frames` trait the hand-off's kind declares; absent when it declares none. */
   frames?: FramesTrait;
+  /**
+   * Runs one of the preset's own pack's declared tools in scratch, under core's approval rules
+   * (src/extension/tools.ts). Core always sets it; optional so a hand-made context compiles.
+   */
+  run?: ToolRunner;
 }
 
 /** One file a preset writes, relative to the target directory. */
@@ -57,6 +64,8 @@ export interface FamiliesContext {
   assetId: string;
   /** The library's families of the asset with this hand-off's in place of their own, by name. */
   families: HandedOffFamily[];
+  /** As `PresetContext.run`. */
+  run?: ToolRunner;
 }
 
 interface PresetShape<Options, Context> {
@@ -115,6 +124,8 @@ export interface PresetRegistry {
   operations?: Readonly<Record<string, string>>;
   /** The loaded kinds with their declared `frames` trait. */
   kinds?: KindTraits["kinds"];
+  /** Every tool the loaded packs declare (`ExtensionRegistry.tools`); none when absent. */
+  tools?: ReadonlyMap<string, RegisteredTool>;
 }
 
 /**

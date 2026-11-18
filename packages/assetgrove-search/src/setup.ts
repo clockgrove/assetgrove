@@ -1,6 +1,7 @@
-import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+import type { SetupContext } from "@clockgrove/assetgrove/extension";
 import { SearchError } from "./errors.ts";
 import {
   MODEL_MANIFEST,
@@ -15,16 +16,13 @@ export interface SetupOptions {
   modelsDir: string;
   /** Tests point these at loopback servers; the defaults are the manifest's fixed hosts. */
   manifest?: ModelManifest;
-  fetch?: typeof fetch;
   onProgress?: (message: string) => void;
   /**
-   * How long a download may go without a byte before it is given up and the next host tried;
-   * defaults to 60 seconds. Tests shorten it.
+   * Core's pinned download (`SetupContext.download`, `pinnedDownload`): the only way the package
+   * fetches a file. It hashes the bytes before the file is used, deletes it on a mismatch and fails.
    */
-  stallMs?: number;
+  download: SetupContext["download"];
 }
-
-const STALL_MS = 60_000;
 
 export function modelFolder(modelsDir: string, manifest: ModelManifest = MODEL_MANIFEST): string {
   return join(modelsDir, manifest.id);
@@ -53,50 +51,12 @@ export async function modelIsInstalled(
 }
 
 /**
- * One file's bytes. A host that sends nothing for `stallMs` (before the response or between two
- * chunks) is given up, so a stalled connection falls back to the next host instead of hanging.
- */
-async function download(doFetch: typeof fetch, url: string, stallMs: number): Promise<Buffer> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const arm = () => {
-    clearTimeout(timer);
-    timer = setTimeout(
-      () => controller.abort(new Error(`no data from ${new URL(url).host} for ${stallMs} ms`)),
-      stallMs,
-    );
-  };
-  arm();
-  try {
-    const res = await doFetch(url, { redirect: "follow", signal: controller.signal });
-    if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
-    if (!res.body) return Buffer.from(await res.arrayBuffer());
-    const chunks: Uint8Array[] = [];
-    const reader = res.body.getReader();
-    for (;;) {
-      arm();
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
-    return Buffer.concat(chunks);
-  } catch (error) {
-    throw controller.signal.aborted && controller.signal.reason instanceof Error
-      ? controller.signal.reason
-      : error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Download every model file into `<modelsDir>/<id>`: the Hugging Face host first, then the fixed
- * mirror, per file. Each file's hash is checked before anything is moved; the files are staged in
- * a sibling folder and renamed into place at the end, so a failure leaves nothing half-written.
+ * Every model file in `<modelsDir>/<id>`, each missing one fetched through core's pinned download
+ * (`options.download`), pinned to the manifest's revision and sha256: the Hugging Face host first,
+ * then the fixed mirror.
  */
 export async function setupModel(options: SetupOptions): Promise<{ dir: string }> {
   const manifest = options.manifest ?? MODEL_MANIFEST;
-  const doFetch = options.fetch ?? fetch;
   const say = options.onProgress ?? (() => {});
   if (!isPinned(manifest)) {
     throw new SearchError(
@@ -108,61 +68,20 @@ export async function setupModel(options: SetupOptions): Promise<{ dir: string }
     );
   }
   const final = modelFolder(options.modelsDir, manifest);
-  if (await modelIsInstalled(options.modelsDir, manifest)) return { dir: final };
-
-  await mkdir(options.modelsDir, { recursive: true });
-  // A killed or interrupted setup cannot run its `finally`: sweep what earlier runs left behind.
-  for (const name of await readdir(options.modelsDir)) {
-    if (name.startsWith(`.${manifest.id}.partial-`)) {
-      await rm(join(options.modelsDir, name), { recursive: true, force: true });
-    }
+  for (const file of manifest.files) {
+    if ((await sha256File(join(final, file.path))) === file.sha256) continue;
+    say(file.path);
+    await options.download({
+      urls: [
+        primaryUrl(manifest, manifest.primaryBase, file),
+        mirrorUrl(manifest.mirrorBase, file),
+      ],
+      version: manifest.revision,
+      sha256: file.sha256,
+      path: `${manifest.id}/${file.path}`,
+    });
   }
-  const stage = join(
-    options.modelsDir,
-    `.${manifest.id}.partial-${randomBytes(6).toString("hex")}`,
-  );
-  try {
-    for (const file of manifest.files) {
-      const attempts = [
-        { host: "primary", url: primaryUrl(manifest, manifest.primaryBase, file) },
-        { host: "mirror", url: mirrorUrl(manifest.mirrorBase, file) },
-      ];
-      const failures: string[] = [];
-      let mismatch = false;
-      let saved = false;
-      for (const a of attempts) {
-        say(`${file.path} from ${a.host}`);
-        try {
-          const bytes = await download(doFetch, a.url, options.stallMs ?? STALL_MS);
-          const got = createHash("sha256").update(bytes).digest("hex");
-          if (got !== file.sha256) {
-            mismatch = true;
-            failures.push(`${a.host}: sha256 ${got} does not match ${file.sha256}`);
-            continue;
-          }
-          const target = join(stage, file.path);
-          await mkdir(dirname(target), { recursive: true });
-          await writeFile(target, bytes);
-          saved = true;
-          break;
-        } catch (error) {
-          failures.push(`${a.host}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-      if (!saved) {
-        throw new SearchError(
-          mismatch ? "hash_mismatch" : "setup_failed",
-          `Could not fetch ${file.path}: ${failures.join("; ")}`,
-          { hint: "Run `assetgrove search setup` again.", details: { file: file.path, failures } },
-        );
-      }
-    }
-    await rm(final, { recursive: true, force: true });
-    await rename(stage, final);
-    return { dir: final };
-  } finally {
-    await rm(stage, { recursive: true, force: true });
-  }
+  return { dir: final };
 }
 
 export async function exists(path: string): Promise<boolean> {

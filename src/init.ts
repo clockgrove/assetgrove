@@ -402,7 +402,7 @@ export function searchSteps(directory: string, settings: Settings): InitStep[] {
     steps.push({
       id: "search",
       status: "needs-person",
-      detail: `${SEARCH_PACKAGE} is installed in the project but not listed, so it is not loaded: add "${SEARCH_PACKAGE}" to the extensions list in ${settings.path} by hand to search the library (find, search index), then run assetgrove search setup.`,
+      detail: `${SEARCH_PACKAGE} is installed in the project but not listed, so it is not loaded: add "${SEARCH_PACKAGE}" to the extensions list in ${settings.path} by hand to search the library (find, search index), then run assetgrove extensions setup search.`,
     });
   }
   const store = settings.search?.store;

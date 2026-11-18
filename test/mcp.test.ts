@@ -987,9 +987,11 @@ export default {
 
 test("every tool's structuredContent deep-equals the CLI --json document", async () => {
   const covered = new Set(rows.map((r) => r.tool));
-  // The search-only tools are compared in test/search-commands.test.ts, with a slot loaded.
+  // The search-only tools are compared in test/search-commands.test.ts, with a slot loaded, and
+  // extensions_setup, which needs a pack with a setup, in the search package's test/core.test.ts.
   for (const c of commands)
-    if (c.tool !== null && c.requires !== "search") assert.ok(covered.has(c.tool), c.tool);
+    if (c.tool !== null && c.requires !== "search" && c.tool !== "extensions_setup")
+      assert.ok(covered.has(c.tool), c.tool);
   // One server per scripted provider; the shared one serves every row that names none.
   const servers = new Map<string, Client>([[script, server]]);
   let previous: Doc = {};

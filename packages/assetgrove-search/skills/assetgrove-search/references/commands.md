@@ -42,15 +42,15 @@ Reports the local store, the embedder and whether its model is installed, what t
 
 MCP tool: `search_status`, arguments `target`.
 
-### `search setup`
+### `extensions setup search`
 
 ```text
-search setup [--target <dir>] [--json]
+assetgrove extensions setup search [--json]
 ```
 
 Downloads the pinned SigLIP2 model to `<stateDir>/models` from Hugging Face, else the project's release mirror, and checks every file against the sha256 values the package ships. A failed download or a mismatch exits 4 `provider_error`. Needs no project.
 
-MCP tool: `search_setup`, arguments `target`.
+MCP tool: `extensions_setup`, argument `name` (`search`).
 
 ## Search paths in the asset tree
 

@@ -8,9 +8,9 @@ import { exists, modelFolder } from "./setup.ts";
 import { fitTokens } from "./tokens.ts";
 
 const MAX_TEXT_TOKENS = 64;
-const NEEDS_SETUP = "Run `assetgrove search setup` to download the model.";
+const NEEDS_SETUP = "Run `assetgrove extensions setup search` to download the model.";
 
-/** Throws a structured error naming search setup when any model file is missing. No network call. */
+/** Throws a structured error naming `extensions setup search` when any model file is missing. No network call. */
 export async function assertModelFiles(
   modelsDir: string,
   manifest: ModelManifest = MODEL_MANIFEST,

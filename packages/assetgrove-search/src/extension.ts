@@ -20,6 +20,7 @@ import type {
   SearchSlot,
   SearchSource,
   SearchStoreSettings,
+  SetupContext,
 } from "@clockgrove/assetgrove/extension";
 import type { Embedder } from "./embedder.ts";
 import { SearchError } from "./errors.ts";
@@ -546,10 +547,14 @@ async function embedderStatus(
   return { id: MODEL_MANIFEST.id, revision: MODEL_MANIFEST.revision };
 }
 
-async function setup(ctx: SearchContext): Promise<Record<string, unknown>> {
-  if (ctx.settings.embedder === "scripted") return { model: "scripted", installed: true };
-  if (ctx.settings.embedder === "route") return { model: "route", installed: true };
-  const { dir } = await setupModel({ modelsDir: modelsDir(ctx), onProgress: ctx.log });
+async function setup(ctx: SetupContext): Promise<Record<string, unknown>> {
+  if (ctx.search.embedder === "scripted") return { model: "scripted", installed: true };
+  if (ctx.search.embedder === "route") return { model: "route", installed: true };
+  const { dir } = await setupModel({
+    modelsDir: ctx.dir,
+    download: ctx.download,
+    onProgress: ctx.log,
+  });
   return { dir, model: MODEL_MANIFEST.id, installed: true };
 }
 
@@ -705,10 +710,10 @@ async function forecast(
   return { images: pending.images, texts: pending.texts, queries, state };
 }
 
-export const searchSlot: SearchSlot = { find, outliers, index, status, setup, nearMatch, forecast };
+export const searchSlot: SearchSlot = { find, outliers, index, status, nearMatch, forecast };
 
 /** Core's entry: refuses on darwin-x64 before LanceDB or Transformers.js is imported. */
 export default function searchExtension(context: ExtensionContext): Extension {
   assertSupportedPlatform();
-  return { api: context.api, name: "search", search: searchSlot };
+  return { api: context.api, name: "search", search: searchSlot, setup };
 }

@@ -11,7 +11,20 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +86,75 @@ const installed = project.install(pack, NAME);
 symlinkSync(join(pkgRoot, "node_modules"), join(installed, "node_modules"), "junction");
 project.writeSettings({ extensions: [NAME], search: { embedder: "scripted" } });
 
+test("the search package's setup runs through extensions setup", async () => {
+  const result = await project.cli(["extensions", "setup", "search", "--json"]);
+  assert.equal(result.code, 0, result.stderr + result.stdout);
+  const fields = result.json as Record<string, unknown>;
+  assert.equal(fields["extension"], "search");
+  assert.equal(fields["model"], "scripted");
+  assert.equal(fields["installed"], true);
+});
+
+test("extensions setup search downloads the pinned model through core, and refuses a wrong hash", async () => {
+  // The installed pack's manifest points at a local fixture: one host serving the right bytes,
+  // a primary that fails so the mirror is used, and a file whose bytes do not match its pin.
+  const body: Record<string, string> = {
+    "config.json": '{"model":"fixture"}',
+    "onnx/vision_model.onnx": "vision-bytes",
+  };
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    hits.push(req.url ?? "");
+    const name = (req.url ?? "").replace(/^\/mirror\//, "").replaceAll("__", "/");
+    if (!req.url?.startsWith("/mirror/")) return void res.writeHead(503).end();
+    res.end(name === "onnx/tampered.onnx" ? "other bytes" : (body[name] ?? ""));
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const manifestPath = join(installed, "dist", "model-manifest.json");
+  assert.ok(existsSync(manifestPath), "the built pack reads its manifest from dist");
+  const shipped = readFileSync(manifestPath, "utf8");
+  const manifest = (files: Array<{ path: string; sha256: string }>) =>
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        ...(JSON.parse(shipped) as object),
+        id: "fixture-model",
+        revision: "b".repeat(40),
+        primaryBase: `${base}/primary`,
+        mirrorBase: `${base}/mirror`,
+        files,
+      }),
+    );
+  const models = join(project.stateDir, "models", "fixture-model");
+  try {
+    project.writeSettings({ extensions: [NAME], search: { embedder: "local" } });
+    manifest(Object.entries(body).map(([path, text]) => ({ path, sha256: hash(text) })));
+    const ok = await project.cli(["extensions", "setup", "search", "--json"]);
+    assert.equal(ok.code, 0, ok.stderr + ok.stdout);
+    assert.equal(ok.json?.["installed"], true);
+    assert.equal(ok.json?.["model"], "fixture-model");
+    for (const [path, text] of Object.entries(body))
+      assert.equal(readFileSync(join(models, path), "utf8"), text);
+    assert.ok(
+      hits.some((h) => h.startsWith("/primary/")),
+      "the primary was tried first",
+    );
+
+    // A pin the served bytes do not match: exit 4, hash_mismatch, nothing left at the path.
+    manifest([{ path: "onnx/tampered.onnx", sha256: hash("the pinned bytes") }]);
+    const bad = await project.cli(["extensions", "setup", "search", "--json"]);
+    assert.equal(bad.code, 4, bad.stderr + bad.stdout);
+    assert.match(bad.stdout, /hash_mismatch/);
+    assert.deepEqual(readdirSync(join(models, "onnx")).sort(), ["vision_model.onnx"]);
+  } finally {
+    writeFileSync(manifestPath, shipped);
+    project.writeSettings({ extensions: [NAME], search: { embedder: "scripted" } });
+    server.close();
+  }
+});
+
 test("the listed package fills core's slot: find returns the same JSON on the CLI and as a tool", async () => {
   const indexed = await project.cli(["search", "index", "--json"]);
   assert.equal(indexed.code, 0, indexed.stderr + indexed.stdout);
@@ -83,8 +165,19 @@ test("the listed package fills core's slot: find returns the same JSON on the CL
   sessions.push(mcp);
   const listed = (await mcp.request("tools/list", {}))["result"] as { tools: { name: string }[] };
   const tools = listed.tools.map((t) => t.name);
-  for (const name of ["find", "search_index", "search_status", "search_setup"])
+  for (const name of ["find", "search_index", "search_status", "extensions_setup"])
     assert.ok(tools.includes(name), name);
+
+  // extensions_setup returns the same document as the CLI's `extensions setup search --json`.
+  const setupCli = await project.cli(["extensions", "setup", "search", "--json"]);
+  const setupTool = await mcp.request("tools/call", {
+    name: "extensions_setup",
+    arguments: { name: "search" },
+  });
+  assert.deepEqual(
+    (setupTool["result"] as { structuredContent: unknown }).structuredContent,
+    setupCli.json,
+  );
 
   const lantern = `asset://${GAME}/lantern`;
   const cases: Array<{ args: string[]; tool: Record<string, unknown>; first?: string }> = [

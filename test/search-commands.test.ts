@@ -1,6 +1,6 @@
 /**
  * The search-only commands (issue #237, design section 7.1): core declares find, search index,
- * search status and search setup with `requires: "search"`. With no loaded extension filling the
+ * and search status with `requires: "search"`. With no loaded extension filling the
  * search slot, help and the tool list omit them and a call exits 2 extension_unavailable naming
  * the settings line; with one listed, find returns the same JSON on the CLI and as a tool, card
  * text only under sharedText and the numbered sheet as image content. The slot here is a stub
@@ -23,8 +23,8 @@ import { GAME, fixtureLibrary } from "./fixtures/library.ts";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const cliPath = join(root, "src", "cli.ts");
 const STUB = "assetgrove-search-stub";
-const SEARCH_ONLY = ["find", "search index", "search status", "search setup"];
-const SEARCH_TOOLS = ["find", "search_index", "search_status", "search_setup"];
+const SEARCH_ONLY = ["find", "search index", "search status"];
+const SEARCH_TOOLS = ["find", "search_index", "search_status"];
 
 const lib = fixtureLibrary();
 const clients: Client[] = [];

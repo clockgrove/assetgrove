@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { MODEL_MANIFEST, isPinned } from "../src/model-manifest.ts";
 import type { ModelManifest } from "../src/model-manifest.ts";
 import { SearchError } from "../src/errors.ts";
+import type { PinnedDownload } from "@clockgrove/assetgrove/extension";
 import { loadSiglip2 } from "../src/siglip2.ts";
-import { modelFolder, modelIsInstalled, setupModel } from "../src/setup.ts";
+import { modelFolder, setupModel } from "../src/setup.ts";
 
 const REV = "a".repeat(40);
 const contents: Record<string, string> = {
@@ -66,85 +67,36 @@ const fromPrimary = (url: string) => contents[url.split(`/resolve/${REV}/`)[1] ?
 const fromMirror = (url: string) => contents[url.slice(1).replaceAll("__", "/")];
 
 describe("search setup", () => {
-  it("downloads from the primary and verifies every hash", async () => {
-    const { manifest, dir, m } = await fixture(fromPrimary, fromMirror);
-    await setupModel({ modelsDir: dir, manifest });
-    assert.equal(await modelIsInstalled(dir, manifest), true);
-    assert.equal(m.hits.length, 0);
-    await rm(dir, { recursive: true });
-  });
-
-  it("falls back to the mirror when the primary fails", async () => {
-    const { manifest, dir, m } = await fixture(() => undefined, fromMirror);
-    await setupModel({ modelsDir: dir, manifest });
-    assert.equal(await modelIsInstalled(dir, manifest), true);
-    assert.equal(m.hits.length, 3);
-    await rm(dir, { recursive: true });
-  });
-
-  it("refuses a wrong hash and leaves nothing written", async () => {
-    const bad = (u: string) => (u.includes("vision") ? "tampered" : fromPrimary(u));
-    const { manifest, dir } = await fixture(bad, (u) =>
-      u.includes("vision") ? "tampered" : fromMirror(u),
-    );
-    await assert.rejects(setupModel({ modelsDir: dir, manifest }), (e: unknown) => {
-      assert.ok(e instanceof SearchError);
-      assert.equal(e.code, "hash_mismatch");
-      return true;
-    });
-    assert.deepEqual(await readdir(dir), []);
-    await rm(dir, { recursive: true });
-  });
-
-  it("reports a download error that says 'does not match' as setup_failed", async () => {
-    const { manifest, dir } = await fixture(fromPrimary, fromMirror);
-    await assert.rejects(
-      setupModel({
-        modelsDir: dir,
-        manifest,
-        fetch: (() => Promise.reject(new Error("host does not match certificate"))) as typeof fetch,
-      }),
-      (e: unknown) => {
-        assert.ok(e instanceof SearchError);
-        assert.equal(e.code, "setup_failed");
-        return true;
-      },
-    );
-    await rm(dir, { recursive: true });
-  });
-
-  it("gives up a primary that stalls mid-file and takes the file from the mirror", async () => {
-    const { manifest, dir, m } = await fixture(fromPrimary, fromMirror);
-    const held: Array<import("node:http").ServerResponse> = [];
-    const stalling = createServer((req, res) => {
-      const body = fromPrimary(req.url ?? "");
-      if (!req.url?.includes("text_model")) return void res.end(body);
-      // Headers and a first chunk, then nothing, as the CI download that hung for 30 minutes.
-      res.writeHead(200, { "content-length": String(1 << 20) });
-      res.write("text");
-      held.push(res);
-    });
-    servers.push(stalling);
-    await new Promise<void>((resolve) => stalling.listen(0, "127.0.0.1", resolve));
-    const base = `http://127.0.0.1:${(stalling.address() as AddressInfo).port}`;
-    await setupModel({
+  // The bytes, the hash check and the fallback are core's pinned download (test/extension-setup.test.ts),
+  // and the package's setup runs through it in test/core.test.ts.
+  it("hands each missing file to the download port, pinned, and skips an installed one", async () => {
+    const { manifest, dir, p, m } = await fixture(fromPrimary, fromMirror);
+    const installed = manifest.files[0]!;
+    await mkdir(dirname(join(dir, "fixture", installed.path)), { recursive: true });
+    await writeFile(join(dir, "fixture", installed.path), contents[installed.path]!);
+    const calls: PinnedDownload[] = [];
+    const result = await setupModel({
       modelsDir: dir,
-      manifest: { ...manifest, primaryBase: base },
-      stallMs: 200,
+      manifest,
+      download: async (file) => {
+        calls.push(file);
+        return join(dir, file.path);
+      },
     });
-    assert.equal(await modelIsInstalled(dir, manifest), true);
-    assert.deepEqual(m.hits, ["/onnx__text_model_int8.onnx"]);
-    held.forEach((res) => res.destroy());
-    await rm(dir, { recursive: true });
-  });
-
-  it("leaves nothing when both hosts fail", async () => {
-    const { manifest, dir } = await fixture(
-      () => undefined,
-      () => undefined,
+    assert.equal(result.dir, modelFolder(dir, manifest));
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      manifest.files.slice(1).map((f) => `fixture/${f.path}`),
     );
-    await assert.rejects(setupModel({ modelsDir: dir, manifest }), /Could not fetch/);
-    assert.deepEqual(await readdir(dir), []);
+    for (const [i, call] of calls.entries()) {
+      const file = manifest.files[i + 1]!;
+      assert.equal(call.version, REV);
+      assert.equal(call.sha256, file.sha256);
+      assert.equal(call.urls.length, 2);
+      assert.ok(call.urls[0]!.startsWith(p.base));
+      assert.ok(call.urls[1]!.startsWith(m.base));
+    }
+    assert.deepEqual([p.hits, m.hits], [[], []], "the package fetched nothing itself");
     await rm(dir, { recursive: true });
   });
 });
@@ -162,36 +114,18 @@ describe("the shipped manifest", () => {
 
   it("refuses to set up an unpinned manifest", async () => {
     await assert.rejects(
-      setupModel({ modelsDir: tmpdir(), manifest: { ...MODEL_MANIFEST, revision: "" } }),
+      setupModel({
+        modelsDir: tmpdir(),
+        manifest: { ...MODEL_MANIFEST, revision: "" },
+        download: () => Promise.reject(new Error("nothing is downloaded")),
+      }),
       (e: unknown) => e instanceof SearchError && e.code === "model_unpinned",
     );
   });
 });
 
-describe("stale staging folders", () => {
-  it("removes partial folders left by an interrupted setup", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ag-search-"));
-    const stale = join(dir, `.${MODEL_MANIFEST.id}.partial-deadbeef`);
-    await mkdir(stale, { recursive: true });
-    await assert.rejects(
-      setupModel({
-        modelsDir: dir,
-        manifest: {
-          ...MODEL_MANIFEST,
-          files: [{ path: "config.json", sha256: "0".repeat(64) }],
-          primaryBase: "http://127.0.0.1:1",
-          mirrorBase: "http://127.0.0.1:1",
-        },
-        fetch: (() => Promise.reject(new Error("down"))) as typeof fetch,
-      }),
-    );
-    assert.deepEqual(await readdir(dir), []);
-    await rm(dir, { recursive: true });
-  });
-});
-
 describe("offline loading", () => {
-  it("fails with an error naming search setup and makes no network call", async () => {
+  it("fails with an error naming extensions setup search and makes no network call", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ag-search-"));
     const real = globalThis.fetch;
     let calls = 0;
@@ -208,7 +142,7 @@ describe("offline loading", () => {
       await assert.rejects(loadSiglip2(dir), (e: unknown) => {
         assert.ok(e instanceof SearchError);
         assert.equal(e.code, "model_missing");
-        assert.match(e.message, /search setup/);
+        assert.match(e.message, /extensions setup search/);
         return true;
       });
     } finally {
