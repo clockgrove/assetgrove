@@ -75,7 +75,10 @@ describe("bench on the 20-image fixture", () => {
       with_(entry("look-category", false), entry("indexing", false, false)).map((e) => e.bar),
       ["look-category"],
     );
-    assert.deepEqual(with_(entry("indexing", false, true)).map((e) => e.bar), ["indexing"]);
+    assert.deepEqual(
+      with_(entry("indexing", false, true)).map((e) => e.bar),
+      ["indexing"],
+    );
   });
 
   it("refuses to score by words while a query holds rule-made, unpooled or unjudged labels", async () => {
