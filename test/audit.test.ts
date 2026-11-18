@@ -377,6 +377,8 @@ test("a model-backed score is advisory unless the stability file has a qualifyin
     repeats: MIN_REPEATS,
     agreement: MIN_AGREEMENT,
     measuredAt: "2026-11-15T00:00:00Z",
+    measuredBy: "a synthetic fixture",
+    labelledSetSha256: "0".repeat(64),
   });
   const none = auditFiltering(routes, []);
   assert.deepEqual(

@@ -3,7 +3,10 @@
  * in its own tests on its adapters, kinds and presets. The whole suite runs with the global `fetch`
  * trapped, so a pack that reaches the network outside its guarded `http` fails. Every `exact` QA
  * check of every kind runs twice, each time under a `Caller` that refuses every call: an exact check
- * that makes a call, throws, or answers differently the second time fails the suite.
+ * that makes a call, throws, or answers differently the second time fails the suite; every `model`
+ * check that runs is run once on the scripted provider. A kind whose `generate` or check returns a
+ * reason naming a check neither the kind nor core declares fails it too: core would record that
+ * reason advisory (`cause: "undeclared"`), never filtering.
  */
 import { AssertionError } from "node:assert";
 import { isAbsolute } from "node:path";
@@ -21,7 +24,10 @@ import type {
   PresetFile,
   ProviderAdapter,
 } from "../extension/api.ts";
+import { coreExtension } from "../extensions/core.ts";
 import { checkExtension } from "../extensions/registry.ts";
+import { checkOf, kindQaRegistry } from "../qa/stability.ts";
+import type { QaCheck } from "../qa/stability.ts";
 import type { Script } from "../gateway/scripted.ts";
 import { ScriptedProvider } from "../gateway/scripted.ts";
 import { createProvider } from "../providers/adapter.ts";
@@ -114,7 +120,7 @@ function reasonProblem(value: unknown): string | undefined {
 
 /** Runs one `exact` check twice, each under a refusing Caller; the problems it shows. */
 export async function exactCheckProblems(
-  check: KindCheck,
+  check: KindCheck & Pick<Required<KindCheck>, "run">,
   input: KindCheckInput,
 ): Promise<string[]> {
   const answers: string[] = [];
@@ -147,10 +153,16 @@ function routesFor(ext: Extension): Routes {
   return routes as unknown as Routes;
 }
 
+/** The checks a list of reasons names that no declaration covers, each once. */
+function undeclaredOf(reasons: readonly Reason[], checks: readonly QaCheck[]): string[] {
+  return [...new Set(reasons.filter((r) => checkOf(r, checks) === undefined).map((r) => r.check))];
+}
+
 async function checkKind(
   kind: AssetKind,
   sample: KindSample | undefined,
   routes: Routes,
+  declared: readonly QaCheck[],
   fail: (why: string) => void,
   ran: (what: string) => void,
 ): Promise<void> {
@@ -200,6 +212,11 @@ async function checkKind(
       else {
         const shape = reasonProblem(generated.qa.reasons);
         if (shape !== undefined) fail(`generate's qa ${shape}`);
+        else
+          for (const id of undeclaredOf(generated.qa.reasons, declared))
+            fail(
+              `generate returned a reason for check "${id}", which neither the kind nor core declares; declare it in the kind's checks`,
+            );
       }
       ran("generate on the scripted provider");
     } catch (error) {
@@ -208,13 +225,48 @@ async function checkKind(
     }
   }
   for (const check of kind.checks ?? []) {
-    if (check.mode !== "exact") {
-      ran(`judged check ${check.name}: not run (it may call a model)`);
+    const run = check.run;
+    if (run === undefined) {
+      ran(`${check.mode} check ${check.name}: declared, its reasons come from generate`);
       continue;
     }
     const input = { spec: sample.spec, profile, bible, output };
-    for (const problem of await exactCheckProblems(check, input))
-      fail(`exact check ${check.name} ${problem}`);
+    if (check.mode !== "exact") {
+      // A model check runs once on the scripted provider, so the reasons it returns are checked
+      // against the kind's declarations as `stage` judges them.
+      try {
+        const provider = new ScriptedProvider(sample.script ?? sampleScript());
+        const call = new Caller({
+          provider,
+          providerName: "scripted",
+          budget: new Budget(100),
+          routes,
+        });
+        const reasons = await run(input, call);
+        const shape = reasonProblem(reasons);
+        if (shape !== undefined) fail(`${check.mode} check ${check.name} ${shape}`);
+        else
+          for (const id of undeclaredOf(reasons, declared))
+            fail(
+              `${check.mode} check ${check.name} returned a reason for check "${id}", which neither the kind nor core declares`,
+            );
+      } catch (error) {
+        fail(
+          `${check.mode} check ${check.name} threw on the scripted provider: ${messageOf(error)}; give options.kinds[<kind>].script the answers it needs`,
+        );
+      }
+      ran(`${check.mode} check ${check.name}, once on the scripted provider`);
+      continue;
+    }
+    const problems = await exactCheckProblems({ ...check, run }, input);
+    for (const problem of problems) fail(`exact check ${check.name} ${problem}`);
+    if (problems.length === 0) {
+      const reasons = await run(input, new RefusingCaller(`exact check ${check.name}`));
+      for (const id of undeclaredOf(reasons, declared))
+        fail(
+          `exact check ${check.name} returned a reason for check "${id}", which neither the kind nor core declares`,
+        );
+    }
     ran(`exact check ${check.name}, twice under a refusing Caller`);
   }
 }
@@ -358,6 +410,8 @@ export async function runConformance(
         kind,
         options.kinds?.[kind.kind],
         routes,
+        // Judged as `stage` judges it: core's declarations and the kind's own, never another kind's.
+        kindQaRegistry(kind, coreExtension.kinds ?? []).checks,
         (why) => failures.push(`kind ${kind.kind} ${why}`),
         (what) => checked.push(`kind ${kind.kind}: ${what}`),
       );

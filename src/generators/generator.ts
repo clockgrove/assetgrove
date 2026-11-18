@@ -4,6 +4,7 @@ import type { CallParameters } from "../call-parameters.ts";
 import type { ReferenceViewCache } from "../model3d/views.ts";
 import type { ClipMapCache } from "../model3d/clip-map.ts";
 import type { FramesTrait } from "../frames.ts";
+import type { StabilityEntry } from "../qa/stability.ts";
 import type { Routes } from "../routes.ts";
 import type {
   AssetSpec,
@@ -77,17 +78,37 @@ export interface KindCheckInput {
 }
 
 /**
- * One QA check a kind declares (design section 11). Core runs a kind's checks on each candidate
- * after `generate` and adds their reasons to its QA. An `exact` check is deterministic and free:
- * core runs it under a `Caller` that refuses every call, and the conformance suite runs it twice
- * and fails it when it calls or answers differently. A `judged` check may call a model through the
- * candidate's `Caller`; its calls belong in the kind's `planCandidate`.
+ * One QA check a kind declares (design section 11). Every check a kind's reasons name, from
+ * `generate` or from a check's `run`, is declared here: core judges each reason by its
+ * declaration, and a reason neither its kind nor core declares is advisory (`cause: "undeclared"`)
+ * and never filters.
+ *
+ * - `exact`: deterministic and free. With `run`, core runs it under a `Caller` that refuses every
+ *   call, and the conformance suite runs it twice and fails it when it calls or answers
+ *   differently. Its reasons filter.
+ * - `model`: a model's answer decides it. With
+ *   `run`, it may call a model through the candidate's `Caller`; its calls belong in the kind's
+ *   `planCandidate`. Its reasons filter only with a qualifying stability entry (core's
+ *   src/qa/stability.json, or the kind's own `stability`) for its name, its version and the model
+ *   its `operation`'s route resolves to on the run; otherwise they are advisory.
+ * - `gated`: core's kinds only: a model decision core gates by its own rule (a 3D character's
+ *   facing, the identity lock). A pack declaring it is refused at load.
  */
 export interface KindCheck {
-  /** The `check` its reasons carry. */
+  /**
+   * The `check` its reasons carry. A name ending in `*` declares a family: every check whose name
+   * starts with what precedes the `*` (`clip-*` covers `clip-walk`).
+   */
   name: string;
-  mode: "exact" | "judged";
-  run(input: KindCheckInput, call: Caller): Promise<Reason[]> | Reason[];
+  mode: "exact" | "model" | "gated";
+  /** Bumped when what the check asks or measures changes; a stability entry holds for one. "1" when absent. */
+  version?: string;
+  /** The `source` of the reasons it covers; absent: every source. */
+  source?: Reason["source"];
+  /** A `model` check: the operation whose route's model answers it. Without one it never filters. */
+  operation?: string;
+  /** Runs the check on a candidate. Absent: a declaration only; the kind's `generate` returns its reasons. */
+  run?(input: KindCheckInput, call: Caller): Promise<Reason[]> | Reason[];
 }
 
 export interface Generator {
@@ -116,8 +137,16 @@ export interface Generator {
     bible: StyleBible,
   ): PlannedCall[];
   generate(context: GeneratorContext): Promise<GeneratedCandidate>;
-  /** QA checks core runs on each candidate after `generate`. Absent: none. */
+  /**
+   * The QA checks the kind declares: every check its reasons name. Core runs those with a `run` on
+   * each candidate after `generate`. Absent: none, so every reason the kind returns is undeclared.
+   */
   checks?: KindCheck[];
+  /**
+   * Measured stability entries for the kind's `model` checks (src/qa/stability.ts), each with
+   * `measuredBy` and the sha256 of its labelled set; core validates them when the kind loads.
+   */
+  stability?: StabilityEntry[];
   /**
    * The operations the kind calls, each with a role of core's role table (`ROLE_CAPABILITY` in
    * src/routes.ts). A pack's are `<pack name>:<op>`; core's kinds name core operations. Core
@@ -139,7 +168,8 @@ export interface Generator {
 
 /**
  * The reasons of a kind's checks on one candidate: each `exact` check under a `RefusingCaller`
- * (`exactCaller`), each `judged` one under the candidate's `call`.
+ * (`exactCaller`), every other one under the candidate's `call`. A declaration without `run` runs
+ * nothing.
  */
 export async function runKindChecks(
   checks: readonly KindCheck[],
@@ -149,6 +179,7 @@ export async function runKindChecks(
 ): Promise<Reason[]> {
   const reasons: Reason[] = [];
   for (const check of checks)
-    reasons.push(...(await check.run(input, check.mode === "exact" ? exactCaller() : call)));
+    if (check.run !== undefined)
+      reasons.push(...(await check.run(input, check.mode === "exact" ? exactCaller() : call)));
   return reasons;
 }

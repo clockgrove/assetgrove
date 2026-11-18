@@ -67,6 +67,8 @@ const MEASURED: StabilityEntry[] = VISION_CHECKS.map((checkId) => ({
   repeats: 3,
   agreement: 0.95,
   measuredAt: "2026-11-14T00:00:00.000Z",
+  measuredBy: "a synthetic fixture",
+  labelledSetSha256: "0".repeat(64),
 }));
 
 function options(

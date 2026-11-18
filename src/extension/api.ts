@@ -300,6 +300,7 @@ export type {
   PlannedCall,
 } from "../generators/generator.ts";
 export type { Caller } from "../calls.ts";
+export type { FilteringState, StabilityEntry } from "../qa/stability.ts";
 export type {
   CallParameterName,
   CallParameters,

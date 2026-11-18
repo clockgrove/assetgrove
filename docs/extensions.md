@@ -10,7 +10,7 @@ An extension is called a pack. The contract is api 2. `@clockgrove/assetgrove/ex
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Extension`        | `{ api: 2, name, kinds?, presets?, adapters?, search? }`                                                                                                                                                                                                                                                              |
 | `ExtensionContext` | `{ api: 2, z, raster, qa, prompt, http, run, log }` ([below](#the-context)).                                                                                                                                                                                                                                          |
-| `AssetKind`        | `kind`, `planCandidate(spec, profile, routes)`, `generate(ctx)`, `checks?` ([QA checks](#qa-checks)), `operations?` ([operations and roles](#operations-and-roles)), `specSchema?` and `profileSchema?` ([schemas](#spec-and-profile-schemas)), `frames?` ([frames](#frames)).                                        |
+| `AssetKind`        | `kind`, `planCandidate(spec, profile, routes)`, `generate(ctx)`, `checks?` and `stability?` ([QA checks](#qa-checks)), `operations?` ([operations and roles](#operations-and-roles)), `specSchema?` and `profileSchema?` ([schemas](#spec-and-profile-schemas)), `frames?` ([frames](#frames)).                       |
 | `EnginePreset`     | `name`, zod `optionsSchema`, `write(ctx, options)`, `check(ctx, options, files, read)`.                                                                                                                                                                                                                               |
 | `ProviderAdapter`  | `id`, `capabilities` (`embed` means images and text in one space), `defaultKeyEnv?`, `fixedHosts`, `endpointFromSettings`, `defaultRoutes?` (by operation), `parameters?` (the [typed call parameters](#typed-call-parameters) it maps), `create(c)` returning a generation provider; `c.fetch` is the guarded fetch. |
 
@@ -49,7 +49,44 @@ It guards provider-steered URLs (a download link in a result, a redirect), not p
 
 ## QA checks
 
-A kind may declare `checks: [{ name, mode, run(input, call) }]`, where `input` is `{ spec, profile, bible, output }` and `run` returns reasons. Core runs them on each candidate after `generate` and adds their reasons to its QA. `mode: "exact"` is a deterministic, free check: core runs it under a `Caller` that refuses every call (exit 2 `invalid_input` if it tries). `mode: "judged"` may call a model through the candidate's `Caller`; list its calls in `planCandidate`.
+A kind declares every check its reasons name in `checks: [{ name, mode, version?, source?, operation?, run? }]`. Core runs each `run(input, call)` (`input` is `{ spec, profile, bible, output }`, it returns reasons) on each candidate after `generate` and adds the reasons to its QA.
+
+- `mode: "exact"` is deterministic and free, and filters. Core runs it under a `Caller` that refuses every call (exit 2 `invalid_input` if it tries), and conformance runs it twice.
+- `mode: "model"` means a model's answer decides it; it may call a model through the candidate's `Caller`, so list its calls in `planCandidate`. It filters only with a qualifying stability entry for its name, `version` (default `"1"`) and the model its `operation`'s route resolves to on the run. Without an `operation` it never filters.
+- A declaration without `run` covers the reasons `generate` returns. A `name` ending in `*` declares a family (`clip-*`). `source` (`deterministic`, `vision` or `decision`) is optional: absent, the declaration covers every source. Where two of a kind's declarations cover a reason, the model-backed one wins. A pack declares only its own checks: one whose name is a check core declares, or a family covering one (`pal*`, `clip-*`), is refused at load, so a pack never changes how core's checks filter.
+
+A kind ships `stability: [entries]` for its model checks: the fields of core's `src/qa/stability.json` entries plus a required `measuredBy` (who or what measured it) and `labelledSetSha256` (the sha256 of the labelled set, 64 lower-case hex). Core validates them when the pack loads and refuses (exit 2 `extension_refused`) a malformed entry, one missing either field, or one naming a check that is not a `model` check of the kind. Malformed check declarations are refused too, and `gated` (a mode core uses for its own model decisions) is not available to a pack.
+
+```ts
+const kind: AssetKind = {
+  kind: "pixel:tile",
+  // planCandidate, generate ...
+  operations: { "pixel:look": "vision" },
+  checks: [
+    { name: "tile-size", mode: "exact", run: (input) => tileSizeReasons(input.output) },
+    { name: "pixel-look", mode: "model", operation: "pixel:look", version: "1" },
+  ],
+  stability: [
+    {
+      checkId: "pixel-look",
+      version: "1",
+      model: "example/vision-model",
+      cases: 40,
+      passCases: 20,
+      failCases: 20,
+      falsePasses: 0,
+      falseFails: 1,
+      repeats: 3,
+      agreement: 1,
+      measuredAt: "2026-11-01T00:00:00Z",
+      measuredBy: "scripts/measure-pixel-look.ts",
+      labelledSetSha256: "<sha256 of the labelled set>",
+    },
+  ],
+};
+```
+
+A kind's reasons are judged by core's declarations and entries and its own, never another pack's. A reason naming a check neither its kind nor core declares is recorded advisory (`shadow`), its run's `filtering` state is `{check, state: "advisory", cause: "undeclared"}`, `stage`'s text output shows it as "(undeclared check)", and it never filters. Core's own kinds declare their checks through the same field: `still` and `sprite-strip` the image QA and `cutout`, `character-3d` its deterministic checks and families, and `facing` and `identity-lock` with mode `gated`, which only core may use (core gates those model decisions by its own rules). Their filtering is unchanged.
 
 ## Operations and roles
 
@@ -112,7 +149,7 @@ A preset reads the kind's trait as `PresetContext.frames`.
 - `ScriptedProvider`, `scriptedAdapter`, `sampleScript()`: the scripted provider core's tests use, which never calls a model.
 - `tempProject({ settings? })`: a temporary Git project with its own developer settings and state directory (`dir`, `settingsPath`, `stateDir`, `env`, `writeSettings(settings, { attended? })`, `install(packageDir, name)`), running core's CLI as a child process (`cli(args)`), a core command in process with the pack's extension registered (`run(command, args, { extensions, confirm })`), or core's MCP server in process (`mcp({ extensions })`). Open, it points `ASSETGROVE_CONFIG` at its settings; `close()` restores the environment and removes it.
 - `sampleBible()` (a style view), `bibleMarkdown(view?)` (that view as a `BIBLE.md` to write where `--bible` reads it), `sampleProfile()`, `samplePng()`, `extensionContext(name)` (the context core hands a pack), `RefusingCaller`.
-- `assertConformance(entry, options)` (and `runConformance`, which returns the report): the conformance suite. It loads the entry as core does and checks the extension's shape and ids; creates each adapter through core (bare `fixedHosts`, a declared billing); plans and generates each kind on the scripted provider from `options.kinds[<kind>]` (`{ spec, bible?, profile?, output?, script? }`, required for every kind) and runs every `exact` check twice, each time under a `Caller` that refuses every call; and parses each preset's sample options, writes, and checks that its `check` passes what it wrote and fails when nothing was written. The whole suite runs with the global `fetch` trapped. An exact check that makes a call (even one it catches), throws, or answers differently the second time fails the suite, as does a pack that reaches the global `fetch`.
+- `assertConformance(entry, options)` (and `runConformance`, which returns the report): the conformance suite. It loads the entry as core does and checks the extension's shape and ids; creates each adapter through core (bare `fixedHosts`, a declared billing); plans and generates each kind on the scripted provider from `options.kinds[<kind>]` (`{ spec, bible?, profile?, output?, script? }`, required for every kind) and runs every `exact` check twice, each time under a `Caller` that refuses every call, and every `model` check that runs once on the scripted provider; and parses each preset's sample options, writes, and checks that its `check` passes what it wrote and fails when nothing was written. The whole suite runs with the global `fetch` trapped. An exact check that makes a call (even one it catches), throws, or answers differently the second time fails the suite, as does a pack that reaches the global `fetch`, a `model` check that throws there, and a kind whose `generate` or check returns a reason for a check neither the kind nor core declares (another kind's declaration does not count, as in `stage`).
 
 ```ts
 import { assertConformance } from "@clockgrove/assetgrove/testing";
