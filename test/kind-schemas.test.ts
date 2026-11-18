@@ -25,7 +25,7 @@ function kind(extra: Partial<Generator> = {}): Generator {
 
 const refuse = (why: string) => new InputError(why);
 const spec = (fields: unknown): AssetSpec =>
-  ({ kind: "pixel:tile", assetId: "t", fields }) as unknown as AssetSpec;
+  ({ kind: "pixel:tile", assetId: "t", animationFamily: "idle", fields }) as unknown as AssetSpec;
 const specSchema = z.looseObject({ fields: z.object({ tileSize: z.number().int() }) });
 
 test("a spec is checked against its kind's specSchema, naming the field", () => {

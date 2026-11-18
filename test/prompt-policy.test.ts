@@ -236,7 +236,12 @@ async function stripFiles(dir: string, term: string) {
   );
   await writeFile(
     files.spec,
-    JSON.stringify({ kind: "sprite-strip", assetId: "fern", subject: `fern ${term}` }),
+    JSON.stringify({
+      kind: "sprite-strip",
+      assetId: "fern",
+      animationFamily: "idle",
+      subject: `fern ${term}`,
+    }),
   );
   return files;
 }
@@ -254,7 +259,12 @@ async function materialFiles(dir: string, term: string) {
   );
   await writeFile(
     files.spec,
-    JSON.stringify({ kind: "still", assetId: "synthetic", subject: `synthetic ${term}` }),
+    JSON.stringify({
+      kind: "still",
+      assetId: "synthetic",
+      animationFamily: "idle",
+      subject: `synthetic ${term}`,
+    }),
   );
   await writeFile(files.albedo, "not an image: a dry run never decodes it");
   await writeFile(
@@ -298,6 +308,7 @@ async function planFiles(dir: string, term: string) {
     JSON.stringify({
       kind: "still",
       assetId: "icon",
+      animationFamily: "idle",
       fields: { description: `a round icon ${term}` },
     }),
   );
@@ -568,7 +579,12 @@ test("a spec's asset id is not prompt text: not refused at the plan step, not in
   const id = `npc-${FIRST}-${LAST}`;
   await writeFile(
     files.spec,
-    JSON.stringify({ kind: "still", assetId: id, fields: { description: "a round icon" } }),
+    JSON.stringify({
+      kind: "still",
+      assetId: id,
+      animationFamily: "idle",
+      fields: { description: "a round icon" },
+    }),
   );
   const run = await cli([
     ...["plan", "--spec", files.spec, "--bible", files.bible, "--profile", files.profile],
@@ -640,6 +656,7 @@ test("a key pose path holding a blocklisted name, with an unlisted extension, pa
     JSON.stringify({
       kind: "still",
       assetId: "icon",
+      animationFamily: "idle",
       keyPose: pose,
       fields: { description: "a round icon" },
     }),

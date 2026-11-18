@@ -273,6 +273,7 @@ function outlinePixels(sheet: Raster): number[] {
 const stillSpec = {
   kind: "still",
   assetId: "fern",
+  animationFamily: "idle",
   fields: { description: "a round icon" },
 };
 

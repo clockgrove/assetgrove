@@ -243,6 +243,7 @@ async function planWorld(description = "a round lantern icon") {
     JSON.stringify({
       kind: "still",
       assetId: "lantern",
+      animationFamily: "idle",
       fields: { description },
     }),
   );

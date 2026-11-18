@@ -146,7 +146,12 @@ test("generated Fern strip and model-edited human prop disclose origin through s
   const pose = await stage({
     ...base,
     provider: scriptedProvider(),
-    spec: { kind: "still", assetId: "fern", frames: { width: 96, height: 96 } },
+    spec: {
+      kind: "still",
+      assetId: "fern",
+      animationFamily: "idle",
+      frames: { width: 96, height: 96 },
+    },
   });
   const posePath = join(pose.runDir, pose.run.candidates[0]!.file);
   const jpegPose = join(world.dir, "human-pose.jpg");

@@ -275,6 +275,22 @@ test("look-dev forecasts its calls, refuses over the cap and needs a model3d pro
   assert.equal(refused.code, 2, refused.stdout + refused.stderr);
 });
 
+test("look-dev refuses a spec missing a value the layout names, before any paid call", async () => {
+  const w = await world();
+  const profile = JSON.parse(await readFile(w.files.profile, "utf8"));
+  profile.layout.media =
+    "characters/{{spec.assetId}}/{{spec.animationFamily}}.{{output.extension}}";
+  await writeFile(w.files.profile, JSON.stringify(profile));
+  const none = await unreadInputs(w);
+  for (const extra of [["--dry-run"], []]) {
+    const r = await cli([...lookDevArgs(w, none), ...extra]);
+    assert.equal(r.code, 2, r.stdout + r.stderr);
+    assert.equal(doc(r)["error"].code, "invalid_input");
+    assert.match(doc(r)["error"].message, /layout\.media needs spec\.animationFamily/);
+    assert.equal(existsSync(w.runs), false, "a run was started");
+  }
+});
+
 test("look-dev with enforce asked for forecasts identity in shadow: no record check", async () => {
   const w = await world({ identity: { mode: "enforce" } });
   const none = await unreadInputs(w);

@@ -8,6 +8,7 @@ import { lookdevSettings } from "../model3d/lookdev/settings.ts";
 import type { AssetSpec } from "../types.ts";
 import { subjectOf } from "../request.ts";
 import { readProvenance } from "../model3d/rig/command.ts";
+import { checkSpecValues } from "../paths.ts";
 import { dryRunOutcome, formatRun, refusal, usd } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext } from "./types.ts";
@@ -40,6 +41,8 @@ async function prepare(args: LookDevArgs, ctx: RunContext) {
   const spec = await readJson<AssetSpec>(args.spec);
   const bible = await loadStyleBible(args.bible);
   const profile = await loadProfile(args.profile);
+  // Before any paid call: every spec value the layout names, which pick hands off with, is set.
+  checkSpecValues(profile.value, spec.value);
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
   const capUsd = runCap(args.cap, ctx.settings, planLookdev(profile.value, routes).capUsd);
