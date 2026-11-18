@@ -6,6 +6,7 @@
 import { z } from "zod";
 import type { ZodType } from "zod";
 import { InputError } from "./errors.ts";
+import { refuseSettingsBlocks } from "./shared-settings.ts";
 import type { Generator } from "./generators/generator.ts";
 import type { AssetSpec, TargetProfile } from "./types.ts";
 
@@ -25,6 +26,7 @@ export const FORBIDDEN_SCHEMA_FIELDS: readonly string[] = [
   "graphs",
   "command",
   "commands",
+  "extensionsettings",
 ];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -43,6 +45,9 @@ const FORBIDDEN_SPELLINGS: readonly string[] = [
   "providerOptions",
   "provider_options",
   "provider-options",
+  "extensionSettings",
+  "extension_settings",
+  "extension-settings",
 ];
 
 /**
@@ -152,13 +157,14 @@ export function checkKindSchemas(kind: Generator, refuse: (why: string) => Error
     }
     if (field !== undefined)
       throw refuse(
-        `the ${name} of kind ${kind.kind} declares "${field}", a routing field: model, tier and price stay on the route in settings (an endpoint, model, provider options, graph or command is never a spec or profile field)`,
+        `the ${name} of kind ${kind.kind} declares "${field}", a routing field: model, tier and price stay on the route in settings (an endpoint, model, provider options, graph, command or extension settings is never a spec or profile field)`,
       );
   }
 }
 
 /** Refuses a spec its kind's `specSchema` does not accept, naming each field. */
 export function validateKindSpec(kind: Generator, spec: AssetSpec): void {
+  refuseSettingsBlocks(spec, `the ${kind.kind} spec`);
   if (kind.specSchema === undefined) return;
   const parsed = kind.specSchema.safeParse(spec);
   if (parsed.success) return;

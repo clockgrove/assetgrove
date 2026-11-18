@@ -6,6 +6,7 @@ import { parse, stringify } from "yaml";
 import { homeDir } from "./env.ts";
 import { InputError } from "./errors.ts";
 import { formatLine, readFormat } from "./formats.ts";
+import { refuseSettingsBlocks } from "./shared-settings.ts";
 import type { BibleReference, ReferenceLicense } from "./types.ts";
 
 /** The kinds of Markdown bible a file can be: the project's BIBLE.md or a style preset. */
@@ -379,6 +380,7 @@ export function referenceLicenses(
 }
 
 export function validateBible(input: unknown): ArtBible {
+  refuseSettingsBlocks(input, "style bible");
   const b = object(input, "bible");
   for (const field of ["version", "world", "preset"]) text(b[field], field);
   const a = object(b["axes"], "axes");

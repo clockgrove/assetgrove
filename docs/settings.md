@@ -13,7 +13,7 @@ Every command reads settings when it builds its run context. `assetgrove setting
 
 ## Schema
 
-The file is JSON, validated with zod. Every object is strict: an unknown field anywhere is refused.
+The file is JSON, validated with zod. Every object is strict: an unknown field anywhere is refused. Two places hold fields a pack declares rather than core: a pack's block under `extensionSettings`, and a pack adapter's fields in its `providers.<id>` entry ([Pack settings](#pack-settings)).
 
 ```jsonc
 {
@@ -43,6 +43,7 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
     },
   },
   "extensions": ["<package>"],
+  "extensionSettings": { "<package>": { "binary": "/opt/tool/bin/tool", "tier": "fast" } },
   "environment": { "allow": ["HTTPS_PROXY"] },
   "reconcile": { "marginUsd": 0.05, "marginPct": 5 },
   "spend": { "acknowledgedHolds": ["<hex>"] },
@@ -82,6 +83,7 @@ The file is JSON, validated with zod. Every object is strict: an unknown field a
 | `roles.<role>`         | `provider`, `model`, `outputGrant` (`license`, `plan`, `commercial`, `relabel`, `attribution`; all but `attribution` required), `providerTerms`, `providerTermsAsOf` (the date, `YYYY-MM-DD`, the terms were read, recorded on each call beside them), `estimatedCostUsd`, `providerOptions` (by provider name, each a plain object the adapter receives with the call). See [Roles and routes](#roles-and-routes). | the adapters' default routes                                                                  |
 | `routes.<operation>`   | The same fields as a role, for one operation; overrides its role.                                                                                                                                                                                                                                                                                                                                                   | the role                                                                                      |
 | `extensions`           | Package names whose extension code may run, each resolved from the project at start. Only this field loads code. See [Extensions](extensions.md).                                                                                                                                                                                                                                                                   | none                                                                                          |
+| `extensionSettings`    | Each listed pack's own settings, by package name, validated by the pack's `settingsSchema`. See [Pack settings](#pack-settings).                                                                                                                                                                                                                                                                                    | none                                                                                          |
 | `environment.allow`    | Refused environment variables (below) that are allowed anyway.                                                                                                                                                                                                                                                                                                                                                      | none                                                                                          |
 | `reconcile`            | `marginUsd`, `marginPct`: a gap between the ledger and the provider's usage holds paid runs only above max(`marginUsd`, `marginPct`% of the ledger spend); `pendingMaxAgeHours`: how long a pending lookup waits before it fails (positive). See [Reconcile](#reconcile).                                                                                                                                           | 0 / 0 / 24                                                                                    |
 | `spend`                | `acknowledgedHolds`: the ids (hex) of spend holds a person has looked at; a listed hold no longer refuses paid runs.                                                                                                                                                                                                                                                                                                | none                                                                                          |
@@ -108,7 +110,8 @@ Loading throws `SettingsError`, with the code `settings_invalid`, when:
 - the file is not JSON;
 - the format is missing, unknown or newer than this build reads;
 - any field is unknown, including inside `outputGrant`;
-- any field anywhere is named `apiKey`, `key`, `token` or `secret` (in any case); the keys of `providers`, `roles`, `routes` and `confirmedBy` are ids, not field names, so a provider called `key` is accepted;
+- any field anywhere is named `apiKey`, `key`, `token` or `secret` (in any case), a pack's block and a pack adapter's provider fields included; the keys of `providers`, `roles`, `routes`, `confirmedBy` and `extensionSettings` are ids, not field names, so a provider called `key` is accepted;
+- an `extensionSettings` block names a package the `extensions` list does not name;
 - `stateDir` is relative or inside a project, or, when it is not set, the default one under the state home is inside a project;
 - `contentCredentials.certificate` or `contentCredentials.privateKey` is relative or inside a project;
 - `search.store.uri` is not an `s3://`, `gs://` or `az://` URI, or `search.store.options` has any field but `endpoint` and `region`;
@@ -125,7 +128,10 @@ The projects are found from the cwd, `--target` and the directory of each input 
 Refusals that depend on the adapter exit 2 with `settings_invalid`, and are checked when the run context is built, for every command:
 
 - an `adapter` that is neither a core adapter nor a `<ext>:<id>` of a loaded extension (an unknown `<ext>:<id>` exits 2 `extension_unavailable`);
-- a `baseURL` on a `tripo` or `scripted` entry. Tripo's endpoint is fixed (api.tripo3d.ai).
+- a `baseURL` on a `tripo` or `scripted` entry. Tripo's endpoint is fixed (api.tripo3d.ai);
+- a listed pack's `extensionSettings` block that fails its `settingsSchema`, or a block for a pack that declares none, naming the pack and each field;
+- a pack adapter's entry whose fields beyond core's fail its `providerSettingsSchema`, or any such field when it declares none, naming the provider and the field;
+- a route or role whose `providerOptions` fail its adapter's `routeOptionsSchema` for the operation, naming the route.
 
 Refusals of spend exit 3:
 
@@ -317,13 +323,32 @@ The tracked-key guard runs at MCP server start, at each paid command's start and
 
 For a by-name hit the refusal also names the Git blob id of the content that hit. A person who has checked that the value is not a live key acknowledges that content by listing the blob id in `keyGuard.acknowledgedBlobs` (`settings change --acknowledge-blobs <id>`, or a hand edit), as a spend hold is acknowledged. Ids compare case-insensitively. The acknowledgement covers exactly that content: editing the file gives it a new blob id, and the refusal comes back if the new content still assigns a key-shaped literal. The candidate value is never sent to a provider or printed.
 
+## Pack settings
+
+A pack keeps its own settings (a binary path, a default size, a tier) here, never in an environment variable or its code. Its block is `extensionSettings.<package>`, keyed by the package name the `extensions` list names:
+
+```json
+{
+  "extensions": ["assetgrove-pack-tiles"],
+  "extensionSettings": { "assetgrove-pack-tiles": { "size": 128 } }
+}
+```
+
+When the extensions load, core parses each listed pack's block (`{}` when there is none) with the pack's `settingsSchema` ([extensions.md](extensions.md#pack-and-adapter-settings)), so the pack's defaults sit under the developer's values, and hands the result to the pack as `context.settings`. A block that fails the schema is refused (exit 2 `settings_invalid`) naming the pack and each field, as is a block for a pack that declares no schema. A block for a package the `extensions` list does not name is refused when the file loads.
+
+A pack adapter (`adapter: "<pack>:<id>"`) may take fields in its `providers.<id>` entry beyond core's `adapter`, `keyEnv`, `baseURL`, `free`, `usdPerCredit` and `limit`. Its `providerSettingsSchema` validates them, with its defaults, when the providers are made; without a schema any such field is refused. A core adapter's entry stays strict. A route's or role's `providerOptions` sent to an adapter that declares a `routeOptionsSchema` for the operation are checked against it when the extensions load, naming the route (`routes.<operation>`, or `roles.<role>` for each operation of the role); the options reach the provider as written.
+
+Only these settings carry these blocks. A target profile, a style bible or a spec that holds a top-level field named `extensionSettings` or `providers` (where these settings keep them) is refused (exit 2 `invalid_input`), naming it, and no kind's `specSchema` or `profileSchema` may declare `extensionSettings`.
+
+`settings show` shows each listed pack's settings as the pack receives them, and `assetgrove init` lists them as `packSettings` (`[{package, extension, settings}]`). Neither writes them, and the settings writer below keeps every block as it is.
+
 ## Who writes the file
 
 `assetgrove settings change` (MCP tool `settings_change`) is the only command that writes the file, and it writes only the caps, one provider's `limit`, `spend.acknowledgedHolds` and `keyGuard.acknowledgedBlobs`, each on a person's confirmation. An agent may propose a change, but only a confirmed form writes it. An MCP client with form elicitation shows a flat form with the proposed values filled in and `acceptUnlimited` as its own Boolean, and an accept writes the values the person submitted. Otherwise the command exits 8 `confirmation_required`, and `assetgrove confirm <id>` at a terminal writes the change. Headless settings exit 8 and write nothing.
 
 A write edits the file in place with `jsonc-parser`: it changes only the proposed fields and adds `confirmedBy.<field path>` = `{method, at, client?}` for each (`caps.runUsd`, `providers.<id>.limit`, `spend.acknowledgedHolds`, `keyGuard.acknowledgedBlobs`), with method `elicitation` or `terminal`. Every other byte stays as it was: a new field goes on its own indented lines inside an object that spans lines, and on the same line inside a one-line object, and no neighbouring field is re-laid out. Which provider entries exist and which holds are already acknowledged are read from the file at the moment of writing, so a later change in the same server session keeps what an earlier one, or a hand edit, put there. A limit for a core adapter id with no provider entry creates the entry with only `limit`, so a first setup on one core key needs no hand edit. `kind: "unlimited"` is written only with `acceptUnlimited: true`. The result is loaded as settings before it replaces the file, so the command never writes a file the settings would refuse. With no file, the change creates one at the default location holding the format line.
 
-A person edits every other field by hand. Headless mode is set only by an operator who edits the file or the environment outside the repository.
+A person edits every other field by hand, `extensionSettings` and a pack adapter's provider fields included; a write keeps them byte for byte. Headless mode is set only by an operator who edits the file or the environment outside the repository.
 
 ## Format lines
 

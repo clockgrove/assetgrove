@@ -135,9 +135,20 @@ export interface PackAdapter {
   keyEnv: string | null;
 }
 
+/**
+ * One listed pack's settings as core hands them to it: its `extensionSettings` block parsed by its
+ * `settingsSchema`, defaults filled; `{}` when it declares none. Init shows them and never writes them.
+ */
+export interface PackSettings {
+  package: string;
+  extension: string;
+  settings: Record<string, unknown>;
+}
+
 export interface InitResult {
   steps: InitStep[];
   adapters: PackAdapter[];
+  packSettings: PackSettings[];
   bibleQuestions: BibleQuestion[];
   providers: RouteDataFlow[];
   files: InitFile[];
@@ -454,6 +465,13 @@ export async function initProject(
         ];
       }),
     );
+  const packSettings = (context.extensions?.loaded ?? [])
+    .filter((extension) => extension.package !== CORE_PACKAGE)
+    .map((extension): PackSettings => ({
+      package: extension.package,
+      extension: extension.name,
+      settings: { ...context.extensions?.packSettings.get(extension.package) },
+    }));
   const providers = options.providers ?? [];
   const steps: InitStep[] = [
     {
@@ -509,6 +527,7 @@ export async function initProject(
   return {
     steps,
     adapters: packAdapters,
+    packSettings,
     bibleQuestions: [...BIBLE_QUESTIONS],
     providers: routeDataFlows(context.settings, {
       ...(context.env && { env: context.env }),

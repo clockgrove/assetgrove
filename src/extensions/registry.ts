@@ -11,7 +11,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { EXTENSION_API } from "../extension/api.ts";
-import { createExtensionContext } from "../extension/context.ts";
+import { bindExtensionSettings, createExtensionContext } from "../extension/context.ts";
 import type {
   AssetKind,
   EnginePreset,
@@ -25,6 +25,7 @@ import { FRAMES_TRAITS } from "../frames.ts";
 import { checkKindSchemas } from "../kind-schemas.ts";
 import { overlaps, parseStability, qaCheckOf, qaRegistry } from "../qa/stability.ts";
 import { OPERATION_ROLES, ROLE_CAPABILITY } from "../routes.ts";
+import type { Route } from "../routes.ts";
 import type { Settings } from "../settings.ts";
 import { CORE_EXTENSION_NAME, coreExtension } from "./core.ts";
 import { compatibilityProblem, CORE_PACKAGE, coreVersion } from "./version.ts";
@@ -47,6 +48,14 @@ export interface LoadedExtension {
   search?: true;
 }
 
+/** What one loaded entry brings: its extension, its package, and its validated settings. */
+interface RegistryEntry {
+  extension: Extension;
+  info: Omit<LoadedExtension, "name" | "kinds" | "presets" | "adapters">;
+  /** The pack's `extensionSettings` block parsed by its `settingsSchema`; `{}` without one. */
+  settings?: Record<string, unknown>;
+}
+
 /** The package that fills the search slot, named when a search-only command is refused. */
 export const SEARCH_PACKAGE = "@clockgrove/assetgrove-search";
 
@@ -66,19 +75,16 @@ export class ExtensionRegistry {
   readonly settingsPath: string | undefined;
   /** Every operation with its role: core's table plus the operations the kinds declare. */
   readonly operations: Readonly<Record<string, string>>;
+  /** Each loaded pack's validated settings (its defaults filled), by package name. */
+  readonly packSettings: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
 
-  constructor(
-    extensions: ReadonlyArray<{
-      extension: Extension;
-      info: Omit<LoadedExtension, "name" | "kinds" | "presets" | "adapters">;
-    }>,
-    settingsPath?: string,
-  ) {
+  constructor(extensions: ReadonlyArray<RegistryEntry>, settingsPath?: string) {
     const names = new Set<string>();
     const kinds = new Map<string, AssetKind>();
     const presets = new Map<string, EnginePreset>();
     const adapters = new Map<string, ProviderAdapter>();
     const loaded: LoadedExtension[] = [];
+    const packSettings = new Map<string, Readonly<Record<string, unknown>>>();
     let search: { slot: SearchSlot; by: string } | undefined;
     const operations: Record<string, string> = { ...OPERATION_ROLES };
     const declared = new Map<string, { role: string; by: string }>();
@@ -90,7 +96,8 @@ export class ExtensionRegistry {
         );
       table.set(id, value);
     };
-    for (const { extension, info } of extensions) {
+    for (const { extension, info, settings } of extensions) {
+      if (settings !== undefined) packSettings.set(info.package, settings);
       if (names.has(extension.name))
         throw new ExtensionError(
           "extension_conflict",
@@ -141,6 +148,49 @@ export class ExtensionRegistry {
     this.search = search?.slot;
     this.settingsPath = settingsPath;
     this.operations = operations;
+    this.packSettings = packSettings;
+  }
+
+  /**
+   * Throws `SettingsError` (exit 2 `settings_invalid`) for a settings route or role entry whose
+   * `providerOptions` fail the `routeOptionsSchema` its provider's adapter declares for the
+   * operation; a role entry is checked for each operation of its role that no `routes` entry
+   * overrides. The route is named.
+   */
+  checkRouteOptions(
+    settings: Pick<Settings, "path" | "providers"> & Partial<Pick<Settings, "routes" | "roles">>,
+  ): void {
+    const check = (
+      where: string,
+      route: { provider: string; providerOptions?: Route["providerOptions"] },
+      operation: string,
+    ) => {
+      if (route.providerOptions === undefined) return;
+      const entry = settings.providers[route.provider];
+      if (entry === undefined) return;
+      const adapterId = entry.adapter ?? route.provider;
+      const adapter = this.adapters.find((a) => a.id === adapterId);
+      if (adapter?.routeOptionsSchema === undefined) return;
+      const schema = adapter.routeOptionsSchema[operation];
+      if (schema === undefined) return;
+      const parsed = schema.safeParse(route.providerOptions);
+      if (parsed.success) return;
+      const issues = parsed.error.issues.map(
+        (issue) =>
+          `${where}.providerOptions${issue.path.map((p) => `.${String(p)}`).join("")}: ${issue.message}`,
+      );
+      throw new SettingsError(
+        `${settings.path}: ${where} sends providerOptions the ${adapter.id} adapter refuses for operation "${operation}": ${issues.join("; ")}`,
+        { cause: parsed.error },
+      );
+    };
+    for (const [operation, route] of Object.entries(settings.routes ?? {}))
+      check(`routes.${operation}`, route, operation);
+    for (const [role, route] of Object.entries(settings.roles ?? {}))
+      for (const [operation, of] of Object.entries(this.operations))
+        // `routes.<operation>` wins over `roles.<role>` (resolveRoute), so the role's options never reach it.
+        if (of === role && !Object.hasOwn(settings.routes ?? {}, operation))
+          check(`roles.${role}`, route, operation);
   }
 
   /**
@@ -253,10 +303,8 @@ async function loadOne(
   index: number,
   cwd: string,
   settingsPath: string,
-): Promise<{
-  extension: Extension;
-  info: Omit<LoadedExtension, "name" | "kinds" | "presets" | "adapters">;
-}> {
+  block: Record<string, unknown> | undefined,
+): Promise<RegistryEntry> {
   const line = `extensions[${index}] "${name}" of ${settingsPath}`;
   if (!PACKAGE_NAME.test(name)) {
     throw new ExtensionError("extension_unavailable", `${line} is not a package name`);
@@ -345,6 +393,8 @@ async function loadOne(
     );
   }
   const extension = checkExtension(exported, line);
+  const settings = packSettingsOf(extension, name, block, settingsPath);
+  bindExtensionSettings(context, settings);
   return {
     extension,
     info: {
@@ -352,8 +402,54 @@ async function loadOne(
       version: typeof manifest.version === "string" ? manifest.version : null,
       entry: realEntry,
     },
+    settings,
   };
 }
+
+/**
+ * The pack's settings: its `extensionSettings` block (`{}` when absent) parsed by its
+ * `settingsSchema`, so the schema's defaults sit under the developer's values. Throws
+ * `SettingsError` (exit 2 `settings_invalid`) naming the pack and each field when the block fails
+ * the schema, or when the pack declares no schema and the developer wrote a block for it.
+ */
+export function packSettingsOf(
+  extension: Extension,
+  packageName: string,
+  block: Record<string, unknown> | undefined,
+  settingsPath: string,
+): Record<string, unknown> {
+  const where = `${settingsPath}: extensionSettings[${JSON.stringify(packageName)}]`;
+  const schema = extension.settingsSchema;
+  if (schema === undefined) {
+    if (block !== undefined)
+      throw new SettingsError(
+        `${where}: pack "${extension.name}" (${packageName}) declares no settingsSchema, so it takes no settings; remove the block.`,
+      );
+    return {};
+  }
+  const parsed = schema.safeParse(block ?? {});
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => {
+      const field = issue.path.map(String).join(".");
+      return `${field === "" ? "(the block)" : field}: ${issue.message}`;
+    });
+    throw new SettingsError(
+      `${where} is refused by pack "${extension.name}" (${packageName}): ${issues.join("; ")}`,
+      { cause: parsed.error },
+    );
+  }
+  const value: unknown = parsed.data;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new SettingsError(
+      `${where}: pack "${extension.name}"'s settingsSchema must give an object.`,
+    );
+  return value as Record<string, unknown>;
+}
+
+const isZod = (schema: unknown): boolean =>
+  typeof schema === "object" &&
+  schema !== null &&
+  typeof (schema as { safeParse?: unknown }).safeParse === "function";
 
 const CHECK_SOURCES: readonly unknown[] = ["deterministic", "vision", "decision"];
 
@@ -448,6 +544,23 @@ export function checkExtension(value: unknown, line: string): Extension {
         );
     }
   }
+  if (ext.settingsSchema !== undefined && !isZod(ext.settingsSchema))
+    throw refuse("its settingsSchema must be a zod schema");
+  for (const adapter of ext.adapters ?? []) {
+    if (adapter.providerSettingsSchema !== undefined && !isZod(adapter.providerSettingsSchema))
+      throw refuse(`the providerSettingsSchema of adapter ${adapter.id} must be a zod schema`);
+    const options: unknown = adapter.routeOptionsSchema;
+    if (options === undefined) continue;
+    if (options === null || typeof options !== "object" || Array.isArray(options))
+      throw refuse(
+        `the routeOptionsSchema of adapter ${adapter.id} must be an object of operation to zod schema`,
+      );
+    for (const [op, schema] of Object.entries(options))
+      if (!isZod(schema))
+        throw refuse(
+          `the routeOptionsSchema of adapter ${adapter.id} for operation "${op}" must be a zod schema`,
+        );
+  }
   for (const kind of ext.kinds ?? []) checkKindQa(kind, refuse);
   for (const kind of ext.kinds ?? []) {
     const frames = (kind as { frames?: unknown }).frames;
@@ -486,7 +599,8 @@ export function checkExtension(value: unknown, line: string): Extension {
  * one core will not load (`extension_refused`), or a repeated name or id (`extension_conflict`).
  */
 export async function loadExtensions(
-  settings: Pick<Settings, "extensions" | "path"> & Partial<Pick<Settings, "routes">>,
+  settings: Pick<Settings, "extensions" | "path"> &
+    Partial<Pick<Settings, "routes" | "roles" | "providers" | "extensionSettings">>,
   cwd: string = process.cwd(),
 ): Promise<ExtensionRegistry> {
   const listed = settings.extensions;
@@ -500,9 +614,17 @@ export async function loadExtensions(
     seen.add(name);
   }
   const loaded = [];
-  for (const [i, name] of listed.entries()) loaded.push(await loadOne(name, i, cwd, settings.path));
+  for (const [i, name] of listed.entries())
+    loaded.push(await loadOne(name, i, cwd, settings.path, settings.extensionSettings?.[name]));
   const registry = new ExtensionRegistry([CORE_ENTRY, ...loaded], settings.path);
   if (settings.routes !== undefined)
     registry.checkRoutes({ routes: settings.routes, path: settings.path });
+  if (settings.providers !== undefined)
+    registry.checkRouteOptions({
+      path: settings.path,
+      providers: settings.providers,
+      ...(settings.routes !== undefined && { routes: settings.routes }),
+      ...(settings.roles !== undefined && { roles: settings.roles }),
+    });
   return registry;
 }

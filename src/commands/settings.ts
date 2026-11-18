@@ -43,6 +43,21 @@ function providers(ctx: RunContext): ConfiguredProvider[] {
   });
 }
 
+/**
+ * Each listed pack's settings as core hands them to it (defaults filled), by package name; the
+ * blocks as written when the extensions are not loaded.
+ */
+function extensionSettings(ctx: RunContext): Record<string, Record<string, unknown>> {
+  const loaded = ctx.extensions?.packSettings;
+  if (loaded === undefined) return ctx.settings.extensionSettings;
+  return Object.fromEntries(
+    ctx.settings.extensions.flatMap((name) => {
+      const settings = loaded.get(name);
+      return settings === undefined ? [] : [[name, { ...settings }]];
+    }),
+  );
+}
+
 export const settingsCommand = defineCommand<SettingsArgs>({
   name: "settings",
   tool: "settings",
@@ -50,7 +65,7 @@ export const settingsCommand = defineCommand<SettingsArgs>({
   details: `Actions (the settings tool takes the action as its action argument):
   path   the settings file and whether it exists, the config and state directories
   show   the settings with every default filled; per provider the key variable's name and
-         whether it is set, never a key
+         whether it is set, never a key; per listed pack its settings with the pack's defaults
   check  per provider: key present, limit declared and verified against the provider's reading,
          where a call's cost comes from (settle: reported or declared), whether it can be looked
          up later (reconcile: lookup or unavailable); and the environment variables refused (when
@@ -97,6 +112,7 @@ Read-only: never writes the settings; settings change proposes a change for a pe
         roles: s.roles,
         routes: s.routes,
         extensions: s.extensions,
+        extensionSettings: extensionSettings(ctx),
         environment: s.environment,
         reconcile: s.reconcile,
         spend: s.spend,

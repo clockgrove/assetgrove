@@ -9,6 +9,7 @@
  */
 import { CALL_PARAMETERS } from "../call-parameters.ts";
 import type { CallParameterName } from "../call-parameters.ts";
+import type { ZodType } from "zod";
 import type { Env } from "../env.ts";
 import { keyValue, SettingsError } from "../env.ts";
 import { extensionOf, unavailableId } from "../extensions/errors.ts";
@@ -28,7 +29,7 @@ import {
   TRIPO_DEFAULT_ROUTES,
 } from "../routes.ts";
 import type { Route } from "../routes.ts";
-import { isLoopback } from "../settings.ts";
+import { isLoopback, providerExtras } from "../settings.ts";
 import { allowedHosts, guardedFetch } from "../extension/http.ts";
 import type { ProviderSettings, Settings } from "../settings.ts";
 
@@ -47,6 +48,12 @@ export interface AdapterContext {
   keyEnv?: string;
   baseURL?: string;
   settings: ProviderSettings;
+  /**
+   * The entry's fields beyond core's, parsed by the adapter's `providerSettingsSchema` (its
+   * defaults filled); `{}` when it declares none. Core always sets it; optional in the type so a
+   * hand-made context still compiles.
+   */
+  adapterSettings?: Record<string, unknown>;
   /** The scripted adapter's module (`--provider-script`); other adapters ignore it. */
   script?: Script;
   /**
@@ -80,6 +87,19 @@ export interface ProviderAdapter {
    * passing one it does not list is refused before any spend, naming it. None when absent.
    */
   parameters?: readonly CallParameterName[];
+  /**
+   * The zod schema of the fields a `providers.<id>` entry of this adapter carries beyond core's
+   * (`adapter`, `keyEnv`, `baseURL`, `free`, `usdPerCredit`, `limit`). Only a pack adapter
+   * (`<pack>:<id>`) may have such fields; without a schema, any is refused. The parsed result
+   * reaches `create` as `c.adapterSettings`.
+   */
+  providerSettingsSchema?: ZodType;
+  /**
+   * Per operation, the zod schema of the `providerOptions` a settings route or role entry sends
+   * this adapter for it. Core refuses, when the extensions load, an entry whose `providerOptions`
+   * fail it, naming the route.
+   */
+  routeOptionsSchema?: Readonly<Record<string, ZodType>>;
   create(c: AdapterContext): GenerationProvider;
 }
 
@@ -313,6 +333,46 @@ function withCorePaid(provider: GenerationProvider, paid: boolean): GenerationPr
 }
 
 /**
+ * The fields of a provider entry beyond core's, parsed by its adapter's `providerSettingsSchema`.
+ * Throws `SettingsError` (exit 2 `settings_invalid`) naming the provider and each field when they
+ * fail it, or when the adapter declares no schema and the entry has any.
+ */
+function checkedAdapterSettings(
+  id: string,
+  entry: ProviderSettings,
+  adapter: ProviderAdapter,
+  where: string,
+): Record<string, unknown> {
+  const extras = providerExtras(entry);
+  const schema = adapter.providerSettingsSchema;
+  if (schema === undefined) {
+    const [field] = Object.keys(extras);
+    if (field !== undefined)
+      throw new SettingsError(
+        `${where}providers.${id}.${field} is not a field core or the ${adapter.id} adapter declares.`,
+      );
+    return {};
+  }
+  const parsed = schema.safeParse(extras);
+  if (!parsed.success)
+    throw new SettingsError(
+      `${where}providers.${id} is refused by the ${adapter.id} adapter's settings: ${parsed.error.issues
+        .map(
+          (issue) =>
+            `providers.${id}${issue.path.map((p) => `.${String(p)}`).join("")}: ${issue.message}`,
+        )
+        .join("; ")}`,
+      { cause: parsed.error },
+    );
+  const value: unknown = parsed.data;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new SettingsError(
+      `${where}providers.${id}: the ${adapter.id} adapter's providerSettingsSchema must give an object.`,
+    );
+  return value as Record<string, unknown>;
+}
+
+/**
  * Makes one provider from a settings entry. Throws `SettingsError` (exit 2 `settings_invalid`)
  * for an unknown adapter, or a `baseURL` on an adapter whose endpoint is fixed. A missing key is
  * not refused here: the provider's calls fail with a provider error naming the variable.
@@ -343,11 +403,13 @@ export function createProvider(
       `${where}providers.${id}.baseURL is not accepted: the ${adapter.id} adapter's endpoint is fixed (${adapter.fixedHosts.join(", ") || "none"}).`,
     );
   }
+  const adapterSettings = checkedAdapterSettings(id, entry, adapter, where);
   const keyEnv = entry.keyEnv ?? adapter.defaultKeyEnv;
   const apiKey = keyEnv !== undefined ? keyValue(keyEnv, options.env) || undefined : undefined;
   const created = adapter.create({
     providerId: id,
     settings: entry,
+    adapterSettings,
     fetch: guardedFetch({ adapter: adapter.id, hosts: allowedHosts(adapter, entry.baseURL) }),
     ...(apiKey !== undefined && { apiKey }),
     ...(keyEnv !== undefined && { keyEnv }),
