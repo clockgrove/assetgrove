@@ -19,8 +19,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Caller } from "../calls.ts";
 import type { ApprovalGate } from "../approvals.ts";
-import { checkPreparedWrites, commitTargetWrite, prepareTargetWrite } from "../handoff.ts";
-import type { PreparedTargetWrite, TargetWriteResult } from "../handoff.ts";
+import { commitTargetWrite, prepareTargetWrites } from "../handoff.ts";
+import type { PreparedTargetWrite, TargetWrite, TargetWriteResult } from "../handoff.ts";
 import type { PresetRegistry } from "../handoff/presets/index.ts";
 import { drawDigits, textWidth } from "../image/digits.ts";
 import {
@@ -968,7 +968,7 @@ export async function writeFamilies(
     bytes: Uint8Array;
     strip: Raster;
     digitalSourceType: DigitalSourceType;
-    prepared: PreparedTargetWrite;
+    write: TargetWrite;
   }> = [];
   for (const s of staged) {
     const count = s.registered.length;
@@ -1070,7 +1070,7 @@ export async function writeFamilies(
         metadataStep(digitalSourceType, [pixelHash(strip)]),
       ],
     };
-    const prepared = await prepareTargetWrite({
+    const write: TargetWrite = {
       profile: record.profile,
       spec,
       bibleVersion: record.bibleVersion,
@@ -1091,13 +1091,15 @@ export async function writeFamilies(
         root: resolve(options.importDir),
       },
       now,
-    });
-    pending.push({ s, count, bytes, strip, digitalSourceType, prepared });
+    };
+    pending.push({ s, count, bytes, strip, digitalSourceType, write });
   }
-  // Before the first family is written: no two families' writes name or reach one file.
-  checkPreparedWrites(pending.map((p) => p.prepared));
+  // Before the first family is written: no two families' writes name or reach one file, and each
+  // families-scope preset runs once, over every family of the asset (the library's and these).
+  const preparedWrites = await prepareTargetWrites(pending.map((p) => p.write));
 
-  for (const { s, count, bytes, strip, digitalSourceType, prepared } of pending) {
+  for (const [i, { s, count, bytes, strip, digitalSourceType }] of pending.entries()) {
+    const prepared = preparedWrites[i] as PreparedTargetWrite;
     const result = await commitTargetWrite(prepared);
     const previewFile = `preview/${s.family.name}.png`;
     await writeFile(join(options.importDir, previewFile), bytes);

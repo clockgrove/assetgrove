@@ -57,7 +57,14 @@ import type { CandidateReview, LibraryPlan } from "./library/write.ts";
 import { WriteJournal } from "./library/undo.ts";
 import type { VersionStatus } from "./library/review.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
-import type { PresetContext, PresetRegistry, ResolvedPreset } from "./handoff/presets/index.ts";
+import type {
+  FamiliesContext,
+  HandedOffFamily,
+  PresetContext,
+  PresetRegistry,
+  ResolvedPreset,
+  TargetRead,
+} from "./handoff/presets/index.ts";
 import { CORE_REGISTRY } from "./extensions/registry.ts";
 import { framesOf } from "./frames.ts";
 import type { HandoffProblem, PresetFile } from "./handoff/presets/index.ts";
@@ -193,6 +200,26 @@ function targetPath(guard: TargetGuard, rel: string): string {
     );
   }
   return full;
+}
+
+/**
+ * What a preset's `write` reads the target through: a path the target-path rule refuses is refused
+ * (exit 2); a file that is missing or cannot be read is undefined.
+ */
+function targetRead(guard: TargetGuard): TargetRead {
+  return async (rel) => {
+    let path: string;
+    try {
+      path = targetPath(guard, rel);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      throw new InputError(`a preset may not read "${rel}": ${why}`, { cause: error });
+    }
+    return readFile(path).then(
+      (bytes) => new Uint8Array(bytes),
+      () => undefined,
+    );
+  };
 }
 
 /** Refuses two writes that reach one file, through a link or a case-insensitive file system. */
@@ -354,6 +381,14 @@ export interface PreparedTargetWrite {
   presets: ResolvedPreset[];
   presetContext: PresetContext;
   presetFiles: PresetFile[][];
+  /**
+   * The context of each `scope: "families"` preset this hand-off ran, by the preset's index; such a
+   * preset runs on one hand-off per asset (the last of `prepareTargetWrites`), so on the others it
+   * is absent and the preset wrote nothing here.
+   */
+  familyContexts: Array<FamiliesContext | undefined>;
+  /** Signs an image a preset writes, when the hand-off signs; records it in `credentials`. */
+  signImage?: (rel: string, bytes: Uint8Array, mediaType: string) => Promise<Uint8Array>;
   mediaRel: string;
   manifestRel: string;
   mediaPath: string;
@@ -369,7 +404,10 @@ export interface PreparedTargetWrite {
   provenanceBytes?: string;
   /** Where each sidecar is written, relative to the target. */
   sidecarRels: string[];
-  /** The images carrying C2PA content credentials, relative to the target, and their signer. */
+  /**
+   * The images carrying C2PA content credentials, relative to the target, and their signer; present
+   * whenever the hand-off signs, its `rels` empty when no image was signed.
+   */
   credentials?: { signer: SignerRecord; rels: string[] };
   /** The sha256 of the media before its credentials were signed in, when they were. */
   contentSha256?: string;
@@ -454,6 +492,120 @@ export function provenanceLayout(write: TargetWrite, mediaRel: string): string |
 
 /** Everything `writeToTarget` checks and renders before its first write; writes nothing. */
 export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTargetWrite> {
+  return (await prepareTargetWrites([write]))[0] as PreparedTargetWrite;
+}
+
+/**
+ * Prepares several hand-offs into one target (each as `prepareTargetWrite`), then runs each
+ * `scope: "families"` preset once per asset, over every family handed off for it so far: the
+ * library's, with these hand-offs' families in place of their own. Its files go with the last of
+ * that asset's hand-offs. Refuses, before anything is written, any two writes that reach one file.
+ */
+export async function prepareTargetWrites(
+  writes: readonly TargetWrite[],
+): Promise<PreparedTargetWrite[]> {
+  const prepared: PreparedTargetWrite[] = [];
+  for (const write of writes) prepared.push(await prepareOne(write));
+  await runFamilyPresets(prepared);
+  if (prepared.length > 1) checkPreparedWrites(prepared);
+  return prepared;
+}
+
+/** The hand-offs of each asset, by target and spec `assetId`, in order. */
+function byAsset(prepared: readonly PreparedTargetWrite[]): PreparedTargetWrite[][] {
+  const groups = new Map<string, PreparedTargetWrite[]>();
+  for (const p of prepared) {
+    const key = JSON.stringify([p.targetDir, p.write.spec.assetId]);
+    groups.set(key, [...(groups.get(key) ?? []), p]);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * Every family handed off for the asset of `group` so far: each library card of the asset's
+ * families (id `<assetId>-<family>`, the spec's kind and subject, a locked version), with the
+ * group's own families in place of theirs, sorted by name.
+ */
+function handedOffFamilies(group: readonly PreparedTargetWrite[]): HandedOffFamily[] {
+  const last = group.at(-1) as PreparedTargetWrite;
+  const { spec } = last.write;
+  const prefix = `${spec.assetId}-`;
+  const subject = spec.subject ?? spec.assetId;
+  const families = new Map<string, HandedOffFamily>();
+  for (const card of last.library.cards) {
+    if (!card.id.startsWith(prefix) || card.id.length === prefix.length) continue;
+    if (card.kind !== spec.kind || card.subject !== subject) continue;
+    if (card.sha256 === undefined || card.resource === undefined) continue;
+    const name = card.id.slice(prefix.length);
+    families.set(name, {
+      name,
+      id: card.id,
+      media: relativeRecordPath(last.targetDir, join(card.dir, card.resource)),
+      sha256: card.sha256,
+    });
+  }
+  for (const p of group) {
+    const name = p.write.spec.animationFamily as string;
+    families.set(name, {
+      name,
+      id: p.library.assetId,
+      media: relativeRecordPath(p.targetDir, p.mediaPath),
+      sha256: sha256(p.mediaBytes),
+    });
+  }
+  return [...families.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/**
+ * Runs each `scope: "families"` preset once per asset, on the last of its hand-offs, and adds its
+ * files to that hand-off's writes, checked as every other write is. A hand-off whose spec names no
+ * animation family is invalid input for such a preset.
+ */
+async function runFamilyPresets(prepared: readonly PreparedTargetWrite[]): Promise<void> {
+  for (const group of byAsset(prepared)) {
+    const last = group.at(-1) as PreparedTargetWrite;
+    for (const [i, { preset, options }] of last.presets.entries()) {
+      if (preset.scope !== "families") continue;
+      for (const p of group) {
+        if (p.write.spec.animationFamily === undefined) {
+          throw new InputError(
+            `the preset "${preset.name}" writes every family of an asset, and the spec of "${p.write.spec.assetId}" names no animationFamily`,
+          );
+        }
+      }
+      const ctx: FamiliesContext = {
+        profile: last.write.profile,
+        assetId: last.write.spec.assetId,
+        families: handedOffFamilies(group),
+      };
+      const files = await preset.write(ctx, options, targetRead(last.guard));
+      // An image a preset writes is signed like the media.
+      for (const [j, file] of files.entries()) {
+        if (last.signImage === undefined || typeof file.content === "string") continue;
+        const type = markableMediaType(file.path);
+        if (type === undefined || !canCarryCredentials(type)) continue;
+        files[j] = { ...file, content: await last.signImage(file.path, file.content, type) };
+      }
+      const at = 1 + last.presetFiles.slice(0, i).flat().length;
+      last.presetFiles[i] = files;
+      last.familyContexts[i] = ctx;
+      last.rels.splice(at, 0, ...files.map((file) => file.path));
+      checkWrites(last.rels);
+      last.writes.splice(
+        at,
+        0,
+        ...files.map((file): [string, Uint8Array | string] => [
+          targetPath(last.guard, file.path),
+          file.content,
+        ]),
+      );
+      sameFile([...last.writes.map(([path]) => path), ...libraryFiles(last.library)]);
+    }
+  }
+}
+
+/** One hand-off checked and rendered, its `scope: "families"` presets not yet run. */
+async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
   const { profile, spec } = write;
   // First: every spec value the layout and manifest name is set (a run staged before stage
   // checked this reaches here with a spec that lacks one).
@@ -583,17 +735,28 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     manifestRel,
     ...(frames !== undefined && { frames }),
   };
-  const presetFiles: PresetFile[][] = presets.map(({ preset, options }) =>
-    preset.write(presetContext, options),
-  );
+  // A preset reads the target as it is before this hand-off writes.
+  const read = targetRead(guard);
+  const presetFiles: PresetFile[][] = [];
+  for (const { preset, options } of presets) {
+    presetFiles.push(
+      preset.scope === "families" ? [] : await preset.write(presetContext, options, read),
+    );
+  }
   // An image a preset writes is signed like the media.
+  const signImage =
+    sign &&
+    (async (rel: string, bytes: Uint8Array, type: string) => {
+      const signedBytes = await sign(rel, bytes, type);
+      signed.push(rel);
+      return signedBytes;
+    });
   for (const files of presetFiles) {
     for (const [i, file] of files.entries()) {
       const type = markableMediaType(file.path);
-      if (!sign || type === undefined || !canCarryCredentials(type)) continue;
+      if (!signImage || type === undefined || !canCarryCredentials(type)) continue;
       if (typeof file.content === "string") continue;
-      files[i] = { ...file, content: await sign(file.path, file.content, type) };
-      signed.push(file.path);
+      files[i] = { ...file, content: await signImage(file.path, file.content, type) };
     }
   }
 
@@ -658,6 +821,8 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     presets,
     presetContext,
     presetFiles,
+    familyContexts: presets.map(() => undefined),
+    ...(signImage && { signImage }),
     mediaRel,
     manifestRel,
     mediaPath,
@@ -670,7 +835,8 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
     provenance,
     ...(provenanceBytes !== undefined && { provenanceBytes }),
     sidecarRels,
-    ...(signer && signed.length > 0 && { credentials: { signer: signer.record, rels: signed } }),
+    // A families preset run later may sign more images into the same list.
+    ...(signer && { credentials: { signer: signer.record, rels: signed } }),
     ...(contentSha256 !== undefined && { contentSha256 }),
   };
 }
@@ -774,7 +940,7 @@ async function commitWritten(
       ),
     })),
   };
-  if (prepared.credentials) {
+  if (prepared.credentials && prepared.credentials.rels.length > 0) {
     const { signer, rels } = prepared.credentials;
     result.contentCredentials = {
       ...signer,
@@ -792,7 +958,14 @@ async function commitWritten(
   const problems: HandoffProblem[] = [];
   const { write } = prepared;
   for (const [i, { preset, options }] of presets.entries()) {
-    const found = await preset.check(presetContext, options, presetFiles[i] ?? [], read);
+    const files = presetFiles[i] ?? [];
+    let found: string[];
+    if (preset.scope === "families") {
+      // It ran on another hand-off of this asset, which checks what it wrote.
+      const families = prepared.familyContexts[i];
+      if (families === undefined) continue;
+      found = await preset.check(families, options, files, read);
+    } else found = await preset.check(presetContext, options, files, read);
     problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
     // The mark is read back from the media and from every file this preset wrote that can carry it.
     const expected = {

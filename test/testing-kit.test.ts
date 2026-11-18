@@ -63,7 +63,7 @@ function packWith(check: KindCheck): (c: ExtensionContext) => Extension {
       {
         name: "probe:list",
         optionsSchema: z.strictObject({}),
-        write: () => [{ path: "list.txt", content: "dot\n" }],
+        write: async () => [{ path: "list.txt", content: "dot\n" }],
         check: async (_c, _o, _f, read) =>
           (await read("list.txt")) === undefined ? ["list.txt is missing"] : [],
       },

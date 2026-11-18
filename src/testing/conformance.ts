@@ -20,6 +20,7 @@ import type {
   ExtensionEntry,
   KindCheck,
   KindCheckInput,
+  FamiliesContext,
   PresetContext,
   PresetFile,
   ProviderAdapter,
@@ -55,7 +56,8 @@ export interface KindSample {
 /** One preset's sample: its profile entry's `options` and the context it writes from. */
 export interface PresetSample {
   options?: unknown;
-  context?: Partial<PresetContext>;
+  /** For a `scope: "families"` preset, fields of its `FamiliesContext`. */
+  context?: Partial<PresetContext> | Partial<FamiliesContext>;
 }
 
 export interface ConformanceOptions {
@@ -300,15 +302,38 @@ async function checkPreset(
     fail(`optionsSchema refused the sample options: ${messageOf(error)}`);
     return;
   }
-  const ctx: PresetContext = {
+  const assetCtx = (): PresetContext => ({
     profile: sampleProfile(),
     context: { spec: { assetId: "conformance-1", kind: "still" }, output: {}, provenance: {} },
     manifestRel: "assets/manifests/conformance-1.json",
-    ...sample?.context,
-  };
+    ...(sample?.context as Partial<PresetContext> | undefined),
+  });
+  const familiesCtx = (): FamiliesContext => ({
+    profile: sampleProfile(),
+    assetId: "conformance-1",
+    families: [
+      {
+        name: "idle",
+        id: "conformance-1-idle",
+        media: "assets/source/conformance-1-idle.png",
+        sha256: "0".repeat(64),
+      },
+    ],
+    ...(sample?.context as Partial<FamiliesContext> | undefined),
+  });
+  // The sample target is empty: `read` finds nothing there.
+  const nothing = async (): Promise<undefined> => undefined;
+  const write = (): Promise<PresetFile[]> =>
+    preset.scope === "families"
+      ? preset.write(familiesCtx(), options, nothing)
+      : preset.write(assetCtx(), options, nothing);
+  const check = (files: PresetFile[], read: (p: string) => Promise<Uint8Array | undefined>) =>
+    preset.scope === "families"
+      ? preset.check(familiesCtx(), options, files, read)
+      : preset.check(assetCtx(), options, files, read);
   let files: PresetFile[];
   try {
-    files = preset.write(ctx, options);
+    files = await write();
   } catch (error) {
     fail(`write threw: ${messageOf(error)}`);
     return;
@@ -338,11 +363,11 @@ async function checkPreset(
     ]),
   );
   try {
-    const problems = await preset.check(ctx, options, files, async (p) => written.get(p));
+    const problems = await check(files, async (p) => written.get(p));
     if (!Array.isArray(problems) || problems.length > 0)
       fail(`check refused what write wrote: ${JSON.stringify(problems)}`);
     if (files.length > 0) {
-      const missing = await preset.check(ctx, options, files, async () => undefined);
+      const missing = await check(files, nothing);
       if (!Array.isArray(missing) || missing.length === 0)
         fail("check passed with none of its files written, so it checks nothing");
     }

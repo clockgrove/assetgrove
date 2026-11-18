@@ -366,7 +366,7 @@ const failingRegistry: PresetRegistry = {
       {
         name: "ext:fail",
         optionsSchema: z.strictObject({}),
-        write: () => [{ path: "fail.txt", content: "x\n" }],
+        write: async () => [{ path: "fail.txt", content: "x\n" }],
         check: async () => ["fail.txt reads back wrong"],
       } satisfies HandoffPreset,
     ],
@@ -539,7 +539,7 @@ test("write-families hands off through a loaded extension's preset", async () =>
   const listPreset: HandoffPreset = {
     name: "ext:list",
     optionsSchema: z.strictObject({}),
-    write: (ctx) => [
+    write: async (ctx) => [
       {
         path: "list.txt",
         content: `${String((ctx.context["spec"] as { assetId: string }).assetId)}\n`,

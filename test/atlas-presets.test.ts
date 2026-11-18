@@ -12,7 +12,7 @@ import { failureOutcome } from "../src/commands/result.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { PRESETS } from "../src/handoff/presets/index.ts";
-import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
+import type { AssetPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import type { Provenance, TargetProfile } from "../src/types.ts";
@@ -121,11 +121,11 @@ test("hash and array outputs pass the checks; the animation and frameTags cover 
 function corrupting(corrupt: (doc: Doc) => Doc): PresetRegistry {
   const presets = new Map(PRESETS);
   for (const name of ["atlas-json", "aseprite-json"]) {
-    const real = PRESETS.get(name) as HandoffPreset;
+    const real = PRESETS.get(name) as AssetPreset;
     presets.set(name, {
       ...real,
-      write: (ctx, options) =>
-        real.write(ctx, options).map((f) => ({
+      write: async (ctx, options, read) =>
+        (await real.write(ctx, options, read)).map((f) => ({
           ...f,
           content: JSON.stringify(corrupt(JSON.parse(f.content as string))),
         })),
@@ -246,7 +246,7 @@ test("corrupting each checked field exits 6 handoff_check_failed", async () => {
   }
   // A missing PNG fails the image check too.
   const target = await dir();
-  const real = PRESETS.get("atlas-json") as HandoffPreset;
+  const real = PRESETS.get("atlas-json") as AssetPreset;
   const registry: PresetRegistry = {
     presets: new Map([
       ...PRESETS,

@@ -30,7 +30,10 @@ export type { FrameLayout, FramesTrait } from "../frames.ts";
 /** An asset kind: one spec `kind`, its planned calls and how one candidate is made. */
 export type AssetKind = Generator;
 
-/** An engine hand-off preset a target profile's `handoff` list names. */
+/**
+ * An engine hand-off preset a target profile's `handoff` list names: its async `write` gets `read`
+ * for the target, and `scope: "families"` makes it write for every family of an asset so far.
+ */
 export type EnginePreset<Options = unknown> = HandoffPreset<Options>;
 
 /** What an extension supplies. Every id is `<name>:<id>`. */
@@ -324,7 +327,13 @@ export type {
   PlannedCallParameters,
 } from "../call-parameters.ts";
 export type { Raster } from "../image/raster.ts";
-export type { PresetContext, PresetFile } from "../handoff/presets/index.ts";
+export type {
+  FamiliesContext,
+  HandedOffFamily,
+  PresetContext,
+  PresetFile,
+  TargetRead,
+} from "../handoff/presets/index.ts";
 export type { AdapterContext, Capability, ProviderAdapter } from "../providers/adapter.ts";
 export type {
   AnimateRequest,

@@ -20,7 +20,7 @@ import type { AtlasShape } from "./atlas-json.ts";
 export const asepriteJsonPreset: HandoffPreset<{ shape: AtlasShape }> = {
   name: "aseprite-json",
   optionsSchema: atlasOptions("array") as z.ZodType<{ shape: AtlasShape }>,
-  write(ctx, { shape }) {
+  async write(ctx, { shape }) {
     const g = stripGeometry(ctx, "aseprite-json");
     const doc = buildAtlas(g, shape, true);
     doc.animations = animationsOf(g);

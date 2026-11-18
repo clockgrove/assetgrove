@@ -81,7 +81,7 @@ function brokenPreset(sabotage: () => Promise<void> = async () => {}): HandoffPr
   return {
     name: "broken",
     optionsSchema: PRESETS.get("manifest")!.optionsSchema,
-    write: () => [{ path: "assets/broken.txt", content: "written\n" }],
+    write: async () => [{ path: "assets/broken.txt", content: "written\n" }],
     check: async () => {
       await sabotage();
       return ["the broken preset always finds a problem"];
@@ -97,7 +97,7 @@ function writingPreset(
   return {
     name: "broken",
     optionsSchema: PRESETS.get("manifest")!.optionsSchema,
-    write: () => [{ path, content: "written\n" }],
+    write: async () => [{ path, content: "written\n" }],
     check,
   };
 }

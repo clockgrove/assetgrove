@@ -11,7 +11,7 @@ import type { HandoffPreset } from "./index.ts";
 export const manifestPreset: HandoffPreset<Record<string, never>> = {
   name: "manifest",
   optionsSchema: z.strictObject({}),
-  write({ profile, context, manifestRel }) {
+  async write({ profile, context, manifestRel }) {
     const manifest = render(profile.manifest, context);
     if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
       throw new InputError("the profile's manifest template must render to a JSON object");

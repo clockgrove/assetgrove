@@ -164,6 +164,9 @@ export interface FoundCard {
   resource?: string;
   /** The card's `lock.sha256`. */
   sha256?: string;
+  /** The card's `kind` and `subject`. */
+  kind?: string;
+  subject?: string;
 }
 
 const SKIP_DIR = (name: string) =>
@@ -231,6 +234,8 @@ export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: Unr
           bible?: string;
           resource?: unknown;
           lock?: { bible?: string; sha256?: unknown };
+          kind?: unknown;
+          subject?: unknown;
         };
         found.push({
           dir,
@@ -242,6 +247,8 @@ export function scanLibrary(root: string): { cards: FoundCard[]; unreadable: Unr
           }),
           ...(typeof data.resource === "string" && { resource: data.resource }),
           ...(typeof data.lock?.sha256 === "string" && { sha256: data.lock.sha256 }),
+          ...(typeof data.kind === "string" && { kind: data.kind }),
+          ...(typeof data.subject === "string" && { subject: data.subject }),
         });
       } catch {
         // Not a card this build reads; `library check` reports it, and its folder's projections keep
