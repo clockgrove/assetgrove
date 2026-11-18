@@ -18,6 +18,8 @@ import { tempProject } from "../src/testing/index.ts";
 
 const BODY = Buffer.from("model bytes");
 const GOOD = createHash("sha256").update(BODY).digest("hex");
+const GOOD512 = createHash("sha512").update(BODY).digest("hex");
+const WRONG512 = createHash("sha512").update("other").digest("hex");
 const WRONG = createHash("sha256").update("other").digest("hex");
 
 const requests: string[] = [];
@@ -88,6 +90,34 @@ test("a pinned download with a wrong hash is refused, deleted, and no other host
   }
 });
 
+test("a sha512 pin downloads and lands", async () => {
+  const dir = await scratch();
+  try {
+    const path = await pinnedDownload(dir, pin({ sha256: undefined, sha512: GOOD512 }));
+    assert.deepEqual(await readFile(path), BODY);
+    assert.deepEqual(await readdir(join(dir, "m")), ["weights.bin"]);
+    requests.length = 0;
+    await pinnedDownload(dir, pin({ sha256: undefined, sha512: GOOD512 }));
+    assert.deepEqual(requests, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a wrong sha512 is refused naming the algorithm and leaves no file", async () => {
+  const dir = await scratch();
+  try {
+    await assert.rejects(
+      pinnedDownload(dir, pin({ sha256: undefined, sha512: WRONG512 })),
+      (error) =>
+        error instanceof ProviderError && /^hash_mismatch: .* has sha512 /.test(error.message),
+    );
+    assert.deepEqual(await readdir(join(dir, "m")), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("a failing host falls back to the next; all failing is setup_failed", async () => {
   const dir = await scratch();
   try {
@@ -122,6 +152,10 @@ test("an invalid pin is invalid input", async () => {
     for (const over of [
       { version: "" },
       { sha256: "ABC" },
+      { sha256: undefined },
+      { sha512: GOOD512 },
+      { sha256: undefined, sha512: "ABC" },
+      { sha256: undefined, sha512: GOOD },
       { path: "../x" },
       { path: "a//b" },
       { path: "/abs" },
