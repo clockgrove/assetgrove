@@ -1,6 +1,7 @@
 /**
  * `node bench/search/run.ts [--fixture] [--manifest p] [--library csv] [--images dir]
- * [--embedder siglip2|scripted] [--models dir]`. By-look searches the full library (`--library`,
+ * [--embedder siglip2|scripted] [--models dir] [--fail-on-miss]`. With --fail-on-miss it exits 1 when a
+ * bar that counts on this machine is missed (see `missedBars`). By-look searches the full library (`--library`,
  * default inventory-full.csv). Every run indexes through the package's indexer into a `LanceStore`
  * in a temporary folder and searches through the package's find.
  */
@@ -8,7 +9,7 @@ import { parseArgs } from "node:util";
 import { join } from "node:path";
 import { ScriptedEmbedder } from "../../packages/assetgrove-search/src/scripted.ts";
 import { readBars } from "./bars.ts";
-import { formatReport, runBench } from "./bench.ts";
+import { formatReport, missedBars, runBench } from "./bench.ts";
 import { writeCardTexts, ScriptedVision } from "./card-text.ts";
 import { fetchImages } from "./fetch.ts";
 import { FULL_INVENTORY, readLookLibrary, type LookLibrary } from "./library.ts";
@@ -25,6 +26,7 @@ const { values } = parseArgs({
     embedder: { type: "string", default: "scripted" },
     models: { type: "string" },
     pad: { type: "string", default: "10000" },
+    "fail-on-miss": { type: "boolean", default: false },
   },
 });
 
@@ -74,3 +76,10 @@ const report = await runBench({
   scriptedJudgements: values.fixture === true,
 });
 for (const line of formatReport(report)) console.log(line);
+const missed = missedBars(report);
+if (values["fail-on-miss"] && missed.length > 0) {
+  console.error(
+    `missed ${missed.length} bar(s): ${missed.map((e) => `${e.bar} ${e.measured} (${e.target})`).join(", ")}`,
+  );
+  process.exit(1);
+}

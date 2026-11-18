@@ -711,6 +711,14 @@ export async function runBench(o: BenchOptions): Promise<BenchReport> {
 }
 
 /** One JSON line per bar, then the dropped written queries, the indexing split and the machine. */
+/**
+ * The bars a run missed that count on this machine: every quality bar, and a speed bar only on the
+ * reference box (a speed entry off it carries `reference: false`).
+ */
+export function missedBars(r: BenchReport): BenchEntry[] {
+  return r.entries.filter((e) => !e.pass && e.reference !== false);
+}
+
 export function formatReport(r: BenchReport): string[] {
   return [
     ...r.entries.map((e) => JSON.stringify(e)),
