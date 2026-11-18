@@ -31,7 +31,7 @@ test("core's still declares single, sprite-strip strip, and character-3d no fram
   assert.equal(isStripKind("fx:strip", traits), true);
 });
 
-test("a strip output's layout is checked: whole positive numbers, and its image is count frames in one row", () => {
+test("a strip output's layout is checked: whole positive count and size, and its image is count frames in one row", () => {
   const layout = checkFrameLayout("fx:strip", png(12, 5, { width: 4, height: 5, count: 3 }));
   assert.deepEqual(layout, { width: 4, height: 5, count: 3 });
   assert.deepEqual(
@@ -58,6 +58,14 @@ test("a strip output's layout is checked: whole positive numbers, and its image 
     /12×5, not the 2 frames of 4×5 in one row/,
   );
   assert.equal(frameLayoutOf({ frames: { width: 4, height: 5, count: 1.5 } }), undefined);
+});
+
+test("a layout's durationMs is any positive number, as sprite-strip copies a profile's frames.durationMs", () => {
+  const layout = { width: 4, height: 5, count: 2, durationMs: 83.5 };
+  assert.deepEqual(checkFrameLayout("sprite-strip", png(8, 5, layout)), layout);
+  assert.deepEqual(frameLayoutOf({ frames: layout }), layout);
+  for (const durationMs of [0, -10])
+    assert.equal(frameLayoutOf({ frames: { ...layout, durationMs } }), undefined);
 });
 
 test("a strip's provenance parameters gain frame and frameCount only when the kind left them out", () => {

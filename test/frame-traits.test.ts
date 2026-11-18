@@ -20,9 +20,15 @@ import { createRaster, decodeImage, encodePng, setPixel } from "../src/image/ras
 import { stalenessThumbnail } from "../src/library/stale.ts";
 import { planStage, stage } from "../src/loop.ts";
 import { planJobs } from "../src/planning.ts";
+import type { SavedPlan } from "../src/planning.ts";
+import { generationTool } from "../src/mcp.ts";
+import { planningContext } from "../src/providers/index.ts";
+import { loadSettings } from "../src/settings.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import { openProject } from "../src/tree/project.ts";
 import { readTree } from "../src/tree/read.ts";
+import { TreeServer } from "../src/tree/serve.ts";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { stripShape } from "../src/tree/thumbs.ts";
 import type { Content } from "../src/tree/read.ts";
 import type { Generator, GeneratedCandidate } from "../src/generators/generator.ts";
@@ -158,6 +164,46 @@ test("plan: a strip kind plans an edit per frame and needs a key pose, a single 
   );
 });
 
+test("plan: the plan command's context saves a plan for a strip kind of the loaded pack, an edit per frame", async () => {
+  const f = await planFixture();
+  const settings = loadSettings();
+  const profilePath = join(f.root, "profile.json");
+  const profile = syntheticProfile();
+  delete profile.validator;
+  await writeFile(profilePath, JSON.stringify(profile));
+  const save = async (spec: object, extensions: ExtensionRegistry | undefined) => {
+    const paths = await f.plan(spec);
+    const context = await planningContext(undefined, undefined, {
+      settings,
+      env: {},
+      ...(extensions && { extensions }),
+    });
+    return await generationTool(
+      "plan",
+      {
+        spec: paths.specPath,
+        bible: paths.biblePath,
+        profile: profilePath,
+        runOptions: paths.runOptionsPath,
+        out: join(f.root, `plan-${Math.random()}.json`),
+      },
+      context,
+    );
+  };
+  const saved = await save(stripSpec("fx:strip"), registry);
+  const plan = saved["plan"] as SavedPlan;
+  assert.ok(plan.operations.includes("edit"), plan.operations.join(","));
+  assert.equal(plan.operations.includes("still"), false);
+  const core = (await save(stripSpec("sprite-strip"), undefined))["plan"] as SavedPlan;
+  assert.deepEqual(plan.operations, core.operations);
+  const forecast = await planJobs({ ...(await f.plan(stripSpec("fx:strip"))), kinds: registry });
+  assert.equal(forecast.jobs.find((j) => j.operation === "edit")?.count, COUNT);
+  await assert.rejects(
+    save(stripSpec("fx:strip"), undefined),
+    /no planned generator handles asset kind fx:strip/,
+  );
+});
+
 async function stageKind(kind: string) {
   const world = await syntheticWorld();
   temporary.push(world.dir);
@@ -269,6 +315,28 @@ test("thumbnails: stripShape reads the trait, and a run candidate or library ass
   const keyed = await widthOf("runs/r-00000000000000bb/c1", registry);
   assert.equal(whole, 8 * W);
   assert.notEqual(keyed, whole);
+  // The MCP resource read (TreeServer) reads the traits it was given, as the mcp command passes them.
+  const served = async (traits?: ExtensionRegistry) => {
+    const handlers = new Map<string, (request: unknown) => Promise<unknown>>();
+    const fake = {
+      server: {
+        setRequestHandler: (method: string, handler: (request: unknown) => Promise<unknown>) =>
+          void handlers.set(method, handler),
+      },
+    };
+    new TreeServer(l.dir, stateDir, undefined, traits).attach(
+      fake as unknown as McpServer,
+      "modern",
+    );
+    const uri = `asset://${GAME}/runs/r-00000000000000bb/c1`;
+    const read = (await handlers.get("resources/read")!({ params: { uri } })) as {
+      contents: Content[];
+    };
+    const blob = read.contents.find((c): c is Extract<Content, { blob: string }> => "blob" in c)!;
+    return decodeImage(new Uint8Array(Buffer.from(blob.blob, "base64"))).width;
+  };
+  assert.equal(await served(), whole);
+  assert.equal(await served(registry), keyed);
 
   // The same walk asset of the fixture library, its card naming the pack's kind.
   const card = join(l.root, "walk.md");

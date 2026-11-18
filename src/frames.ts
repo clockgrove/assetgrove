@@ -35,7 +35,8 @@ export const FRAME_LAYOUT_SCHEMA = z.object({
   width: positive,
   height: positive,
   order: z.literal("left-to-right").optional(),
-  durationMs: positive.optional(),
+  // A profile's frames.durationMs is an open number (sprite-strip copies it as given): any positive.
+  durationMs: z.number().positive().optional(),
 });
 
 /** The kinds whose traits a frame feature reads: a registry, or a list of kinds. */
