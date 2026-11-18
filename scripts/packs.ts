@@ -182,8 +182,9 @@ export const defaultRunner: Runner = (argv, cwd) => {
   const out = spawnSync(file, args, {
     cwd,
     encoding: "utf8",
-    // npm is a .cmd shim on Windows.
-    shell: process.platform === "win32",
+    // npm is a .cmd shim on Windows, so it needs the shell; nothing else goes through cmd.exe,
+    // which would read the `^` in `<sha>^{commit}` as its escape character.
+    shell: process.platform === "win32" && file === "npm",
   });
   return {
     status: out.status,

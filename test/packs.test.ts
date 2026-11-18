@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  defaultRunner,
   listPacks,
   matrix,
   releasePlan,
@@ -128,6 +129,16 @@ test("a pack's leg covers what it reaches outside itself, transitively, and noth
     assert.ok(paths.includes(wanted), wanted);
   assert.ok(!paths.some((p) => p.startsWith("other/") || p.startsWith("src/")), paths.join(", "));
   assert.ok(!touchedPaths(root, alpha!).includes("bench/tiles/fixture.ts"));
+});
+
+test("the default runner hands Git's revision syntax over unchanged on every system", () => {
+  // cmd.exe reads `^` as its escape character, so `<sha>^{commit}` must not pass through it.
+  const out = defaultRunner(
+    [process.execPath, "-e", "process.stdout.write(process.argv[1])", "abc^{commit}"],
+    process.cwd(),
+  );
+  assert.equal(out.status, 0, out.stderr);
+  assert.equal(out.stdout, "abc^{commit}");
 });
 
 test("a leg runs when its pack, core or what it reads changed, and not for another pack's change", () => {
