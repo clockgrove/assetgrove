@@ -29,7 +29,8 @@ Returns steps [{id, status, detail}]: guard (refused exits 2 key_tracked before 
 written), files, the key recipe's steps for --harness (needs-person), settings (needs-person: the
 agent calls settings_change), spend-check (to-run) and two notices; bibleQuestions to draft the
 bible with the developer; adapters, each adapter of a listed extension pack with its hosts and key
-variable; providers, each route's data flow; and files [{path, role, status}].
+variable; packSettings, each listed pack's settings (its extensionSettings block with the pack's
+defaults filled, never written by init); providers, each route's data flow; and files [{path, role, status}].
 
 Profile presets: ${Object.keys(PROFILE_PRESETS).join(", ")}.
 Style presets: ${Object.keys(BIBLE_PRESETS).join(", ")}.
@@ -112,6 +113,9 @@ Harnesses: ${HARNESSES.join(", ")} (default claude-code).`,
             `- pack adapter ${a.adapter} (${a.package}): ${
               a.hosts.length > 0 ? `hosts ${a.hosts.join(", ")}` : "no fixed host"
             }${a.endpointFromSettings ? " or the settings baseURL" : ""}; ${a.keyEnv ? `key ${a.keyEnv}` : "no key"}`,
+        ),
+        ...result.packSettings.map(
+          (p) => `- pack settings ${p.package} (${p.extension}): ${JSON.stringify(p.settings)}`,
         ),
       ].join("\n");
       return { exitCode: 0, fields: { ...result }, human };

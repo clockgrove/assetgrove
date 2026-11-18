@@ -1,0 +1,15 @@
+{
+  "name": "assetgrove-fixture-tuned",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A synthetic Assetgrove extension for test/pack-settings.test.ts: a pack settings schema, and an adapter with provider settings and route options schemas.",
+  "license": "MIT",
+  "type": "module",
+  "peerDependencies": {
+    "@clockgrove/assetgrove": ">=0.2.0"
+  },
+  "assetgrove": {
+    "api": 2,
+    "entry": "./index.js"
+  }
+}
