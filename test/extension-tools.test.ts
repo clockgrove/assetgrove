@@ -8,7 +8,7 @@ import "./fixtures/env.ts";
 import { approveCommand, useAttended } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
@@ -21,9 +21,14 @@ import type { RegisteredTool } from "../src/extensions/registry.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { PRESETS } from "../src/handoff/presets/index.ts";
-import type { HandoffPreset, PresetRegistry } from "../src/handoff/presets/index.ts";
+import type {
+  FamiliesPreset,
+  HandoffPreset,
+  PresetRegistry,
+} from "../src/handoff/presets/index.ts";
 import { encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
+import { recordSha256 } from "../src/provenance-binding.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { Provenance } from "../src/types.ts";
 import { gitTarget } from "./fixtures/git.ts";
@@ -191,6 +196,49 @@ test("an approval lapses when the binary changes", async () => {
   assert.notEqual(second, first, "a changed binary is another tool run");
 });
 
+test("a script named after an option's = or under a named directory is hashed; the run's data is not", async () => {
+  const dir = await project();
+  const bin = join(await temp("assetgrove-tool-bin-"), "engine");
+  await writeFile(bin, "engine v1");
+  const pkg = await temp("assetgrove-pack-pkg-");
+  const script = join(pkg, "build.gd");
+  await writeFile(script, "extends SceneTree # v1");
+  const runner = () =>
+    toolRunner({ pack: "tooler", tools: tools(bin), gate: gate(), projectDir: dir });
+  const asked = (args: string[], files?: Record<string, string>) =>
+    askedId(runner()("tooler:node", { args, ...(files && { files }) }));
+
+  // `--script=<path>`: the value after `=` is hashed.
+  const eq = await asked([`--script=${script}`]);
+  await writeFile(script, "extends SceneTree # v2");
+  assert.notEqual(await asked([`--script=${script}`]), eq, "a script after = lapses the approval");
+
+  // `--path <dir>`: every file under the directory is hashed.
+  const tree = await asked(["--path", pkg]);
+  assert.equal(await asked(["--path", pkg]), tree);
+  await writeFile(script, "extends SceneTree # v3");
+  assert.notEqual(await asked(["--path", pkg]), tree, "a script under a named directory lapses it");
+
+  // `--path .` is scratch: the data the pack passes there is not hashed, so the approval holds
+  // across assets; a file the argv names directly is, data or not.
+  const a = await asked(["--path", "."], { "input/sprite.json": '{"asset":"fern"}' });
+  const b = await asked(["--path", "."], { "input/sprite.json": '{"asset":"lantern"}' });
+  assert.equal(a, b, "per-asset data under a named directory leaves the approval");
+  const c = await asked(["--path", ".", "--script", "gen.gd"], { "gen.gd": "# one" });
+  const d = await asked(["--path", ".", "--script", "gen.gd"], { "gen.gd": "# two" });
+  assert.notEqual(c, d, "a file the argv names is hashed even when the pack passed it");
+
+  // A link inside a named directory is refused: what it reaches could change unhashed.
+  await symlink(script, join(pkg, "linked.gd"));
+  const refused = failureOutcome(
+    await runner()("tooler:node", { args: ["--path", pkg] }).then(
+      () => undefined,
+      (e: unknown) => e,
+    ),
+  );
+  assert.equal(refused.error?.code, "command_refused");
+});
+
 test("a person's approval holds while the bytes hold and lapses when the script changes", async () => {
   useAttended();
   const { script, marker } = await packScript();
@@ -267,7 +315,14 @@ async function toolHandoff(to: string, script: string): Promise<TargetWrite> {
       assert.ok(seen);
       return [{ path: to, content: seen.content }];
     },
-    check: async () => [],
+    // The check runs the tool too, as an engine pack checks the resource it built.
+    check: async (ctx) => {
+      const ran = await ctx.run!("tooler:node", {
+        args: [script],
+        files: { "input.txt": String((ctx.context["spec"] as { assetId: string }).assetId) },
+      });
+      return ran.exitCode === 0 ? [] : [ran.stderr];
+    },
   };
   const registry: PresetRegistry = {
     presets: new Map([...PRESETS, ["tooler:build", preset]]),
@@ -308,9 +363,17 @@ test("a preset's tool output reaches the target only through the hand-off's path
   const result = await writeToTarget(write);
   const built = result.handoff.find((h) => h.preset === "tooler:build");
   assert.deepEqual(built?.files, ["engine/seen.json"]);
-  assert.deepEqual(built?.tools, [
-    { kind: "tool", tool: "tooler:node", hash: id, method: "settings" },
-  ]);
+  // The run in write and the run in check, each approved.
+  const step = { kind: "tool", tool: "tooler:node", hash: id, method: "settings" };
+  assert.deepEqual(built?.tools, [step, step]);
+  // The run that made the files is in the provenance record, which is bound again; the manifest,
+  // rendered before the tool ran, is rendered again from it.
+  const manifest = JSON.parse(await readFile(result.manifestPath, "utf8")) as {
+    provenance: { generated: Provenance };
+  };
+  const record = manifest.provenance.generated;
+  assert.deepEqual(record.commands, [step]);
+  assert.equal(record.binding?.recordSha256, recordSha256(record));
   const seen = JSON.parse(await readFile(join(write.targetDir, "engine", "seen.json"), "utf8")) as {
     input: string;
   };
@@ -327,4 +390,46 @@ test("a preset's tool output reaches the target only through the hand-off's path
   assert.equal(outcome.exitCode, 2);
   assert.equal(outcome.error?.code, "invalid_input");
   assert.equal(existsSync(join(dirname(escape.targetDir), "escaped.json")), false);
+});
+
+test("a families preset's tool run is in the record of the hand-off its files go with", async () => {
+  const { script } = await packScript();
+  const families: FamiliesPreset = {
+    name: "tooler:families",
+    scope: "families",
+    optionsSchema: z.strictObject({}),
+    write: async (ctx) => {
+      const ran = await ctx.run!("tooler:node", {
+        args: [script],
+        files: { "input.txt": ctx.families.map((f) => f.name).join(",") },
+      });
+      const seen = ran.files.find((f) => f.path === "out/seen.json");
+      assert.ok(seen);
+      return [{ path: `engine/${ctx.assetId}.json`, content: seen.content }];
+    },
+    check: async () => [],
+  };
+  const handoff = async () => {
+    const write = await toolHandoff("engine/unused.json", script);
+    write.registry = {
+      presets: new Map([...PRESETS, ["tooler:families", families]]),
+      tools: tools(process.execPath),
+    };
+    write.profile.handoff = [{ preset: "manifest" }, { preset: "tooler:families" }];
+    return write;
+  };
+  const id = await askedId(writeToTarget(await handoff()));
+  approveCommand({ hash: id, kind: "tool", argv: [process.execPath, script] });
+
+  const result = await writeToTarget(await handoff());
+  const step = { kind: "tool", tool: "tooler:node", hash: id, method: "settings" };
+  const built = result.handoff.find((h) => h.preset === "tooler:families");
+  assert.deepEqual(built?.files, [`engine/${shelterSpec.assetId}.json`]);
+  assert.deepEqual(built?.tools, [step]);
+  const manifest = JSON.parse(await readFile(result.manifestPath, "utf8")) as {
+    provenance: { generated: Provenance };
+  };
+  const record = manifest.provenance.generated;
+  assert.deepEqual(record.commands, [step]);
+  assert.equal(record.binding?.recordSha256, recordSha256(record));
 });

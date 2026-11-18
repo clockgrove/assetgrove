@@ -10,7 +10,7 @@
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -151,11 +151,35 @@ export function toolExecutable(tool: RegisteredTool, platform = process.platform
   return real;
 }
 
+/** The kind of entry at `path`, following links; undefined when there is none. */
+function kindOf(path: string): "file" | "dir" | undefined {
+  try {
+    const stat = statSync(path);
+    return stat.isFile() ? "file" : stat.isDirectory() ? "dir" : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The paths an argument names: the argument itself, and the value after the first `=` of an
+ * option such as `--script=build.gd`.
+ */
+function namedPaths(arg: string): string[] {
+  const eq = arg.indexOf("=");
+  return eq > 0 && eq < arg.length - 1 ? [arg, arg.slice(eq + 1)] : [arg];
+}
+
 /**
  * The identity of one run: kind `tool`, the tool id, argv `[executable, ...args]` with the args as
  * given (relative to scratch), cwd `<scratch>`, and the sha256 of the executable and of every
- * argument that names a regular file: inside scratch by its `/` path there, elsewhere by its real
- * absolute path. Its project is the game project. Reads bytes only; runs nothing.
+ * file the argv names: an argument, or the value after an option's `=`, that is a regular file,
+ * and every file under one that is a directory (such as `--path .`). Inside scratch a file is
+ * keyed by its `/` path there, elsewhere by its real absolute path. A file the pack passes in
+ * `inputs` is the run's data: hashed when an argument names it, not when it is only under a named
+ * directory, so an approval holds across the assets a pack builds. A link inside a named directory
+ * is refused, since what it reaches could change unhashed. Its project is the game project. Reads
+ * bytes only; runs nothing.
  */
 export function toolIdentity(input: {
   tool: string;
@@ -163,19 +187,37 @@ export function toolIdentity(input: {
   args: readonly string[];
   scratch: string;
   projectDir: string;
+  /** The scratch-relative paths the pack passed as `files`. */
+  inputs?: ReadonlySet<string>;
 }): CommandIdentity {
   const scratch = realpathSync.native(input.scratch);
   const files: Record<string, string> = {};
+  const keyOf = (real: string) =>
+    isInside(real, scratch) ? toPosix(relative(scratch, real)) : toPosix(real);
   const hash = (path: string) => {
     const real = realpathSync.native(path);
-    const key = isInside(real, scratch) ? toPosix(relative(scratch, real)) : toPosix(real);
-    files[key] = sha256Hex(readFileSync(real));
+    files[keyOf(real)] = sha256Hex(readFileSync(real));
+  };
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isSymbolicLink())
+        throw new CommandRefusedError(
+          `the tool ${input.tool}'s argv names the directory holding the link ${path}; a tool's files are hashed by their bytes, so a named directory may hold no link`,
+        );
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && !input.inputs?.has(keyOf(path))) hash(path);
+    }
   };
   hash(input.executable);
   for (const arg of input.args) {
-    if (arg === "") continue;
-    const path = isAbsolute(arg) ? arg : resolve(scratch, arg);
-    if (isFile(path)) hash(path);
+    for (const named of namedPaths(arg)) {
+      if (named === "") continue;
+      const path = isAbsolute(named) ? named : resolve(scratch, named);
+      const kind = kindOf(path);
+      if (kind === "file") hash(path);
+      else if (kind === "dir") walk(realpathSync.native(path));
+    }
   }
   return identityOf(
     {
@@ -275,6 +317,7 @@ export async function runTool(
       args: options.args,
       scratch,
       projectDir: project,
+      inputs: new Set(inputs.keys()),
     });
     const approval = await requireApproval(identity, scope.gate);
     const step: ToolStep = {

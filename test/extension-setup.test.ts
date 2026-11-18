@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
-import type { Server } from "node:http";
+import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,7 @@ const GOOD = createHash("sha256").update(BODY).digest("hex");
 const WRONG = createHash("sha256").update("other").digest("hex");
 
 const requests: string[] = [];
+const held: ServerResponse[] = [];
 let server: Server;
 let base = "";
 before(async () => {
@@ -30,12 +31,22 @@ before(async () => {
       res.writeHead(503).end();
       return;
     }
+    if (req.url === "/stall") {
+      // Headers and a first chunk, then nothing, as the CI download that hung for 30 minutes.
+      res.writeHead(200, { "content-length": String(1 << 20) });
+      res.write("model");
+      held.push(res);
+      return;
+    }
     res.writeHead(200).end(BODY);
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
-after(() => server.close());
+after(() => {
+  held.forEach((res) => res.destroy());
+  server.close();
+});
 
 async function scratch(): Promise<string> {
   return realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-setup-")));
@@ -87,6 +98,19 @@ test("a failing host falls back to the next; all failing is setup_failed", async
       (error) => error instanceof ProviderError && /^setup_failed: /.test(error.message),
     );
     assert.deepEqual((await readdir(dir)).sort(), ["m"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a host that stalls mid-file is given up for the next, leaving no partial file", async () => {
+  const dir = await scratch();
+  try {
+    const path = await pinnedDownload(dir, pin({ urls: [`${base}/stall`, `${base}/good`] }), {
+      stallMs: 200,
+    });
+    assert.deepEqual(await readFile(path), BODY);
+    assert.deepEqual(await readdir(join(dir, "m")), ["weights.bin"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -585,7 +585,10 @@ async function runFamilyPresets(prepared: readonly PreparedTargetWrite[]): Promi
         families: handedOffFamilies(group),
         run: last.runnerOf(i),
       };
+      const ran = last.toolSteps[i]?.length ?? 0;
       const files = await preset.write(ctx, options, targetRead(last.guard));
+      const steps = last.toolSteps[i]?.slice(ran) ?? [];
+      if (steps.length > 0) await recordFamilyToolSteps(last, steps);
       // An image a preset writes is signed like the media.
       for (const [j, file] of files.entries()) {
         if (last.signImage === undefined || typeof file.content === "string") continue;
@@ -608,6 +611,54 @@ async function runFamilyPresets(prepared: readonly PreparedTargetWrite[]): Promi
       );
       sameFile([...last.writes.map(([path]) => path), ...libraryFiles(last.library)]);
     }
+  }
+}
+
+/** A provenance record as its own file holds it. */
+const provenanceText = (provenance: Provenance) => `${JSON.stringify(provenance, null, 2)}\n`;
+
+/**
+ * The tool runs that made a hand-off's files join its record's commands, beside the validator's,
+ * and the record is bound again to the media's bytes.
+ */
+function recordToolSteps(provenance: Provenance, steps: ToolStep[], media: Uint8Array): void {
+  provenance.commands = [...(provenance.commands ?? []), ...steps];
+  provenance.binding = bindingOf(provenance, media);
+}
+
+/**
+ * A families preset's tool runs, recorded on the hand-off its files go with: the record's commands
+ * and binding, its own provenance file, and every preset of it that ran no tool rendered again from
+ * the record, to the same paths.
+ */
+async function recordFamilyToolSteps(p: PreparedTargetWrite, steps: ToolStep[]): Promise<void> {
+  recordToolSteps(p.provenance, steps, p.mediaBytes);
+  const replace = (path: string, content: Uint8Array | string) => {
+    const entry = p.writes.find(([at]) => at === path);
+    if (entry) entry[1] = content;
+  };
+  if (p.provenancePath !== undefined) {
+    p.provenanceBytes = provenanceText(p.provenance);
+    replace(p.provenancePath, p.provenanceBytes);
+  }
+  const read = targetRead(p.guard);
+  for (const [i, { preset, options }] of p.presets.entries()) {
+    if (preset.scope === "families" || (p.toolSteps[i]?.length ?? 0) > 0) continue;
+    const files = await preset.write({ ...p.presetContext, run: p.runnerOf(i) }, options, read);
+    const before = (p.presetFiles[i] ?? []).map((file) => file.path);
+    if (JSON.stringify(files.map((file) => file.path)) !== JSON.stringify(before)) {
+      throw new InputError(
+        `the preset "${preset.name}" wrote other files when rendered again with the record's tool runs`,
+      );
+    }
+    for (const [j, file] of files.entries()) {
+      const type = markableMediaType(file.path);
+      if (p.signImage === undefined || typeof file.content === "string") continue;
+      if (type === undefined || !canCarryCredentials(type)) continue;
+      files[j] = { ...file, content: await p.signImage(file.path, file.content, type) };
+    }
+    p.presetFiles[i] = files;
+    for (const file of files) replace(targetPath(p.guard, file.path), file.content);
   }
 }
 
@@ -761,12 +812,21 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
         : await preset.write({ ...presetContext, run: runnerOf(i) }, options, read),
     );
   }
+  // A tool that made files is in the record: its steps join the commands, the record is bound
+  // again, and every preset that ran no tool (the manifest) is rendered again from it.
+  if (toolSteps.some((steps) => steps.length > 0)) {
+    recordToolSteps(provenance, toolSteps.flat(), output.bytes);
+    for (const [i, { preset, options }] of presets.entries()) {
+      if (preset.scope === "families" || (toolSteps[i]?.length ?? 0) > 0) continue;
+      presetFiles[i] = await preset.write({ ...presetContext, run: runnerOf(i) }, options, read);
+    }
+  }
   // An image a preset writes is signed like the media.
   const signImage =
     sign &&
     (async (rel: string, bytes: Uint8Array, type: string) => {
       const signedBytes = await sign(rel, bytes, type);
-      signed.push(rel);
+      if (!signed.includes(rel)) signed.push(rel);
       return signedBytes;
     });
   for (const files of presetFiles) {
@@ -799,7 +859,7 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
   sidecars.forEach((sidecar, i) => {
     writes.push([targetPath(guard, sidecarRels[i] as string), sidecar.bytes]);
   });
-  const provenanceBytes = provenancePath ? `${JSON.stringify(provenance, null, 2)}\n` : undefined;
+  const provenanceBytes = provenancePath ? provenanceText(provenance) : undefined;
   if (provenancePath && provenanceBytes !== undefined)
     writes.push([provenancePath, provenanceBytes]);
   // Before anything is written: the asset id is free and the library's own files are readable.
@@ -958,9 +1018,6 @@ async function commitWritten(
       files: (presetFiles[i] ?? []).map((file) =>
         relativeRecordPath(targetDir, inside(targetDir, file.path)),
       ),
-      ...((prepared.toolSteps[i]?.length ?? 0) > 0 && {
-        tools: [...(prepared.toolSteps[i] as ToolStep[])],
-      }),
     })),
   };
   if (prepared.credentials && prepared.credentials.rels.length > 0) {
@@ -1026,6 +1083,11 @@ async function commitWritten(
       models: prepared.provenance.models,
     };
     problems.push(...(await fileProblems(rel, await read(rel), type, expected, "sidecar")));
+  }
+  // Each preset's tool runs, its checks' included, once every check has run.
+  for (const [i, entry] of result.handoff.entries()) {
+    const steps = prepared.toolSteps[i] ?? [];
+    if (steps.length > 0) entry.tools = [...steps];
   }
   if (problems.length > 0) throw new HandoffCheckError(problems);
   // An adopt's validator runs before the library, so a rejection records no version.
