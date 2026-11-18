@@ -176,9 +176,9 @@ function namedPaths(arg: string): string[] {
  * file the argv names: an argument, or the value after an option's `=`, that is a regular file,
  * and every file under one that is a directory (such as `--path .`). Inside scratch a file is
  * keyed by its `/` path there, elsewhere by its real absolute path. A file the pack passes in
- * `inputs` is the run's data: hashed when an argument names it, not when it is only under a named
- * directory, so an approval holds across the assets a pack builds. A link inside a named directory
- * is refused, since what it reaches could change unhashed. Its project is the game project. Reads
+ * `files` is hashed like any other file the argv names, directly or under a named directory: a
+ * script cannot sit unhashed beside the data. A link inside a named directory is refused, since
+ * what it reaches could change unhashed. Its project is the game project. Reads
  * bytes only; runs nothing.
  */
 export function toolIdentity(input: {
@@ -187,8 +187,6 @@ export function toolIdentity(input: {
   args: readonly string[];
   scratch: string;
   projectDir: string;
-  /** The scratch-relative paths the pack passed as `files`. */
-  inputs?: ReadonlySet<string>;
 }): CommandIdentity {
   const scratch = realpathSync.native(input.scratch);
   const files: Record<string, string> = {};
@@ -206,7 +204,7 @@ export function toolIdentity(input: {
           `the tool ${input.tool}'s argv names the directory holding the link ${path}; a tool's files are hashed by their bytes, so a named directory may hold no link`,
         );
       if (entry.isDirectory()) walk(path);
-      else if (entry.isFile() && !input.inputs?.has(keyOf(path))) hash(path);
+      else if (entry.isFile()) hash(path);
     }
   };
   hash(input.executable);
@@ -317,7 +315,6 @@ export async function runTool(
       args: options.args,
       scratch,
       projectDir: project,
-      inputs: new Set(inputs.keys()),
     });
     const approval = await requireApproval(identity, scope.gate);
     const step: ToolStep = {

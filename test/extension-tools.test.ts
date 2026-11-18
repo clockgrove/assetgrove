@@ -196,7 +196,7 @@ test("an approval lapses when the binary changes", async () => {
   assert.notEqual(second, first, "a changed binary is another tool run");
 });
 
-test("a script named after an option's = or under a named directory is hashed; the run's data is not", async () => {
+test("a script named after an option's = or under a named directory is hashed, the pack's files under it too", async () => {
   const dir = await project();
   const bin = join(await temp("assetgrove-tool-bin-"), "engine");
   await writeFile(bin, "engine v1");
@@ -219,14 +219,20 @@ test("a script named after an option's = or under a named directory is hashed; t
   await writeFile(script, "extends SceneTree # v3");
   assert.notEqual(await asked(["--path", pkg]), tree, "a script under a named directory lapses it");
 
-  // `--path .` is scratch: the data the pack passes there is not hashed, so the approval holds
-  // across assets; a file the argv names directly is, data or not.
-  const a = await asked(["--path", "."], { "input/sprite.json": '{"asset":"fern"}' });
-  const b = await asked(["--path", "."], { "input/sprite.json": '{"asset":"lantern"}' });
-  assert.equal(a, b, "per-asset data under a named directory leaves the approval");
-  const c = await asked(["--path", ".", "--script", "gen.gd"], { "gen.gd": "# one" });
-  const d = await asked(["--path", ".", "--script", "gen.gd"], { "gen.gd": "# two" });
-  assert.notEqual(c, d, "a file the argv names is hashed even when the pack passed it");
+  // `--path .` is scratch: every file the pack passes there is hashed, so a script it writes
+  // beside the data (a `project.godot`, a `.gd` the engine loads) lapses the approval when it
+  // changes; data at a path the script knows, outside any named directory, is not.
+  const a = await asked(["--path", "."], { "main.gd": "# one", "project.godot": "[app]" });
+  assert.equal(await asked(["--path", "."], { "main.gd": "# one", "project.godot": "[app]" }), a);
+  const b = await asked(["--path", "."], { "main.gd": "# two", "project.godot": "[app]" });
+  assert.notEqual(a, b, "a script the pack passes under a named directory lapses the approval");
+  const c = await asked(["--path", "."], { "main.gd": "# one", "project.godot": "[changed]" });
+  assert.notEqual(a, c, "so does any other file the pack passes there");
+  const e = await asked(["--script", "gen.gd"], { "gen.gd": "# one", "input/s.json": '{"a":1}' });
+  const f = await asked(["--script", "gen.gd"], { "gen.gd": "# one", "input/s.json": '{"a":2}' });
+  assert.equal(e, f, "data outside every named path leaves the approval");
+  const g = await asked(["--script", "gen.gd"], { "gen.gd": "# two", "input/s.json": '{"a":1}' });
+  assert.notEqual(e, g, "a file the argv names is hashed even when the pack passed it");
 
   // A link inside a named directory is refused: what it reaches could change unhashed.
   await symlink(script, join(pkg, "linked.gd"));

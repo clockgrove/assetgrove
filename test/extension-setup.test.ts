@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -142,6 +142,26 @@ test("a file already there with the pinned hash is not fetched again", async () 
     requests.length = 0;
     await pinnedDownload(dir, pin());
     assert.deepEqual(requests, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("removes partial files left by a setup killed mid-download", async () => {
+  const dir = await scratch();
+  try {
+    await mkdir(join(dir, "m"), { recursive: true });
+    await writeFile(join(dir, "m", "weights.bin.partial-0a1b2c3d4e5f"), "model");
+    await writeFile(join(dir, "m", "other.bin.partial-0a1b2c3d4e5f"), "kept");
+    await pinnedDownload(dir, pin());
+    assert.deepEqual((await readdir(join(dir, "m"))).sort(), [
+      "other.bin.partial-0a1b2c3d4e5f",
+      "weights.bin",
+    ]);
+    // A partial left beside a file already in place goes too.
+    await writeFile(join(dir, "m", "weights.bin.partial-ffffffffffff"), "model");
+    await pinnedDownload(dir, pin());
+    assert.equal(existsSync(join(dir, "m", "weights.bin.partial-ffffffffffff")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

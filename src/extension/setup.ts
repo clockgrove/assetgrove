@@ -5,8 +5,8 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { InputError, ProviderError } from "../errors.ts";
@@ -129,7 +129,8 @@ async function fetchTo(
 /**
  * Downloads one pinned file to `dir`/`file.path` and returns its absolute path. The bytes are
  * streamed to a sibling partial file and hashed; only a match is renamed into place. A hash
- * mismatch fails at once, without trying another host.
+ * mismatch fails at once, without trying another host. Partial files of `dest` left by a setup
+ * that was killed mid-download are removed first.
  */
 export async function pinnedDownload(
   dir: string,
@@ -138,10 +139,14 @@ export async function pinnedDownload(
 ): Promise<string> {
   validate(file);
   const dest = resolve(dir, ...file.path.split("/"));
+  await mkdir(dirname(dest), { recursive: true });
+  const prefix = `${basename(dest)}.partial-`;
+  for (const name of await readdir(dirname(dest)))
+    if (name.startsWith(prefix))
+      await rm(join(dirname(dest), name), { force: true, recursive: true });
   if ((await sha256Of(dest)) === file.sha256) return dest;
   const doFetch = options.fetch ?? fetch;
   const stallMs = options.stallMs ?? 60_000;
-  await mkdir(dirname(dest), { recursive: true });
   const failures: string[] = [];
   for (const url of file.urls) {
     const partial = `${dest}.partial-${randomBytes(6).toString("hex")}`;
