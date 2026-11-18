@@ -1,11 +1,22 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, test } from "node:test";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
 import { SettingsError } from "../src/env.ts";
-import { checkExtension, CORE_ENTRY, ExtensionRegistry } from "../src/extensions/registry.ts";
-import { ProviderSet } from "../src/providers/index.ts";
+import { routeDataFlows } from "../src/dataflows.ts";
+import {
+  checkExtension,
+  CORE_ENTRY,
+  ExtensionRegistry,
+  loadExtensions,
+} from "../src/extensions/registry.ts";
+import { coreVersion } from "../src/extensions/version.ts";
+import { requireGrants } from "../src/license.ts";
+import { providerSet, ProviderSet } from "../src/providers/index.ts";
 import { OPERATION_ROLES, RouteUnavailableError } from "../src/routes.ts";
 import type { Settings } from "../src/settings.ts";
 import type { Extension } from "../src/extension/api.ts";
@@ -204,4 +215,98 @@ test("through a provider set, an adapter that maps no typed parameter refuses th
       ),
   );
   assert.equal(budget.spentUsd + budget.reservedUsd, 0);
+});
+
+const root = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-kind-operations-")));
+after(() => rmSync(root, { recursive: true, force: true }));
+
+/** A project with the pixel pack installed on disk, its kind declaring pixel:still (role image). */
+function pixelProject(): string {
+  const dir = join(root, "project");
+  const pkg = join(dir, "node_modules", "pixel-pack");
+  mkdirSync(pkg, { recursive: true });
+  writeFileSync(
+    join(pkg, "package.json"),
+    JSON.stringify({
+      name: "pixel-pack",
+      version: "1.0.0",
+      type: "module",
+      assetgrove: { api: 2, entry: "./index.js" },
+      peerDependencies: { "@clockgrove/assetgrove": `^${coreVersion()}` },
+    }),
+  );
+  writeFileSync(
+    join(pkg, "index.js"),
+    `export default ({ api }) => ({
+  api,
+  name: "pixel",
+  kinds: [{
+    kind: "pixel:tile",
+    operations: { "pixel:still": "image" },
+    planCandidate: () => [],
+    generate: () => Promise.reject(new Error("not called")),
+  }],
+});
+`,
+  );
+  return dir;
+}
+
+test("loadExtensions refuses a settings route for an operation the loaded pack does not declare", async () => {
+  const dir = pixelProject();
+  const route = { provider: "main", model: "m" };
+  const settings = (routes: Settings["routes"]) => ({
+    extensions: ["pixel-pack"],
+    path: "settings.json",
+    routes,
+  });
+  const registry = await loadExtensions(settings({ "pixel:still": route }), dir);
+  assert.equal(registry.operations["pixel:still"], "image");
+  await assert.rejects(
+    loadExtensions(settings({ "pixel:render": route }), dir),
+    (error: unknown) =>
+      error instanceof SettingsError &&
+      /routes\["pixel:render"\] of settings\.json routes an operation extension "pixel" does not declare; its kinds declare: pixel:still/.test(
+        error.message,
+      ),
+  );
+});
+
+test("providerSet routes a loaded pack's operation through its role's default", async () => {
+  const extensions = await loadExtensions(
+    { extensions: ["pixel-pack"], path: "settings.json" },
+    pixelProject(),
+  );
+  const settings = {
+    ...settingsOf({ gateway: { adapter: "vercel-ai-gateway", limit: LIMIT } }),
+    promptPolicy: { allow: [] },
+  } as unknown as Settings;
+  const set = await providerSet(undefined, { settings, env: {}, extensions });
+  const route = set.routes["pixel:still"];
+  assert.ok(route, "pixel:still is routed");
+  assert.equal(route.provider, "gateway");
+  assert.equal(route.model, set.routes["still"]?.model);
+  const coreOnly = await providerSet(undefined, { settings, env: {} });
+  assert.equal(coreOnly.routes["pixel:still"], undefined);
+});
+
+test("routeDataFlows lists a kind's operation by its role, with or without a route of its own", () => {
+  const gateway = { gateway: { adapter: "vercel-ai-gateway", limit: LIMIT } } as const;
+  const routed = settingsOf(gateway, {
+    routes: { "pixel:still": { provider: "gateway", model: "openai/gpt-image-2" } },
+  });
+  const flows = routeDataFlows(routed, { operations });
+  const pixelStill = flows.find((f) => f.operation === "pixel:still");
+  assert.equal(pixelStill?.providerId, "gateway");
+  assert.equal(pixelStill?.upstream, "openai");
+  const unrouted = routeDataFlows(settingsOf(gateway), { operations });
+  assert.ok(unrouted.some((f) => f.operation === "pixel:still"));
+});
+
+test("a hand-off refused for a kind's operation with no grant names its role's settings field", () => {
+  const call = { operation: "pixel:still", route: "gateway:pixel:still:m" } as never;
+  assert.throws(
+    () => requireGrants([call], operations),
+    /routes\.pixel:still\.outputGrant or roles\.image\.outputGrant/,
+  );
 });

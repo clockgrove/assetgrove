@@ -29,6 +29,7 @@ import {
 } from "../compare.ts";
 import type { Comparison, CompareRow } from "../compare.ts";
 import { writeContactRows } from "../contact.ts";
+import { paletteReads } from "../call-parameters.ts";
 import { InputError, ProviderError } from "../errors.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
@@ -207,6 +208,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   // before the spend is confirmed.
   const promptText: string[] = [];
   let bible: Awaited<ReturnType<typeof loadStyleBible>> | undefined;
+  let palettes: Record<string, string> = {};
   const registry = ctx.extensions ?? CORE_REGISTRY;
   const generators = [...registry.kinds];
   if (kind === "3d") {
@@ -225,6 +227,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       capUsd,
       bible: bible.value,
     });
+    palettes = paletteReads([...plan.perCandidate, ...plan.perRequest]);
     // The request's own calls (the reference views it judges) are part of the confirmed spend.
     jobs = mergeJobs([
       ...jobsOf(plan.perCandidate, routes, candidates),
@@ -275,6 +278,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     r.refs.forEach((path, j) => (reads[`region${i + 1}/ref${j + 1}`] = path));
   });
   if (bible !== undefined) Object.assign(reads, styleBibleReads("bible", bible));
+  Object.assign(reads, palettes);
   const work = await buildWorkPlan(requestChangeCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["bible"],

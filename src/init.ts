@@ -509,6 +509,7 @@ export async function initProject(
     providers: routeDataFlows(context.settings, {
       ...(context.env && { env: context.env }),
       adapters,
+      ...(context.extensions && { operations: context.extensions.operations }),
     }),
     files,
   };

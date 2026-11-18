@@ -455,7 +455,7 @@ export async function prepareTargetWrite(write: TargetWrite): Promise<PreparedTa
   // First: the profile's hand-off presets and their options.
   const presets = resolveHandoff(profile, write.registry);
   // Before anything is written: the output must be declarable under a licence the target takes.
-  const licensed = requireLicensable(profile, write.provenance);
+  const licensed = requireLicensable(profile, write.provenance, write.registry?.operations);
   if (write.provenance.digitalSourceType === "undeclared") requireDeclared("undeclared");
   const known = [
     write.provenance.digitalSourceType,

@@ -30,6 +30,49 @@ export const FORBIDDEN_SCHEMA_FIELDS: readonly string[] = [
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isForbidden = (name: string): boolean =>
+  FORBIDDEN_SCHEMA_FIELDS.includes(name.toLowerCase().replace(/[-_]/g, ""));
+
+/** The spellings a key pattern is tried against: each forbidden field and its usual camel and snake forms. */
+const FORBIDDEN_SPELLINGS: readonly string[] = [
+  ...FORBIDDEN_SCHEMA_FIELDS,
+  "baseURL",
+  "baseUrl",
+  "base_url",
+  "base-url",
+  "providerOptions",
+  "provider_options",
+  "provider-options",
+];
+
+/**
+ * Names no routing field: a key pattern that matches these as well admits any name, like
+ * `additionalProperties`, and so declares no field.
+ */
+const NEUTRAL_NAMES: readonly string[] = ["zzzz", "palette", "frames", "x1"];
+
+/** The forbidden spelling a key pattern names, when it names one rather than admitting any key. */
+function forbiddenByPattern(pattern: unknown): string | undefined {
+  if (typeof pattern !== "string") return undefined;
+  const regex = new RegExp(pattern, "u");
+  if (NEUTRAL_NAMES.some((name) => regex.test(name))) return undefined;
+  return FORBIDDEN_SPELLINGS.find((name) => regex.test(name));
+}
+
+/** The forbidden names a `propertyNames` schema admits: its `const`, `enum` and `pattern`. */
+function forbiddenKeyNames(node: Record<string, unknown>): string | undefined {
+  const names = [
+    ...(typeof node["const"] === "string" ? [node["const"]] : []),
+    ...(Array.isArray(node["enum"]) ? node["enum"].filter((v) => typeof v === "string") : []),
+  ];
+  return names.find(isForbidden) ?? forbiddenByPattern(node["pattern"]);
+}
+
+/**
+ * The dotted path of the first field a JSON Schema node declares with a routing name: through
+ * `properties`, `required`, `propertyNames` (const, enum, pattern) and `patternProperties`, at any
+ * depth.
+ */
 function walk(node: unknown, path: string[]): string | undefined {
   if (Array.isArray(node)) {
     for (const item of node) {
@@ -40,31 +83,52 @@ function walk(node: unknown, path: string[]): string | undefined {
   }
   if (!isRecord(node)) return undefined;
   for (const [key, value] of Object.entries(node)) {
+    let found: string | undefined;
     if (key === "properties" && isRecord(value)) {
       for (const [name, child] of Object.entries(value)) {
-        if (FORBIDDEN_SCHEMA_FIELDS.includes(name.toLowerCase().replace(/[-_]/g, "")))
-          return [...path, name].join(".");
-        const found = walk(child, [...path, name]);
+        if (isForbidden(name)) return [...path, name].join(".");
+        found = walk(child, [...path, name]);
         if (found !== undefined) return found;
       }
+    } else if (key === "patternProperties" && isRecord(value)) {
+      for (const [pattern, child] of Object.entries(value)) {
+        const name = forbiddenByPattern(pattern);
+        if (name !== undefined) return [...path, name].join(".");
+        found = walk(child, [...path, `/${pattern}/`]);
+        if (found !== undefined) return found;
+      }
+    } else if (key === "propertyNames" && isRecord(value)) {
+      const name = forbiddenKeyNames(value);
+      if (name !== undefined) return [...path, name].join(".");
+      found = walk(value, path);
+    } else if (key === "required" && Array.isArray(value)) {
+      const name = value.find((v): v is string => typeof v === "string" && isForbidden(v));
+      if (name !== undefined) return [...path, name].join(".");
     } else if (key === "$defs" || key === "definitions") {
       if (isRecord(value))
         for (const child of Object.values(value)) {
-          const found = walk(child, path);
+          found = walk(child, path);
           if (found !== undefined) return found;
         }
     } else {
-      const found = walk(value, path);
-      if (found !== undefined) return found;
+      found = walk(value, path);
     }
+    if (found !== undefined) return found;
   }
   return undefined;
 }
 
-/** The dotted path of the first routing field a schema declares, or undefined when it has none. */
+/**
+ * The dotted path of the first routing field a schema declares, or undefined when it has none.
+ * Both sides are read: what the schema accepts (`io: "input"`) and what it gives (`io: "output"`),
+ * so a pipe or transform cannot hide a field on either side.
+ */
 export function forbiddenSchemaField(schema: ZodType): string | undefined {
-  const json = z.toJSONSchema(schema, { unrepresentable: "any", io: "input" });
-  return walk(json, []);
+  for (const io of ["input", "output"] as const) {
+    const found = walk(z.toJSONSchema(schema, { unrepresentable: "any", io }), []);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }
 
 const isZod = (schema: unknown): schema is ZodType =>

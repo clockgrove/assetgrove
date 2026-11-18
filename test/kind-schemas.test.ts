@@ -89,6 +89,32 @@ test("checkKindSchemas refuses routing fields at any depth and non-zod schemas",
   checkKindSchemas(kind({ specSchema, profileSchema: z.object({ grid: z.number() }) }), refuse);
 });
 
+test("checkKindSchemas refuses a routing field named by a key enum, const or pattern, or only on the output side", () => {
+  const refused = (schema: z.ZodType, field: string) =>
+    assert.throws(
+      () => checkKindSchemas(kind({ specSchema: schema }), refuse),
+      (e: unknown) => e instanceof InputError && e.message.includes(`declares "${field}"`),
+      field,
+    );
+  refused(
+    z.object({ fields: z.record(z.enum(["model", "endpoint"]), z.string()) }),
+    "fields.model",
+  );
+  refused(z.record(z.literal("graph"), z.string()), "graph");
+  refused(z.record(z.string().regex(/^(command|tile)$/), z.string()), "command");
+  refused(z.unknown().pipe(z.object({ model: z.string() })), "model");
+  const patterned = { patternProperties: { "^provider": { type: "string" } } };
+  refused(z.object({}).meta({ ...patterned }), "provider");
+  // A key type that admits any name declares no field, as a loose object does not.
+  checkKindSchemas(
+    kind({
+      specSchema: z.looseObject({ names: z.record(z.string().regex(/^[a-z]+$/), z.number()) }),
+      profileSchema: z.record(z.string(), z.number()),
+    }),
+    refuse,
+  );
+});
+
 test("the target profile accepts a kinds section", () => {
   const profile = validateProfile(
     { format: "assetgrove-target-profile/1", kinds: { "pixel:tile": { grid: 8 } } },
@@ -107,6 +133,37 @@ test("planStage refuses a pack kind that plans an operation it does not declare"
   );
   const declared = kind({ planCandidate: () => [call], operations: { "pixel:render": "still" } });
   assert.equal(planStage({ ...base, generators: [declared] }).calls, 4);
+});
+
+test("planStage runs a kind's specSchema and profileSchema before planning, naming the field", () => {
+  const routes = defaultRoutes;
+  const g = kind({ specSchema, profileSchema: z.object({ grid: z.number() }) });
+  assert.throws(
+    () =>
+      planStage({
+        spec: spec({ tileSize: "big" }),
+        profile: syntheticProfile(),
+        routes,
+        generators: [g],
+      }),
+    (e: unknown) => e instanceof InputError && /fields\.tileSize/.test(e.message),
+  );
+  assert.throws(
+    () =>
+      planStage({
+        spec: spec({ tileSize: 4 }),
+        profile: syntheticProfile({ kinds: { "pixel:tile": { grid: "x" } } }),
+        routes,
+        generators: [g],
+      }),
+    (e: unknown) => e instanceof InputError && e.message.includes("kinds.pixel:tile.grid"),
+  );
+  planStage({
+    spec: spec({ tileSize: 4 }),
+    profile: syntheticProfile({ kinds: { "pixel:tile": { grid: 8 } } }),
+    routes,
+    generators: [g],
+  });
 });
 
 test("at load, a pack kind whose schema declares a model field is refused; core's kinds pass the same check", () => {

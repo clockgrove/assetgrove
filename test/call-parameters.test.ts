@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { Budget } from "../src/budget.ts";
 import { Caller } from "../src/calls.ts";
+import { paletteReads } from "../src/call-parameters.ts";
 import type { CallParameters } from "../src/call-parameters.ts";
 import { InputError } from "../src/errors.ts";
 import type { GenerationProvider, ImageRequest } from "../src/gateway/provider.ts";
@@ -21,7 +22,7 @@ import { scriptedAdapter, tripoAdapter } from "../src/providers/adapter.ts";
 import { RouteUnavailableError } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
 import { Journal, callKey, withRunScope } from "../src/runs/journal.ts";
-import { jobsOf, mergeJobs, requestDigest } from "../src/runs/plan.ts";
+import { buildWorkPlan, jobsOf, mergeJobs, requestDigest } from "../src/runs/plan.ts";
 import type { PlanJob } from "../src/runs/plan.ts";
 
 const temporary: string[] = [];
@@ -265,4 +266,50 @@ test("planned calls put their parameters on the job and in the digest; none leav
     });
   assert.notEqual(digest(plain), digest(tiled));
   assert.equal(digest(plain), digest(jobsOf([call], routes)));
+});
+
+test("a palette's bytes enter the request digest through the plan's reads; one outside the project is refused", async () => {
+  const parent = await tempDir();
+  const dir = join(parent, "project");
+  mkdirSync(join(dir, ".git"), { recursive: true });
+  const calls = [
+    {
+      operation: "sprite",
+      model: "m",
+      estimatedCostUsd: 0.1,
+      parameters: { palette: { path: "pal.gpl", dir } },
+    },
+  ];
+  assert.deepEqual(paletteReads(calls), { "palette/pal.gpl": join(dir, "pal.gpl") });
+  assert.deepEqual(paletteReads([{ operation: "sprite" }]), {});
+  const routes = { sprite: ROUTES["sprite"]! };
+  const digestOf = async (bytes: string) => {
+    await writeFile(join(dir, "pal.gpl"), bytes);
+    const plan = await buildWorkPlan(
+      { name: "stage", input: { type: "object", properties: {} } } as never,
+      {},
+      {
+        inputs: [],
+        reads: paletteReads(calls),
+        jobs: jobsOf(calls, routes),
+        capUsd: 1,
+        paid: false,
+        providers: { routes: {}, get: () => undefined },
+        candidates: 1,
+      },
+    );
+    return plan.digest;
+  };
+  const one = await digestOf("one");
+  assert.equal(await digestOf("one"), one);
+  assert.notEqual(await digestOf("two"), one, "an edited palette is another request");
+  await writeFile(join(parent, "outside.gpl"), "x");
+  assert.throws(
+    () =>
+      paletteReads([
+        { operation: "sprite", parameters: { palette: { path: "../outside.gpl", dir } } },
+      ]),
+    (error: unknown) =>
+      error instanceof InputError && /palette.*outside the project/.test(error.message),
+  );
 });

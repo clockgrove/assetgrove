@@ -5,6 +5,8 @@
  * passed, both are byte-identical to a call that never knew of them. The serving adapter maps them
  * to its API, and one that does not declare a passed parameter is refused before any spend.
  */
+import { resolve } from "node:path";
+import { requireInsideProject } from "./bible.ts";
 import { InputError } from "./errors.ts";
 
 /** Every typed per-call parameter, in the order core names them. */
@@ -32,7 +34,10 @@ export interface KeyedCallParameters {
   palette?: { path: string; sha256: string };
 }
 
-/** The parameters as the request digest carries them: the palette by its path (planning reads no file). */
+/**
+ * The parameters as a plan's job carries them: the palette by its path. Its bytes enter the request
+ * digest through the plan's reads (`paletteReads`), as a bible reference's do.
+ */
 export interface PlannedCallParameters {
   size?: { width: number; height: number };
   tiling?: { x: boolean; y: boolean };
@@ -99,4 +104,28 @@ export function plannedCallParameters(
     ...(parameters.palette !== undefined && { palette: parameters.palette.path }),
   };
   return Object.keys(planned).length === 0 ? undefined : planned;
+}
+
+/**
+ * The palette files planned calls pass, as a plan's `reads` (name to path): hashed into the request
+ * digest beside the bible's references, so a palette edited after a plan is approved is another
+ * request. Each is checked with the reference-path rule first; one outside the project throws
+ * `InputError` (exit 2 `invalid_input`) before anything is spent.
+ */
+export function paletteReads(
+  calls: readonly { operation: string; parameters?: CallParameters }[],
+): Record<string, string> {
+  const reads: Record<string, string> = {};
+  for (const call of calls) {
+    const palette = call.parameters?.palette;
+    if (palette === undefined) continue;
+    checkCallParameters(call.parameters, call.operation);
+    requireInsideProject([palette.path], palette.dir, `the ${call.operation} call's palette`);
+    const full = resolve(palette.dir, palette.path);
+    let name = `palette/${palette.path}`;
+    for (let n = 2; reads[name] !== undefined && reads[name] !== full; n++)
+      name = `palette/${palette.path}#${n}`;
+    reads[name] = full;
+  }
+  return reads;
 }
