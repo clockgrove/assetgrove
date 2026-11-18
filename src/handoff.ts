@@ -535,7 +535,9 @@ function byAsset(prepared: readonly PreparedTargetWrite[]): PreparedTargetWrite[
  * asset and family gives it; the library holds one card per id), with a locked version; the
  * group's own families in place of theirs, sorted by name.
  */
-function handedOffFamilies(group: readonly PreparedTargetWrite[]): HandedOffFamily[] {
+async function handedOffFamilies(
+  group: readonly PreparedTargetWrite[],
+): Promise<HandedOffFamily[]> {
   const last = group.at(-1) as PreparedTargetWrite;
   const { spec } = last.write;
   const families = new Map<string, HandedOffFamily>();
@@ -543,11 +545,14 @@ function handedOffFamilies(group: readonly PreparedTargetWrite[]): HandedOffFami
     const name = card.animationFamily;
     if (name === undefined || card.id !== `${spec.assetId}-${name}`) continue;
     if (card.sha256 === undefined || card.resource === undefined) continue;
+    const file = join(card.dir, card.resource);
+    const content = await readFile(file).catch(() => undefined);
     families.set(name, {
       name,
       id: card.id,
-      media: relativeRecordPath(last.targetDir, join(card.dir, card.resource)),
+      media: relativeRecordPath(last.targetDir, file),
       sha256: card.sha256,
+      ...(content !== undefined && { content }),
     });
   }
   for (const p of group) {
@@ -557,6 +562,7 @@ function handedOffFamilies(group: readonly PreparedTargetWrite[]): HandedOffFami
       id: p.library.assetId,
       media: relativeRecordPath(p.targetDir, p.mediaPath),
       sha256: sha256(p.mediaBytes),
+      content: p.mediaBytes,
     });
   }
   return [...families.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -582,7 +588,7 @@ async function runFamilyPresets(prepared: readonly PreparedTargetWrite[]): Promi
       const ctx: FamiliesContext = {
         profile: last.write.profile,
         assetId: last.write.spec.assetId,
-        families: handedOffFamilies(group),
+        families: await handedOffFamilies(group),
         run: last.runnerOf(i),
       };
       const ran = last.toolSteps[i]?.length ?? 0;

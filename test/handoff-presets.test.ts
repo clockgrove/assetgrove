@@ -623,3 +623,82 @@ test("a character-3d pick and a write-families run go through the same pipeline"
     assert.equal(existsSync(join(targetDir, "validator-ran")), false);
   }
 });
+
+test("a families preset reads the media bytes of this run's family and of an earlier one", async () => {
+  const seen: Array<Array<{ name: string; sha256: string; content?: Uint8Array }>> = [];
+  const probe: HandoffPreset = {
+    name: "ext:probe",
+    optionsSchema: z.strictObject({}),
+    scope: "families",
+    write: async (ctx) => {
+      seen.push(ctx.families.map((f) => ({ name: f.name, sha256: f.sha256, content: f.content })));
+      return [];
+    },
+    check: async () => [],
+  };
+  const registry: PresetRegistry = { presets: new Map([...PRESETS, ["ext:probe", probe]]) };
+  const dir = await target();
+  const targetDir = join(dir, "target");
+  gitTarget(targetDir);
+  const profile = syntheticProfile({ validator: { command: MARKING_VALIDATOR } });
+  profile.handoff = [{ preset: "manifest" }, { preset: "ext:probe" }];
+  approveProfile(profile, { targetDir });
+  const call = new Caller({
+    provider: new ScriptedProvider({
+      image: () => ({ images: [], costUsd: 0 }),
+      vision: () => ({
+        text: JSON.stringify({
+          families: [
+            { name: "idle", frames: [1, 2, 3, 4], reason: "standing still" },
+            { name: "walk-right", frames: [5, 6, 7, 8, 9, 10], reason: "walking" },
+          ],
+          unassigned: [],
+        }),
+        costUsd: 0,
+      }),
+    }),
+    providerName: "scripted",
+    budget: new Budget(5),
+    routes: defaultRoutes,
+  });
+  const { importDir, grouping } = await importSheet({
+    digitalSourceType: DIGITAL_SOURCE_TYPES.generated,
+    sheet: syntheticSheet().png,
+    sheetPath: "sheets/synthetic.png",
+    tool: "synthetic",
+    assetId: "fern",
+    profile,
+    importsDir: join(dir, "imports"),
+    importId: "imp1",
+    propose: { call },
+  });
+  const [idle, walk] = grouping.families;
+  const first = await writeFamilies({
+    importDir,
+    grouping: { ...grouping, status: "confirmed", families: [idle!] },
+    targetDir,
+    registry,
+  });
+  const second = await writeFamilies({
+    importDir,
+    grouping: { ...grouping, status: "confirmed", families: [walk!] },
+    targetDir,
+    registry,
+  });
+  const bytesOf = async (written: typeof first, name: string) =>
+    new Uint8Array(await readFile(written.families.find((f) => f.name === name)!.result.mediaPath));
+  const idleBytes = await bytesOf(first, "idle");
+  const walkBytes = await bytesOf(second, "walk-right");
+  assert.deepEqual(
+    seen[0]?.map((f) => f.name),
+    ["idle"],
+  );
+  assert.ok(Buffer.from(seen[0]?.[0]?.content ?? []).equals(idleBytes));
+  assert.deepEqual(
+    seen[1]?.map((f) => f.name),
+    ["idle", "walk-right"],
+  );
+  assert.ok(Buffer.from(seen[1]?.[0]?.content ?? []).equals(idleBytes));
+  assert.equal(seen[1]?.[0]?.sha256, sha256(idleBytes));
+  assert.ok(Buffer.from(seen[1]?.[1]?.content ?? []).equals(walkBytes));
+});

@@ -8,6 +8,7 @@
  * reason naming a check neither the kind nor core declares fails it too: core would record that
  * reason advisory (`cause: "undeclared"`), never filtering.
  */
+import { createHash } from "node:crypto";
 import { AssertionError } from "node:assert";
 import { isAbsolute } from "node:path";
 import { Budget } from "../budget.ts";
@@ -36,7 +37,7 @@ import { defaultRoutes } from "../routes.ts";
 import type { Routes } from "../routes.ts";
 import type { ProviderSettings } from "../settings.ts";
 import type { AssetSpec, MediaOutput, Reason, StyleBible, TargetProfile } from "../types.ts";
-import { sampleBible, sampleProfile, sampleScript } from "./samples.ts";
+import { sampleBible, samplePng, sampleProfile, sampleScript } from "./samples.ts";
 import { refusingToolRunner } from "../extension/tools.ts";
 
 /** One kind's sample: what the suite plans, generates and checks it with. */
@@ -312,6 +313,7 @@ async function checkPreset(
     run: noTools,
     ...(sample?.context as Partial<PresetContext> | undefined),
   });
+  const familyPng = samplePng();
   const familiesCtx = (): FamiliesContext => ({
     profile: sampleProfile(),
     assetId: "conformance-1",
@@ -320,7 +322,8 @@ async function checkPreset(
         name: "idle",
         id: "conformance-1-idle",
         media: "assets/source/conformance-1-idle.png",
-        sha256: "0".repeat(64),
+        sha256: createHash("sha256").update(familyPng).digest("hex"),
+        content: familyPng,
       },
     ],
     run: noTools,
