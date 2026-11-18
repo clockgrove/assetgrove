@@ -7,6 +7,7 @@
  * An adapter reads its key from the entry's `keyEnv` or its default variable and passes `apiKey`
  * and `baseURL` to its SDK explicitly, so no `*_BASE_URL` variable ever applies.
  */
+import type { CallParameterName } from "../call-parameters.ts";
 import type { Env } from "../env.ts";
 import { keyValue, SettingsError } from "../env.ts";
 import { extensionOf, unavailableId } from "../extensions/errors.ts";
@@ -73,6 +74,11 @@ export interface ProviderAdapter {
    * route to another model exits 2 `route_unavailable` before any reservation.
    */
   embedsModel?: (model: string) => boolean;
+  /**
+   * The typed per-call parameters (src/call-parameters.ts) its providers map to their API. A call
+   * passing one it does not list is refused before any spend, naming it. None when absent.
+   */
+  parameters?: readonly CallParameterName[];
   create(c: AdapterContext): GenerationProvider;
 }
 

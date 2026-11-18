@@ -21,6 +21,18 @@ export interface ImageRequest {
   size?: string;
   seed?: number;
   providerOptions?: Record<string, Record<string, unknown>>;
+  /**
+   * The typed per-call parameters the kind passed (src/call-parameters.ts), sent only to a
+   * provider whose adapter declares each in `parameters`; the adapter maps them to its API.
+   */
+  output?: ImageOutputParameters;
+}
+
+/** The typed per-call parameters as a provider receives them; the palette with its bytes. */
+export interface ImageOutputParameters {
+  size?: { width: number; height: number };
+  tiling?: { x: boolean; y: boolean };
+  palette?: { path: string; sha256: string; bytes: Uint8Array };
 }
 
 export interface ProviderResult {
@@ -156,6 +168,11 @@ export type ProviderJobs = { [K in CallKind]?: JobProvider<CallTypes[K][0], Call
 export interface GenerationProvider {
   /** What its calls cost and where they go, from its adapter. */
   readonly billing: Billing;
+  /**
+   * The typed per-call parameters it maps (src/call-parameters.ts), read when it is called
+   * directly rather than through a provider set (which reads its adapter's). None when absent.
+   */
+  readonly parameters?: readonly ("size" | "tiling" | "palette")[];
   /** The kinds of call served as queued jobs; a kind not listed is one direct call. */
   readonly jobs?: ProviderJobs;
   /** The billing of one kind of call, for a provider made of several adapters. */
