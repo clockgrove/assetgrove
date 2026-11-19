@@ -15,6 +15,7 @@ import { generateSheetCommand } from "./generate-sheet.ts";
 import { identityCheckCommand } from "./identity-check.ts";
 import { identityEvalCommand } from "./identity-eval.ts";
 import { importCommand } from "./import.ts";
+import { intakeCommand } from "./intake.ts";
 import { initCommand } from "./init.ts";
 import {
   libraryAdoptCommand,
@@ -56,6 +57,7 @@ export const commands: readonly CommandSpec[] = [
   materialsCommand,
   stageCommand,
   pickCommand,
+  intakeCommand,
   reviewCommand,
   approveCommand,
   cardDescribeCommand,

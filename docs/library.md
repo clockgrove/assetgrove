@@ -366,3 +366,33 @@ summary, it keeps the original operation, model and timestamp and recomputes its
 summary digest for the normalized tags. It never restores machine attribution
 after a person changed the summary. A subsequent person edit of tags or
 description still drops the summary entry; rebuild preserves that decision.
+
+## Exact duplicate media
+
+`intake <file> --target <project> [--profile <profile>]` (MCP `intake`) checks incoming
+media without writing to the library or calling a model. Its result reports the SHA-256
+of the complete bytes and `matches` with `assetId`, `version`, `sha256` and `card`. It compares all recorded versions, including historical versions whose
+media is no longer local; a card without a review record uses its lock hash and
+version. Unreadable unrelated records are skipped, as on library writes. Run
+`library check` to find and repair those records. LFS inputs must have validated local
+bytes; pointer text is never compared as media. Names, decoded pixels and similarity
+rankings do not establish identity: differently encoded or differently credentialled
+files are distinct even when they look identical.
+
+Before admitting a staged candidate, `pick` performs the same exact-byte check. When
+there are matches, it returns `outcome: decision-required` with the matching asset and
+version for each candidate, and writes nothing. Select a candidate and an explicit
+outcome:
+
+- `--duplicate existing-version --existing-version <assetId>@<version>` returns that
+  matching reference without changing the library.
+- `--duplicate keep-separate` admits the candidate through the normal pick path,
+  retaining separate cards and review records. It cannot append an older identical
+  version to its own asset; select the existing version or exit instead.
+- `--duplicate exit` exits without changing the library.
+
+Existing-version and keep-separate require a person's confirmation even with headless
+settings. The confirmation includes the candidate, full match set, chosen outcome and
+selected reference; changing any of them requires confirmation again. Declining leaves
+library data unchanged. A changed match set or staged input after confirmation stops
+before admission. Repeating an already completed pick still completes normally.
