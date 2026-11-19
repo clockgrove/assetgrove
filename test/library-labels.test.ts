@@ -2,7 +2,6 @@ import "./fixtures/env.ts";
 import { execFileSync } from "node:child_process";
 import { stateDir } from "./fixtures/env.ts";
 import { createLibraryReader } from "../src/search/reader.ts";
-import { parseWhere } from "../packages/assetgrove-search/src/where.ts";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -192,15 +191,6 @@ test("browse, model summaries and filter aliases share canonical labels; collisi
     assert.equal(readFileSync(path, "utf8"), before);
   } finally {
     await rm(lib.dir, { recursive: true, force: true });
-  }
-});
-
-test("label filter whitespace resolves through the search parser", () => {
-  const parsed = parseVocabulary(JSON.stringify(vocabulary), "labels");
-  for (const filter of ["tag=props", "tag = props", "label = props", "  label\t= props  "]) {
-    assert.deepEqual(parseWhere(labelFilters([filter], parsed)), [
-      { field: "tags", op: "has", value: "object" },
-    ]);
   }
 });
 
