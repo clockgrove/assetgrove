@@ -145,6 +145,11 @@ undecided") until \`animation-qa --import\` decides the template and runs them.`
         `  wrote ${f.result.mediaPath}`,
         `  wrote ${f.result.manifestPath}`,
       );
+      for (const finding of f.result.ruleFindings ?? [])
+        if (finding.status === "failed" && finding.severity === "warning")
+          lines.push(
+            `warning: project rule ${finding.rule}: ${finding.asset} (${finding.evidence})`,
+          );
       if (f.fieldsNote !== undefined) lines.push(`  note: ${f.fieldsNote}`);
       if (f.result.provenancePath) lines.push(`  wrote ${f.result.provenancePath}`);
       lines.push(

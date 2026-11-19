@@ -1,3 +1,10 @@
+import {
+  evaluateProjectRules,
+  enforceProjectRules,
+  type ProjectRule,
+  type RuleFinding,
+  measuredRuleMedia,
+} from "../project-rules.ts";
 /**
  * The library write of a hand-off (design sections 1 to 1.3): after the media and its provenance,
  * the version goes into `<assetId>.review.json` (the commit point), then the card `<assetId>.md`,
@@ -736,23 +743,13 @@ export interface LibraryWriteResult {
   unreadable?: UnreadableRecord[];
 }
 
-/**
- * Appends the version to the review record (the commit point), then writes the card, each
- * `index.md` from the library root down, and the folder's `log.md` unless the profile turns logs
- * off. The caller holds the library write lock and has written the media and provenance.
- */
-export async function commitLibraryWrite(
-  plan: LibraryPlan,
-  input: LibraryVersionInput,
-  journal?: WriteJournal,
-): Promise<LibraryWriteResult> {
+async function prepareLibraryVersion(plan: LibraryPlan, input: LibraryVersionInput) {
   const { config, assetId, dir } = plan;
-  const files: string[] = [];
   const sha256 = sha256Hex(input.mediaBytes);
   const resource = basename(plan.mediaPath);
   const address = `asset://${config.game}/${assetId}/review`;
 
-  // 3. The review record: the commit point.
+  // Project the next version without writing, so preflight checks the exact card we commit.
   let record = (await readOwnReview(plan.reviewPath, config.root, dir, address))!;
   const copies: Array<[string, Uint8Array]> = [];
   if (input.candidateReview) {
@@ -796,16 +793,6 @@ export async function commitLibraryWrite(
       "ag:action": answers.length > 0 ? "answer" : (input.action ?? (first ? "pick" : "replace")),
     });
   }
-  for (const [path, bytes] of copies) {
-    if (!existsSync(path)) {
-      if (journal) await journal.write(path, bytes);
-      else await writeAtomic(path, bytes);
-      files.push(path);
-    }
-  }
-  if (await writeIfChanged(plan.reviewPath, writeReview(record), journal))
-    files.push(plan.reviewPath);
-
   // 4. The card: machine fields from the records; person fields set once, then kept.
   const fields = machineFields({
     resource,
@@ -849,6 +836,50 @@ export async function commitLibraryWrite(
           plan.cardPath,
         )
       : base;
+  return { record, copies, at, appended, card };
+}
+
+export async function checkLibraryRules(
+  plan: LibraryPlan,
+  input: LibraryVersionInput,
+  rules?: ProjectRule[],
+): Promise<RuleFinding[]> {
+  if (!rules?.length) return [];
+  const { card } = await prepareLibraryVersion(plan, input);
+  const findings = evaluateProjectRules({
+    rules,
+    asset: plan.assetId,
+    spec: input.spec as unknown as Record<string, unknown>,
+    card: card.data,
+    media: measuredRuleMedia(input.mediaBytes),
+  });
+  enforceProjectRules(findings);
+  return findings;
+}
+
+/**
+ * Appends the version to the review record (the commit point), then writes the card, each
+ * `index.md` from the library root down, and the folder's `log.md` unless the profile turns logs
+ * off. The caller holds the library write lock and has written the media and provenance.
+ */
+export async function commitLibraryWrite(
+  plan: LibraryPlan,
+  input: LibraryVersionInput,
+  journal?: WriteJournal,
+): Promise<LibraryWriteResult> {
+  const { config, assetId, dir } = plan;
+  const files: string[] = [];
+  const { record, copies, at, appended, card } = await prepareLibraryVersion(plan, input);
+  for (const [path, bytes] of copies) {
+    if (!existsSync(path)) {
+      if (journal) await journal.write(path, bytes);
+      else await writeAtomic(path, bytes);
+      files.push(path);
+    }
+  }
+  if (await writeIfChanged(plan.reviewPath, writeReview(record), journal))
+    files.push(plan.reviewPath);
+
   if (await writeIfChanged(plan.cardPath, writeCard(card), journal)) files.push(plan.cardPath);
   const title = (card.data as { title: string }).title;
 

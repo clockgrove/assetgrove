@@ -1,3 +1,5 @@
+import { measureMediaBytes } from "./library/media-metadata.ts";
+import { sha256Hex } from "./library/canonical.ts";
 import { z } from "zod";
 import { InputError } from "./errors.ts";
 
@@ -108,4 +110,17 @@ export function enforceProjectRules(findings: RuleFinding[]): void {
         .map((finding) => `project rule ${finding.rule}: ${finding.asset} (${finding.evidence})`)
         .join("; "),
     );
+}
+
+export function measuredRuleMedia(
+  bytes: Uint8Array,
+): Partial<Record<"bytes" | "width" | "height", number>> {
+  const evidence = measureMediaBytes(bytes, sha256Hex(bytes));
+  return {
+    bytes: bytes.byteLength,
+    ...(evidence.status === "available" &&
+      evidence.width !== undefined && { width: evidence.width }),
+    ...(evidence.status === "available" &&
+      evidence.height !== undefined && { height: evidence.height }),
+  };
 }
