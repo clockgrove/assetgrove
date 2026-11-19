@@ -7,8 +7,6 @@ permissions:
   contents: read
 
 env:
-  ASSETGROVE_R2_BUCKET: ${{ vars.ASSETGROVE_R2_BUCKET }}
-  ASSETGROVE_R2_ENDPOINT: ${{ vars.ASSETGROVE_R2_ENDPOINT }}
   ASSETGROVE_R2_PREFIX: assetgrove-gate/${{ github.run_id }}/${{ github.run_attempt }}
 
 jobs:
@@ -37,6 +35,8 @@ jobs:
 
       - name: Index and rebuild the labelled library
         env:
+          ASSETGROVE_R2_BUCKET: ${{ secrets.ASSETGROVE_R2_BUCKET }}
+          ASSETGROVE_R2_ENDPOINT: ${{ secrets.ASSETGROVE_R2_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.ASSETGROVE_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.ASSETGROVE_R2_SECRET_ACCESS_KEY }}
         run: node bench/search/remote.ts write
@@ -66,6 +66,8 @@ jobs:
 
       - name: Verify shared picks and references without a local media cache
         env:
+          ASSETGROVE_R2_BUCKET: ${{ secrets.ASSETGROVE_R2_BUCKET }}
+          ASSETGROVE_R2_ENDPOINT: ${{ secrets.ASSETGROVE_R2_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.ASSETGROVE_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.ASSETGROVE_R2_SECRET_ACCESS_KEY }}
         run: node bench/search/remote.ts read
@@ -78,12 +80,15 @@ jobs:
     steps:
       - name: Delete only this attempt's objects and verify the prefix is empty
         env:
+          ASSETGROVE_R2_BUCKET: ${{ secrets.ASSETGROVE_R2_BUCKET }}
+          ASSETGROVE_R2_ENDPOINT: ${{ secrets.ASSETGROVE_R2_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.ASSETGROVE_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.ASSETGROVE_R2_SECRET_ACCESS_KEY }}
           AWS_EC2_METADATA_DISABLED: 'true'
         shell: bash
         run: |
           if [[ -z "$AWS_ACCESS_KEY_ID" || -z "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo 'Configure the scoped R2 repository secrets before dispatch.' >&2
             exit 1
           fi
           [[ "$ASSETGROVE_R2_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]]
