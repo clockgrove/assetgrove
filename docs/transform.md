@@ -62,6 +62,45 @@ Recipes are JSON. Every step is checked against its operation's schema before an
 
 Recipes are deterministic. The same input, recipe and engine versions give the same output bytes. Nothing reads a clock or a random source, and the provenance record holds no time.
 
+## Named renditions from a mezzanine version
+
+Keep project recipes as existing `assetgrove-recipe/1` files in a directory, for example
+`.assetgrove/recipes/icon.json`. Select the recipe by its file stem and pin the mezzanine by its
+full SHA-256, rather than relying on whichever bytes happen to occupy the source path:
+
+```sh
+pnpm assetgrove rendition --recipes .assetgrove/recipes --recipe icon \
+  --source mezzanine/hero.png --source-sha256 <64-hex-sha256> --out build/icons \
+  --preview --json
+```
+
+Remove `--preview` to write the rendition. The MCP tool `rendition` accepts the same inputs as
+`recipes`, `recipe`, `source`, `sourceSha256`, `out` and `preview`. Both previews run the local
+image transform in memory and report exact output paths, byte hashes and the provenance path
+without creating output files or directories. No provider call or external tool runs.
+
+The output directory is `<out>/<digest>/`, with images named `rendition` plus any operation
+suffixes and the matching format extension, and a `provenance.json` record. An explicit `join`
+name is retained; unsafe names and colliding output paths are refused before writes. The digest identifies
+the exact mezzanine bytes, resolved recipe parameters, decoder and encoder versions, operation
+and metadata engine versions, resolved style and disclosure. An identical build reproduces the
+same output bytes and paths. A source, resolved parameter or tool-version change selects another
+directory, even when the resulting pixels happen to be identical. Recipe JSON formatting and
+object key order do not affect this identity.
+
+The record's `sources` and `outputs` retain the exact mezzanine and rendition byte hashes.
+`rendition` adds the digest, selected recipe name, recipe file path and byte hash, resolved recipe
+and build inputs. The optional `--source-provenance` record, or an automatically discovered
+`<source>.provenance.json`, is retained under `sourceProvenance` with its own file hash; it must
+identify the selected source bytes. Use the explicit option when the source record has another
+name, such as a transform directory's `provenance.json`.
+
+Embedded Digital Source Type survives the transform. An undeclared source needs an explicit
+`--digital-source-type` to plan or write a rendition with its final disclosure. `--profile` supplies the same style and
+frame defaults as `recipe`. This workflow accepts deterministic raster operations; material,
+model-assisted and external-tool operations remain available through their existing commands.
+It writes build files only and does not select, approve or add a library version.
+
 ## Provenance
 
 The record (`generator: "transform"`) lists:
