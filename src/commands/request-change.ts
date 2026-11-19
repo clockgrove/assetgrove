@@ -19,7 +19,7 @@ import { qaStyle } from "../animation/commands.ts";
 import { fixFrame } from "../animation/fix.ts";
 import { splitStrip } from "../animation/strip.ts";
 import { Budget, BudgetExceededError, runCap } from "../budget.ts";
-import { Caller } from "../calls.ts";
+import { Caller, RefusingCaller } from "../calls.ts";
 import {
   compareRasters,
   comparisonFields,
@@ -31,9 +31,13 @@ import type { Comparison, CompareRow } from "../compare.ts";
 import { writeContactRows } from "../contact.ts";
 import { paletteReads } from "../call-parameters.ts";
 import { InputError, ProviderError } from "../errors.ts";
+import { extensionOf as kindExtension, unavailableId } from "../extensions/errors.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
+import { runKindChecks } from "../generators/generator.ts";
+import type { Generator, KindCheck } from "../generators/generator.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
+import { BIBLE_PATH } from "../init.ts";
 import { loadStyleBible } from "../inputs.ts";
 import { imageSize } from "../model3d/scene.ts";
 import { loadAsset, locateAsset, withLibraryLock, writeAsset } from "../library/actions.ts";
@@ -48,6 +52,7 @@ import type { RunRecord, StagedCandidate } from "../loop.ts";
 import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
+import { applyStability, kindQaRegistry, mergeFiltering } from "../qa/stability.ts";
 import { parseRegions } from "../regions.ts";
 import type { Region } from "../regions.ts";
 import { sha256, sniffMediaType } from "../request.ts";
@@ -57,6 +62,7 @@ import {
   ROUND_PROPERTY,
   RUNS_PROPERTY,
   buildWorkPlan,
+  canonicalJson,
   jobOf,
   jobsOf,
   mergeJobs,
@@ -65,10 +71,11 @@ import {
 } from "../runs/plan.ts";
 import type { PlanJob } from "../runs/plan.ts";
 import { ledgerFor } from "../spend.ts";
+import { projectDir } from "../tree/project.ts";
 import { registrationPin, templatesFor, thresholdsFor } from "../animation/templates.ts";
 import { planTemplateDecisions, TemplateChooser } from "../animation/template-choice.ts";
-import type { LoadedReference, Provenance } from "../types.ts";
-import { dryRunOutcome, formatWork, refusal } from "./result.ts";
+import type { LoadedReference, Provenance, Reason } from "../types.ts";
+import { dryRunOutcome, formatRejections, formatWork, refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import type { RunContext } from "./types.ts";
 
@@ -208,6 +215,8 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   // before the spend is confirmed.
   const promptText: string[] = [];
   let bible: Awaited<ReturnType<typeof loadStyleBible>> | undefined;
+  let biblePath: string | undefined;
+  let changeQa: { generator: Generator; checks: KindCheck[] } | undefined;
   let palettes: Record<string, string> = {};
   const registry = ctx.extensions ?? CORE_REGISTRY;
   const generators = [...registry.kinds];
@@ -216,7 +225,8 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       throw new InputError(
         "a view region asks for another round of the 3D kind, which reads the style bible: give it with --bible",
       );
-    bible = await loadStyleBible(args.bible);
+    biblePath = args.bible;
+    bible = await loadStyleBible(biblePath);
     promptText.push(source.spec.subject ?? source.spec.assetId ?? asset.assetId);
     const plan = planStage({
       spec: source.spec,
@@ -270,6 +280,29 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     } else {
       jobs = [jobOf("edit", route, candidates)];
       job = providers.declares(route, "mask") ? "masked-edit" : "edit";
+      const generator = generators.find((g) => g.kind === source.spec.kind);
+      if (generator === undefined && kindExtension(source.spec.kind) !== undefined)
+        throw unavailableId(source.spec.kind, "asset kind", ctx.settings.path);
+      const checks = (generator?.checks ?? []).filter(
+        (check) => check.run !== undefined && check.mode !== "gated",
+      );
+      if (generator !== undefined && checks.length > 0) {
+        changeQa = { generator, checks };
+        biblePath = args.bible ?? join(projectDir(undefined, asset.dir), BIBLE_PATH);
+        bible = await loadStyleBible(biblePath);
+        const operations = new Set(
+          checks.filter((check) => check.mode === "model").map((check) => check.operation),
+        );
+        if (operations.size > 0) {
+          // Plan the declared model-check calls. Without a named operation, use the kind's
+          // complete per-candidate forecast as the upper bound.
+          const planned = generator
+            .planCandidate(source.spec, source.profile, routes)
+            .filter((call) => operations.has(undefined) || operations.has(call.operation));
+          palettes = paletteReads(planned);
+          jobs = mergeJobs([...jobs, ...jobsOf(planned, routes, candidates)]);
+        }
+      }
     }
   }
   const reads: Record<string, string> = {};
@@ -278,12 +311,29 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     r.refs.forEach((path, j) => (reads[`region${i + 1}/ref${j + 1}`] = path));
   });
   if (bible !== undefined) Object.assign(reads, styleBibleReads("bible", bible));
+  if (biblePath !== undefined && args.bible === undefined) reads["bible"] = biblePath;
   Object.assign(reads, palettes);
   const work = await buildWorkPlan(requestChangeCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["bible"],
     reads,
-    hashes: { version: version.sha256 },
+    hashes: {
+      version: version.sha256,
+      ...(changeQa && {
+        kindChecks: sha256Hex(
+          canonicalJson({
+            checks: changeQa.checks.map(({ name, mode, version, operation, source }) => ({
+              name,
+              mode,
+              version,
+              operation,
+              source,
+            })),
+            stability: changeQa.generator.stability,
+          }),
+        ),
+      }),
+    },
     promptText: [...regions.map((r) => r.note), ...promptText],
     jobs,
     capUsd,
@@ -302,6 +352,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     providers,
     capUsd,
     bible,
+    changeQa,
     generators,
     work,
   };
@@ -489,9 +540,11 @@ round of the 3D kind with the note (--bible names the style bible). The asset, t
 sha256 and each region, note, mask and reference are in the request's digest; the notes pass the
 prompt policy before the confirmation, and the spend form shows each region and note. Each region
 becomes an editing annotation on the version (its state turns changes-requested), its mask and
-references copied into <assetId>.review/<sha256>.<ext>. Writes c<n>.<ext> with provenance,
-contact.png and compare.png to the run directory and reports each candidate's outsideChange (above
-0.05 with the advisory reason changed_outside_region). The same request again resumes from the
+references copied into <assetId>.review/<sha256>.<ext>. Still edits run the kind's registered exact
+and model checks on the edited image. Exact checks and model checks with qualified stability can
+filter candidates. The run lists their rejections and writes only passing candidates as c<n>.<ext>
+with provenance, contact.png and compare.png. The report shows each staged candidate's outsideChange
+(above 0.05 with the advisory reason changed_outside_region). The same request again resumes from the
 run's journal or returns the finished run, paying for nothing twice. Pick a candidate with pick: the
 version is appended with answers naming the requests. The run that made the asset is read from
 --runs. --dry-run prints the planned calls and the forecast, and needs no key.`,
@@ -522,7 +575,8 @@ version is appended with answers naming the requests. The run that made the asse
       },
       bible: {
         type: "string",
-        description: "the style bible, for view regions on a 3D asset",
+        description:
+          "the style bible for 3D view regions or still-edit checks (still checks default to the project's BIBLE.md)",
         placeholder: "<BIBLE.md>",
       },
       cap: {
@@ -554,7 +608,8 @@ version is appended with answers naming the requests. The run that made the asse
   plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     const prepared = await prepare(args, ctx);
-    const { candidates, asset, version, regions, job, source, providers, capUsd, work } = prepared;
+    const { candidates, asset, version, regions, job, source, providers, capUsd, work, changeQa } =
+      prepared;
     const ledger = spendLedger(ctx, args.workItem);
     if (args.dryRun)
       return dryRunOutcome(work, formatWork("request-change", work), ledger, { job });
@@ -622,6 +677,10 @@ version is appended with answers naming the requests. The run that made the asse
       }
       errors.push(...run.errors);
     } else {
+      const qaRegistry = changeQa && kindQaRegistry(changeQa.generator, CORE_REGISTRY.kinds);
+      const editBibleVersion = changeQa ? prepared.bible!.value.version : source.bibleVersion;
+      let filtering: NonNullable<RunRecord["filtering"]> = [];
+      const rejections: NonNullable<RunRecord["rejections"]> = [];
       before = decodeImage(prepared.bytes);
       const mediaType = sniffMediaType(prepared.bytes) ?? "image/png";
       const current: LoadedReference = {
@@ -672,6 +731,7 @@ version is appended with answers naming the requests. The run that made the asse
         });
         try {
           let made: Made;
+          let checkReasons: Reason[] = [];
           if (job === "fix-frame") {
             const frame = profileFrame(source.profile);
             const anchor = defaultAnchor(frame);
@@ -741,6 +801,43 @@ version is appended with answers naming the requests. The run that made the asse
               ...(mask !== undefined && { mask }),
             });
             const decoded = decodeImage(image.bytes);
+            if (changeQa && qaRegistry) {
+              const reasons = await runKindChecks(
+                changeQa.checks,
+                {
+                  spec: source.spec,
+                  profile: source.profile,
+                  bible: prepared.bible!.value,
+                  output: {
+                    bytes: image.bytes,
+                    mediaType: image.mediaType,
+                    extension: extensionOf(image.mediaType),
+                    fields: sourceCandidate?.fields ?? {},
+                  },
+                },
+                caller,
+                () =>
+                  new RefusingCaller(
+                    `an exact check of ${source.spec.kind} makes no provider call`,
+                  ),
+              );
+              const qa = applyStability(reasons, providers.routes, {
+                checks: qaRegistry.checks,
+                entries: qaRegistry.entries,
+                undeclared: "advisory",
+              });
+              filtering = mergeFiltering(filtering, qa.filtering);
+              checkReasons = qa.reasons;
+              if (checkReasons.some((reason) => !reason.passed && !reason.shadow)) {
+                rejections.push({
+                  candidate: index + 1,
+                  reasons: checkReasons,
+                  costUsd: caller.records.reduce((sum, record) => sum + record.costUsd, 0),
+                });
+                ctx.log(`candidate ${index + 1}/${candidates}: filtered by QA`);
+                continue;
+              }
+            }
             const calls = caller.records;
             const provenance: Provenance = {
               ...(sourceCandidate?.provenance ?? ({} as Provenance)),
@@ -753,8 +850,12 @@ version is appended with answers naming the requests. The run that made the asse
               },
               seed,
               requestIds: calls.map((c) => c.requestId),
-              referenceHashes: [current.sha256, ...refs.map((r) => r.sha256)],
-              bibleVersion: source.bibleVersion,
+              referenceHashes: [
+                current.sha256,
+                ...refs.map((r) => r.sha256),
+                ...calls.slice(1).flatMap((c) => c.referenceHashes),
+              ],
+              bibleVersion: editBibleVersion,
               startedAt: calls[0]?.startedAt ?? "",
               finishedAt: calls[calls.length - 1]?.finishedAt ?? "",
               costUsd: calls.reduce((sum, c) => sum + c.costUsd, 0),
@@ -786,7 +887,7 @@ version is appended with answers naming the requests. The run that made the asse
             mediaType: made.mediaType,
             extension,
             sha256: sha256(bytes),
-            reasons: numbers?.reasons ?? [],
+            reasons: [...(numbers?.reasons ?? []), ...checkReasons],
             fields: sourceCandidate?.fields ?? {},
             provenance: made.provenance,
           });
@@ -813,14 +914,16 @@ version is appended with answers naming the requests. The run that made the asse
         spec: source.spec,
         specDir: source.specDir,
         profile: source.profile,
-        bibleVersion: source.bibleVersion,
+        bibleVersion: editBibleVersion,
         capUsd,
         estimateUsd: work.forecastUsd,
         spentUsd: budget.spentUsd,
         requested: candidates,
         candidates: staged,
-        filtered: errors.length,
+        filtered: errors.length + rejections.length,
         errors,
+        ...(rejections.length > 0 && { rejections }),
+        ...(filtering.length > 0 && { filtering }),
         ...(contact && { contactSheet: contact.file }),
       };
     }
@@ -846,8 +949,11 @@ version is appended with answers naming the requests. The run that made the asse
         file: c.file,
         sha256: c.sha256,
         ...outside.find((o) => o["id"] === c.id),
+        ...(changeQa && { reasons: c.reasons }),
       })),
       errors,
+      ...(changeQa && run.rejections && { rejections: run.rejections }),
+      ...(changeQa && run.filtering && { filtering: run.filtering }),
       files: recorded.files,
       ...(run.contactSheet && { contactSheet: run.contactSheet }),
       ...(compareSheet && { compareSheet: "compare.png" }),
@@ -860,10 +966,16 @@ version is appended with answers naming the requests. The run that made the asse
           `  ${c.file}${"outsideChange" in c ? `  outsideChange ${String(c.outsideChange)}` : ""}`,
       ),
       ...errors,
-      `pick one with: assetgrove pick --run ${dir} --candidate <id> --target <project>`,
+      ...(changeQa ? formatRejections(run, dir) : []),
+      ...(run.candidates.length > 0 || !changeQa || run.rejections === undefined
+        ? [`pick one with: assetgrove pick --run ${dir} --candidate <id> --target <project>`]
+        : []),
     ].join("\n");
-    if (run.candidates.length === 0)
+    if (run.candidates.length === 0) {
+      if (changeQa && run.rejections?.length)
+        return refusal("qa_found_nothing", "no candidate passed QA", fields, human);
       return refusal("provider_error", errors[0] ?? "no candidate was made", fields, human);
+    }
     return { exitCode: 0, fields, human };
   },
 });

@@ -186,6 +186,29 @@ export function formatPlan(plan: StagePlan): string {
   return lines.join("\n");
 }
 
+/** Filtered candidates and their reasons, shared by stage and request-change. */
+export function formatRejections(run: RunRecord, runDir: string): string[] {
+  const undeclared = new Set(
+    (run.filtering ?? []).filter((s) => s.cause === "undeclared").map((s) => s.check),
+  );
+  const lines: string[] = [];
+  for (const rejection of run.rejections ?? []) {
+    for (const r of rejection.reasons.filter((reason) => !reason.passed && !reason.shadow))
+      lines.push(`candidate ${rejection.candidate} filtered: ${r.check}: ${r.reason}`);
+    for (const r of rejection.reasons.filter((reason) => !reason.passed && reason.shadow))
+      lines.push(
+        `candidate ${rejection.candidate} also failed, not filtered${undeclared.has(r.check) ? " (undeclared check)" : ""}: ${r.check}: ${r.reason}`,
+      );
+    if (rejection.costUsd !== undefined)
+      lines.push(`candidate ${rejection.candidate} cost ${usd(rejection.costUsd)}`);
+    if (rejection.artifacts?.length)
+      lines.push(
+        `candidate ${rejection.candidate} renders: ${join(runDir, dirname(rejection.artifacts[0]!))}`,
+      );
+  }
+  return lines;
+}
+
 /** A staged run as text: its candidates with their reasons, rejections and identity agreement. */
 export function formatRun(run: RunRecord, runDir: string): string {
   const lines = [
@@ -216,20 +239,7 @@ export function formatRun(run: RunRecord, runDir: string): string {
     }
     if (c.artifacts?.length) lines.push(`    renders: ${join(runDir, dirname(c.artifacts[0]!))}`);
   }
-  for (const rejection of run.rejections ?? []) {
-    for (const r of rejection.reasons.filter((reason) => !reason.passed && !reason.shadow))
-      lines.push(`candidate ${rejection.candidate} filtered: ${r.check}: ${r.reason}`);
-    for (const r of rejection.reasons.filter((reason) => !reason.passed && reason.shadow))
-      lines.push(
-        `candidate ${rejection.candidate} also failed, not filtered${undeclared.has(r.check) ? " (undeclared check)" : ""}: ${r.check}: ${r.reason}`,
-      );
-    if (rejection.costUsd !== undefined)
-      lines.push(`candidate ${rejection.candidate} cost ${usd(rejection.costUsd)}`);
-    if (rejection.artifacts?.length)
-      lines.push(
-        `candidate ${rejection.candidate} renders: ${join(runDir, dirname(rejection.artifacts[0]!))}`,
-      );
-  }
+  lines.push(...formatRejections(run, runDir));
   if (run.identity) {
     const a = run.identity.agreement;
     lines.push(

@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pickCommand } from "../src/commands/pick.ts";
@@ -20,10 +20,16 @@ import { runCommand } from "../src/commands/runner.ts";
 import type { RunContext } from "../src/commands/types.ts";
 import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { writeToTarget } from "../src/handoff.ts";
-import { createRaster, decodePng, encodePng, setPixel } from "../src/image/raster.ts";
+import { EXTENSION_API } from "../src/extension/api.ts";
+import { CORE_ENTRY, ExtensionRegistry, checkExtension } from "../src/extensions/registry.ts";
+import type { Generator } from "../src/generators/generator.ts";
+import { createRaster, decodePng, encodePng, getPixel, setPixel } from "../src/image/raster.ts";
+import { BIBLE_PATH } from "../src/init.ts";
 import { parseReview, versionStatus } from "../src/library/review.ts";
+import { readRun } from "../src/loop.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
+import { providerSet } from "../src/providers/index.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { AssetSpec, Provenance, StyleBible, TargetProfile } from "../src/types.ts";
 import { libraryProfile } from "./fixtures/library.ts";
@@ -156,6 +162,196 @@ async function inProject<T>(dir: string, body: () => Promise<T>): Promise<T> {
   } finally {
     process.chdir(before);
   }
+}
+
+const CHECKED_KIND = "edit-probe:tile";
+
+function checkedContext(over: Partial<Generator>): RunContext {
+  const extension = checkExtension(
+    {
+      api: EXTENSION_API,
+      name: "edit-probe",
+      kinds: [
+        {
+          kind: CHECKED_KIND,
+          planCandidate: () => [],
+          async generate() {
+            throw new Error("request-change edits the picked version instead of generating anew");
+          },
+          ...over,
+        },
+      ],
+    },
+    "change check fixture",
+  );
+  return {
+    ...context(),
+    extensions: new ExtensionRegistry([
+      CORE_ENTRY,
+      { extension, info: { package: "edit-probe", version: "1.0.0", entry: "fixture" } },
+    ]),
+  };
+}
+
+for (const requiredRed of [250, 90]) {
+  test(`an edited tile ${requiredRed === 250 ? "passing" : "failing"} its exact check ${requiredRed === 250 ? "is staged" : "is listed without staging"}`, async () => {
+    const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+    const s = await script(p.dir);
+    const biblePath = join(p.dir, BIBLE_PATH);
+    await mkdir(dirname(biblePath), { recursive: true });
+    await writeStyleBible(biblePath, {
+      version: "synthetic-1",
+      palette: ["#fa0a0a"],
+      references: [],
+    });
+    const ctx = checkedContext({
+      checks: [
+        {
+          name: "edit-tile-marker",
+          mode: "exact",
+          run: (input) => {
+            assert.equal(input.spec.kind, CHECKED_KIND);
+            assert.equal(input.profile.name, libraryProfile().name);
+            assert.equal(input.bible.version, "synthetic-1");
+            const [red] = getPixel(decodePng(input.output.bytes), 0, 0);
+            return [
+              {
+                check: "edit-tile-marker",
+                passed: red === requiredRed,
+                reason: `expected red ${requiredRed}, edited pixel has red ${red}`,
+                source: "deterministic",
+              },
+            ];
+          },
+        },
+      ],
+    });
+    await inProject(p.dir, async () => {
+      const outcome = await runCommand(
+        requestChangeCommand,
+        {
+          address: p.card,
+          region: ["0,0,10,10 : make the corner red"],
+          runs: p.runs,
+          providerScript: s.path,
+          candidates: 1,
+        },
+        ctx,
+      );
+      const dir = outcome.fields["runDir"] as string;
+      const run = await readRun(dir);
+      assert.equal((await s.calls()).length, 1);
+      if (requiredRed === 250) {
+        assert.equal(outcome.exitCode, 0, outcome.error?.message);
+        assert.equal(run.candidates[0]?.reasons[0]?.passed, true);
+        assert.equal(run.filtered, 0);
+        assert.ok(existsSync(join(dir, "c1.png")));
+        return;
+      }
+      assert.equal(outcome.error?.code, "qa_found_nothing");
+      assert.equal(run.candidates.length, 0);
+      assert.equal(run.filtered, 1);
+      assert.equal(run.rejections?.[0]?.candidate, 1);
+      assert.equal(run.rejections[0]!.reasons[0]?.passed, false);
+      assert.deepEqual(outcome.fields["rejections"], run.rejections);
+      assert.match(outcome.human, /candidate 1 filtered: edit-tile-marker: .*red 250/);
+      for (const file of ["c1.png", "c1.provenance.json", "contact.png", "compare.png"])
+        assert.ok(!existsSync(join(dir, file)), `rejected c1 did not write ${file}`);
+      const pick = await runCommand(pickCommand, { run: dir, candidate: "c1", target: p.dir }, ctx);
+      assert.match(pick.error?.message ?? "", /is not a QA-passing candidate/);
+    });
+  });
+}
+
+for (const stable of [false, true]) {
+  test(`a failing ${stable ? "qualified" : "unqualified"} model check of an edited candidate ${stable ? "filters" : "remains advisory"}`, async () => {
+    const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+    const s = await script(p.dir);
+    const bible = await writeStyleBible(join(p.dir, "BIBLE.md"), {
+      version: "synthetic-1",
+      palette: ["#fa0a0a"],
+      references: [],
+    });
+    const { model } = (await providerSet(s.path, context())).routes.vision;
+    const ctx = checkedContext({
+      planCandidate: (_spec, _profile, routes) =>
+        ["still", "vision"].map((operation) => ({ operation, ...routes[operation]! })),
+      checks: [
+        {
+          name: "edit-tile-look",
+          mode: "model",
+          operation: "vision",
+          source: "vision",
+          async run({ output }, call) {
+            const text = await call.vision("vision", "Inspect the edited tile.", [
+              { role: "edit", path: "edit", ...output, sha256: sha(output.bytes) },
+            ]);
+            assert.equal(text, "ok");
+            return [
+              {
+                check: "edit-tile-look",
+                passed: false,
+                reason: "the model did not like the edited tile",
+                source: "vision",
+              },
+            ];
+          },
+        },
+      ],
+      ...(stable && {
+        stability: [
+          {
+            checkId: "edit-tile-look",
+            version: "1",
+            model,
+            cases: 40,
+            passCases: 20,
+            failCases: 20,
+            falsePasses: 1,
+            falseFails: 2,
+            repeats: 3,
+            agreement: 0.95,
+            measuredAt: "2026-11-14T00:00:00.000Z",
+            measuredBy: "synthetic fixture",
+            labelledSetSha256: "a".repeat(64),
+          },
+        ],
+      }),
+    });
+    await inProject(p.dir, async () => {
+      const args = {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+        bible,
+      };
+      const preview = await runCommand(requestChangeCommand, { ...args, dryRun: true }, ctx);
+      assert.equal(preview.exitCode, 0, preview.error?.message);
+      const jobs = preview.fields["jobs"] as Array<{ operation: string; count: number }>;
+      assert.equal(jobs.find((job) => job.operation === "vision")?.count, 1);
+      assert.ok(!jobs.some((job) => job.operation === "still"));
+      assert.equal((await s.calls()).length, 0);
+      const outcome = await runCommand(requestChangeCommand, args, ctx);
+      const run = await readRun(outcome.fields["runDir"] as string);
+      assert.equal(run.filtering?.[0]?.state, stable ? "filtering" : "advisory");
+      if (stable) {
+        assert.equal(outcome.error?.code, "qa_found_nothing");
+        assert.equal(run.candidates.length, 0);
+        assert.equal(run.rejections?.[0]?.reasons[0]?.shadow, undefined);
+      } else {
+        assert.equal(outcome.exitCode, 0, outcome.error?.message);
+        const [candidate] = run.candidates;
+        assert.equal(candidate?.reasons[0]?.shadow, true);
+        assert.deepEqual(
+          candidate?.provenance.calls.map((call) => call.operation),
+          ["edit", "vision"],
+        );
+        assert.equal(run.rejections, undefined);
+      }
+    });
+  });
 }
 
 test("a box region on a still with a mask-capable route makes masked edits; the run is recorded, compared and resumed", async () => {
