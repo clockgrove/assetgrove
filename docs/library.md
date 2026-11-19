@@ -483,3 +483,6 @@ lineage and every edge participating in a cycle with its review file, exact
 `ag:versions[i].lineage[j]` reference, and offending source. They exit 6 when
 lineage is invalid. A rebuild preserves the source records and reconstructs the
 same graph; it does not silently repair references or infer new links.
+## Origin evidence
+
+The machine-owned `origin` field records the classification (`human-made`, `third-party`, `ai-generated` or `unknown`), supplied `declaredKind`, `evidence`, `source` and `license` where present, and the IPTC `digitalSourceType` where known. The `import --origin <origin.json>` intake described in [sheet-import.md](sheet-import.md#declared-origins) supplies the evidence. A declaration is a recorded claim, not verification or approval. An unclassified file remains unknown; a hand edit of generated media remains AI-derived. Rebuild derives this field from the current provenance, keeping the original supplied evidence and licence rather than inferring them from a model or tool name.

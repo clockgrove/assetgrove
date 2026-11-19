@@ -1,3 +1,4 @@
+import { modelDeclarationRecord } from "./model-declarations.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -239,6 +240,7 @@ export class Caller {
       );
     const usedSeed = result.seed ?? seed;
     const record: CallRecord = {
+      modelDeclarations: modelDeclarationRecord(route.modelDeclarations),
       operation,
       model: route.model,
       route: name,

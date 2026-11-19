@@ -1,3 +1,5 @@
+import { readLibrary, rebuildLibrary } from "../src/library/maintain.ts";
+import { parseCard } from "../src/library/card.ts";
 /**
  * `library adopt` (issues #251 and #235): a hand edit becomes the next version, handed off as a pick
  * is, with credentials naming its original.
@@ -189,7 +191,7 @@ test("adopting refuses a wrong original and an unedited file with exit 2", async
 });
 
 test("an asset with a provenance file of its own gets it rewritten with the adopt step", async () => {
-  const { media, options } = await handedOff(OWN_PROVENANCE);
+  const { targetDir, profile, card, media, options } = await handedOff(OWN_PROVENANCE);
   await edit(media);
   await adoptHandEdit(await options());
   const own = JSON.parse(await readFile(`${media}.provenance.json`, "utf8"));
@@ -199,6 +201,10 @@ test("an asset with a provenance file of its own gets it rewritten with the adop
     ["human-edit", "embed-digital-source-type"],
   );
   assert.ok(own.contentCredentials);
+  const expected = { kind: "ai-generated", digitalSourceType: DIGITAL_SOURCE_TYPES.composite };
+  assert.deepEqual(parseCard(await readFile(card, "utf8"), card).data["origin"], expected);
+  await rebuildLibrary(await readLibrary(profile, targetDir));
+  assert.deepEqual(parseCard(await readFile(card, "utf8"), card).data["origin"], expected);
 });
 
 test("a provenance file of another name keeps its card source and gets the adopt step", async () => {

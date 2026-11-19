@@ -94,7 +94,7 @@ export async function createLibraryReader(options: {
     const s = stat(abs);
     if (!s) return undefined;
     known.set(path, abs);
-    return { path, size: s.size, mtimeMs: s.mtimeMs, source, id, address };
+    return { path, size: s.size, mtimeMs: s.mtimeMs, source, id, address, origin: "unknown" };
   };
   const rel = (abs: string) => slash(relative(project.dir, abs));
 
@@ -120,6 +120,21 @@ export async function createLibraryReader(options: {
       const data = asset.card.data as Record<string, unknown>;
       const str = (k: string) =>
         typeof data[k] === "string" && data[k] !== "" ? (data[k] as string) : undefined;
+      const declared = data["origin"];
+      const record =
+        declared && typeof declared === "object" ? (declared as Record<string, unknown>) : {};
+      const origin =
+        typeof record["kind"] === "string" &&
+        ["unknown", "ai-generated", "human-made", "third-party"].includes(record["kind"])
+          ? record["kind"]
+          : "unknown";
+      const evidence = (key: string) =>
+        typeof record[key] === "string" ? (record[key] as string) : undefined;
+      const declaredOrigin = evidence("declaredKind");
+      const originEvidence = evidence("evidence");
+      const originSource = evidence("source");
+      const originLicense = evidence("license");
+      const digitalSourceType = evidence("digitalSourceType");
       const title = str("title");
       const description = str("description");
       const text = [
@@ -129,6 +144,12 @@ export async function createLibraryReader(options: {
         asset.kind,
         asset.subject,
         asset.card.body.trim(),
+        origin,
+        declaredOrigin,
+        originEvidence,
+        originSource,
+        originLicense,
+        digitalSourceType,
       ]
         .filter((t): t is string => typeof t === "string" && t !== "")
         .join("\n");
@@ -153,6 +174,12 @@ export async function createLibraryReader(options: {
             }
           : { mediaStatus: "unavailable" as const, mediaReason: "version-unavailable" }),
         game,
+        origin,
+        declaredOrigin,
+        originEvidence,
+        originSource,
+        originLicense,
+        digitalSourceType,
         ...(asset.kind && { kind: asset.kind }),
         ...(asset.subject && { subject: asset.subject }),
         tags: asset.tags,

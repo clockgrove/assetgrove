@@ -1,3 +1,4 @@
+import { originOf } from "../origin.ts";
 /**
  * Cards: `<assetId>.md` beside the media, YAML front matter plus a Markdown body. Assetgrove owns
  * the machine fields and rewrites them from the provenance and review records; the person fields,
@@ -37,6 +38,7 @@ export const MACHINE_FIELDS = [
   "version",
   "bible",
   "license",
+  "origin",
   "lock",
   "media",
 ] as const;
@@ -195,7 +197,16 @@ export function writeCard(card: Card): string {
 export interface MachineInput {
   /** The media file name. */
   resource: string;
-  provenance: Pick<Provenance, "route" | "bibleVersion" | "license" | "finishedAt">;
+  provenance: Pick<
+    Provenance,
+    | "route"
+    | "bibleVersion"
+    | "license"
+    | "finishedAt"
+    | "origin"
+    | "digitalSourceType"
+    | "sourceDeclaration"
+  >;
   /** The provenance record's path from the card; left out of `sources` when absent. */
   provenanceResource?: string;
   review: ReviewRecord;
@@ -283,6 +294,7 @@ export function machineFields(input: MachineInput): Record<string, unknown> {
     version: versionNumber(review, current.sha256),
     bible: provenance.bibleVersion,
     license: provenance.license,
+    origin: originOf(provenance),
     lock: { sha256: current.sha256, bible: provenance.bibleVersion },
     ...(input.media !== undefined && { media: input.media }),
   };

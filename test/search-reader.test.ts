@@ -12,6 +12,7 @@ import { test } from "node:test";
 import { encodePng, decodePng } from "../src/image/raster.ts";
 import { createLibraryReader } from "../src/search/reader.ts";
 import { appendVersion, parseReview, writeReview } from "../src/library/review.ts";
+import { parseCard, rewriteMachineFields, writeCard } from "../src/library/card.ts";
 import { writeFindSheet } from "../src/search/sheet.ts";
 import { GAME, RUN_ID, fixtureLibrary } from "./fixtures/library.ts";
 import { drawSubject } from "./fixtures/synthetic.ts";
@@ -167,4 +168,35 @@ test("changedSince answers whether a shared index's files changed, not whether H
   git(lib.dir, "commit", "-q", "-am", "bible");
   assert.equal(await reader.changedSince(afterCard), true, "a bible commit");
   assert.equal(await reader.changedSince("0".repeat(40)), true, "an unknown commit");
+});
+
+test("search reader exposes exact declared origin evidence and leaves unclassified files unknown", async () => {
+  const lib = fixtureLibrary();
+  const cardPath = join(lib.root, "lantern.md");
+  const origin = {
+    kind: "third-party",
+    evidence: "Published synthetic source declaration",
+    source: "https://example.invalid/art/lantern",
+    license: "Synthetic grant: attribution required",
+    digitalSourceType: "undeclared",
+  };
+  const card = parseCard(readFileSync(cardPath, "utf8"), cardPath);
+  writeFileSync(
+    cardPath,
+    writeCard(rewriteMachineFields(card, { ...card.data, origin }, cardPath)),
+  );
+  const reader = await createLibraryReader({
+    dir: lib.dir,
+    stateDir,
+    settings: { folders: [], candidates: false },
+  });
+  const picks = await reader.list();
+  const item = picks.find((item) => item.id === "lantern")!;
+  assert.equal(item.origin, origin.kind);
+  assert.equal(item.originEvidence, origin.evidence);
+  assert.equal(item.originSource, origin.source);
+  assert.equal(item.originLicense, origin.license);
+  assert.equal(item.digitalSourceType, "undeclared");
+  assert.equal(picks.find((item) => item.id === "fern")!.origin, "unknown");
+  assert.ok(item.text?.includes(origin.evidence));
 });

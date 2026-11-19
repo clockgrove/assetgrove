@@ -1,3 +1,4 @@
+import { parseOrigin } from "../origin.ts";
 /**
  * The sheet import path: a raw contact sheet (from Assetgrove's own sheet generation, another tool
  * or hand work) becomes cleaned frames and a grouping proposal; an author-confirmed grouping then
@@ -130,6 +131,7 @@ export interface ImportedFrame {
 }
 
 export interface ImportRecord {
+  origin?: import("../origin.ts").OriginRecord;
   digitalSourceType?: DigitalSourceType;
   sourceDeclaration?: import("../metadata.ts").SourceDeclaration;
   importId: string;
@@ -231,6 +233,7 @@ export interface ImportIdentity {
 }
 
 export interface ImportOptions {
+  origin?: import("../origin.ts").OriginRecord;
   digitalSourceType?: DigitalSourceType;
   sheet: Uint8Array;
   /** Recorded as the sheet's path in provenance. */
@@ -406,6 +409,7 @@ export async function importSheet(
       },
     );
   }
+  const origin = options.origin === undefined ? undefined : parseOrigin(options.origin);
   const embedded = readDigitalSourceType(options.sheet, sniffMediaType(options.sheet));
   const declaration =
     options.digitalSourceType === undefined
@@ -413,7 +417,11 @@ export async function importSheet(
       : sourceDeclaration(options.digitalSourceType);
   const digitalSourceType = options.generation?.calls.some((c) => c.operation !== "vision")
     ? DIGITAL_SOURCE_TYPES.generated
-    : (embedded ?? declaration?.value ?? DIGITAL_SOURCE_TYPES.undeclared);
+    : (embedded ??
+      declaration?.value ??
+      (origin?.kind === "human-made"
+        ? DIGITAL_SOURCE_TYPES.human
+        : DIGITAL_SOURCE_TYPES.undeclared));
   const sheetItem: ImageItem = {
     name: "sheet",
     raster,
@@ -515,6 +523,7 @@ export async function importSheet(
   await writeFile(join(importDir, CONTACT_FILE), contact);
 
   const record: ImportRecord = {
+    ...(origin && { origin }),
     digitalSourceType,
     ...(declaration && { sourceDeclaration: declaration }),
     importId,
@@ -1024,6 +1033,7 @@ export async function writeFamilies(
       record.generation?.prompt ??
       `Imported from a contact sheet made with ${record.sheet.tool}; that tool's own prompt is not recorded.`;
     const provenance: Provenance = {
+      ...(record.origin && { origin: parseOrigin(record.origin) }),
       digitalSourceType,
       ...(record.sourceDeclaration && { sourceDeclaration: record.sourceDeclaration }),
       generator: "sheet-import",

@@ -1,3 +1,4 @@
+import { modelDeclarationsSchema } from "./model-declarations.ts";
 /**
  * Developer settings: the one per-user file outside every project, and the only input that steers
  * money, code or keys. `loadSettings` finds it, refuses it structurally (exit 2 `settings_invalid`)
@@ -102,6 +103,7 @@ const routeSchema = z.strictObject({
   provider: name,
   model: name,
   outputGrant: outputGrantSchema.optional(),
+  modelDeclarations: modelDeclarationsSchema.optional(),
   providerTerms: z.string().optional(),
   providerTermsAsOf: z
     .string()
