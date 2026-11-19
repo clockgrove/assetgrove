@@ -1,7 +1,7 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -275,4 +275,77 @@ test("content credentials count development and settings signers, and the note n
   const md = disclosureMarkdown(d);
   assert.match(md, /## Content credentials\nSigned assets: 2/);
   assert.ok(md.includes(`(sha256 ${own.record.certificateSha256}): 1`));
+});
+
+test("versioned release fixture scopes store evidence and retains legacy summaries", async () => {
+  const fixture = JSON.parse(
+    await readFile(new URL("./fixtures/disclosure-v1.json", import.meta.url), "utf8"),
+  ) as { version: number; missing: string };
+  assert.equal(fixture.version, 1);
+  const target = await library();
+  const { scanCards } = await import("../src/library/write.ts");
+  const { relative } = await import("node:path");
+  const cards = scanCards(target);
+  const selected = cards
+    .filter((c) => c.id.includes("shelter"))
+    .map((c) => relative(target, join(c.dir, c.resource!)).split("\\").join("/"));
+  assert.equal(selected.length, 1);
+  const summary = await disclose(target, { selected });
+  assert.equal(summary.assets, 1);
+  assert.deepEqual(summary.godot.affectedAssets, selected);
+  assert.deepEqual(summary.playdate.affectedAssets, selected);
+  assert.equal(summary.playdate.status, "resolved");
+  assert.equal(summary.godot.status, "unresolved");
+  assert.deepEqual(summary.godot.unresolvedAssets, selected);
+  assert.match(summary.godot.how, /openai\/gpt-image-2/);
+  const missing = await disclose(target, { selected: [fixture.missing] });
+  assert.equal(missing.godot.status, "unresolved");
+  assert.deepEqual(missing.godot.unresolvedAssets, [fixture.missing]);
+  const all = await disclose(target);
+  assert.equal(all.assets, 3);
+  assert.deepEqual(all.itch.tags, ["ai-generated-assets"]);
+  assert.match(all.steam, /2 of 3/);
+  const empty = await disclose(target, { selected: [] });
+  assert.equal(empty.assets, 0);
+});
+
+test("release evidence names unclassified, unknown-source and changed media", async () => {
+  const target = await library();
+  const { scanCards } = await import("../src/library/write.ts");
+  const { relative } = await import("node:path");
+  const cards = scanCards(target);
+  const card = cards[0]!;
+  const media = join(card.dir, card.resource!);
+  const name = relative(target, media).split("\\").join("/");
+  const mediaBytes = await readFile(media);
+  await writeFile(media, new Uint8Array([1, 2, 3]));
+  const changed = await disclose(target, { selected: [name] });
+  assert.deepEqual(changed.playdate.unresolvedAssets, [name]);
+  await writeFile(media, mediaBytes);
+  const cardPath = join(card.dir, `${card.id}.md`);
+  const original = await readFile(cardPath, "utf8");
+  await writeFile(cardPath, original.replace("kind: ai-generated", "kind: unknown"));
+  const unclassified = await disclose(target, { selected: [name] });
+  assert.deepEqual(unclassified.playdate.unresolvedAssets, [name]);
+  const unknown = await library([["unknown", {}]]);
+  const { readdir } = await import("node:fs/promises");
+  async function unclassify(dir: string): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) await unclassify(path);
+      else if (entry.name.endsWith(".provenance.json")) {
+        const record = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+        record["digitalSourceType"] = "unrecognised";
+        await writeFile(path, JSON.stringify(record));
+      }
+    }
+  }
+  await unclassify(unknown);
+  const unknownCard = scanCards(unknown)[0]!;
+  const unknownName = relative(unknown, join(unknownCard.dir, unknownCard.resource!))
+    .split("\\")
+    .join("/");
+  const result = await disclose(unknown, { selected: [unknownName] });
+  assert.deepEqual(result.playdate.unresolvedAssets, [unknownName]);
+  assert.equal(result.playdate.status, "unresolved");
 });

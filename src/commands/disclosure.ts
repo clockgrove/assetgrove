@@ -7,6 +7,7 @@ import { defineCommand } from "./types.ts";
 interface DisclosureArgs {
   root?: string;
   out?: string;
+  selected?: string[];
 }
 
 export const disclosureCommand = defineCommand<DisclosureArgs>({
@@ -23,6 +24,11 @@ Spends nothing; nothing is written without --out.`,
     type: "object",
     properties: {
       root: { type: "string", description: "the library root to read", default: "." },
+      selected: {
+        type: "array",
+        items: { type: "string" },
+        description: "exact root-relative media paths selected for release",
+      },
       out: {
         type: "string",
         description: "write the summary here as Markdown",
@@ -35,7 +41,10 @@ Spends nothing; nothing is written without --out.`,
   effect: { readOnly: false, spends: "never", writes: "out" },
   async run(args, ctx) {
     const root = resolve(args.root ?? ".");
-    const summary = await disclose(root, { settings: ctx.settings });
+    const summary = await disclose(root, {
+      settings: ctx.settings,
+      ...(args.selected !== undefined && { selected: args.selected }),
+    });
     if (args.out !== undefined) {
       if (args.out === "") throw new InputError("--out needs a file");
       if (isAbsolute(args.out) || args.out.split(/[\\/]/).includes(".."))
@@ -60,6 +69,9 @@ Spends nothing; nothing is written without --out.`,
           ]
         : []),
       "",
+      `Godot: ${summary.godot.status}: ${summary.godot.what} ${summary.godot.how}`,
+      `Playdate: ${summary.playdate.status}: ${summary.playdate.what}`,
+      `Unresolved: ${summary.godot.unresolvedAssets.join(", ") || "none"}`,
       `Steam: ${summary.steam}`,
       `itch.io: ${summary.itch.text}`,
     ].join("\n");
