@@ -566,9 +566,11 @@ Confirms a pending spend, pick, write, policy, command or settings request at a 
 ### `disclosure`
 
 ```text
-disclosure [<root>] [--out <file>] [--json]
+disclosure [<root>] [--selected <media-path>]... [--out <file>] [--json]
 ```
 
 Reads the cards under `<root>` (the current directory by default) and the provenance each names, and reports assets by kind and source type, models, providers, and provider terms with their dates, then text for Steam's AI content survey and itch.io's AI tags. No prompt text is read or shown. `--out` also writes the summary there as Markdown, to a path inside the current directory. The marks and the summary help users and stores; they make no claim of compliance with any law. Spends nothing; read-only.
 
-MCP tool: `disclosure`, arguments `root`, `out`.
+Repeat `--selected` for each release media file, using exact paths relative to the library root with forward slashes. Omit it to report on the whole library. The Godot and Playdate sections name media with AI evidence and media with unresolved evidence.
+
+MCP tool: `disclosure`, arguments `root`, `out`, `selected` (array of media paths).

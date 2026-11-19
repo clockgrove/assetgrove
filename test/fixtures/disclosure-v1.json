@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "missing": "missing/release.png",
+  "records": [
+    [
+      "shelter",
+      {
+        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+        "generator": "sprite-strip",
+        "route": "gateway",
+        "models": ["openai/gpt-image-2"],
+        "prompt": "synthetic fixture prompt",
+        "parameters": {},
+        "requestIds": [],
+        "referenceHashes": [],
+        "bibleVersion": "synthetic-1",
+        "license": "MIT",
+        "providerTerms": ["OpenAI Services Agreement (as of 2026-11-07)"],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "finishedAt": "2026-01-01T00:00:01.000Z",
+        "costUsd": 0,
+        "calls": [
+          {
+            "operation": "generate",
+            "model": "openai/gpt-image-2",
+            "route": "still",
+            "prompt": "synthetic fixture prompt",
+            "parameters": {},
+            "referenceHashes": [],
+            "requestId": "synthetic-request",
+            "requestIdSource": "provider",
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "finishedAt": "2026-01-01T00:00:01.000Z",
+            "costUsd": 0,
+            "costSource": "estimate",
+            "outputGrant": {
+              "license": "MIT",
+              "plan": "api",
+              "commercial": true,
+              "relabel": true
+            }
+          }
+        ]
+      }
+    ],
+    [
+      "walk",
+      {
+        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+        "generator": "sprite-strip",
+        "route": "gateway",
+        "models": ["openai/gpt-image-2", "bfl/flux-kontext-pro"],
+        "prompt": "synthetic fixture prompt",
+        "parameters": {},
+        "requestIds": [],
+        "referenceHashes": [],
+        "bibleVersion": "synthetic-1",
+        "license": "MIT",
+        "providerTerms": ["OpenAI Services Agreement (as of 2026-11-07)"],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "finishedAt": "2026-01-01T00:00:01.000Z",
+        "costUsd": 0,
+        "calls": [
+          {
+            "operation": "generate",
+            "model": "openai/gpt-image-2",
+            "route": "still",
+            "prompt": "synthetic fixture prompt",
+            "parameters": {},
+            "referenceHashes": [],
+            "requestId": "synthetic-request",
+            "requestIdSource": "provider",
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "finishedAt": "2026-01-01T00:00:01.000Z",
+            "costUsd": 0,
+            "costSource": "estimate",
+            "outputGrant": {
+              "license": "MIT",
+              "plan": "api",
+              "commercial": true,
+              "relabel": true
+            }
+          }
+        ]
+      }
+    ],
+    [
+      "idle",
+      {
+        "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
+        "generator": "sprite-strip",
+        "route": "gateway",
+        "models": [],
+        "prompt": "synthetic fixture prompt",
+        "parameters": {},
+        "requestIds": [],
+        "referenceHashes": [],
+        "bibleVersion": "synthetic-1",
+        "license": "MIT",
+        "providerTerms": ["OpenAI Services Agreement (as of 2026-11-07)"],
+        "startedAt": "2026-01-01T00:00:00.000Z",
+        "finishedAt": "2026-01-01T00:00:01.000Z",
+        "costUsd": 0,
+        "calls": []
+      }
+    ]
+  ],
+  "selected": ["assets/source/fern/shelter.png"],
+  "expected": {
+    "godot": {
+      "checkedOn": "2026-11-19",
+      "affectedAssets": ["assets/source/fern/shelter.png"],
+      "policy": "https://docs.godotengine.org/en/stable/community/asset_store/faq.html",
+      "status": "unresolved",
+      "unresolvedAssets": ["assets/source/fern/shelter.png"],
+      "what": "assets/source/fern/shelter.png",
+      "how": "Generated or edited with AI with openai/gpt-image-2. Developer must describe the creation process."
+    },
+    "playdate": {
+      "checkedOn": "2026-11-19",
+      "affectedAssets": ["assets/source/fern/shelter.png"],
+      "policy": "https://help.play.date/catalog-developer/ai-disclosure/",
+      "status": "resolved",
+      "unresolvedAssets": [],
+      "what": "Selected AI media triggers the April 2026 new-title Catalog exclusion.",
+      "how": "New-title policy only; code assistance and grandfathered titles require developer review. This is media evidence, not title eligibility."
+    }
+  }
+}

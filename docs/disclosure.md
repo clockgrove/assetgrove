@@ -46,3 +46,11 @@ The `disclosure` tool takes the same arguments. It reads the cards under `root` 
 - text for Steam's AI content survey and tags and text for itch.io's AI disclosure.
 
 No prompt text is read or shown. `--out` writes the same summary as Markdown, to a path inside the current directory. The Steam and itch.io text is a draft for the developer to check against the form as the store shows it today.
+
+## Release selection and store policy snapshot (2026-11-19)
+
+The optional `selected` array (tool/API; CLI `--selected` array) names exact root-relative media paths, using `/`. Only those carded files contribute; an empty array selects none. Omit it for the existing whole-library summary. Missing selections, missing media and unclassified source types produce `unresolved` with affected paths. Never interpret unresolved as absence of AI. No media is sent to a provider.
+
+Godot's [submission fields](https://docs.godotengine.org/en/stable/community/asset_store/submitting_to_asset_store.html) require AI usage disclosure; its [FAQ](https://docs.godotengine.org/en/stable/community/asset_store/faq.html) requires what was generated and how AI was used. `godot.what` names media and `godot.how` lists recorded models; the developer must complete the process description, which provenance cannot establish fully.
+
+The chosen [Playdate Catalog policy](https://help.play.date/catalog-developer/ai-disclosure/) is the April 2026 policy for new titles: generated art, audio, music, text and dialogue are excluded. `playdate.affectedAssets` names selected generated/composite media; `unresolvedAssets` names evidence needing investigation. Previously approved titles and AI coding assistance have different disclosure treatment. These outputs are evidence about selected media, never a guarantee of title eligibility or an assessment of code or runtime generation.

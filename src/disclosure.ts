@@ -4,15 +4,16 @@
  * survey or itch.io's AI tags. Only the fields it reports are read: no prompt, parameter or
  * request ID reaches the summary. It is help for the developer, not a compliance claim.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { readFileSync, existsSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { upstreamOf } from "./dataflows.ts";
 import { canCarryCredentials, readCredentials } from "./credentials.ts";
 import { markableMediaType } from "./handoff/mark-check.ts";
-import { readDigitalSourceType, readMarkedModels } from "./metadata.ts";
+import { readDigitalSourceType, readMarkedModels, parseDigitalSourceType } from "./metadata.ts";
 import { parseCard } from "./library/card.ts";
 import { libraryPath } from "./library/paths.ts";
-import { scanCards } from "./library/write.ts";
+import { scanLibrary } from "./library/write.ts";
 import { adapterOf } from "./providers/adapter.ts";
 import type { Settings } from "./settings.ts";
 
@@ -41,6 +42,15 @@ export interface DisclosureCredentials {
   /** Present only when something was signed with the development certificate. */
   note?: string;
 }
+export interface StoreEvidence {
+  policy: string;
+  checkedOn: string;
+  status: "resolved" | "unresolved";
+  affectedAssets: string[];
+  unresolvedAssets: string[];
+  what: string;
+  how: string;
+}
 export interface Disclosure {
   /** Cards read. */
   assets: number;
@@ -55,6 +65,8 @@ export interface Disclosure {
   contentCredentials: DisclosureCredentials;
   /** Cards whose provenance could not be read; they count as `unknown`. */
   withoutProvenance: string[];
+  godot: StoreEvidence;
+  playdate: StoreEvidence;
   steam: string;
   itch: { tags: string[]; text: string };
 }
@@ -97,7 +109,7 @@ function legacyTermsAsOf(text: string): string | undefined {
 /** Summarises the library under `root` from its cards and provenance. */
 export async function disclose(
   root: string,
-  options: { settings?: Pick<Settings, "providers"> } = {},
+  options: { settings?: Pick<Settings, "providers">; selected?: string[] } = {},
 ): Promise<Disclosure> {
   const byKind: Record<string, Record<string, number>> = {};
   const sources = new Map<string, number>();
@@ -109,7 +121,22 @@ export async function disclose(
   const withoutProvenance: string[] = [];
   const signers = new Map<string, DisclosureSigner>();
   let approvedAi = 0;
-  const cards = scanCards(root).sort((a, b) => compare(join(a.dir, a.id), join(b.dir, b.id)));
+  const { cards: allCards, unreadable } = scanLibrary(root);
+  const mediaName = (card: (typeof allCards)[number]): string =>
+    relative(resolve(root), resolve(card.dir, card.resource ?? `${card.id}.md`))
+      .split("\\")
+      .join("/");
+  const selected = options.selected === undefined ? undefined : new Set(options.selected);
+  const unresolvedAssets: string[] =
+    selected === undefined
+      ? unreadable
+          .filter((record) => record.code === "card_invalid")
+          .map((record) => relative(resolve(root), record.file).split("\\").join("/"))
+      : [...selected].filter((name) => !allCards.some((card) => mediaName(card) === name));
+  const affectedAssets: string[] = [];
+  const cards = allCards
+    .filter((card) => selected === undefined || selected.has(mediaName(card)))
+    .sort((a, b) => compare(join(a.dir, a.id), join(b.dir, b.id)));
   const bump = (map: Map<string, number>, key: string): void => {
     map.set(key, (map.get(key) ?? 0) + 1);
   };
@@ -118,10 +145,12 @@ export async function disclose(
     let kind = "unknown";
     let provenance: Record<string, unknown> | undefined;
     let state: unknown;
+    let declaredOrigin: unknown;
     try {
       const data = parseCard(readFileSync(path, "utf8"), path).data as Record<string, unknown>;
       if (typeof data["kind"] === "string") kind = data["kind"];
       state = data["state"];
+      declaredOrigin = data["origin"];
       const entry = (Array.isArray(data["sources"]) ? data["sources"] : []).find(
         (s: unknown) => (s as { id?: unknown } | null)?.id === "provenance",
       ) as { resource?: unknown } | undefined;
@@ -169,6 +198,33 @@ export async function disclose(
       typeof declared === "string" && declared !== "undeclared"
         ? (declared.split("/").pop() ?? "unknown")
         : "unknown";
+    const name = mediaName(found);
+    if (AI_TYPES.has(source)) affectedAssets.push(name);
+    let mediaMatches = false;
+    if (found.resource && found.sha256) {
+      try {
+        mediaMatches =
+          createHash("sha256")
+            .update(readFileSync(join(found.dir, found.resource)))
+            .digest("hex") === found.sha256;
+      } catch {
+        /* Unavailable bytes remain unresolved. */
+      }
+    }
+    const originKind =
+      declaredOrigin && typeof declaredOrigin === "object"
+        ? (declaredOrigin as Record<string, unknown>)["kind"]
+        : undefined;
+    if (
+      source === "unknown" ||
+      typeof declared !== "string" ||
+      parseDigitalSourceType(declared) === undefined ||
+      originKind === "unknown" ||
+      !found.resource ||
+      !existsSync(join(found.dir, found.resource)) ||
+      !mediaMatches
+    )
+      unresolvedAssets.push(name);
     const row = (byKind[kind] ??= {});
     row[source] = (row[source] ?? 0) + 1;
     bump(sources, source);
@@ -271,6 +327,28 @@ export async function disclose(
     terms: termList,
     contentCredentials,
     withoutProvenance,
+    godot: {
+      policy: "https://docs.godotengine.org/en/stable/community/asset_store/faq.html",
+      checkedOn: "2026-11-19",
+      status: unresolvedAssets.length || affectedAssets.length ? "unresolved" : "resolved",
+      affectedAssets,
+      unresolvedAssets: [...new Set([...unresolvedAssets, ...affectedAssets])].sort(compare),
+      what: affectedAssets.length ? affectedAssets.join(", ") : "No generated media recorded.",
+      how: affectedAssets.length
+        ? `Generated or edited with AI${made}. Developer must describe the creation process.`
+        : "No AI creation process recorded.",
+    },
+    playdate: {
+      policy: "https://help.play.date/catalog-developer/ai-disclosure/",
+      checkedOn: "2026-11-19",
+      status: unresolvedAssets.length ? "unresolved" : "resolved",
+      affectedAssets,
+      unresolvedAssets: [...new Set(unresolvedAssets)].sort(compare),
+      what: affectedAssets.length
+        ? "Selected AI media triggers the April 2026 new-title Catalog exclusion."
+        : "No selected AI media trigger recorded.",
+      how: "New-title policy only; code assistance and grandfathered titles require developer review. This is media evidence, not title eligibility.",
+    },
     steam,
     itch: { tags: itchTags, text: itchText },
   };
@@ -312,6 +390,19 @@ export function disclosureMarkdown(d: Disclosure): string {
           `- ${x.subject} (${x.development ? "development, " : ""}sha256 ${x.certificateSha256}): ${x.assets}`,
       ),
       ...(d.contentCredentials.note ? [d.contentCredentials.note] : []),
+      "",
+      "## Godot Asset Store AI usage disclosure",
+      `Status: ${d.godot.status}`,
+      `What: ${d.godot.what}`,
+      `How: ${d.godot.how}`,
+      `Unresolved assets: ${d.godot.unresolvedAssets.join(", ") || "none"}`,
+      "",
+      "## Playdate Catalog (April 2026 new-title policy)",
+      `Status: ${d.playdate.status}`,
+      d.playdate.what,
+      d.playdate.how,
+      `Affected assets: ${d.playdate.affectedAssets.join(", ") || "none"}`,
+      `Unresolved assets: ${d.playdate.unresolvedAssets.join(", ") || "none"}`,
       "",
       "## Steam AI content survey",
       d.steam,
