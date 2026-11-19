@@ -59,6 +59,7 @@ export class Caller {
   private readonly log: (message: string) => void;
   private readonly index: number | undefined;
   private readonly polling: Required<JobPolling>;
+  private readonly plannedCalls: Map<string, number> | undefined;
 
   constructor(options: {
     /** A `ProviderSet` serves each call on its route's provider; any other provider serves all. */
@@ -72,6 +73,8 @@ export class Caller {
     log?: (message: string) => void;
     /** The candidate or frame index these calls are for, part of each call's journal key. */
     index?: number;
+    /** When given, the confirmed per-operation call counts for this candidate. */
+    plannedCalls?: ReadonlyMap<string, number>;
     /** How a queued job is polled; tests shorten it. */
     jobPolling?: JobPolling;
   }) {
@@ -82,6 +85,7 @@ export class Caller {
     this.now = options.now ?? (() => new Date());
     this.log = options.log ?? (() => {});
     this.index = options.index;
+    this.plannedCalls = options.plannedCalls && new Map(options.plannedCalls);
     this.polling = {
       firstMs: 3000,
       maxMs: 30_000,
@@ -120,6 +124,15 @@ export class Caller {
     keyedParameters?: KeyedCallParameters,
   ): Promise<CallTypes[K][1]> {
     type Result = CallTypes[K][1];
+    if (this.plannedCalls !== undefined) {
+      const remaining = this.plannedCalls.get(operation) ?? 0;
+      if (remaining === 0)
+        throw new CallRefusedError(
+          operation,
+          "the candidate's confirmed plan has no call left for this operation",
+        );
+      this.plannedCalls.set(operation, remaining - 1);
+    }
     const route = this.route(operation);
     if ((kind === "image" || kind === "model") && this.provider instanceof ProviderSet)
       this.provider.checkPrompt(prompt, operation);
@@ -888,7 +901,7 @@ function decisionLog(
   );
 }
 
-/** A provider call asked of a `RefusingCaller`: exit 2 `invalid_input`, nothing reserved or sent. */
+/** A provider call refused before any reservation or request: exit 2 `invalid_input`. */
 export class CallRefusedError extends InputError {
   readonly operation: string;
   constructor(operation: string, why: string) {

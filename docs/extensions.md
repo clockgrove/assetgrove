@@ -84,7 +84,7 @@ None of these blocks may appear in a shared file: a target profile, a style bibl
 
 A kind declares every check its reasons name in `checks: [{ name, mode, version?, source?, operation?, run? }]`. Core runs each `run(input, call)` (`input` is `{ spec, profile, bible, output }`, it returns reasons) on each candidate after `generate` and adds the reasons to its QA.
 
-`request-change` also runs the kind's exact and model check functions on a still edit before staging it. Its forecast includes the calls `planCandidate` lists for the model checks' operations. If a model check has no named operation, the forecast uses the kind's full per-candidate plan as an upper bound. The model verdicts use the same stability rules as `stage`.
+`request-change` also runs the kind's exact and model check functions on a still edit before staging it. If it runs model checks, the forecast includes the edit and the kind's full per-candidate plan as an upper bound, using each route's cost ceiling. This covers auxiliary operations the check uses before it gets its model verdict. A call outside the confirmed counts for that candidate is refused before spend. The model verdicts use the same stability rules as `stage`.
 
 - `mode: "exact"` is deterministic and free, and filters. Core runs it under a `Caller` that refuses every call (exit 2 `invalid_input` if it tries), and conformance runs it twice.
 - `mode: "model"` means a model's answer decides it; it may call a model through the candidate's `Caller`, so list its calls in `planCandidate`. It filters only with a qualifying stability entry for its name, `version` (default `"1"`) and the model its `operation`'s route resolves to on the run. Without an `operation` it never filters.

@@ -198,12 +198,6 @@ for (const requiredRed of [250, 90]) {
     const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
     const s = await script(p.dir);
     const biblePath = join(p.dir, BIBLE_PATH);
-    await mkdir(dirname(biblePath), { recursive: true });
-    await writeStyleBible(biblePath, {
-      version: "synthetic-1",
-      palette: ["#fa0a0a"],
-      references: [],
-    });
     const ctx = checkedContext({
       checks: [
         {
@@ -227,17 +221,28 @@ for (const requiredRed of [250, 90]) {
       ],
     });
     await inProject(p.dir, async () => {
-      const outcome = await runCommand(
-        requestChangeCommand,
-        {
-          address: p.card,
-          region: ["0,0,10,10 : make the corner red"],
-          runs: p.runs,
-          providerScript: s.path,
-          candidates: 1,
-        },
-        ctx,
-      );
+      const args = {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+      };
+      const missing = await runCommand(requestChangeCommand, { ...args, dryRun: true }, ctx);
+      assert.match(missing.error?.message ?? "", /style bible given with --bible/);
+      assert.equal((await s.calls()).length, 0);
+      await mkdir(dirname(biblePath), { recursive: true });
+      await writeStyleBible(biblePath, {
+        version: "synthetic-1",
+        palette: ["#fa0a0a"],
+        references: [],
+      });
+      const preview = await runCommand(requestChangeCommand, { ...args, dryRun: true }, ctx);
+      assert.equal(preview.exitCode, 0, preview.error?.message);
+      const inputs = preview.fields["inputs"] as Record<string, string>;
+      assert.equal(inputs["bible"], sha(await readFile(biblePath)));
+      assert.match(inputs["kindChecks"]!, /^[a-f0-9]{64}$/);
+      const outcome = await runCommand(requestChangeCommand, args, ctx);
       const dir = outcome.fields["runDir"] as string;
       const run = await readRun(dir);
       assert.equal((await s.calls()).length, 1);
@@ -272,10 +277,15 @@ for (const stable of [false, true]) {
       palette: ["#fa0a0a"],
       references: [],
     });
-    const { model } = (await providerSet(s.path, context())).routes.vision;
+    const { model, estimatedCostUsd } = (await providerSet(s.path, context())).routes.vision;
     const ctx = checkedContext({
+      operations: { "edit-probe:inspect": "vision" },
       planCandidate: (_spec, _profile, routes) =>
-        ["still", "vision"].map((operation) => ({ operation, ...routes[operation]! })),
+        ["still", "vision", "edit-probe:inspect"].map((operation) => ({
+          operation,
+          model: routes[operation]!.model,
+          estimatedCostUsd: 0,
+        })),
       checks: [
         {
           name: "edit-tile-look",
@@ -283,6 +293,10 @@ for (const stable of [false, true]) {
           operation: "vision",
           source: "vision",
           async run({ output }, call) {
+            assert.equal(
+              await call.vision("edit-probe:inspect", "Inspect the tile shape.", []),
+              "ok",
+            );
             const text = await call.vision("vision", "Inspect the edited tile.", [
               { role: "edit", path: "edit", ...output, sha256: sha(output.bytes) },
             ]);
@@ -329,9 +343,16 @@ for (const stable of [false, true]) {
       };
       const preview = await runCommand(requestChangeCommand, { ...args, dryRun: true }, ctx);
       assert.equal(preview.exitCode, 0, preview.error?.message);
-      const jobs = preview.fields["jobs"] as Array<{ operation: string; count: number }>;
-      assert.equal(jobs.find((job) => job.operation === "vision")?.count, 1);
-      assert.ok(!jobs.some((job) => job.operation === "still"));
+      const jobs = preview.fields["jobs"] as Array<{
+        operation: string;
+        count: number;
+        estimatedCostUsd: number;
+      }>;
+      const visionJob = jobs.find((job) => job.operation === "vision");
+      assert.equal(visionJob?.count, 1);
+      assert.equal(visionJob?.estimatedCostUsd, estimatedCostUsd);
+      assert.equal(jobs.find((job) => job.operation === "edit-probe:inspect")?.count, 1);
+      assert.equal(jobs.find((job) => job.operation === "still")?.count, 1);
       assert.equal((await s.calls()).length, 0);
       const outcome = await runCommand(requestChangeCommand, args, ctx);
       const run = await readRun(outcome.fields["runDir"] as string);
@@ -346,13 +367,108 @@ for (const stable of [false, true]) {
         assert.equal(candidate?.reasons[0]?.shadow, true);
         assert.deepEqual(
           candidate?.provenance.calls.map((call) => call.operation),
-          ["edit", "vision"],
+          ["edit", "edit-probe:inspect", "vision"],
         );
         assert.equal(run.rejections, undefined);
       }
     });
   });
 }
+
+test("a model check cannot spend beyond its planned call count", async () => {
+  const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+  const s = await script(p.dir);
+  const bible = await writeStyleBible(join(p.dir, "BIBLE.md"), {
+    version: "synthetic-1",
+    palette: ["#fa0a0a"],
+    references: [],
+  });
+  const ctx = checkedContext({
+    planCandidate: (_spec, _profile, routes) => [{ ...routes.vision, operation: "vision" }],
+    checks: [
+      {
+        name: "edit-tile-look",
+        mode: "model",
+        operation: "vision",
+        async run(_input, call) {
+          await call.vision("vision", "First inspection", []);
+          await call.vision("vision", "Second inspection", []);
+          return [];
+        },
+      },
+    ],
+  });
+  await inProject(p.dir, async () => {
+    const outcome = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+        bible,
+      },
+      ctx,
+    );
+    assert.match(outcome.error?.message ?? "", /vision call was refused.*confirmed plan/);
+    const dir = outcome.fields["runDir"] as string;
+    const callsDir = join(dir, "calls");
+    const records = await Promise.all(
+      readdirSync(callsDir)
+        .filter((file) => file.endsWith(".json"))
+        .map(
+          async (file) =>
+            JSON.parse(await readFile(join(callsDir, file), "utf8")) as { operation: string },
+        ),
+    );
+    assert.equal(records.filter(({ operation }) => operation === "vision").length, 1);
+    assert.ok(!existsSync(join(dir, "c1.png")));
+  });
+});
+
+test("changing source fields after a change check is confirmed refuses before annotation or edit", async () => {
+  const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+  const s = await script(p.dir);
+  const bible = await writeStyleBible(join(p.dir, "custom-bible.md"), {
+    version: "synthetic-1",
+    palette: ["#fa0a0a"],
+    references: [],
+  });
+  const review = await readFile(p.review, "utf8");
+  const sourceDir = join(p.runs, "r1");
+  useAttended();
+  const ctx = checkedContext({
+    checks: [{ name: "edit-tile-size", mode: "exact", run: () => [] }],
+  });
+  const prompt: ConfirmPort = {
+    method: "tty",
+    async confirm(request) {
+      assert.equal(request.kind, "spend");
+      const source = await readRun(sourceDir);
+      source.candidates[0]!.fields["tileSize"] = 24;
+      await writeFile(join(sourceDir, "run.json"), JSON.stringify(source));
+      return true;
+    },
+  };
+  await inProject(p.dir, async () => {
+    const outcome = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+        bible,
+      },
+      { ...ctx, prompt },
+    );
+    assert.equal(outcome.error?.code, "plan_changed", outcome.error?.message);
+    assert.equal((await s.calls()).length, 0);
+    assert.equal(await readFile(p.review, "utf8"), review);
+  });
+});
 
 test("a box region on a still with a mask-capable route makes masked edits; the run is recorded, compared and resumed", async () => {
   const p = await project();
