@@ -1,4 +1,9 @@
 import "./fixtures/env.ts";
+import { useAttended } from "./fixtures/env.ts";
+import { cardAcceptCommand } from "../src/commands/card.ts";
+import { runCommand } from "../src/commands/runner.ts";
+import { loadSettings } from "../src/settings.ts";
+import { metadataProposal } from "../src/library/suggestions.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -117,4 +122,47 @@ test("card edits enforce measured media budgets with the same prewrite gate", ()
   assert.equal(failed.code, 2);
   assert.match(JSON.stringify(failed.output), /project rule media-bytes: rock \(media\)/);
   assert.deepEqual(snapshot(lib.root), before);
+});
+
+test("card accept rejects project errors without mutation and returns warning findings", async () => {
+  useAttended();
+  for (const severity of ["error", "warning"] as const) {
+    const lib = library(severity);
+    const subject = (await selectDescribed({ address: join(lib.root, "rock.md"), propose: true }))
+      .pending[0]!;
+    const proposal = join(lib.dir, "proposal.json");
+    writeFileSync(
+      proposal,
+      JSON.stringify(
+        metadataProposal(subject, { description: "Wrong text", tags: [] }, "fixture-model", false),
+      ),
+    );
+    const before = snapshot(lib.root);
+    const result = await runCommand(
+      cardAcceptCommand,
+      { proposal, field: ["description"] },
+      {
+        settings: loadSettings(),
+        log: () => {},
+        prompt: { method: "tty", confirm: async () => true },
+      },
+    );
+    if (severity === "error") {
+      assert.equal(result.exitCode, 2);
+      assert.match(result.error!.message, /project rule project-label: rock \(card\)/);
+      assert.deepEqual(snapshot(lib.root), before);
+    } else {
+      assert.equal(result.exitCode, 0, result.error?.message);
+      assert.deepEqual(result.fields.ruleFindings, [
+        {
+          rule: "project-label",
+          asset: "rock",
+          severity: "warning",
+          evidence: "card",
+          status: "failed",
+        },
+      ]);
+      assert.match(readFileSync(join(lib.root, "rock.md"), "utf8"), /Wrong text/);
+    }
+  }
 });

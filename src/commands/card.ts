@@ -530,6 +530,7 @@ export const cardAcceptCommand = defineCommand<CardAcceptArgs>({
       if (again.id !== request.id)
         throw new PlanChangedError("the proposal changed after confirmation; review it again");
       const card = acceptedCard(current, fresh, fields);
+      const ruleFindings = await checkCardProjectRules(current, card);
       const written = await writeAsset({ ...current, card }, current.record, { card });
       const sharedText: SharedText[] = [];
       for (const field of fields)
@@ -540,12 +541,16 @@ export const cardAcceptCommand = defineCommand<CardAcceptArgs>({
         fields: {
           asset: current.assetId,
           accepted: fields,
+          ruleFindings,
           proposal: digestOf(fresh),
           confirmation,
           files: written.files,
           sharedText,
         },
-        human: `accepted ${fields.join(", ")} for ${current.assetId}`,
+        human: [
+          `accepted ${fields.join(", ")} for ${current.assetId}`,
+          ...ruleFindingLines(ruleFindings),
+        ].join("\n"),
       };
     });
   },
