@@ -82,11 +82,22 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
       const run = text(body["run"]);
       const target = text(body["target"]);
       const candidate = text(body["candidate"]);
+      const duplicate = text(body["duplicate"]);
+      if (
+        duplicate !== undefined &&
+        duplicate !== "existing-version" &&
+        duplicate !== "keep-separate" &&
+        duplicate !== "exit"
+      )
+        return undefined;
+      const existingVersion = text(body["existingVersion"]);
       if (run === undefined || target === undefined) return undefined;
       rebuilt = await pickRequest({
         run,
         target,
         ...(candidate !== undefined && { candidate }),
+        ...(duplicate !== undefined && { duplicate }),
+        ...(existingVersion !== undefined && { existingVersion }),
       });
     } else {
       const importDir = text(body["import"]);
