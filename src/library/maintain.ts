@@ -39,6 +39,7 @@ import { measureMedia } from "./media-metadata.ts";
 import { bibleVersionOfText, judgementOf, madeUnderOtherVersion } from "./stale.ts";
 import type { Judgement, StaleSubject, StalenessCache } from "./stale.ts";
 import { libraryPath } from "./paths.ts";
+import { relationshipGraph } from "./relations.ts";
 import {
   checkReviewPaths,
   currentVersion,
@@ -62,6 +63,8 @@ import type { LibraryConfig } from "./write.ts";
 export interface LibraryProblem {
   file: string;
   code: string;
+  reference?: string;
+  message?: string;
 }
 
 interface Asset {
@@ -341,6 +344,7 @@ export async function readLibrary(
   const needsRebuild: string[] = [];
   const writes: LibraryState["writes"] = [];
   const assets = await gather(config, problems);
+  problems.push(...relationshipGraph(config.root, assets).problems);
   // A card or record that cannot be read leaves its folders' projections underivable: that problem
   // is reported once, not again as a mismatch of the index and log it would have fed.
   const broken = new Set(problems.map((p) => dirname(join(config.root, p.file))));
