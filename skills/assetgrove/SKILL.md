@@ -17,11 +17,11 @@ Run it as `npx @clockgrove/assetgrove@<version> <command>`, or as `assetgrove` (
 
 ## The rule
 
-**Agents may plan, apply authorized generation plans, stage candidates, generate and import sheets, check animation and identity, fix frames and run local operations, dry-running paid commands first to check cost. Agents never run `pick`, never confirm a grouping, never run `write-families` and never approve. A human picks, and Assetgrove never marks anything approved.** Report the run or import directory and the candidate IDs to the human instead.
+**Agents may plan, apply authorized generation plans, stage candidates, generate and import sheets, check animation and identity, fix frames and run local operations, dry-running paid commands first to check cost. Agents never run `pick` or `card accept`, never confirm a grouping, never run `write-families` and never approve. A human picks, and Assetgrove never marks anything approved.** Report the run or import directory and the candidate IDs to the human instead.
 
 Only a person:
 
-- runs `pick` and `write-families`;
+- runs `pick`, `card accept` and `write-families`;
 - sets a grouping's `status` to `confirmed`;
 - confirms spend, a pick or a write, or runs `assetgrove confirm` (a person confirms; headless settings are the operator's, never an agent's);
 - fixes an identity record that `identity-check` reports as disagreeing;
@@ -40,6 +40,8 @@ Only a person:
 3. Hand the run directory and candidate IDs to the human.
 
 Once a person has picked, they review with `review`, approve with `approve` (never under headless settings), adopt hand edits with `library adopt` and edit cards with `card edit`; agents run none of the confirmed ones.
+
+To suggest metadata without changing a card, use `card describe <address> --propose` after checking its `--dry-run` forecast. Give the resulting proposal path and suggested fields to the person. They apply a description, vocabulary labels or both with `card accept <proposal> --field description` and/or `--field labels`, through human confirmation. Unselected fields keep their values; conflicting edits, stale media and labels outside the current vocabulary are refused.
 
 To set up a target repository, run `init`, then walk the person through the steps it returns: the key recipe for their harness, `settings_change` for the caps and the provider limit (the person confirms it), and `spend check`. Draft the bible with them from its `bibleQuestions`, and show them `providers`, where each route sends data. Then `bible describe` the bible before writing a brief, then `plan`, show the plan to the human, and `apply` it once they approve. See [generation knobs](https://github.com/clockgrove/assetgrove/blob/main/docs/generation-knobs.md) for the brief, run settings and target template formats.
 

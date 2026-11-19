@@ -136,12 +136,24 @@ MCP tool: `card_edit`, arguments `address`, `title`, `description`, `tag`, `labe
 ### `card describe`
 
 ```text
-card describe [<address>] [--missing] [--target <dir>] [--profile <profile.json>] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
+card describe [<address>] [--propose] [--missing] [--target <dir>] [--profile <profile.json>] [--cap <usd>] [--work-item <label>] [--provider-script <module>] [--runs .assetgrove/runs] [--round 1] [--dry-run] [--json]
 ```
 
 Has a vision model write a card's `description` and `tags` from the asset's image (a 3D asset's turntable renders). Give one asset's card, media or review record, or `--missing` for every card with no description in the library of `--target`'s profile. The summary is recorded in the card's `verified` list as `process:assetgrove-summary:vision:<model>`. A card whose description or tags a person wrote is never overwritten; it is listed under `skipped` with the reason, as is an asset with no image view (audio, a Git LFS pointer, an undecodable file) and a reply with no summary. A paid command: a plan step, a forecast with `--dry-run`, a person's confirmation and the spend caps. The written text is returned only under `sharedText`.
 
-MCP tool: `card_describe`, arguments `address`, `missing`, `target`, `profile`, `cap`, `workItem`, `runs`, `round`.
+With `--propose`, writes a proposal JSON file in the paid run directory instead of changing the card, and returns its path. This mode can suggest replacements for person-written text. It records proposed fields, baseline values, source version and media, and model. Labels are restricted to the project vocabulary; without one, no labels are proposed. Spending still follows the same forecast, confirmation and caps. `--dry-run` makes no proposal. A person applies selected fields with `card accept`.
+
+MCP tool: `card_describe`, arguments `address`, `propose`, `missing`, `target`, `profile`, `cap`, `workItem`, `runs`, `round`.
+
+### `card accept`
+
+```text
+card accept <proposal> --field <description|labels>... [--json]
+```
+
+Applies only the named fields of a proposal created by `card describe` in proposal mode; repeat `--field` to accept both. Unselected fields remain unchanged. A person must confirm the selected changes through the existing pick confirmation path. Acceptance calls no model and spends nothing. Under the library write lock it checks the source version and media, detects edits to selected fields since the proposal, and validates accepted labels against the current vocabulary. A stale source, overlapping edit or label outside the vocabulary refuses the write. Edits to unselected fields do not block acceptance. Each accepted field carries process attribution for its model; retained human text is not attributed to the model. Only a person runs this command.
+
+MCP tool: `card_accept`, arguments `proposal`, `field`.
 
 ### `rig`
 
