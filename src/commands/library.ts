@@ -114,7 +114,13 @@ async function open(args: LibraryArgs) {
 
 function checkOutcome(state: LibraryState, extra: Record<string, unknown> = {}): Outcome {
   const { problems, needsRebuild } = state;
-  const fields = { library: state.config.rootRel || ".", problems, needsRebuild, ...extra };
+  const fields = {
+    library: state.config.rootRel || ".",
+    problems,
+    needsRebuild,
+    ...(state.ruleFindings.length && { ruleFindings: state.ruleFindings }),
+    ...extra,
+  };
   const human = [
     problems.length === 0
       ? "library check passed"
@@ -123,6 +129,9 @@ function checkOutcome(state: LibraryState, extra: Record<string, unknown> = {}):
       (p) =>
         `  ${p.file}${p.reference ? `:${p.reference}` : ""}: ${p.code}${p.message ? `: ${p.message}` : ""}`,
     ),
+    ...state.ruleFindings
+      .filter((f) => f.status === "failed" && f.severity === "warning")
+      .map((f) => `warning: project rule ${f.rule}: ${f.asset} (${f.evidence})`),
     ...(needsRebuild.length > 0
       ? [
           `needs rebuild (layout only): ${needsRebuild.join(", ")}`,
@@ -663,6 +672,9 @@ one path segment, a missing run or a run without the version's candidate exits 2
           (result.validator.output ? `:\n${result.validator.output}` : ""),
       );
     }
+    for (const f of result.ruleFindings ?? [])
+      if (f.status === "failed" && f.severity === "warning")
+        lines.push(`warning: project rule ${f.rule}: ${f.asset} (${f.evidence})`);
     const human = lines.join("\n");
     if (result.validator?.accepted === false) {
       return refusal(

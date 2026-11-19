@@ -185,7 +185,7 @@ The optional `style.materials` data is validated against the material profile sc
 
 Per-channel `encoding` declares `unorm8` and an ordered normalized `range`. `compression` declares the format (`ktx2` or `basis`, delivered in KTX2), version and argv command; `preview` declares its version and argv command. `lightRig` is target-owned JSON data consumed by the preview renderer from the material report. No target light rig is available yet; tests use an explicit synthetic rig. Commands never use shell interpolation and have bounded runtimes. See [materials.md](materials.md) for derivation inputs, defaults, rendition limits and `--dry-run` cost forecasts.
 
-### Project rules (initial planning support)
+### Project rules
 
 An optional `rules` array declares data-only constraints. Every rule has a unique
 `id`, a `kind`, and `severity` (`error` by default, or `warning`). Unknown rule
@@ -221,7 +221,22 @@ an inclusive maximum. The evaluator reports the rule, asset, severity, evidence
 source and `passed`, `failed` or `unavailable` status; unavailable evidence is
 never guessed from a declaration.
 
-Planning currently enforces required spec errors before paid calls. Card and
-measured-media enforcement in write paths and library checks is delivered in the
-next Objective part; declaring those rules in this initial part does not yet
-block writes. The evaluator retains warnings without blocking.
+Planning enforces required spec errors before paid calls. Its result and forecast
+report `ruleFindings`, including warnings and unavailable card/media evidence;
+planned frame dimensions are not measurements. CLI plan dry runs include these
+findings in both JSON and human output.
+
+Hand-off evaluates the spec, resulting card (including tags), and available media
+measurements before writing a pick. Library checks evaluate the same rules against
+the stored card and measured media, alongside the existing licence and format
+checks; spec evidence is unavailable there. Each finding identifies its rule,
+asset, severity, evidence source and status. An error with failed evidence blocks a write or fails the library check;
+a warning reports the same finding without blocking. Unavailable evidence remains
+explicit rather than being treated as a pass. A rule failure leaves no partial
+pick, and CLI and MCP writes share this enforcement path.
+
+Card edits and descriptions check the resulting card and existing media before
+writing. They use the standard project profile when present; `card describe` also
+honors its explicit profile. Standalone libraries without a profile keep their
+existing behavior. Missing media and unresolved LFS objects leave media evidence
+unavailable. Byte budgets count the final marked and signed file at hand-off.

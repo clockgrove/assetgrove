@@ -85,7 +85,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     promptAllow: ctx.settings.promptPolicy.allow,
     applyPolicy: { modelWritten: compiles },
   });
-  return { profile, work };
+  return { profile, work, ruleFindings: forecast.ruleFindings ?? [] };
 }
 
 export const planCommand = defineCommand<PlanArgs>({
@@ -146,12 +146,23 @@ Review the saved plan before apply; this command never generates images.`,
   plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     if (args.dryRun) {
-      const { profile, work } = await prepare(args, ctx);
-      return dryRunOutcome(
+      const { profile, work, ruleFindings } = await prepare(args, ctx);
+      const outcome = await dryRunOutcome(
         work,
         formatWork("plan", work),
         spendLedger(ctx, args.workItem).forProfile(profile.value),
       );
+      return {
+        ...outcome,
+        fields: { ...outcome.fields, ruleFindings },
+        human: [
+          outcome.human,
+          ...ruleFindings.map(
+            (finding) =>
+              `project rule ${finding.rule}: ${finding.asset} (${finding.evidence}) ${finding.status} [${finding.severity}]`,
+          ),
+        ].join("\n"),
+      };
     }
     const result = await generationTool(
       "plan",

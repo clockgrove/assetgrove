@@ -118,3 +118,65 @@ test("planning refuses a required spec violation before provider or template acc
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("planning and forecast expose warnings and unavailable card/media evidence", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { BIBLE_PRESETS, serializeBible } = await import("../src/bible.ts");
+  const { createPlan, planJobs } = await import("../src/planning.ts");
+  const { createRaster, encodePng } = await import("../src/image/raster.ts");
+  const root = await mkdtemp(join(tmpdir(), "project-rules-plan-"));
+  try {
+    const biblePath = join(root, "BIBLE.md");
+    const specPath = join(root, "spec.json");
+    const profilePath = join(root, "profile.json");
+    const templatePath = join(root, "template.md");
+    await writeFile(join(root, "reference.png"), encodePng(createRaster(2, 2)));
+    const bible = structuredClone(BIBLE_PRESETS["cozy-storybook"]!);
+    bible.referenceLicense = "NOASSERTION";
+    bible.anchors.positive = [{ path: "reference.png", role: "subject", subject: "fern" }];
+    bible.perspective = "reference.png";
+    await writeFile(
+      biblePath,
+      serializeBible(bible, "## Do's and Don'ts\nDo preserve silhouettes. Don't add text.\n"),
+    );
+    await writeFile(
+      templatePath,
+      "# Prompt template v1\n{{constitution}}\n{{spec}}\n{{brief}}\n{{settings}}\n{{family}}\n",
+    );
+    await writeFile(
+      specPath,
+      JSON.stringify({ kind: "still", assetId: "fern", animationFamily: "idle" }),
+    );
+    const { syntheticProfile } = await import("./fixtures/synthetic.ts");
+    await writeFile(
+      profilePath,
+      JSON.stringify({
+        ...syntheticProfile(),
+        format: "assetgrove-target-profile/2",
+        rules: [
+          {
+            id: "role",
+            kind: "required",
+            source: "spec",
+            field: "fields.role",
+            severity: "warning",
+          },
+          { id: "title", kind: "required", source: "card", field: "title" },
+          { id: "bytes", kind: "media", metric: "bytes", max: 1 },
+        ],
+      }),
+    );
+    const options = { biblePath, specPath, profilePath, templatePath };
+    const expected = [
+      { rule: "role", asset: "fern", severity: "warning", evidence: "spec", status: "failed" },
+      { rule: "title", asset: "fern", severity: "error", evidence: "card", status: "unavailable" },
+      { rule: "bytes", asset: "fern", severity: "error", evidence: "media", status: "unavailable" },
+    ];
+    assert.deepEqual((await planJobs(options)).ruleFindings, expected);
+    assert.deepEqual((await createPlan(options)).ruleFindings, expected);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

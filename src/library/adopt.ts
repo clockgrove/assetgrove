@@ -1,3 +1,4 @@
+import type { RuleFinding } from "../project-rules.ts";
 /**
  * Adopting a person's hand edit (design section 4; issues #251 and #235): the asset's working
  * media, edited outside Assetgrove, becomes its next version. A person confirms it like a pick, over
@@ -632,6 +633,7 @@ export interface AdoptOptions {
 }
 
 export interface AdoptResult {
+  ruleFindings?: RuleFinding[];
   assetId: string;
   /** The new version's number, absent when the validator rejected the adopt. */
   version?: number;
@@ -730,6 +732,7 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
   const written = await commitTargetWrite(prepared);
   return {
     assetId: asset.assetId,
+    ...(written.ruleFindings && { ruleFindings: written.ruleFindings }),
     ...(written.library && { version: written.library.version }),
     sha256: sha256Hex(prepared.mediaBytes),
     editedSha256: edited.sha256,

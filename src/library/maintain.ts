@@ -1,4 +1,5 @@
 import { libraryOriginSchema, originSchema, originSourceType } from "../origin.ts";
+import { evaluateProjectRules, measuredRuleMedia, type RuleFinding } from "../project-rules.ts";
 /**
  * Library maintenance (design sections 1.2, 1.4 and 4): `library check` compares the records
  * (provenance and review records) with their projections (card machine fields, `index.md`,
@@ -90,6 +91,7 @@ interface Expected {
 
 export interface LibraryState {
   config: LibraryConfig;
+  ruleFindings: RuleFinding[];
   assets: Asset[];
   problems: LibraryProblem[];
   /** Files that hold the records' content in another layout (a union merge, a hand edit of layout). */
@@ -369,6 +371,7 @@ export async function readLibrary(
 ): Promise<LibraryState> {
   const config = libraryConfig(profile, targetDir);
   const problems: LibraryProblem[] = [];
+  const ruleFindings: RuleFinding[] = [];
   const needsRebuild: string[] = [];
   const writes: LibraryState["writes"] = [];
   const assets = await gather(config, problems);
@@ -381,6 +384,7 @@ export async function readLibrary(
   // Records: review records in canonical layout; cards' machine fields; media in LFS.
   const expected: Expected[] = [];
   for (const asset of assets) {
+    const findingStart = ruleFindings.length;
     if (asset.review) {
       expected.push({
         path: asset.reviewPath,
@@ -420,16 +424,30 @@ export async function readLibrary(
       }
       const resource = String(asset.card.parsed.data["resource"]);
       const media = join(asset.dir, resource);
-      if (!within(config.root, media)) continue;
-      try {
-        await readMedia(media);
-        if (lfsMapped(media) === false) problem(media, "media_not_lfs");
-      } catch (error) {
-        if (error instanceof MediaMissingError) {
-          problem(media, "media_missing");
-        } else problem(media, "media_invalid");
+      let measured: ReturnType<typeof measuredRuleMedia> | undefined;
+      if (within(config.root, media)) {
+        try {
+          const read = await readMedia(media);
+          if (read.kind !== "lfs-pointer") measured = measuredRuleMedia(read.bytes);
+          if (lfsMapped(media) === false) problem(media, "media_not_lfs");
+        } catch (error) {
+          if (error instanceof MediaMissingError) {
+            problem(media, "media_missing");
+          } else problem(media, "media_invalid");
+        }
       }
+      ruleFindings.push(
+        ...evaluateProjectRules({
+          rules: profile.rules,
+          asset: asset.id,
+          card: asset.card.parsed.data,
+          ...(measured && { media: measured }),
+        }),
+      );
     }
+    for (const finding of ruleFindings.slice(findingStart))
+      if (finding.status === "failed" && finding.severity === "error")
+        problem(asset.cardPath, `project_rule:${finding.rule}`);
   }
 
   // Projections: every folder from the root to each card, from the cards found.
@@ -566,7 +584,7 @@ export async function readLibrary(
       problem(file.path, `${file.kind}_mismatch`);
     }
   }
-  return { config, assets, problems, needsRebuild, writes };
+  return { config, assets, problems, needsRebuild, writes, ruleFindings };
 }
 
 /** Rewrites every projection that differs from what the records say; the caller holds the library lock. */

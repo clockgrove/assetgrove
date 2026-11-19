@@ -1,3 +1,4 @@
+import type { RuleFinding } from "./project-rules.ts";
 import { canCarryMark, markableMediaType, markProblems } from "./handoff/mark-check.ts";
 import {
   canCarryCredentials,
@@ -51,12 +52,13 @@ import { acquireLibraryLock } from "./runs/lock.ts";
 import {
   assetgroveVersion,
   commitLibraryWrite,
+  checkLibraryRules,
   libraryWritePaths,
   prepareLibraryWrite,
   recheckLibraryWrite,
   writeAtomic,
 } from "./library/write.ts";
-import type { CandidateReview, LibraryPlan } from "./library/write.ts";
+import type { CandidateReview, LibraryPlan, LibraryVersionInput } from "./library/write.ts";
 import { WriteJournal } from "./library/undo.ts";
 import type { VersionStatus } from "./library/review.ts";
 import { HandoffCheckError, resolveHandoff } from "./handoff/presets/index.ts";
@@ -94,6 +96,7 @@ export interface PickOptions {
 }
 
 export interface PickResult {
+  ruleFindings?: RuleFinding[];
   candidate: StagedCandidate;
   mediaPath: string;
   manifestPath: string;
@@ -344,6 +347,7 @@ export interface CredentialsResult extends SignerRecord {
 export { DEVELOPMENT_SIGNER_WARNING } from "./credentials.ts";
 
 export interface TargetWriteResult {
+  ruleFindings?: RuleFinding[];
   mediaPath: string;
   manifestPath: string;
   provenancePath?: string;
@@ -379,6 +383,8 @@ async function undone(journal: WriteJournal, error: unknown): Promise<unknown> {
 
 /** A hand-off checked and rendered, with nothing written yet (see `prepareTargetWrite`). */
 export interface PreparedTargetWrite {
+  libraryInput?: LibraryVersionInput;
+  ruleFindings?: RuleFinding[];
   /** Every path the hand-off writes, relative to the target. */
   rels: string[];
   write: TargetWrite;
@@ -519,6 +525,12 @@ export async function prepareTargetWrites(
   for (const write of writes) prepared.push(await prepareOne(write));
   await runFamilyPresets(prepared);
   if (prepared.length > 1) checkPreparedWrites(prepared);
+  for (const item of prepared)
+    item.ruleFindings = await checkLibraryRules(
+      item.library,
+      libraryVersionInput(item),
+      item.write.profile.rules,
+    );
   return prepared;
 }
 
@@ -980,11 +992,40 @@ export async function commitTargetWrite(prepared: PreparedTargetWrite): Promise<
   }
 }
 
+function libraryVersionInput(prepared: PreparedTargetWrite): LibraryVersionInput {
+  if (prepared.libraryInput) return prepared.libraryInput;
+  const { write } = prepared;
+  return (prepared.libraryInput = {
+    mediaBytes: prepared.mediaBytes,
+    provenance: prepared.provenance,
+    ...(prepared.provenanceBytes !== undefined && { provenanceBytes: prepared.provenanceBytes }),
+    ...(prepared.contentSha256 !== undefined && { contentSha256: prepared.contentSha256 }),
+    spec: write.spec,
+    run: String(write.run["runId"] ?? ""),
+    candidate: String(write.run["candidateId"] ?? ""),
+    ...(write.confirmation && { confirmation: write.confirmation }),
+    ...(write.answers && { answers: write.answers.answers }),
+    ...(write.candidateReview && { candidateReview: write.candidateReview }),
+    ...(write.summary !== undefined && write.adopt === undefined && { summary: write.summary }),
+    ...(write.adopt !== undefined && {
+      action: "adopt" as const,
+      digitalSourceType: prepared.provenance.digitalSourceType,
+    }),
+    now: (write.now ?? (() => new Date()))(),
+    assetgrove: assetgroveVersion(),
+  });
+}
+
 async function commitLocked(prepared: PreparedTargetWrite): Promise<TargetWriteResult> {
   const { writes } = prepared;
   // Another writer may have committed since this was prepared: check again before any write.
   await recheckLibraryWrite(prepared.library);
   await prepared.write.adopt?.underLock?.();
+  prepared.ruleFindings = await checkLibraryRules(
+    prepared.library,
+    libraryVersionInput(prepared),
+    prepared.write.profile.rules,
+  );
   if (prepared.write.adopt === undefined) {
     for (const [path, content] of writes) await writeAtomic(path, content);
     return await commitWritten(prepared);
@@ -1018,6 +1059,7 @@ async function commitWritten(
 ): Promise<TargetWriteResult> {
   const { targetDir, guard, presets, presetContext, presetFiles, writes } = prepared;
   const result: TargetWriteResult = {
+    ...(prepared.ruleFindings?.length && { ruleFindings: prepared.ruleFindings }),
     mediaPath: prepared.mediaPath,
     manifestPath: prepared.manifestPath,
     ...(prepared.provenancePath !== undefined && { provenancePath: prepared.provenancePath }),
@@ -1108,25 +1150,7 @@ async function commitWritten(
   // Every preset check passed: the version goes into the library.
   const library = await commitLibraryWrite(
     prepared.library,
-    {
-      mediaBytes: prepared.mediaBytes,
-      provenance: prepared.provenance,
-      ...(prepared.provenanceBytes !== undefined && { provenanceBytes: prepared.provenanceBytes }),
-      ...(prepared.contentSha256 !== undefined && { contentSha256: prepared.contentSha256 }),
-      spec: write.spec,
-      run: String(write.run["runId"] ?? ""),
-      candidate: String(write.run["candidateId"] ?? ""),
-      ...(write.confirmation && { confirmation: write.confirmation }),
-      ...(write.answers && { answers: write.answers.answers }),
-      ...(write.candidateReview && { candidateReview: write.candidateReview }),
-      ...(write.summary !== undefined && write.adopt === undefined && { summary: write.summary }),
-      ...(write.adopt !== undefined && {
-        action: "adopt" as const,
-        digitalSourceType: prepared.provenance.digitalSourceType,
-      }),
-      now: (write.now ?? (() => new Date()))(),
-      assetgrove: assetgroveVersion(),
-    },
+    libraryVersionInput(prepared),
     journal,
   );
   result.library = {

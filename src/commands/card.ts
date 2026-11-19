@@ -21,7 +21,9 @@ import { Caller } from "../calls.ts";
 import { InputError } from "../errors.ts";
 import { PROFILE_PATH } from "../init.ts";
 import { loadProfile } from "../inputs.ts";
-import { selectDescribed, writeDescribed } from "../library/describe.ts";
+import { checkCardProjectRules, selectDescribed, writeDescribed } from "../library/describe.ts";
+import type { TargetProfile } from "../types.ts";
+import type { RuleFinding } from "../project-rules.ts";
 import type { Skipped } from "../library/describe.ts";
 import { describePrompt, parseSummary } from "../library/summary.ts";
 import { providerSet, spendLedger } from "../providers/index.ts";
@@ -175,6 +177,7 @@ confirmation. The card's text is returned only under sharedText.`,
         card = dropSummary(card, asset.cardPath);
         card = dropSuggestedFields(card, Object.keys(values), asset.cardPath);
       }
+      const ruleFindings = await checkCardProjectRules(asset, card);
       const version = selectVersion(asset.record);
       const input: AnnotationInput = {
         type: "Annotation",
@@ -199,6 +202,7 @@ confirmation. The card's text is returned only under sharedText.`,
         exitCode: 0,
         fields: {
           asset: asset.assetId,
+          ruleFindings,
           changed,
           annotation: annotationFields(annotation),
           files: written.files,
@@ -206,6 +210,7 @@ confirmation. The card's text is returned only under sharedText.`,
         },
         human: [
           `edited ${changed.join(", ")} of ${asset.assetId}`,
+          ...ruleFindingLines(ruleFindings),
           ...written.files.map((f) => `wrote ${f}`),
         ].join("\n"),
       };
@@ -232,10 +237,10 @@ async function prepareDescribe(args: CardDescribeArgs, ctx: RunContext) {
   if ((args.address === undefined) === (args.missing !== true))
     throw new InputError("give the asset's address, or --missing, and not both");
   let missingIn: string | undefined;
+  let profile: TargetProfile | undefined;
   if (args.missing === true) {
     const targetDir = resolve(args.target ?? ".");
     const profilePath = resolve(args.profile ?? join(targetDir, PROFILE_PATH));
-    let profile;
     try {
       profile = (await loadProfile(profilePath)).value;
     } catch (error) {
@@ -244,6 +249,8 @@ async function prepareDescribe(args: CardDescribeArgs, ctx: RunContext) {
     }
     missingIn = libraryConfig(profile, targetDir).root;
   }
+  if (profile === undefined && args.profile !== undefined)
+    profile = (await loadProfile(resolve(args.profile))).value;
   const { pending, skipped } = await selectDescribed(
     {
       ...(args.address !== undefined && { address: args.address }),
@@ -275,7 +282,7 @@ async function prepareDescribe(args: CardDescribeArgs, ctx: RunContext) {
     providers: provider,
     candidates: 0,
   });
-  return { pending, skipped, provider, work };
+  return { pending, skipped, provider, work, profile };
 }
 
 export const cardDescribeCommand = defineCommand<CardDescribeArgs>({
@@ -344,7 +351,13 @@ forecast, confirmation and caps. The written text is returned only under sharedT
   replayFinished: false,
   plan: async (args, ctx) => (await prepareDescribe(args, ctx)).work,
   async run(args, ctx) {
-    const { pending, skipped: unviewable, provider, work } = await prepareDescribe(args, ctx);
+    const {
+      pending,
+      skipped: unviewable,
+      provider,
+      work,
+      profile,
+    } = await prepareDescribe(args, ctx);
     if (args.dryRun)
       return dryRunOutcome(
         work,
@@ -369,6 +382,7 @@ forecast, confirmation and caps. The written text is returned only under sharedT
       model: string;
       sourceVersion: string;
     }[] = [];
+    const ruleFindings: RuleFinding[] = [];
     const skipped: Skipped[] = [...unviewable];
     const sharedText: SharedText[] = [];
     for (const subject of pending) {
@@ -420,11 +434,14 @@ forecast, confirmation and caps. The written text is returned only under sharedT
         model,
         ctx.settings.stateDir,
         args.missing === true,
+        undefined,
+        profile,
       );
       if ("skipped" in written) {
         skipped.push({ asset: subject.asset, reason: written.skipped });
         continue;
       }
+      ruleFindings.push(...written.ruleFindings);
       described.push({ asset: subject.asset, files: written.files });
       sharedText.push({ source: "card.description", text: summary.description });
       for (const tag of summary.tags) sharedText.push({ source: "card.tags", text: tag });
@@ -436,6 +453,7 @@ forecast, confirmation and caps. The written text is returned only under sharedT
             ...proposals.map((p) => `  ${p.asset}: ${p.proposal}`),
           ]
         : [`described ${described.length} card(s)`]),
+      ...ruleFindingLines(ruleFindings),
       ...described.map((d) => `  ${d.asset}: wrote ${d.files.join(", ")}`),
       ...(skipped.length > 0 ? [`skipped ${skipped.length}:`] : []),
       ...skipped.map((s) => `  ${s.asset}: ${s.reason}`),
@@ -449,6 +467,7 @@ forecast, confirmation and caps. The written text is returned only under sharedT
         skipped,
         spentUsd: budget.spentUsd,
         sharedText,
+        ruleFindings,
       },
       human,
     };
@@ -511,6 +530,7 @@ export const cardAcceptCommand = defineCommand<CardAcceptArgs>({
       if (again.id !== request.id)
         throw new PlanChangedError("the proposal changed after confirmation; review it again");
       const card = acceptedCard(current, fresh, fields);
+      const ruleFindings = await checkCardProjectRules(current, card);
       const written = await writeAsset({ ...current, card }, current.record, { card });
       const sharedText: SharedText[] = [];
       for (const field of fields)
@@ -521,13 +541,23 @@ export const cardAcceptCommand = defineCommand<CardAcceptArgs>({
         fields: {
           asset: current.assetId,
           accepted: fields,
+          ruleFindings,
           proposal: digestOf(fresh),
           confirmation,
           files: written.files,
           sharedText,
         },
-        human: `accepted ${fields.join(", ")} for ${current.assetId}`,
+        human: [
+          `accepted ${fields.join(", ")} for ${current.assetId}`,
+          ...ruleFindingLines(ruleFindings),
+        ].join("\n"),
       };
     });
   },
 });
+function ruleFindingLines(findings: RuleFinding[]): string[] {
+  return findings.map(
+    (finding) =>
+      `project rule ${finding.rule}: ${finding.asset} (${finding.evidence}) ${finding.status} [${finding.severity}]`,
+  );
+}

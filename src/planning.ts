@@ -1,4 +1,5 @@
 import { evaluateProjectRules, enforceProjectRules } from "./project-rules.ts";
+import type { RuleFinding } from "./project-rules.ts";
 import {
   DIGITAL_SOURCE_TYPES,
   embedDigitalSourceType,
@@ -369,6 +370,7 @@ function resolved(value: Route) {
 
 /** Everything a plan and apply share, computed from the input files and the settings alone. */
 interface Prepared {
+  ruleFindings: RuleFinding[];
   doc: BibleDocument;
   spec: AssetSpec;
   specDir: string;
@@ -441,13 +443,12 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
       : (await loadProfile(options.profilePath)).value,
   );
   // Before any paid call: the paths the hand-off will write for this spec can be written.
-  enforceProjectRules(
-    evaluateProjectRules({
-      rules: profile.rules,
-      asset: spec.assetId,
-      spec: spec as unknown as Record<string, unknown>,
-    }),
-  );
+  const ruleFindings = evaluateProjectRules({
+    rules: profile.rules,
+    asset: spec.assetId,
+    spec: spec as unknown as Record<string, unknown>,
+  });
+  enforceProjectRules(ruleFindings);
   checkLayout(profile, spec);
   const routes = routesOf(options);
   const kinds = options.kinds ?? CORE_REGISTRY;
@@ -677,6 +678,7 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
       };
     });
   return {
+    ruleFindings,
     doc,
     spec,
     specDir,
@@ -726,6 +728,7 @@ export interface CompilerRecord {
 
 /** A new plan and what planning did beside it. */
 export interface CreatedPlan {
+  ruleFindings: RuleFinding[];
   plan: SavedPlan;
   compiler: CompilerRecord;
   clamps: Clamp[];
@@ -1050,6 +1053,7 @@ export async function createPlan(options: CreatePlanOptions): Promise<CreatedPla
     resolutionSha256: p.resolutionSha256,
   };
   return {
+    ruleFindings: p.ruleFindings,
     plan: { ...body, digest: planDigest(body) },
     compiler: {
       mode,
@@ -1157,6 +1161,7 @@ async function savedPlanPromptParts(
 
 /** What a plan or apply would call and spend, computed without a provider call. */
 export interface JobForecast {
+  ruleFindings?: RuleFinding[];
   jobs: PlanJob[];
   candidates: number;
   capUsd: number;
@@ -1188,6 +1193,7 @@ function compilerCallable(options: CreatePlanOptions, compilerRoute: Route): boo
 export async function planJobs(options: CreatePlanOptions): Promise<JobForecast> {
   const p = await prepare(options);
   return {
+    ruleFindings: p.ruleFindings,
     jobs: [
       ...(compilerCallable(options, p.routes.compiler)
         ? [jobOf("compiler", p.routes.compiler)]
