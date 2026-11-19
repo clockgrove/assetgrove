@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { InputError } from "./errors.ts";
+import { checkKindLayoutPaths } from "./paths.ts";
 import { refuseSettingsBlocks } from "./shared-settings.ts";
 import type { TargetProfile } from "./types.ts";
 
@@ -61,5 +62,22 @@ export function validateProfile(value: Record<string, unknown>, source: string):
       cause: parsed.error,
     });
   }
-  return parsed.data as unknown as TargetProfile;
+  const profile = parsed.data as unknown as TargetProfile;
+  for (const [kind, block] of Object.entries(profile.kinds ?? {})) {
+    if (block.layout === undefined) continue;
+    const layout = z
+      .strictObject({ media: z.string(), manifest: z.string().optional() })
+      .safeParse(block.layout);
+    if (!layout.success) {
+      const issues = layout.error.issues.map(
+        (issue) =>
+          `kinds.${kind}.layout${issue.path.length ? `.${issue.path.join(".")}` : ""}: ${issue.message}`,
+      );
+      throw new InputError(`target profile ${source} is invalid: ${issues.join("; ")}`, {
+        cause: layout.error,
+      });
+    }
+    checkKindLayoutPaths(profile, kind);
+  }
+  return profile;
 }

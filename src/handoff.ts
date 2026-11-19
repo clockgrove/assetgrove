@@ -39,6 +39,8 @@ import type { StagedCandidate } from "./loop.ts";
 import type { CandidateSummary } from "./library/summary.ts";
 import {
   checkSpecValues,
+  checkKindLayoutPaths,
+  layoutFor,
   checkWrites,
   embedsProvenance,
   inGitDir,
@@ -500,7 +502,7 @@ export function provenanceLayout(write: TargetWrite, mediaRel: string): string |
     const context = layoutContext(write, write.provenance, write.output);
     return (
       ownProvenanceRel(write.profile, context, mediaRel) ??
-      renderString(write.profile.layout.manifest, context)
+      renderString(layoutFor(write.profile, write.spec.kind).manifest, context)
     );
   } catch {
     return undefined;
@@ -768,19 +770,26 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     provenance.commands = [...(provenance.commands ?? []), validatorStep];
   }
   const context = layoutContext(write, provenance, output);
+  const layout = layoutFor(profile, spec.kind);
+  checkKindLayoutPaths(
+    profile,
+    spec.kind,
+    (template) => renderString(template, context),
+    targetDir,
+  );
   const signed: string[] = [];
   const sign = signer && credentialSigner(signer, guard, digitalSourceType, provenance.models);
   let contentSha256: string | undefined;
   if (sign && canCarryCredentials(output.mediaType)) {
     contentSha256 = sha256(output.bytes);
     // The path is rendered first to find the file already there, then again with the signed bytes.
-    const rel = renderString(profile.layout.media, context);
+    const rel = renderString(layout.media, context);
     output.bytes = await sign(rel, output.bytes, output.mediaType, write.adopt?.original);
     (context["output"] as Record<string, unknown>)["sha256"] = sha256(output.bytes);
   }
-  const mediaRel = renderString(profile.layout.media, context);
+  const mediaRel = renderString(layout.media, context);
   if (sign && canCarryCredentials(output.mediaType)) signed.push(mediaRel);
-  const manifestRel = renderString(profile.layout.manifest, context);
+  const manifestRel = renderString(layout.manifest, context);
   const provenanceRel = ownProvenanceRel(profile, context, mediaRel);
   (context["output"] as Record<string, unknown>)["path"] = mediaRel;
   const sidecarRels: string[] = [];
