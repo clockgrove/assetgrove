@@ -1,7 +1,7 @@
 import "./fixtures/env.ts";
 import { approve, approveProfile, settingsPath } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,7 +23,7 @@ import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, decodeImage, encodePng, setPixel } from "../src/image/raster.ts";
 import type { TargetProfile } from "../src/types.ts";
 import { GAME, fixtureLibrary } from "./fixtures/library.ts";
-import { gitTarget } from "./fixtures/git.ts";
+import { bareGitTarget, gitTarget } from "./fixtures/git.ts";
 import { lodModel } from "./fixtures/lod.ts";
 import { quadrupedTemplate, syntheticQuadruped, walkGait } from "./fixtures/quadruped.ts";
 import { syntheticSheet } from "./fixtures/sheet.ts";
@@ -1013,6 +1013,40 @@ export default {
       return { target: join(work, "target"), profile };
     },
   })),
+  {
+    tool: "library_diff",
+    prepare: async () => {
+      const target = bareGitTarget(join(work, "diff-target"));
+      const git = (...args: string[]) =>
+        execFileSync("git", args, { cwd: target, encoding: "utf8" }).trim();
+      git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "base",
+      );
+      const base = git("rev-parse", "HEAD");
+      await writeFile(
+        join(target, "lamp.md"),
+        "---\ntype: Game Asset\nformat: assetgrove-card/1\ntitle: Lamp\nresource: lamp.png\ntags: [prop]\n---\n",
+      );
+      git("add", "lamp.md");
+      git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "add lamp",
+      );
+      return { target, base, head: "HEAD" };
+    },
+  },
   {
     tool: "library_labels",
     prepare: async () => {
