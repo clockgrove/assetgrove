@@ -1,7 +1,7 @@
 import { animationQaCommand } from "./animation-qa.ts";
 import { applyCommand } from "./apply.ts";
 import { approveCommand, reviewCommand } from "./review.ts";
-import { cardEditCommand } from "./card.ts";
+import { cardDescribeCommand, cardEditCommand } from "./card.ts";
 import { auditCommand } from "./audit.ts";
 import { bibleCommand } from "./bible.ts";
 import { catCommand, lsCommand } from "./browse.ts";
@@ -57,6 +57,7 @@ export const commands: readonly CommandSpec[] = [
   pickCommand,
   reviewCommand,
   approveCommand,
+  cardDescribeCommand,
   cardEditCommand,
   rigCommand,
   lodCommand,

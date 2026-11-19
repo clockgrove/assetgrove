@@ -6,6 +6,7 @@ import type { ClipMapCache } from "../model3d/clip-map.ts";
 import type { FramesTrait } from "../frames.ts";
 import type { StabilityEntry } from "../qa/stability.ts";
 import type { Routes } from "../routes.ts";
+import type { CardSummary } from "../library/summary.ts";
 import type {
   AssetSpec,
   MediaOutput,
@@ -55,6 +56,8 @@ export interface GeneratedCandidate {
    * `ext:tile` writes to `c1-ext-tile/`).
    */
   artifacts?: Array<{ name: string; bytes: Uint8Array }>;
+  /** The model-written summary of the candidate, when its QA call gave one. */
+  summary?: CardSummary;
 }
 
 /** One model call a candidate makes, as forecast from the routes. */

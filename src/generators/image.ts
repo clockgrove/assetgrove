@@ -3,6 +3,7 @@ import { InputError, ProviderError } from "../errors.ts";
 import { decodeImage, encodePng } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { overContrast, postprocessFrames, sideBySide } from "../postprocess.ts";
+import { parseSummary } from "../library/summary.ts";
 import type { Caller } from "../calls.ts";
 import type { DecisionQuestion } from "../gateway/provider.ts";
 import { buildVisionPrompt, combineQa, deterministicChecks, parseVisionVerdict } from "../qa.ts";
@@ -150,6 +151,7 @@ async function finish(
     referenceRoles: refs.map((r) => r.role),
   });
   const verdict = await ctx.call.vision("vision", visionPrompt, [candidate, ...refs]);
+  const summary = parseSummary(verdict);
   return {
     output: {
       mediaType: "image/png",
@@ -169,6 +171,7 @@ async function finish(
     qa: combineQa(deterministic, parseVisionVerdict(verdict), [cutout]),
     prompt,
     parameters: { ...parameters, frame: grid.frame, frameCount: grid.count, anchor },
+    ...(summary !== undefined && { summary }),
   };
 }
 

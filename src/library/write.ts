@@ -25,6 +25,7 @@ import type { AssetSpec, ConfirmationRecord, Provenance, TargetProfile } from ".
 import { sha256Hex } from "./canonical.ts";
 import type { WriteJournal } from "./undo.ts";
 import {
+  applySummary,
   checkCardPaths,
   isCardText,
   machineFields,
@@ -34,6 +35,8 @@ import {
   writeCard,
 } from "./card.ts";
 import type { Card } from "./card.ts";
+import { summaryEntry, summaryState } from "./summary.ts";
+import type { CandidateSummary } from "./summary.ts";
 import {
   indexAssetsFor,
   logEntriesFromReview,
@@ -705,6 +708,8 @@ export interface LibraryVersionInput {
   action?: "adopt";
   /** The version's digital source type, recorded on an adopted version. */
   digitalSourceType?: string;
+  /** The model-written summary of a picked candidate; a person's description or tags win over it. */
+  summary?: CandidateSummary;
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
 }
@@ -815,7 +820,7 @@ export async function commitLibraryWrite(
   const existing = await readOwnCard(plan.cardPath, config.root, dir);
   const extra = input.spec.fields ?? {};
   const tags = extra["tags"];
-  const card = existing
+  const base = existing
     ? rewriteMachineFields(existing, fields, plan.cardPath)
     : newCard(
         {
@@ -826,6 +831,16 @@ export async function commitLibraryWrite(
         },
         fields,
       );
+  const summary = input.summary;
+  const card =
+    summary !== undefined && summaryState(base.data).state !== "person"
+      ? applySummary(
+          base,
+          { description: summary.description, tags: summary.tags },
+          summaryEntry(summary, summary.operation, summary.model, at),
+          plan.cardPath,
+        )
+      : base;
   if (await writeIfChanged(plan.cardPath, writeCard(card), journal)) files.push(plan.cardPath);
   const title = (card.data as { title: string }).title;
 

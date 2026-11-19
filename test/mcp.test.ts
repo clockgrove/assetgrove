@@ -576,6 +576,10 @@ const rows: Row[] = [
   { tool: "approve", prepare: async () => ({ address: await pickedCard() }), exitCode: 8 },
   { tool: "card_edit", prepare: async () => ({ address: await pickedCard(), title: "A row" }) },
   {
+    tool: "card_describe",
+    prepare: async () => ({ address: await pickedCard() }),
+  },
+  {
     tool: "request_change",
     prepare: async () => ({
       address: await pickedCard(),

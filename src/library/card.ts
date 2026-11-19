@@ -14,6 +14,8 @@ import type { Provenance } from "../types.ts";
 import { LIBRARY_FORMATS, currentVersion, versionNumber, versionStatus } from "./review.ts";
 import type { ReviewRecord } from "./review.ts";
 import { libraryPath } from "./paths.ts";
+import { isSummaryEntry, matchingSummaryEntry } from "./summary.ts";
+import type { CardSummary, SummaryEntry } from "./summary.ts";
 
 /** The fields Assetgrove writes, in the order a card lists them. */
 export const MACHINE_FIELDS = [
@@ -285,12 +287,26 @@ function fromEntries(card: Card, entries: CardEntry[], source: string): Card {
   return parseCard(writeCard({ ...card, entries: normal }), source);
 }
 
-/** The card with its machine fields rewritten from `fields`; everything else is kept byte for byte. */
+/**
+ * The card with its machine fields rewritten from `fields`; everything else is kept byte for byte.
+ * A model-written summary's `verified` entry has no record besides the card: when `fields`
+ * rewrites `verified` with no summary entry of its own, the card's entry is kept while it still
+ * matches the card's description and tags, and dropped once a person changed them.
+ */
 export function rewriteMachineFields(
   card: Card,
   fields: Record<string, unknown>,
   source: string,
 ): Card {
+  const verified = fields["verified"];
+  if (Array.isArray(verified) && !verified.some(isSummaryEntry)) {
+    const kept = matchingSummaryEntry(card.data);
+    if (kept) return rewrite(card, { ...fields, verified: [...verified, kept] }, source);
+  }
+  return rewrite(card, fields, source);
+}
+
+function rewrite(card: Card, fields: Record<string, unknown>, source: string): Card {
   const withNewline = card.entries.map((entry, index) => ({
     key: entry.key,
     text: index === card.entries.length - 1 ? entry.text + card.newline : entry.text,
@@ -440,4 +456,46 @@ export function setPersonFields(
   const next =
     body === undefined ? card : { ...card, body: body.endsWith("\n") ? body : `${body}\n` };
   return fromEntries(next, entries, source);
+}
+
+/** The machine fields a card holds now, with `verified` replaced. */
+function withVerified(card: Card, verified: unknown[], source: string): Card {
+  const fields: Record<string, unknown> = {};
+  for (const key of MACHINE_FIELDS) if (key in card.data) fields[key] = card.data[key];
+  fields["verified"] = verified;
+  return rewrite(card, fields, source);
+}
+
+function verifiedOfCard(card: Card): unknown[] {
+  const verified = card.data["verified"];
+  return Array.isArray(verified) ? (verified as unknown[]) : [];
+}
+
+/**
+ * The card with a model-written summary: its `description` and `tags` set and `entry` in
+ * `verified` in place of any earlier summary entry. The caller checks first that the card's text
+ * is not a person's (`summaryState`).
+ */
+export function applySummary(
+  card: Card,
+  summary: CardSummary,
+  entry: SummaryEntry,
+  source: string,
+): Card {
+  const values: Record<string, unknown> = { description: summary.description };
+  values["tags"] = summary.tags;
+  const text = setPersonFields(card, values, undefined, source);
+  const verified = verifiedOfCard(text).filter((v) => !isSummaryEntry(v));
+  return withVerified(text, [...verified, entry], source);
+}
+
+/** The card without its summary entry: a person changed its description or tags. */
+export function dropSummary(card: Card, source: string): Card {
+  const verified = verifiedOfCard(card);
+  if (!verified.some(isSummaryEntry)) return card;
+  return withVerified(
+    card,
+    verified.filter((v) => !isSummaryEntry(v)),
+    source,
+  );
 }
