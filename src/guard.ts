@@ -4,6 +4,7 @@
  * file and never the value) when a file Git tracks holds a key. Hand-written: see docs/decisions.md,
  * "The tracked-key scan is hand-written".
  */
+import { isGitMarker } from "./git-marker.ts";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
@@ -131,7 +132,7 @@ function insideGit(dir: string): string | undefined {
   if (gitDirSet()) return dir;
   let at = dir;
   for (;;) {
-    if (existsSync(join(at, ".git"))) return at;
+    if (isGitMarker(join(at, ".git"))) return at;
     if (dirname(at) === at) return undefined;
     at = dirname(at);
   }

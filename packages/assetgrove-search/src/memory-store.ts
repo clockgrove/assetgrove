@@ -16,6 +16,7 @@ function matches(row: Row, t: FilterTerm): boolean {
   if (t.op === "has") return (row.tags ?? []).includes(String(t.value));
   const v = (row as unknown as Record<string, unknown>)[t.field];
   if (t.op === "in") return v !== undefined && t.value.includes(v as Scalar);
+  if ((t.field === "width" || t.field === "height") && v === undefined) return false;
   switch (t.op) {
     case "=":
       return v === t.value;
@@ -23,6 +24,10 @@ function matches(row: Row, t: FilterTerm): boolean {
       return v !== t.value;
     case "<":
       return v !== undefined && (v as string | number) < t.value;
+    case "<=":
+      return v !== undefined && (v as string | number) <= t.value;
+    case ">=":
+      return v !== undefined && (v as string | number) >= t.value;
     case ">":
       return v !== undefined && (v as string | number) > t.value;
   }

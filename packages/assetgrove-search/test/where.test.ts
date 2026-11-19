@@ -135,3 +135,38 @@ test("the memory store matches in, and resolveOrdered orders values as versions"
     plain,
   );
 });
+
+test("measured dimensions parse as numbers and unavailable dimensions never satisfy inequality", async () => {
+  const store = new MemoryStore();
+  await store.upsert(
+    [2, 10, undefined].map((width, i) => ({
+      key: String(i),
+      tree: "t",
+      id: String(i),
+      address: String(i),
+      source: "pick" as const,
+      path: String(i),
+      sha256: "a",
+      width,
+    })),
+  );
+  for (const [filter, expected] of [
+    ["width<10", ["0"]],
+    ["width<=10", ["0", "1"]],
+    ["width>2", ["1"]],
+    ["width>=2", ["0", "1"]],
+    ["width=10", ["1"]],
+    ["width!=10", ["0"]],
+    ["width>-1", ["0", "1"]],
+  ] as Array<[string, string[]]>) {
+    const parsed = parseWhere(filter);
+    assert.equal(typeof parsed[0]!.value, "number");
+    assert.deepEqual(
+      (await store.query({ filter: parsed, limit: 10 })).map((h) => h.row.key),
+      expected,
+    );
+  }
+  assert.equal(compileFilter(parseWhere("width!=10")), "width != 10");
+  for (const invalid of ["width=Infinity", "height=NaN", "width=", "width=2px", "bible<=v3"])
+    assert.throws(() => parseWhere(invalid), { code: "invalid_input" });
+});

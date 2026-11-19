@@ -65,6 +65,10 @@ const ROW_STRINGS = [
   "path",
   "sha256",
   "view",
+  "mediaType",
+  "mediaSha256",
+  "mediaStatus",
+  "mediaReason",
 ] as const;
 const REQUIRED = new Set(["key", "tree", "id", "address", "source", "path", "sha256"]);
 /** Scalar indexes of design section 7.3; `tree` has many values, the others few. */
@@ -87,7 +91,7 @@ const tableSuffix = (embedder: { id: string; revision: string }): string => {
 
 /** `rows_<id>_<revision>` made safe for a table name. */
 export function rowsTableName(embedder: { id: string; revision: string }): string {
-  return `rows_${tableSuffix(embedder)}`;
+  return `rows_v2_${tableSuffix(embedder)}`;
 }
 
 /**
@@ -95,11 +99,11 @@ export function rowsTableName(embedder: { id: string; revision: string }): strin
  * rows table, so one embedder's index is never judged by what another indexed.
  */
 export function sourcesTableName(embedder: { id: string; revision: string }): string {
-  return `sources_${tableSuffix(embedder)}`;
+  return `sources_v2_${tableSuffix(embedder)}`;
 }
 
 export function builtTableName(embedder: { id: string; revision: string }): string {
-  return `built_${tableSuffix(embedder)}`;
+  return `built_v2_${tableSuffix(embedder)}`;
 }
 
 /** The one-row table recording which embedder made the store's vectors. */
@@ -149,6 +153,8 @@ export class LanceStore implements Store {
     if (name === this.rowsName) {
       return new Schema([
         ...ROW_STRINGS.map((n) => str(n, !REQUIRED.has(n))),
+        new Field("width", new Float64(), true),
+        new Field("height", new Float64(), true),
         new Field("tags", new List(new Field("item", new Utf8(), true)), true),
         vec("imageVec"),
         vec("textVec"),
@@ -258,6 +264,8 @@ export class LanceStore implements Store {
     const records = rows.map((r) => {
       const o: Record<string, unknown> = {};
       for (const n of ROW_STRINGS) o[n] = r[n] ?? null;
+      o.width = r.width ?? null;
+      o.height = r.height ?? null;
       o.tags = r.tags ?? null;
       o.imageVec = r.imageVec ? Array.from(r.imageVec) : null;
       o.textVec = r.textVec ? Array.from(r.textVec) : null;
@@ -281,6 +289,7 @@ export class LanceStore implements Store {
   private toRow(o: Record<string, unknown>): Row {
     const r: Record<string, unknown> = {};
     for (const n of ROW_STRINGS) if (o[n] !== null && o[n] !== undefined) r[n] = o[n];
+    for (const n of ["width", "height"]) if (typeof o[n] === "number") r[n] = o[n];
     const list = (v: unknown) => (v as { toArray(): ArrayLike<unknown> }).toArray();
     if (o.tags !== null && o.tags !== undefined) r.tags = Array.from(list(o.tags)) as string[];
     for (const n of ["imageVec", "textVec"]) {

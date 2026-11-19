@@ -22,6 +22,7 @@ import {
   realpathSync,
   symlinkSync,
   writeFileSync,
+  unlinkSync,
 } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -225,4 +226,87 @@ test("the listed package fills core's slot: find returns the same JSON on the CL
     hits: Array<{ sharedText: { title?: string; text?: string } }>;
   };
   assert.match(String(words.hits[0]!.sharedText.text), /lantern/i);
+});
+
+test("CLI and MCP filter measured numeric boundaries and report unavailable evidence", async () => {
+  const assets = join(project.dir, "assets");
+  for (const id of ["lantern", "walk", "trot"]) {
+    const bytes = readFileSync(join(assets, `${id}.png`));
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const path = join(assets, `${id}.md`);
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(
+        "state: pending",
+        `state: pending\nlock: { sha256: "${sha256}" }`,
+      ),
+    );
+  }
+  const missing = join(assets, "missing.md");
+  const pointerSha = "a".repeat(64);
+  for (const id of ["missing", "pointer", "unsupported"]) {
+    const bytes = id === "unsupported" ? Buffer.from("unsupported media") : undefined;
+    const sha256 = bytes ? createHash("sha256").update(bytes).digest("hex") : pointerSha;
+    writeFileSync(
+      join(assets, `${id}.md`),
+      `---\ntype: Game Asset\nformat: assetgrove-card/1\ntitle: ${id}\nresource: ${id}.bin\nlock: { sha256: "${sha256}" }\n---\n`,
+    );
+    if (bytes) writeFileSync(join(assets, `${id}.bin`), bytes);
+    if (id === "pointer")
+      writeFileSync(
+        join(assets, `${id}.bin`),
+        `version https://git-lfs.github.com/spec/v1\noid sha256:${pointerSha}\nsize 100\n`,
+      );
+  }
+  assert.ok(existsSync(missing));
+  const indexed = await project.cli(["search", "index", "--rebuild", "--json"]);
+  assert.equal(indexed.code, 0, indexed.stderr + indexed.stdout);
+  const mcp = await project.mcpServer();
+  sessions.push(mcp);
+  const cases: Array<[string, string[]]> = [
+    ["width<40", ["trot"]],
+    ["width<=40", ["trot", "walk"]],
+    ["width=40", ["walk"]],
+    ["width>=40", ["lantern", "walk"]],
+    ["width>40", ["lantern"]],
+    ["width!=40", ["lantern", "trot"]],
+    ["height=48", ["lantern"]],
+  ];
+  type Document = { hits: Array<{ address: string; fields: Record<string, unknown> }> };
+  for (const [where, expected] of cases) {
+    const cli = await project.cli(["find", "--where", where, "--json"]);
+    assert.equal(cli.code, 0, cli.stderr + cli.stdout);
+    const result = cli.json as unknown as Document;
+    assert.deepEqual(result.hits.map((h) => h.address.split("/").at(-1)).sort(), expected);
+    for (const h of result.hits) {
+      assert.equal(typeof h.fields["width"], "number");
+      assert.equal(h.fields["mediaType"], "image/png");
+      assert.equal(h.fields["mediaStatus"], "available");
+      assert.match(String(h.fields["mediaSha256"]), /^[0-9a-f]{64}$/);
+    }
+    const response = await mcp.request("tools/call", {
+      name: "find",
+      arguments: { where: [where] },
+    });
+    const tool = response["result"] as { isError?: boolean; structuredContent: unknown };
+    assert.notEqual(tool.isError, true, JSON.stringify(tool));
+    assert.deepEqual(tool.structuredContent, result);
+  }
+  const unavailable = await project.cli(["find", "--where", "mediaStatus=unavailable", "--json"]);
+  assert.equal(unavailable.code, 0, unavailable.stderr + unavailable.stdout);
+  const hits = (unavailable.json as unknown as Document).hits;
+  for (const id of ["missing", "pointer", "unsupported"]) {
+    const hit = hits.find((h) => h.address.endsWith(`/${id}`));
+    assert.ok(hit, id);
+    assert.equal(hit.fields["mediaStatus"], "unavailable");
+    assert.equal(typeof hit.fields["mediaReason"], "string");
+    assert.equal(hit.fields["width"], undefined);
+  }
+  const invalid = await project.cli(["find", "--where", "duration>1", "--json"]);
+  assert.equal(invalid.code, 2);
+  assert.match(invalid.stdout, /evidence unavailable/);
+  unlinkSync(join(assets, "lantern.png"));
+  const gone = await project.cli(["find", "--where", "width=48", "--json"]);
+  assert.equal(gone.code, 0, gone.stderr + gone.stdout);
+  assert.deepEqual((gone.json as unknown as Document).hits, []);
 });

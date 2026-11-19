@@ -3,6 +3,7 @@
  * writes inside the library root, and the checks pick makes by asking Git. Nothing here parses
  * `.gitattributes`, runs `git add`, `git commit` or `git lfs install`.
  */
+import { isGitMarker } from "./git-marker.ts";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -71,7 +72,7 @@ function gitCwd(path: string): string {
   const start = existingDir(path);
   if (gitDirSet()) return start;
   for (let at = start; ; at = dirname(at)) {
-    if (existsSync(join(at, ".git"))) return at;
+    if (isGitMarker(join(at, ".git"))) return at;
     if (dirname(at) === at) return start;
   }
 }

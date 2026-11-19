@@ -3,6 +3,7 @@
  * money, code or keys. `loadSettings` finds it, refuses it structurally (exit 2 `settings_invalid`)
  * and fills the defaults. Nothing here reads a key.
  */
+import { isGitMarker } from "./git-marker.ts";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -673,7 +674,7 @@ function projectRoots(options: LoadOptions): string[] {
     for (let dir = start; !walked.has(dir); dir = dirname(dir)) {
       walked.add(dir);
       const dotGit = join(dir, ".git");
-      if (existsSync(dotGit)) {
+      if (isGitMarker(dotGit)) {
         roots.add(dir);
         const main = mainWorkTree(dotGit);
         if (main !== undefined) pending.push(main);

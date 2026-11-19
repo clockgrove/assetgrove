@@ -26,6 +26,7 @@ async function fixture(): Promise<{
   const oid = hash(object);
   const text = pointerText(oid, object.length);
   await mkdir(join(repo, ".git"), { recursive: true });
+  await writeFile(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
   await mkdir(join(repo, "lib"), { recursive: true });
   const media = join(repo, "lib", "a.png");
   await writeFile(media, text);

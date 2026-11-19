@@ -20,6 +20,12 @@ export interface Row {
   game?: string;
   title?: string;
   description?: string;
+  width?: number;
+  height?: number;
+  mediaType?: string;
+  mediaSha256?: string;
+  mediaStatus?: "available" | "unavailable";
+  mediaReason?: string;
   /** Full-text searched. */
   text?: string;
   path: string;
@@ -29,7 +35,7 @@ export interface Row {
   textVec?: Float32Array;
 }
 
-export type FilterOp = "=" | "!=" | "<" | ">" | "has" | "in";
+export type FilterOp = "=" | "!=" | "<" | ">" | "<=" | ">=" | "has" | "in";
 /**
  * A parsed filter term; a store never receives an unparsed string. All terms must match. `in`
  * keeps a row whose field is one of `value` (an empty list keeps none).

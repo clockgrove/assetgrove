@@ -35,6 +35,7 @@ import {
 import type { LogEntry } from "./folder.ts";
 import { describesUnrecordedEdit } from "./adopt.ts";
 import { MediaMissingError, readMedia } from "./lfs.ts";
+import { measureMedia } from "./media-metadata.ts";
 import { bibleVersionOfText, judgementOf, madeUnderOtherVersion } from "./stale.ts";
 import type { Judgement, StaleSubject, StalenessCache } from "./stale.ts";
 import { libraryPath } from "./paths.ts";
@@ -237,6 +238,10 @@ async function expectedFields(
   const bibleResource = resource("bible");
   const fields = machineFields({
     resource: resourceName,
+    media: await measureMedia(
+      libraryPath(config.root, asset.dir, resourceName, asset.cardPath),
+      currentVersion(review.record)!.sha256,
+    ),
     provenance,
     ...(provenanceResource !== undefined && { provenanceResource }),
     review: review.record,

@@ -46,6 +46,7 @@ import {
 } from "./folder.ts";
 import type { LogEntry } from "./folder.ts";
 import { parseLfsPointer } from "./lfs.ts";
+import { measureMediaBytes } from "./media-metadata.ts";
 import { libraryPath } from "./paths.ts";
 import {
   annotationId,
@@ -805,6 +806,7 @@ export async function commitLibraryWrite(
   const fields = machineFields({
     resource,
     provenance: input.provenance,
+    media: measureMediaBytes(input.mediaBytes, sha256),
     ...(plan.provenanceSource !== undefined && {
       provenanceResource: relPosix(dir, plan.provenanceSource),
     }),

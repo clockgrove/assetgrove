@@ -14,10 +14,14 @@ export const FILTER_FIELDS = [
   "path",
   "view",
   "title",
+  "mediaType",
+  "mediaStatus",
 ] as const;
 
-const ALLOWED = `${FILTER_FIELDS.join(", ")}, tag`;
-const OPS = ["!=", "=", "<", ">"] as const;
+export const NUMERIC_FILTER_FIELDS = ["width", "height"] as const;
+const ALL_FILTER_FIELDS: readonly string[] = [...FILTER_FIELDS, ...NUMERIC_FILTER_FIELDS];
+const ALLOWED = `${ALL_FILTER_FIELDS.join(", ")}, tag`;
+const OPS = ["!=", "<=", ">=", "=", "<", ">"] as const;
 
 function bad(filter: string, why: string): SearchError {
   return new SearchError("invalid_input", `${why}. Allowed fields: ${ALLOWED}.`, {
@@ -38,8 +42,17 @@ function parseOne(raw: string): FilterTerm {
     if (op !== "=") throw bad(raw, `Filter "${raw}": tag only supports =`);
     return { field: "tags", op: "has", value };
   }
-  if (!(FILTER_FIELDS as readonly string[]).includes(field)) {
-    throw bad(raw, `Unknown filter field "${field}"`);
+  if (!ALL_FILTER_FIELDS.includes(field)) {
+    throw bad(raw, `Unknown filter field "${field}": measured evidence unavailable`);
+  }
+  if (field === "width" || field === "height") {
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) || !Number.isFinite(Number(value))) {
+      throw bad(raw, `Filter "${raw}" requires a finite numeric boundary`);
+    }
+    return { field, op, value: Number(value) };
+  }
+  if (op === "<=" || op === ">=") {
+    throw bad(raw, `Filter "${raw}": inclusive boundaries require width or height`);
   }
   return { field, op, value };
 }
@@ -70,10 +83,7 @@ export function compileFilter(terms: FilterTerm[]): string | undefined {
     .map((t) => {
       const isTags = t.field === "tags" && t.op === "has";
       const known =
-        isTags ||
-        t.field === "tree" ||
-        t.field === "sha256" ||
-        (FILTER_FIELDS as readonly string[]).includes(t.field);
+        isTags || t.field === "tree" || t.field === "sha256" || ALL_FILTER_FIELDS.includes(t.field);
       if (!known) {
         throw new SearchError(
           "invalid_input",
@@ -107,7 +117,8 @@ export function compileFilter(terms: FilterTerm[]): string | undefined {
           details: { filter: t },
         });
       }
-      if (t.op === "!=") return `(${t.field} IS NULL OR ${t.field} != ${lit})`;
+      if (t.op === "!=" && t.field !== "width" && t.field !== "height")
+        return `(${t.field} IS NULL OR ${t.field} != ${lit})`;
       return `${t.field} ${t.op} ${lit}`;
     })
     .join(" AND ");

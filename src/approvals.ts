@@ -7,6 +7,7 @@
  * `assetgrove confirm <hex>` approves it. Commands never run through a shell; on Windows a `.cmd`
  * or `.bat` shim is refused (exit 2 `command_refused`).
  */
+import { isGitMarker } from "./git-marker.ts";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -142,7 +143,7 @@ function real(path: string): string {
 /** The nearest directory at or above `dir` holding a `.git` entry (a directory or a file). */
 export function gitTopLevel(dir: string): string | undefined {
   for (let at = real(resolve(dir)); ; at = dirname(at)) {
-    if (existsSync(join(at, ".git"))) return at;
+    if (isGitMarker(join(at, ".git"))) return at;
     if (dirname(at) === at) return undefined;
   }
 }

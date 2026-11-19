@@ -150,6 +150,7 @@ test("a cap lowered and a limit declared through settings_change hold for the sa
 async function projectWithSettings(): Promise<{ project: string; config: string }> {
   const project = await scratch();
   mkdirSync(join(project, ".git"));
+  writeFileSync(join(project, ".git", "HEAD"), "ref: refs/heads/main\n");
   const config = join(project, "assetgrove-settings.json");
   writeFileSync(config, readFileSync(settingsPath, "utf8"));
   return { project, config };
@@ -176,11 +177,25 @@ test("a settings file inside the project of --target or of an input file is refu
   assert.match(picked["error"].message, /inside the project/);
 });
 
+test("a scratch .git directory without HEAD does not make its parent a project", async () => {
+  const dir = await scratch();
+  mkdirSync(join(dir, ".git"));
+  writeFileSync(join(dir, ".git", "config"), "");
+  writeFileSync(join(dir, ".git", "hooks"), "");
+  const config = join(dir, "settings.json");
+  writeFileSync(config, readFileSync(settingsPath, "utf8"));
+  const env = { ...process.env, ASSETGROVE_CONFIG: config };
+  assert.doesNotThrow(() => loadSettings({ env, cwd: dir }));
+  writeFileSync(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+  assert.throws(() => loadSettings({ env, cwd: dir }), /inside the project/);
+});
+
 test("a settings file inside a sibling worktree of the cwd's repository is refused", async () => {
   const base = await scratch();
   const main = join(base, "main");
   const sibling = join(base, "sibling");
   mkdirSync(join(main, ".git", "worktrees", "sibling"), { recursive: true });
+  writeFileSync(join(main, ".git", "HEAD"), "ref: refs/heads/main\n");
   mkdirSync(sibling);
   writeFileSync(join(main, ".git", "worktrees", "sibling", "gitdir"), `${join(sibling, ".git")}\n`);
   writeFileSync(join(main, ".git", "worktrees", "sibling", "commondir"), `${join("..", "..")}\n`);

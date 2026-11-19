@@ -25,6 +25,12 @@ export interface LibraryItem {
   license?: string;
   title?: string;
   description?: string;
+  width?: number;
+  height?: number;
+  mediaType?: string;
+  mediaSha256?: string;
+  mediaStatus?: "available" | "unavailable";
+  mediaReason?: string;
   /** The card fields and body joined; full-text indexed and embedded as the card-text vector. */
   text?: string;
 }

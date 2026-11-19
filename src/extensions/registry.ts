@@ -6,6 +6,7 @@
  * from its package.json before anything is imported, src/extensions/version.ts), and the project's
  * Git does not track its entry file. A package.json dependency or a shared file alone never loads anything.
  */
+import { isGitMarker } from "../git-marker.ts";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -316,7 +317,7 @@ export function resolvePackage(name: string, cwd: string): string | undefined {
 function trackedByAnyProject(paths: readonly string[]): boolean {
   for (const path of new Set(paths)) {
     for (let dir = dirname(path); ; dir = dirname(dir)) {
-      if (existsSync(join(dir, ".git"))) {
+      if (isGitMarker(join(dir, ".git"))) {
         const rel = relative(dir, path);
         const result = spawnSync("git", ["ls-files", "-z", "--", rel], {
           cwd: dir,

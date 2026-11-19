@@ -85,6 +85,51 @@ Required: `type` (`Game Asset`), `format`, `title` and `resource`. The format li
 
 **Person fields** are `title`, `description`, `tags`, the body and every field Assetgrove does not own. They are set at the first pick and then kept; unknown fields are kept, as OKF requires. The one exception is a model-written summary, which may fill `description` and `tags` while no person has written them ([Summaries](#summaries)).
 
+### Measured media evidence
+
+Picks and `library rebuild` write the optional machine field `media`, a separately versioned
+`assetgrove-media/1` projection. The outer card format stays `assetgrove-card/1`, so existing cards
+and their byte-identical parse/write round trip remain supported.
+
+```yaml
+media:
+  {
+    format: assetgrove-media/1,
+    sha256: "<picked version sha256>",
+    status: available,
+    mediaType: image/png,
+    width: 512,
+    height: 256,
+  }
+```
+
+The sha256 is the review record's current picked version hash, including embedded credentials.
+Width and height are positive integer pixel dimensions measured by the existing PNG/JPEG decoders;
+media type comes from those bytes, never the filename, spec or provider's claimed dimensions. The
+existing binary glTF reader can establish `model/gltf-binary`; its width and height are absent
+because a model has no raster dimensions. Other formats are unavailable until an existing reader
+can measure them. No new media format is forbidden by this measurement support.
+
+When the picked bytes are missing, remain an unfetched LFS pointer, differ from the picked hash,
+or cannot be decoded, `media` instead records `status: unavailable` and a fixed reason
+(`missing_file`, `lfs_pointer`, `hash_mismatch`, `unsupported_media` or `invalid_media`). Local LFS
+objects use the same validated LFS read as other library operations. Rebuild repeats the
+measurement from the same hash-checked bytes, replacing stale facts rather than guessing.
+
+The projection copies only media type, width and height. Embedded GPS coordinates, camera serial
+numbers, free text and arbitrary EXIF/XMP or credential fields are never copied into cards,
+folder indexes or logs. Measurement failures never log decoder output or embedded values.
+
+With the search extension installed, `find --where 'width>=512' --where 'height<1024'`
+compares measured dimensions numerically; `=`, `!=`, `<`, `<=`, `>` and `>=` are supported.
+`mediaType=image/png` filters the measured type. Results include `mediaSha256`, `mediaStatus`
+and, when unavailable, `mediaReason`; `mediaStatus=unavailable` lists missing or unmeasurable
+evidence. An absent dimension never satisfies a dimension filter, including `!=`. An unsupported
+filter field reports measured evidence unavailable. Search measures the current review version's
+bytes rather than trusting a card's cached facts; card-only libraries use their lock hash.
+Search's rows, source metadata and build markers use projection version 2 so older indexes are
+reconstructed automatically; cached embeddings remain reusable.
+
 ### Summaries
 
 A card's `description` and `tags` can be a model-written summary of its media: one or two plain sentences naming the subject, materials, colours, style and apparent use, and up to 12 short lower-case tags. The card records it in `verified` as a `process:` entry naming the operation and model, with the sha256 of the canonical `{description, tags}` it wrote, so its trust tier reads as machine-confirmed:
