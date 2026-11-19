@@ -233,6 +233,9 @@ jobs:
           path: assetgrove-godot
           downloads-path: assetgrove-godot-downloads
           bin-path: assetgrove-godot-bin
+          # The action's cache restores only the editor executable, not the console one the Windows step
+          # needs, so every run after the first failed there. A fresh download unpacks both (~80 MB).
+          cache: false
 
       - name: Put the Godot console executable on PATH on Windows
         if: matrix.pack.touched && matrix.pack.short == 'assetgrove-godot' && runner.os == 'Windows'
