@@ -2,6 +2,7 @@
 import "./fixtures/env.ts";
 import { stateDir } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { encodePng, decodePng } from "../src/image/raster.ts";
 import { createLibraryReader } from "../src/search/reader.ts";
+import { appendVersion, parseReview, writeReview } from "../src/library/review.ts";
 import { writeFindSheet } from "../src/search/sheet.ts";
 import { GAME, RUN_ID, fixtureLibrary } from "./fixtures/library.ts";
 import { drawSubject } from "./fixtures/synthetic.ts";
@@ -20,6 +22,35 @@ const git = (dir: string, ...args: string[]) =>
     ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args],
     { cwd: dir, encoding: "utf8" },
   ).trim();
+
+test("search evidence follows the picked review version when the card lock is stale", async () => {
+  const lib = fixtureLibrary();
+  const cardPath = join(lib.root, "lantern.md");
+  const bytes = readFileSync(join(lib.root, "lantern.png"));
+  const oldHash = createHash("sha256").update(bytes).digest("hex");
+  const card = readFileSync(cardPath, "utf8").replace(
+    /sha256: [0-9a-f]{64}/g,
+    `sha256: ${oldHash}`,
+  );
+  writeFileSync(cardPath, card);
+  const reviewPath = join(lib.root, "lantern.review.json");
+  const nextHash = "f".repeat(64);
+  const review = appendVersion(parseReview(readFileSync(reviewPath, "utf8"), reviewPath), {
+    sha256: nextHash,
+    at: "2099-01-01T00:00:00Z",
+  });
+  writeFileSync(reviewPath, writeReview(review));
+  const reader = await createLibraryReader({
+    dir: lib.dir,
+    stateDir,
+    settings: { folders: [], candidates: false },
+  });
+  const item = (await reader.list()).find((item) => item.id === "lantern")!;
+  assert.equal(item.mediaSha256, nextHash);
+  assert.equal(item.mediaStatus, "unavailable");
+  assert.equal(item.mediaReason, "hash_mismatch");
+  assert.equal(item.width, undefined);
+});
 
 test("the reader lists picks, runs and folders, loads on demand, and reports Git state", async () => {
   const lib = fixtureLibrary();

@@ -204,7 +204,7 @@ async function refreshBatch(
   }
 
   const rows: Row[] = toWrite.flatMap(({ item, sha256, text, textSha, views }) =>
-    views.map((v) => {
+    (views.length ? views : [{ view: "" }]).map((v) => {
       const row: Row = {
         key: `${tree}:${item.path}#${v.view}`,
         tree,
@@ -228,6 +228,12 @@ async function refreshBatch(
         "license",
         "title",
         "description",
+        "width",
+        "height",
+        "mediaType",
+        "mediaSha256",
+        "mediaStatus",
+        "mediaReason",
       ] as const) {
         if (item[f] !== undefined) (row as unknown as Record<string, unknown>)[f] = item[f];
       }

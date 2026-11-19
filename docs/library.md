@@ -120,6 +120,16 @@ The projection copies only media type, width and height. Embedded GPS coordinate
 numbers, free text and arbitrary EXIF/XMP or credential fields are never copied into cards,
 folder indexes or logs. Measurement failures never log decoder output or embedded values.
 
+With the search extension installed, `find --where 'width>=512' --where 'height<1024'`
+compares measured dimensions numerically; `=`, `!=`, `<`, `<=`, `>` and `>=` are supported.
+`mediaType=image/png` filters the measured type. Results include `mediaSha256`, `mediaStatus`
+and, when unavailable, `mediaReason`; `mediaStatus=unavailable` lists missing or unmeasurable
+evidence. An absent dimension never satisfies a dimension filter, including `!=`. An unsupported
+filter field reports measured evidence unavailable. Search measures the current review version's
+bytes rather than trusting a card's cached facts; card-only libraries use their lock hash.
+Search's rows, source metadata and build markers use projection version 2 so older indexes are
+reconstructed automatically; cached embeddings remain reusable.
+
 ### Summaries
 
 A card's `description` and `tags` can be a model-written summary of its media: one or two plain sentences naming the subject, materials, colours, style and apparent use, and up to 12 short lower-case tags. The card records it in `verified` as a `process:` entry naming the operation and model, with the sha256 of the canonical `{description, tags}` it wrote, so its trust tier reads as machine-confirmed:

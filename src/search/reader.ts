@@ -17,9 +17,11 @@ import type {
 } from "../extension/api.ts";
 import { decodeImage } from "../image/raster.ts";
 import { BIBLE_PATH } from "../init.ts";
-import { findGitDir, readMedia } from "../library/lfs.ts";
+import { measureMedia } from "../library/media-metadata.ts";
+import { currentVersion } from "../library/review.ts";
+import { findGitDir, readMedia, MediaMissingError } from "../library/lfs.ts";
 import type { SearchSettings } from "../settings.ts";
-import { loadAssets, mediaPath, openProject } from "../tree/project.ts";
+import { loadAssets, mediaPath, openProject, readAssetReview } from "../tree/project.ts";
 import type { Project } from "../tree/project.ts";
 import { runCandidateFiles, runIds } from "../tree/read.ts";
 
@@ -95,7 +97,7 @@ export async function createLibraryReader(options: {
   };
   const rel = (abs: string) => slash(relative(project.dir, abs));
 
-  function picks(): SearchLibraryItem[] {
+  async function picks(): Promise<SearchLibraryItem[]> {
     const out: SearchLibraryItem[] = [];
     for (const asset of loadAssets(project).values()) {
       let abs: string;
@@ -105,8 +107,15 @@ export async function createLibraryReader(options: {
         if (error instanceof InputError) continue;
         throw error;
       }
-      const item = base("pick", abs, rel(abs), asset.id, `asset://${game}/${asset.id}`);
-      if (!item) continue;
+      const item = base("pick", abs, rel(abs), asset.id, `asset://${game}/${asset.id}`) ?? {
+        path: rel(abs),
+        size: 0,
+        mtimeMs: 0,
+        source: "pick" as const,
+        id: asset.id,
+        address: `asset://${game}/${asset.id}`,
+      };
+      known.set(item.path, abs);
       const data = asset.card.data as Record<string, unknown>;
       const str = (k: string) =>
         typeof data[k] === "string" && data[k] !== "" ? (data[k] as string) : undefined;
@@ -123,8 +132,25 @@ export async function createLibraryReader(options: {
         .filter((t): t is string => typeof t === "string" && t !== "")
         .join("\n");
       const license = str("license");
+      const lock = data["lock"] as { sha256?: string } | undefined;
+      const review = readAssetReview(project, asset);
+      const sha256 = review ? currentVersion(review)?.sha256 : lock?.sha256;
+      const media = sha256 ? await measureMedia(abs, sha256) : undefined;
       out.push({
         ...item,
+        ...(media
+          ? {
+              mediaSha256: media.sha256,
+              mediaStatus: media.status,
+              ...(media.status === "available"
+                ? {
+                    width: media.width,
+                    height: media.height,
+                    mediaType: media.mediaType,
+                  }
+                : { mediaReason: media.reason }),
+            }
+          : { mediaStatus: "unavailable" as const, mediaReason: "version-unavailable" }),
         game,
         ...(asset.kind && { kind: asset.kind }),
         ...(asset.subject && { subject: asset.subject }),
@@ -202,7 +228,7 @@ export async function createLibraryReader(options: {
   async function list(sources: readonly SearchSource[] = ALL): Promise<SearchLibraryItem[]> {
     const want = new Set(sources);
     return [
-      ...(want.has("pick") ? picks() : []),
+      ...(want.has("pick") ? await picks() : []),
       ...(want.has("reference") ? references() : []),
       ...(want.has("candidate") && options.settings.candidates ? candidates() : []),
       ...(want.has("folder") ? folders() : []),
@@ -213,12 +239,24 @@ export async function createLibraryReader(options: {
     if (!known.has(path)) await list();
     const abs = known.get(path);
     if (abs === undefined) return undefined;
-    const media = await readMedia(abs, { gitDir: findGitDir(dirname(abs)) });
+    let media;
+    try {
+      media = await readMedia(abs, { gitDir: findGitDir(dirname(abs)) });
+    } catch (error) {
+      if (error instanceof MediaMissingError) return undefined;
+      throw error;
+    }
     return media.kind === "lfs-pointer" ? { pointer: media.pointer.oid } : media.bytes;
   }
 
   async function load(item: SearchLibraryItem): Promise<SearchLoadedItem> {
     const got = await bytesOf(item.path);
+    if (got === undefined && known.has(item.path) && item.mediaStatus === "unavailable") {
+      return {
+        bytes: new TextEncoder().encode(`unavailable:${item.mediaSha256 ?? ""}`),
+        views: [],
+      };
+    }
     if (got === undefined) {
       throw new InputError(`${item.path} is not a file the library reader lists`);
     }

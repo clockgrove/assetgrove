@@ -31,7 +31,22 @@ export interface FindHit {
   source: Row["source"];
   path: string;
   view: string;
-  fields: Pick<Row, "game" | "kind" | "subject" | "tags" | "state" | "bible" | "license">;
+  fields: Pick<
+    Row,
+    | "game"
+    | "kind"
+    | "subject"
+    | "tags"
+    | "state"
+    | "bible"
+    | "license"
+    | "width"
+    | "height"
+    | "mediaType"
+    | "mediaSha256"
+    | "mediaStatus"
+    | "mediaReason"
+  >;
   /** Card text: core passes it on only under `sharedText`. */
   sharedText: Pick<Row, "title" | "description" | "text">;
 }
@@ -275,6 +290,12 @@ export class SearchIndex {
           state: row.state,
           bible: row.bible,
           license: row.license,
+          width: row.width,
+          height: row.height,
+          mediaType: row.mediaType,
+          mediaSha256: row.mediaSha256,
+          mediaStatus: row.mediaStatus,
+          mediaReason: row.mediaReason,
         },
         sharedText: { title: row.title, description: row.description, text: row.text },
       }));

@@ -288,6 +288,12 @@ const toHit = ({ row, score }: Hit, i: number): SearchHit => {
       state: row.state,
       bible: row.bible,
       license: row.license,
+      width: row.width,
+      height: row.height,
+      mediaType: row.mediaType,
+      mediaSha256: row.mediaSha256,
+      mediaStatus: row.mediaStatus,
+      mediaReason: row.mediaReason,
     }),
     sharedText: defined({ title: row.title, description: row.description, text: row.text }),
   };
