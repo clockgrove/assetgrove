@@ -153,9 +153,16 @@ export interface TargetProfile {
   frames: { width: number; height: number; maxEdge?: number; durationMs?: number };
   /**
    * Per-kind settings, keyed by kind id (`kinds["pixel:tile"]`). `values` is free; any other field
-   * is checked against the kind's `profileSchema`, and a kind without one accepts only `values`.
+   * is checked against the kind's `profileSchema`, except the shared `layout` override.
    */
-  kinds?: Record<string, { values?: Record<string, unknown>; [field: string]: unknown }>;
+  kinds?: Record<
+    string,
+    {
+      values?: Record<string, unknown>;
+      layout?: { media: string; manifest?: string };
+      [field: string]: unknown;
+    }
+  >;
   /**
    * Path templates relative to the target directory, with `{{a.b}}` placeholders (the same values
    * as the manifest template, for example `{{spec.assetId}}` and `{{output.extension}}`).

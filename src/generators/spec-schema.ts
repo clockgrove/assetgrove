@@ -16,5 +16,5 @@ export const CORE_SPEC_SCHEMA = z.looseObject({
   fields: z.record(z.string(), z.unknown()).optional(),
 });
 
-/** Core's kinds declare no profile block fields: `kinds.<kind>` accepts only `values`. */
+/** Core's kinds declare no profile block fields: `kinds.<kind>` also accepts core-owned `values` and `layout`. */
 export const CORE_PROFILE_SCHEMA = z.strictObject({});
