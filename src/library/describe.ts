@@ -3,8 +3,15 @@
  * and the write of one summary. A card with a person's description or tags is never overwritten:
  * the state is checked when the work is planned and again under the library write lock.
  */
-import { readFileSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { extname, join, resolve } from "node:path";
+import { PROFILE_PATH } from "../init.ts";
+import { loadProfile } from "../inputs.ts";
+import { evaluateProjectRules, enforceProjectRules, measuredRuleMedia } from "../project-rules.ts";
+import type { RuleFinding } from "../project-rules.ts";
+import type { TargetProfile } from "../types.ts";
+import type { Card } from "./card.ts";
+import { projectOf } from "./adopt.ts";
 import { turntableViews } from "../compare.ts";
 import { InputError } from "../errors.ts";
 import { thumbnail } from "../tree/thumbs.ts";
@@ -16,6 +23,7 @@ import { applySummary } from "./card.ts";
 import { stalenessThumbnail } from "./stale.ts";
 import { summaryEntry, summaryState } from "./summary.ts";
 import type { CardSummary } from "./summary.ts";
+import { MediaMissingError, readMedia } from "./lfs.ts";
 import { scanCards } from "./write.ts";
 
 /** One card to describe, with the image views its call is shown. */
@@ -173,6 +181,35 @@ export async function selectDescribed(
   return { pending, skipped };
 }
 
+export async function checkCardProjectRules(
+  asset: LoadedAsset,
+  card: Card,
+  profile?: TargetProfile,
+): Promise<RuleFinding[]> {
+  if (profile === undefined) {
+    const project = projectOf(asset);
+    const path = project === undefined ? undefined : join(project, PROFILE_PATH);
+    if (path !== undefined && existsSync(path)) profile = (await loadProfile(path)).value;
+  }
+  let media;
+  if (profile?.rules?.some((rule) => rule.kind === "media")) {
+    try {
+      const read = await readMedia(asset.mediaPath);
+      if (read.kind !== "lfs-pointer") media = measuredRuleMedia(read.bytes);
+    } catch (error) {
+      if (!(error instanceof MediaMissingError)) throw error;
+    }
+  }
+  const findings = evaluateProjectRules({
+    rules: profile?.rules,
+    asset: asset.assetId,
+    card: card.data,
+    ...(media !== undefined && { media }),
+  });
+  enforceProjectRules(findings);
+  return findings;
+}
+
 /**
  * Writes one summary into the card under the library write lock, re-reading the card first: a
  * person's words written meanwhile (or, for `--missing`, any description) still win.
@@ -184,7 +221,8 @@ export async function writeDescribed(
   stateDir: string,
   missing: boolean,
   now: () => Date = () => new Date(),
-): Promise<{ files: string[] } | { skipped: string }> {
+  profile?: TargetProfile,
+): Promise<{ files: string[]; ruleFindings: RuleFinding[] } | { skipped: string }> {
   return withLibraryLock(subject.location, stateDir, async () => {
     const asset = await loadAsset(subject.location);
     const state = summaryState(asset.card.data);
@@ -192,7 +230,8 @@ export async function writeDescribed(
     if (missing && state.state !== "none") return { skipped: "it was described while this ran" };
     const entry = summaryEntry(summary, "vision", model, now().toISOString());
     const card = applySummary(asset.card, summary, entry, asset.cardPath);
+    const ruleFindings = await checkCardProjectRules(asset, card, profile);
     const written = await writeAsset({ ...asset, card }, asset.record, { card });
-    return { files: written.files };
+    return { files: written.files, ruleFindings };
   });
 }

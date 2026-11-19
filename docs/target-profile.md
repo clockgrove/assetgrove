@@ -229,8 +229,14 @@ findings in both JSON and human output.
 Hand-off evaluates the spec, resulting card (including tags), and available media
 measurements before writing a pick. Library checks evaluate the same rules against
 the stored card and measured media, alongside the existing licence and format
-checks; spec evidence is unavailable there. Each finding identifies its rule, asset, severity, evidence source and
-status. An error with failed evidence blocks a write or fails the library check;
+checks; spec evidence is unavailable there. Each finding identifies its rule,
+asset, severity, evidence source and status. An error with failed evidence blocks a write or fails the library check;
 a warning reports the same finding without blocking. Unavailable evidence remains
 explicit rather than being treated as a pass. A rule failure leaves no partial
 pick, and CLI and MCP writes share this enforcement path.
+
+Card edits and descriptions check the resulting card and existing media before
+writing. They use the standard project profile when present; `card describe` also
+honors its explicit profile. Standalone libraries without a profile keep their
+existing behavior. Missing media and unresolved LFS objects leave media evidence
+unavailable. Byte budgets count the final marked and signed file at hand-off.
