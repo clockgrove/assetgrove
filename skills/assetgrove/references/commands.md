@@ -52,12 +52,14 @@ MCP tool: `apply`, arguments `plan`, `out`, `note`, `workItem`, `round`.
 ### `mcp`
 
 ```text
-mcp [--target <dir>] [--work-item <label>] [--provider-script <module>]
+mcp [--read-only] [--target <dir>] [--work-item <label>] [--provider-script <module>]
 ```
 
 Serves one MCP tool per command other than `mcp` over MCP stdio with the official MCP SDK; each tool takes its command's arguments and returns the same result document as the command's JSON output (as `structuredContent`, with `isError` set when the result is not ok; `cat` lists its contents there and carries them as content, see `cat`), and file paths are local to the server. A paid tool call runs in the server's process; while its client is connected, a call that carries a `progressToken` gets `notifications/progress` at least once per job. If the client drops, the run goes on until it ends or the server stops; repeating the request resumes it from its journal. Stdout carries the protocol, so it prints no JSON document; logs go to stderr. Spends and writes as the commands it serves do. Like every paid command, it exits 2 `settings_invalid` when a TLS or proxy variable is set that the settings' `environment.allow` does not list.
 
 It also serves the library of the project at `--target` (default: the working directory's Git top level) as `asset://<game>/` resources, the tree `ls` and `cat` read: `resources/list` (the game root, every folder and card address, 200 per cursor page), `resources/templates/list`, `resources/read` and `resources/subscribe`. After each of its own tool calls it sends `notifications/resources/updated` for a subscribed asset or run folder that changed (a new version or annotation, a staged candidate) and `notifications/resources/list_changed` after a pick or write it served. A refused read answers JSON-RPC `-32602` with `data.code` `invalid_input`. Other changes show at the next read.
+
+Use `--read-only` to browse the library and inspect candidate resources with tools that cannot edit, pick or spend.
 
 ### `materials`
 

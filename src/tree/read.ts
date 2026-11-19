@@ -584,7 +584,7 @@ async function readRuns(view: View, at: Address, r: Reader): Promise<void> {
     ...(found.artifacts.length > 0 && { artifacts: found.artifacts }),
   });
   const bytes = readBytes(file);
-  if (bytes && found.sha256 !== sha256Hex(bytes))
+  if (bytes && found.sha256 !== undefined && found.sha256 !== sha256Hex(bytes))
     throw new InputError(`${r.address}: candidate bytes changed since staging`);
   const shape = stripShape(spec["kind"], found.parameters, view.traits);
   if (bytes && found.mediaType?.startsWith("image/")) {
