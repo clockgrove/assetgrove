@@ -334,6 +334,23 @@ Runs a recipe file's operations in order over the inputs and writes the outputs 
 
 MCP tool: `recipe`, arguments `recipe`, `inputs`, `out`, `profile`, `digitalSourceType`.
 
+### `rendition`
+
+```text
+rendition --recipes <directory> --recipe <name> --source <image> --source-sha256 <64-hex-sha256> --out <directory> [--source-provenance <record.json>] [--profile <profile.json>] [--digital-source-type <IPTC code or URI>] [--preview] [--json]
+```
+
+Selects `<name>.json` from the project's recipe directory and builds deterministic image
+renditions from the exact mezzanine bytes named by `--source-sha256`. Outputs and provenance go
+under `<out>/<digest>/`; resolved recipe parameters and tool versions participate in the digest.
+`--preview` is a write-free dry run showing exact output paths and hashes, also available over
+MCP. Existing source provenance is retained when supplied explicitly or found at
+`<source>.provenance.json`. Known disclosure survives; writing an undeclared source requires
+`--digital-source-type`. Local raster operations only: no model call, external tool or spend.
+Does not approve assets or add library versions.
+
+MCP tool: `rendition`, arguments `recipes`, `recipe`, `source`, `sourceSha256`, `out`, `sourceProvenance`, `profile`, `digitalSourceType`, `preview`.
+
 ### `ops`
 
 ```text
