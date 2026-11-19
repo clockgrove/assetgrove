@@ -5,6 +5,9 @@
  * top-level entries, so writing it again is byte-identical and a rewrite touches only the entries
  * it replaces.
  */
+import { dirname, isAbsolute } from "node:path";
+import { canonicalLabels, checkedVocabulary } from "./labels.ts";
+import { summaryDigest } from "./summary.ts";
 import { Document, isMap, isSeq, parse as parseYaml, parseDocument, type Node } from "yaml";
 import { z } from "zod";
 import { splitFrontMatter } from "../bible.ts";
@@ -514,7 +517,9 @@ export function applySummary(
   source: string,
 ): Card {
   const values: Record<string, unknown> = { description: summary.description };
-  values["tags"] = summary.tags;
+  const vocabulary = isAbsolute(source) ? checkedVocabulary(dirname(source)) : undefined;
+  values["tags"] = canonicalLabels(summary.tags, vocabulary, "omit");
+  entry = { ...entry, summary: summaryDigest(summary.description, values["tags"]) };
   const text = setPersonFields(card, values, undefined, source);
   const verified = verifiedOfCard(text).filter((v) => !isSummaryEntry(v));
   return withVerified(text, [...verified, entry], source);

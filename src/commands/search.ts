@@ -5,6 +5,7 @@
  * the tool list leave them out and a call exits 2 `extension_unavailable` (src/commands/runner.ts).
  * Core never imports the search package.
  */
+import { checkedVocabulary, labelFilters } from "../library/labels.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -415,6 +416,11 @@ export async function runFind(
     (hosted(ctx) ? (await embedRoute(args.providerScript, ctx)).embedder : undefined);
   const { slot, context, reader } = await searchCall("find", args.target, ctx, true, embedder);
   const query = await findQuery(args, context.game);
+  if (query.where !== undefined)
+    query.where = labelFilters(
+      Array.isArray(query.where) ? query.where : [query.where],
+      checkedVocabulary(context.worktree),
+    );
   const result = await calling(() => slot.find(query, context));
   const fields: Record<string, unknown> = {
     hits: result.hits,

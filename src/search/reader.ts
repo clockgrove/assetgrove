@@ -3,6 +3,7 @@
  * file of the project with its card fields, loaded on demand. Picks follow the library path rule
  * and LFS pointer handling; core never imports the search package.
  */
+import { LABELS_PATH } from "../library/labels.ts";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -287,7 +288,14 @@ export async function createLibraryReader(options: {
     },
     async clean() {
       const root = slash(relative(project.dir, project.library.root)) || ".";
-      const r = git(project.dir, ["status", "--porcelain", "--untracked-files=all", "--", root]);
+      const r = git(project.dir, [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        root,
+        LABELS_PATH,
+      ]);
       return r.ok && r.out.trim() === "";
     },
     async changedSince(commit) {
@@ -299,6 +307,7 @@ export async function createLibraryReader(options: {
       const paths = new Set([
         slash(relative(project.dir, project.library.root)) || ".",
         BIBLE_PATH,
+        LABELS_PATH,
         ...bibleRefs().map((r) => r.path),
       ]);
       const r = spawnSync("git", ["diff", "--quiet", commit, "HEAD", "--", ...paths], {

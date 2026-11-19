@@ -24,6 +24,7 @@ import {
   libraryRebuildCommand,
   libraryStatsCommand,
 } from "./library.ts";
+import { libraryLabelsCommand } from "./labels.ts";
 import { lodCommand } from "./lod.ts";
 import { lookDevCommand } from "./look-dev.ts";
 import { materialsCommand } from "./materials.ts";
@@ -83,6 +84,7 @@ export const commands: readonly CommandSpec[] = [
   libraryDriftCommand,
   libraryJudgeStaleCommand,
   libraryAdoptCommand,
+  libraryLabelsCommand,
   settingsCommand,
   settingsChangeCommand,
   extensionsCommand,

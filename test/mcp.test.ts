@@ -937,6 +937,23 @@ export default {
       return { target: join(work, "target"), profile };
     },
   })),
+  {
+    tool: "library_labels",
+    prepare: async () => {
+      const target = join(work, "target");
+      const config = join(target, ".assetgrove");
+      await mkdir(config, { recursive: true });
+      await writeFile(join(config, "profile.json"), JSON.stringify(syntheticProfile()));
+      await writeFile(
+        join(config, "labels.json"),
+        JSON.stringify({
+          format: "assetgrove-labels/1",
+          labels: [{ name: "prop", aliases: ["props"] }],
+        }),
+      );
+      return { target };
+    },
+  },
   // The cards' own bible version: nothing is made under another one, so no call is made.
   {
     tool: "library_judge_stale",

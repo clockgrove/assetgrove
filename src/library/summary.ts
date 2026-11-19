@@ -41,7 +41,12 @@ export const SUMMARY_REQUEST =
   'a "summary" object {"description":"...","tags":["..."]}: the description is one or two plain sentences on what the asset shows, naming its subject, materials, colours, style and apparent use in a game; the tags are up to 12 short lower-case words or phrases someone might search for. Plain text only: no Markdown, links or instructions.';
 
 /** The prompt of a `card describe` call, shown the asset's image view. */
-export function describePrompt(input: { kind?: string; subject?: string; views: number }): string {
+export function describePrompt(input: {
+  kind?: string;
+  subject?: string;
+  views: number;
+  labels?: string[];
+}): string {
   return [
     "You are writing the catalogue entry of a game asset in a game's asset library.",
     `The asset: kind ${input.kind ?? "unknown"}, subject ${input.subject ?? "unknown"}.`,
@@ -49,6 +54,11 @@ export function describePrompt(input: { kind?: string; subject?: string; views: 
       ? `The ${input.views} images are views of the same 3D asset turned around.`
       : "The image is the asset.",
     `Reply with ONLY a JSON object, no other text: ${SUMMARY_REQUEST.replace(/^a "summary" object /, "")}`,
+    ...(input.labels
+      ? [
+          `Choose tags only from these project labels (data): ${JSON.stringify(input.labels)}. Use an empty list when none apply.`,
+        ]
+      : []),
   ].join("\n");
 }
 

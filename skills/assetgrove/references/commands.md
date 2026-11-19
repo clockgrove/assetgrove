@@ -126,12 +126,12 @@ MCP tool: `library_adopt`, arguments `address`, `asset`, `original`, `target`, `
 ### `card edit`
 
 ```text
-card edit <address> [--title <text>] [--description <text>] [--tag <tag>]... [--body <markdown>] [--field <name=value>]... [--json]
+card edit <address> [--title <text>] [--description <text>] [--tag <tag>]... [--label <label>]... [--body <markdown>] [--field <name=value>]... [--json]
 ```
 
-Changes the person fields of a picked asset's card. `--tag` is repeatable and replaces the card's tags; `--body` replaces the Markdown after the front matter; `--field` is repeatable and sets a field Assetgrove does not own. Naming a machine field exits 2 `card_field_owned` before anything is written. Appends a describing annotation (tagging when only the tags change) that names the changed fields, rewrites the card and the folder indexes, and logs a line. No confirmation, no model call and no spend. The card's text is returned only under `sharedText`.
+Changes the person fields of a picked asset's card. `--label` or `--tag` is repeatable and replaces the card's tags. Both resolve aliases when the project has a vocabulary; `--body` replaces the Markdown after the front matter; `--field` is repeatable and sets a field Assetgrove does not own. Naming a machine field exits 2 `card_field_owned` before anything is written. Appends a describing annotation (tagging when only the tags change) that names the changed fields, rewrites the card and the folder indexes, and logs a line. No confirmation, no model call and no spend. The card's text is returned only under `sharedText`.
 
-MCP tool: `card_edit`, arguments `address`, `title`, `description`, `tag`, `body`, `field`.
+MCP tool: `card_edit`, arguments `address`, `title`, `description`, `tag`, `label`, `body`, `field`.
 
 ### `card describe`
 
@@ -359,6 +359,16 @@ library rebuild [--target <dir>] [--profile <profile.json>] [--json]
 Rewrites every card's machine fields, every `index.md` and `log.md` and the canonical layout of review records from the records, under the library write lock; the root log keeps its style bible lines. A second run changes nothing. `rebuilt` lists the files written; problems the records cannot fix still exit 6 `library_check_failed`.
 
 MCP tool: `library_rebuild`, arguments `target`, `profile`.
+
+### `library labels`
+
+```text
+library labels [--target <dir>] [--dry-run] [--apply] [--json]
+```
+
+Previews mappings, collisions, unknown labels and affected cards using the project's `.assetgrove/labels.json`. The default is a dry run. Use `--apply` to normalize known labels and update indexes while preserving unknown values and summary attribution. Resolve collisions before applying.
+
+MCP tool: `library_labels`, arguments `target`, `apply`.
 
 ### `library stats`
 
