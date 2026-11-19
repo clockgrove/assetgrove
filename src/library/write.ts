@@ -35,6 +35,7 @@ import {
   writeCard,
 } from "./card.ts";
 import type { Card } from "./card.ts";
+import { checkedVocabulary, editLabels } from "./labels.ts";
 import { summaryEntry, summaryState } from "./summary.ts";
 import type { CandidateSummary } from "./summary.ts";
 import {
@@ -412,7 +413,10 @@ export async function prepareLibraryWrite(input: {
   }
   const cardPath = join(dir, `${assetId}.md`);
   const reviewPath = join(dir, `${assetId}.review.json`);
-  await readOwnCard(cardPath, config.root, dir);
+  const existingCard = await readOwnCard(cardPath, config.root, dir);
+  const vocabulary = checkedVocabulary(input.targetDir);
+  if (!existingCard && input.spec.fields?.["tags"] !== undefined)
+    editLabels(input.spec.fields["tags"], [], vocabulary);
   const review = await readOwnReview(reviewPath, config.root, dir, undefined);
   const sha256 = input.mediaBytes && sha256Hex(input.mediaBytes);
   const expects: VersionExpectations = {
@@ -829,7 +833,9 @@ export async function commitLibraryWrite(
           title: typeof extra["title"] === "string" ? extra["title"] : assetId,
           ...(typeof extra["description"] === "string" && { description: extra["description"] }),
           ...(Array.isArray(tags) &&
-            tags.every((tag) => typeof tag === "string") && { tags: tags as string[] }),
+            tags.every((tag) => typeof tag === "string") && {
+              tags: editLabels(tags, [], checkedVocabulary(dir)),
+            }),
         },
         fields,
       );

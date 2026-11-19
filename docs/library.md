@@ -315,3 +315,54 @@ Masks and references are copied to `<assetId>.review/<sha256>.<ext>` beside the 
 ## Merges
 
 `index.md`, `log.md` and `*.review.json` are meant for Git's union merge driver, so two branches that write into one folder never conflict; the readers above accept what that driver produces.
+
+## Project labels
+
+Projects can replace free-form tag entry with a shared vocabulary at
+`.assetgrove/labels.json` in the project root:
+
+```json
+{
+  "format": "assetgrove-labels/1",
+  "labels": [
+    { "name": "prop", "aliases": ["props", "object"] },
+    { "name": "light", "aliases": ["lamp", "old-light"] }
+  ]
+}
+```
+
+A label's `name` is its canonical spelling. Aliases match after trimming, Unicode
+NFKC normalization and lower-casing. To rename a label, change its name and keep
+the old name in its aliases. Each normalized spelling must identify one label;
+ambiguous aliases and duplicate names are collisions and block writes.
+
+`assetgrove library labels --target <project>` (MCP `library_labels`) defaults to
+a dry run; `--dry-run` is also explicit. It lists mappings, collisions, unknown
+existing values with their cards, unreadable records and affected cards with the
+before and after labels. `--apply` repeats the scan under the library write lock
+and normalizes known values, removes duplicates and updates folder indexes.
+Collisions or unreadable records refuse application before any card is changed.
+A second application writes nothing. This operation makes no model call.
+
+`card edit <card> --label prop --label lamp` replaces labels with canonical
+`prop` and `light`. The existing `--tag` spelling uses the same resolver. Unknown
+new entries are refused; an unknown value already on that card can be retained
+until the project owner adds it to the vocabulary. Unknown existing values are
+preserved and reported by migration. A project's first pick also validates tags
+from its spec against the vocabulary. Without a vocabulary, existing projects
+continue accepting their tags.
+
+The same canonical names reach the tree's `by-tag` groups, search indexing,
+`find --where label=lamp` (also `tag=lamp`), and MCP browse and search reads. Old
+names resolve through their aliases. No read rewrites cards. Model summaries
+write only known labels when a vocabulary exists; `card describe` also supplies
+the canonical choices to its model. Existing unknown tags are migrated as data,
+not discarded as suggestions.
+
+Labels remain solely in OKF's top-level `tags`; there is no parallel `labels`
+field, label database or per-asset vocabulary. Vocabulary normalization keeps
+human prose, unknown front matter and the card body. For an unchanged machine
+summary, it keeps the original operation, model and timestamp and recomputes its
+summary digest for the normalized tags. It never restores machine attribution
+after a person changed the summary. A subsequent person edit of tags or
+description still drops the summary entry; rebuild preserves that decision.

@@ -4,6 +4,7 @@
  * through their cards, never by a stored path; every path a card names passes the library path
  * rule before it is read.
  */
+import { canonicalLabels, checkedVocabulary } from "../library/labels.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { gitTopLevel } from "../approvals.ts";
@@ -83,6 +84,7 @@ export interface Asset {
  */
 export function loadAssets(project: Project, reserved?: string[]): Map<string, Asset> {
   const assets = new Map<string, Asset>();
+  const vocabulary = checkedVocabulary(project.dir);
   for (const found of scanCards(project.library.root)) {
     if (assets.has(found.id)) continue;
     if ((VIEWS as readonly string[]).includes(found.id)) {
@@ -114,7 +116,7 @@ export function loadAssets(project: Project, reserved?: string[]): Map<string, A
       ...(state && { state }),
       ...(typeof data["version"] === "number" && { version: data["version"] }),
       ...(found.bible !== undefined && { bible: found.bible }),
-      tags: [...new Set(tags)],
+      tags: canonicalLabels(tags, vocabulary),
     });
   }
   return assets;

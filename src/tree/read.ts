@@ -8,6 +8,7 @@
  * thumbnail of at most 512 px and `image/full` the file. No read's encoded content exceeds 64 KB:
  * content that would is replaced by a JSON pointer naming the file and its size.
  */
+import { canonicalLabel, checkedVocabulary } from "../library/labels.ts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 import { turntableViews } from "../compare.ts";
@@ -502,7 +503,11 @@ async function readView(view: View, at: Address, r: Reader): Promise<void> {
     r.json(folderDoc(r.address, page(r.address, children, at.after), {}));
     return;
   }
-  const members = grouped.get(value);
+  const label =
+    name === "by-tag"
+      ? (canonicalLabel(value, checkedVocabulary(view.project.dir)) ?? value)
+      : value;
+  const members = grouped.get(label);
   if (!members) throw new InputError(`${r.address}: nothing in the library under "${value}"`);
   const children = members.map((a) => assetChild(view, a)).sort(byName);
   r.json(folderDoc(r.address, page(r.address, children, at.after), {}));

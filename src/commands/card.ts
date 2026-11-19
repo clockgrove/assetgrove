@@ -5,6 +5,7 @@
  * when only the tags change, with `ag:action: "card-edit"`, and logged; the card text reaches a
  * tool result only under `sharedText`.
  */
+import { canonicalLabels, checkedVocabulary, editLabels } from "../library/labels.ts";
 import { join, resolve } from "node:path";
 import { Budget, runCap } from "../budget.ts";
 import { Caller } from "../calls.ts";
@@ -55,6 +56,7 @@ interface CardEditArgs {
   title?: string;
   description?: string;
   tag?: string[];
+  label?: string[];
   body?: string;
   field?: string[];
 }
@@ -73,7 +75,9 @@ function editedFields(args: CardEditArgs): Record<string, unknown> {
   }
   if (args.title !== undefined) values["title"] = args.title;
   if (args.description !== undefined) values["description"] = args.description;
-  if (args.tag !== undefined) values["tags"] = [...args.tag];
+  if (args.tag !== undefined && args.label !== undefined)
+    throw new InputError("choose --label or --tag");
+  if (args.label !== undefined || args.tag !== undefined) values["tags"] = args.label ?? args.tag;
   // A card keeps a title, whether --title or --field title= sets it.
   const title = values["title"];
   if (typeof title === "string" && title.trim() === "") {
@@ -107,6 +111,12 @@ confirmation. The card's text is returned only under sharedText.`,
         type: "string",
         description: "the card's new description",
         placeholder: "<text>",
+      },
+      label: {
+        type: "array",
+        items: { type: "string" },
+        description: "canonical project labels; replaces the card labels",
+        placeholder: "<label>",
       },
       tag: {
         type: "array",
@@ -143,6 +153,12 @@ confirmation. The card's text is returned only under sharedText.`,
     const location = locateAsset(args.address);
     return withLibraryLock(location, ctx.settings.stateDir, async () => {
       const asset = await loadAsset(location);
+      if ("tags" in values)
+        values["tags"] = editLabels(
+          values["tags"],
+          asset.card.data["tags"],
+          checkedVocabulary(asset.dir),
+        );
       let card = setPersonFields(asset.card, values, args.body, asset.cardPath);
       // A person's words replace the summary's: the card no longer reads machine-confirmed.
       if ("description" in values || "tags" in values) card = dropSummary(card, asset.cardPath);
@@ -329,12 +345,14 @@ forecast, confirmation and caps. The written text is returned only under sharedT
     const skipped: Skipped[] = [...unviewable];
     const sharedText: SharedText[] = [];
     for (const subject of pending) {
+      const vocabulary = checkedVocabulary(subject.location.dir);
       const reply = await caller.vision(
         "vision",
         describePrompt({
           ...(subject.kind !== undefined && { kind: subject.kind }),
           ...(subject.subject !== undefined && { subject: subject.subject }),
           views: subject.images.length,
+          ...(vocabulary && { labels: vocabulary.labels.map((label) => label.name) }),
         }),
         subject.images,
       );
@@ -343,6 +361,7 @@ forecast, confirmation and caps. The written text is returned only under sharedT
         skipped.push({ asset: subject.asset, reason: "no summary in the reply" });
         continue;
       }
+      summary.tags = canonicalLabels(summary.tags, vocabulary, "omit");
       const model = caller.records[caller.records.length - 1]!.model;
       const written = await writeDescribed(
         subject,
