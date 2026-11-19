@@ -1,6 +1,6 @@
 # Local style route
 
-The local-style extension runs a developer-owned graph through core's approved command runner. It does not train a model or call a paid remote provider. Install `packages/assetgrove-local-style` as a local package and list it in developer settings `extensions`; configure `extensionSettings` for its package with:
+The local-style extension runs a developer-owned graph through core's approved command runner. It does not train a model or call a paid remote provider. Install `examples/assetgrove-local-style` as a local package and list it in developer settings `extensions`; configure `extensionSettings` for its package with:
 
 ```json
 {

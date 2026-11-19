@@ -7,7 +7,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import localStyle, { doctor } from "../packages/assetgrove-local-style/src/index.ts";
+import localStyle, { doctor } from "../examples/assetgrove-local-style/src/index.ts";
 import { createExtensionContext } from "../src/extension/context.ts";
 import { ExtensionRegistry } from "../src/extensions/registry.ts";
 import { createProvider } from "../src/providers/adapter.ts";
