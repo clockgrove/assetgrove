@@ -134,3 +134,58 @@ test("library diff refuses unavailable promised blobs without fetching", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("library diff discovers committed buildRendition outputs with unchanged source card", async () => {
+  const { buildRendition } = await import("../src/transform/rendition.ts");
+  const { createRaster, encodePng } = await import("../src/image/raster.ts");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-rendition-diff-")));
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: root, encoding: "utf8", timeout: 30_000 });
+  try {
+    git("init");
+    git("config", "user.name", "Fixture");
+    git("config", "user.email", "fixture@example.invalid");
+    const source = join(root, "lamp.png");
+    const bytes = encodePng(createRaster(2, 2));
+    writeFileSync(source, bytes);
+    writeFileSync(
+      join(root, "lamp.md"),
+      "---\ntype: Game Asset\nformat: assetgrove-card/1\ntitle: Fixture\nresource: lamp.png\n---\n",
+    );
+    mkdirSync(join(root, "recipes"));
+    writeFileSync(
+      join(root, "recipes", "thumb.json"),
+      JSON.stringify({
+        format: "assetgrove-recipe/1",
+        steps: [{ op: "scale", params: { factor: 2 } }],
+      }),
+    );
+    git("add", ".");
+    git("commit", "-m", "source");
+    const base = git("rev-parse", "HEAD").trim();
+    const built = await buildRendition({
+      source,
+      sourceSha256: sha256Hex(bytes),
+      recipes: join(root, "recipes"),
+      recipe: "thumb",
+      out: join(root, "out"),
+      digitalSourceType: "digitalCreation",
+    });
+    git("add", ".");
+    git("commit", "-m", "rendition");
+    const head = git("rev-parse", "HEAD").trim();
+    const status = git("status", "--porcelain");
+    const report = libraryDiff(root, base, head);
+    assert.equal(report.changes.length, 1);
+    assert.deepEqual(report.changes[0]!.categories, ["renditions"]);
+    const output = report.changes[0]!.after!.renditions[0]!;
+    assert.equal(output.path, `out/${built.digest}/rendition.png`);
+    assert.equal(output.sha256, built.record.outputs[0]!.sha256);
+    assert.equal(output.status, "available");
+    assert.equal(output.preview, `git:${head}:${encodeURIComponent(output.path)}`);
+    assert.deepEqual(libraryDiff(root, base, head), report);
+    assert.equal(git("status", "--porcelain"), status);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

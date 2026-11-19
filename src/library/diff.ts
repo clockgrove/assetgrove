@@ -90,6 +90,22 @@ export function libraryDiff(target: string, base: string, head: string) {
         : `git:${commit}:${encodeURIComponent(path)}`;
       return { path, sha256, status, ...(status === "available" ? { preview: link } : {}) };
     };
+    const provenance = [...files.keys()]
+      .filter((p) => p.endsWith("provenance.json"))
+      .flatMap((path) => {
+        const text = bytes(path).toString();
+        let record;
+        try {
+          record = JSON.parse(text);
+        } catch {
+          return [];
+        }
+        return record?.generator === "transform" &&
+          Array.isArray(record.sources) &&
+          Array.isArray(record.outputs)
+          ? [{ path, sources: record.sources, outputs: record.outputs }]
+          : [];
+      });
     const assets = new Map<string, Asset>();
     for (const path of [...files.keys()].sort(order)) {
       if (!path.endsWith(".md")) continue;
@@ -112,17 +128,45 @@ export function libraryDiff(target: string, base: string, head: string) {
       const review = files.has(reviewPath)
         ? parseReview(bytes(reviewPath).toString(), reviewPath)
         : undefined;
-      const renditionPaths = [...files.keys()]
-        .filter(
-          (p) =>
-            p.startsWith(`${id}.`) &&
-            p !== path &&
-            p !== reviewPath &&
-            p !== resourcePath &&
-            !p.endsWith(".json") &&
-            !p.endsWith(".md"),
+      const sourceHash = files.has(resourcePath) ? media(resourcePath).sha256 : undefined;
+      const provenPaths: string[] = [];
+      for (const record of provenance) {
+        if (
+          !sourceHash ||
+          !record.sources.some((source: { sha256?: string }) => source?.sha256 === sourceHash)
         )
-        .sort(order);
+          continue;
+        for (const output of record.outputs) {
+          if (typeof output?.path !== "string" || typeof output?.sha256 !== "string") continue;
+          const portable = output.path.replaceAll("\\", "/");
+          const candidates = [
+            portable,
+            posix.join(posix.dirname(record.path), posix.basename(portable)),
+          ];
+          for (const candidate of candidates) {
+            if (
+              candidate !== resourcePath &&
+              files.has(candidate) &&
+              media(candidate).sha256 === output.sha256
+            )
+              provenPaths.push(candidate);
+          }
+        }
+      }
+      const renditionPaths = [
+        ...new Set([
+          ...provenPaths,
+          ...[...files.keys()].filter(
+            (p) =>
+              p.startsWith(`${id}.`) &&
+              p !== path &&
+              p !== reviewPath &&
+              p !== resourcePath &&
+              !p.endsWith(".json") &&
+              !p.endsWith(".md"),
+          ),
+        ]),
+      ].sort(order);
       assets.set(id, {
         version: review?.versions ?? { version: card.version, lock: card.lock },
         labels: card.tags ?? [],
