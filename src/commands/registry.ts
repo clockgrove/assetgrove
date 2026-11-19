@@ -35,6 +35,7 @@ import { opCommand } from "./op.ts";
 import { opsCommand } from "./ops.ts";
 import { pickCommand } from "./pick.ts";
 import { planCommand } from "./plan.ts";
+import { renditionCommand } from "./rendition.ts";
 import { recipeCommand } from "./recipe.ts";
 import { rigCommand } from "./rig.ts";
 import { runsListCommand, runsShowCommand } from "./runs.ts";
@@ -78,6 +79,7 @@ export const commands: readonly CommandSpec[] = [
   requestChangeCommand,
   opCommand,
   recipeCommand,
+  renditionCommand,
   opsCommand,
   migrateCommand,
   libraryCheckCommand,

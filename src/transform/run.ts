@@ -263,6 +263,10 @@ export interface TransformRecord {
 }
 
 export interface TransformFilesOptions extends RunOptions {
+  /** Plan encoded outputs without creating directories or writing files. */
+  dryRun?: boolean;
+  /** Stable item name for a single input, independent of the source file's basename. */
+  inputName?: string;
   recipe: Recipe;
   inputs: string[];
   /**
@@ -273,11 +277,18 @@ export interface TransformFilesOptions extends RunOptions {
 }
 
 /** Reads the inputs, runs the recipe, writes the outputs and the provenance record beside them. */
-export async function transformFiles(
-  options: TransformFilesOptions,
-): Promise<{ record: TransformRecord; provenancePath: string }> {
+export async function transformFiles(options: TransformFilesOptions): Promise<{
+  record: TransformRecord;
+  provenancePath: string;
+  plannedFiles: { path: string; bytes: Uint8Array }[];
+}> {
   const engines = options.engines ?? DEFAULT_ENGINES;
   if (options.inputs.length === 0) throw new InputError("no input image given");
+  if (
+    options.inputName !== undefined &&
+    (options.inputs.length !== 1 || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(options.inputName))
+  )
+    throw new InputError("inputName requires one input and a safe file stem");
   const decoder = engines[0];
   if (!decoder) throw new InputError("no engine");
   const sources: SourceFile[] = [];
@@ -296,7 +307,7 @@ export async function transformFiles(
     } catch (error) {
       throw new InputError(`cannot decode ${path}: ${(error as Error).message}`, { cause: error });
     }
-    let name = basename(path, extname(path));
+    let name = options.inputName ?? basename(path, extname(path));
     for (let n = 2; seen.has(name); n++) name = `${basename(path, extname(path))}-${n}`;
     seen.add(name);
     const mediaType = sniffMediaType(bytes);
@@ -363,7 +374,8 @@ export async function transformFiles(
   const provenancePath = single ? `${out}.provenance.json` : join(dir, "provenance.json");
   if (inputs.has(provenancePath)) throw new InputError(`refused: ${provenancePath} is an input`);
 
-  await mkdir(dir, { recursive: true });
+  if (!options.dryRun) await mkdir(dir, { recursive: true });
+  const plannedFiles: { path: string; bytes: Uint8Array }[] = [];
   const outputs: OutputFile[] = [];
   for (const { item, engine, encoder, path } of planned) {
     const digitalSourceType = item.digitalSourceType ?? DIGITAL_SOURCE_TYPES.undeclared;
@@ -373,7 +385,8 @@ export async function transformFiles(
       digitalSourceType,
     );
     steps.push(metadataStep(digitalSourceType, [pixelHash(item.raster)]));
-    await writeFile(path, bytes);
+    plannedFiles.push({ path, bytes });
+    if (!options.dryRun) await writeFile(path, bytes);
     const meta = jsonMeta(item.meta);
     outputs.push({
       name: item.name,
@@ -406,8 +419,8 @@ export async function transformFiles(
     steps,
     outputs,
   };
-  await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
-  return { record, provenancePath };
+  if (!options.dryRun) await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
+  return { record, provenancePath, plannedFiles };
 }
 
 function jsonMeta(meta: Record<string, unknown>): Record<string, unknown> | undefined {

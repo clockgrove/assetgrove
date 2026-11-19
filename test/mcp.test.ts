@@ -15,6 +15,7 @@ import { requireConfirmation } from "../src/confirm/index.ts";
 import { loadAsset, locateAsset } from "../src/library/actions.ts";
 import { acceptRequest, readProposal } from "../src/library/suggestions.ts";
 import { loadSettings } from "../src/settings.ts";
+import { sha256Hex } from "../src/library/canonical.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { flagName } from "../src/commands/runner.ts";
 import type { CommandSpec } from "../src/commands/types.ts";
@@ -969,6 +970,32 @@ export default {
         recipe: join(dir, "recipe.json"),
         inputs: [join(dir, "hero.png")],
         out: join(dir, "out"),
+      };
+    },
+  },
+  {
+    tool: "rendition",
+    prepare: async () => {
+      const recipes = join(work, "rendition-recipes");
+      await mkdir(recipes, { recursive: true });
+      const source = join(recipes, "source.png");
+      const bytes = encodePng(drawSubject(48));
+      await writeFile(source, bytes);
+      await writeFile(
+        join(recipes, "thumbnail.json"),
+        JSON.stringify({
+          format: "assetgrove-recipe/1",
+          steps: [{ op: "flip" }],
+        }),
+      );
+      return {
+        recipes,
+        recipe: "thumbnail",
+        source,
+        sourceSha256: sha256Hex(bytes),
+        out: join(work, "renditions"),
+        digitalSourceType: "digitalCreation",
+        preview: true,
       };
     },
   },
