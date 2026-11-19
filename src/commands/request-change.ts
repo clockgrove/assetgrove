@@ -204,6 +204,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     );
   const runsDir = resolve(args.runs ?? DEFAULT_RUNS);
   const source = await sourceRun(asset, runsDir);
+  const sourceCandidate = source.candidates.find((candidate) => candidate.id === version.candidate);
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
   const capUsd = runCap(args.cap, ctx.settings);
@@ -216,7 +217,9 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   const promptText: string[] = [];
   let bible: Awaited<ReturnType<typeof loadStyleBible>> | undefined;
   let biblePath: string | undefined;
-  let changeQa: { generator: Generator; checks: KindCheck[] } | undefined;
+  let changeQa:
+    | { generator: Generator; checks: KindCheck[]; plannedCalls: ReadonlyMap<string, number> }
+    | undefined;
   let palettes: Record<string, string> = {};
   const registry = ctx.extensions ?? CORE_REGISTRY;
   const generators = [...registry.kinds];
@@ -287,18 +290,26 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
         (check) => check.run !== undefined && check.mode !== "gated",
       );
       if (generator !== undefined && checks.length > 0) {
-        changeQa = { generator, checks };
+        const plannedCalls = new Map([["edit", 1]]);
+        changeQa = { generator, checks, plannedCalls };
         biblePath = args.bible ?? join(projectDir(undefined, asset.dir), BIBLE_PATH);
+        if (args.bible === undefined && !existsSync(biblePath))
+          throw new InputError(
+            `the checks of ${generator.kind} need ${biblePath} or a style bible given with --bible`,
+          );
         bible = await loadStyleBible(biblePath);
-        const operations = new Set(
-          checks.filter((check) => check.mode === "model").map((check) => check.operation),
-        );
-        if (operations.size > 0) {
-          // Plan the declared model-check calls. Without a named operation, use the kind's
-          // complete per-candidate forecast as the upper bound.
+        if (checks.some((check) => check.mode === "model")) {
+          // The kind's plan does not separate generation from check calls. Reserve the complete
+          // forecast so a model check can use auxiliary operations listed there.
           const planned = generator
             .planCandidate(source.spec, source.profile, routes)
-            .filter((call) => operations.has(undefined) || operations.has(call.operation));
+            .map((call) => {
+              const { operation } = call;
+              const route = routes[operation];
+              if (!route) throw new InputError(`no model route for operation "${operation}"`);
+              plannedCalls.set(operation, (plannedCalls.get(operation) ?? 0) + 1);
+              return { ...call, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
+            });
           palettes = paletteReads(planned);
           jobs = mergeJobs([...jobs, ...jobsOf(planned, routes, candidates)]);
         }
@@ -330,6 +341,9 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
               source,
             })),
             stability: changeQa.generator.stability,
+            spec: source.spec,
+            profile: source.profile,
+            fields: sourceCandidate?.fields ?? {},
           }),
         ),
       }),
@@ -349,6 +363,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     regions,
     job,
     source,
+    sourceCandidate,
     providers,
     capUsd,
     bible,
@@ -608,18 +623,38 @@ version is appended with answers naming the requests. The run that made the asse
   plan: async (args, ctx) => (await prepare(args, ctx)).work,
   async run(args, ctx) {
     const prepared = await prepare(args, ctx);
-    const { candidates, asset, version, regions, job, source, providers, capUsd, work, changeQa } =
-      prepared;
+    const {
+      candidates,
+      asset,
+      version,
+      regions,
+      job,
+      source,
+      sourceCandidate,
+      providers,
+      capUsd,
+      work,
+      changeQa,
+    } = prepared;
     const ledger = spendLedger(ctx, args.workItem);
     if (args.dryRun)
       return dryRunOutcome(work, formatWork("request-change", work), ledger, { job });
+    if (
+      ctx.run !== undefined &&
+      (changeQa !== undefined || ctx.run.plan.inputs["kindChecks"] !== undefined) &&
+      ctx.run.plan.digest !== work.digest
+    )
+      return refusal(
+        "plan_changed",
+        "the change checks or their inputs changed after confirmation",
+        {},
+        "",
+      );
     const dir = ctx.run?.dir ?? work.runDir;
     const runId = basename(dir);
     const recorded = await recordRequests(args, ctx, prepared, runId);
     const answers = recorded.annotations.map((a) => a.id);
     const budget = new Budget(capUsd, ledgerFor(ledger, providers, source.profile));
-    const sourceCandidate = source.candidates.find((c) => c.id === (version.candidate ?? "")) as
-      StagedCandidate | undefined;
     const errors: string[] = [];
     const staged: StagedCandidate[] = [];
     const rows: CompareRow[] = [];
@@ -728,6 +763,7 @@ version is appended with answers naming the requests. The run that made the asse
           routes: providers.routes,
           index,
           log: ctx.log,
+          ...(changeQa && { plannedCalls: changeQa.plannedCalls }),
         });
         try {
           let made: Made;
