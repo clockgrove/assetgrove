@@ -2,10 +2,10 @@
   "name": "@clockgrove/assetgrove-local-style",
   "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "index.js",
   "assetgrove": {
     "api": 2,
-    "entry": "src/index.ts"
+    "entry": "index.js"
   },
   "peerDependencies": {
     "@clockgrove/assetgrove": "^0.2.0"

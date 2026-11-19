@@ -825,6 +825,7 @@ function collectStop(operation: string, handle: string, where: string, error: un
 /** A provider failure as `ProviderError`; a budget refusal or a stopped job passes through. */
 function providerError(operation: string, error: unknown): Error {
   if (
+    error instanceof ConfirmationError ||
     error instanceof ProviderError ||
     error instanceof BudgetExceededError ||
     error instanceof JobStoppedError
