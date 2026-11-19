@@ -61,6 +61,8 @@ import { defineCommand } from "./types.ts";
 import type { JsonSchemaObject, Outcome, RunContext } from "./types.ts";
 import type { LoadedReference } from "../types.ts";
 
+import { browseRelationships, relationshipGraph } from "../library/relations.ts";
+
 interface LibraryArgs {
   target?: string;
   profile?: string;
@@ -117,7 +119,10 @@ function checkOutcome(state: LibraryState, extra: Record<string, unknown> = {}):
     problems.length === 0
       ? "library check passed"
       : `library check found ${problems.length} problem(s)`,
-    ...problems.map((p) => `  ${p.file}: ${p.code}`),
+    ...problems.map(
+      (p) =>
+        `  ${p.file}${p.reference ? `:${p.reference}` : ""}: ${p.code}${p.message ? `: ${p.message}` : ""}`,
+    ),
     ...(needsRebuild.length > 0
       ? [
           `needs rebuild (layout only): ${needsRebuild.join(", ")}`,
@@ -132,7 +137,7 @@ function checkOutcome(state: LibraryState, extra: Record<string, unknown> = {}):
     human,
     error: {
       code: "library_check_failed",
-      message: `library check found ${problems.length} problem(s): ${problems.map((p) => `${p.file} ${p.code}`).join("; ")}`,
+      message: `library check found ${problems.length} problem(s): ${problems.map((p) => `${p.file}${p.reference ? `:${p.reference}` : ""} ${p.code}${p.message ? `: ${p.message}` : ""}`).join("; ")}`,
       problems,
     },
   };
@@ -670,6 +675,82 @@ one path segment, a missing run or a run without the version's candidate exits 2
         human,
       );
     }
+    return { exitCode: 0, fields, human };
+  },
+});
+
+export const libraryRelationsCommand = defineCommand<
+  LibraryArgs & { asset?: string; sha256?: string }
+>({
+  name: "library relations",
+  tool: "library_relations",
+  summary: "browse version-aware typed sources, dependents and changed source hashes",
+  details: `Reads lineage from review versions. Edges point from downstream to source. With an asset,
+forward and reverse include all its versions unless sha256 selects one. changedSources compares
+recorded source hashes with current recorded versions; affected includes transitive downstream
+versions and their recorded sources. These are facts, not freshness judgments. Read-only.`,
+  input: {
+    ...input(false),
+    properties: {
+      ...input(false).properties,
+      asset: { type: "string", description: "library-relative asset id, without a file extension" },
+      sha256: {
+        type: "string",
+        description: "select an exact recorded version hash (requires asset)",
+      },
+    },
+  },
+  effect: { readOnly: true, spends: "never", writes: "none" },
+  async run(args) {
+    const { targetDir, profile } = await open(args);
+    const state = await readLibrary(profile, targetDir);
+    const graph = relationshipGraph(state.config.root, state.assets);
+    const fields = browseRelationships(graph, args.asset, args.sha256);
+    const unreadable = state.problems.filter(
+      (problem) => problem.code === "review_invalid" || problem.code === "review_missing",
+    );
+    fields.problems.push(
+      ...unreadable.map((problem) => ({
+        ...problem,
+        reference: "",
+        message: "cannot build lineage from this review record",
+      })),
+    );
+    const human = [
+      "forward:",
+      ...fields.forward.map(
+        (edge) =>
+          `  ${edge.downstream.asset}@${edge.downstream.sha256} --${edge.relation}--> ${edge.source.asset}@${edge.source.sha256}`,
+      ),
+      "reverse:",
+      ...fields.reverse.map(
+        (edge) =>
+          `  ${edge.source.asset}@${edge.source.sha256} <--${edge.relation}-- ${edge.downstream.asset}@${edge.downstream.sha256}`,
+      ),
+      "changed sources:",
+      ...fields.changedSources.map(
+        (edge) =>
+          `  ${edge.downstream.asset}@${edge.downstream.sha256}: ${edge.source.asset} recorded ${edge.source.sha256}, current ${edge.currentSha256}`,
+      ),
+      "affected versions:",
+      ...fields.affected.flatMap((node) => [
+        `  ${node.asset}@${node.sha256}`,
+        ...node.recordedSources.map(
+          (edge) => `    ${edge.relation}: ${edge.source.asset}@${edge.source.sha256}`,
+        ),
+      ]),
+      ...fields.problems.map(
+        (problem) => `${problem.file}:${problem.reference}: ${problem.code}: ${problem.message}`,
+      ),
+      `changed source references: ${fields.changedSources.length}; affected versions: ${fields.affected.length}`,
+    ].join("\n");
+    if (fields.problems.length)
+      return {
+        exitCode: EXIT.library_check_failed,
+        fields,
+        human,
+        error: { code: "library_check_failed", message: human, problems: fields.problems },
+      };
     return { exitCode: 0, fields, human };
   },
 });

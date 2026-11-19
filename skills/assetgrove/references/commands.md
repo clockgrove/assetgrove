@@ -394,6 +394,16 @@ Counts assets by `kind` and `state`, and reports `changeRequests` `{total, appro
 
 MCP tool: `library_stats`, arguments `target`, `profile`.
 
+### `library relations`
+
+```text
+library relations [--target <dir>] [--profile <profile.json>] [--asset <id>] [--sha256 <hash>] [--json]
+```
+
+Browse recorded `derived-from`, `variant-of` and `part-of` links in both directions. Use `--asset` to select a library-relative asset id and add `--sha256` to select a specific version. The report includes recorded and current hashes for changed sources and the exact downstream versions that depend on them, directly or indirectly. Read-only.
+
+MCP tool: `library_relations`, arguments `target`, `profile`, `asset`, `sha256`.
+
 ### `library drift`
 
 ```text

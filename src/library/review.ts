@@ -139,6 +139,12 @@ export type Annotation = z.output<typeof annotationSchema> & { id: string };
 /** An annotation before its id is computed. */
 export type AnnotationInput = z.input<typeof annotationSchema>;
 export type Version = z.output<typeof versionSchema>;
+const versionPositions = new WeakMap<Version, number>();
+
+export function versionSourceIndex(version: Version, fallback: number): number {
+  return versionPositions.get(version) ?? fallback;
+}
+
 export type VersionInput = z.input<typeof versionSchema>;
 
 export interface ReviewRecord {
@@ -281,9 +287,11 @@ export function validateReview(value: unknown, source: string): ReviewRecord {
   const items = first === undefined ? [] : ((first as { items?: unknown } | null)?.items ?? []);
   if (!Array.isArray(items)) throw new InputError(`${source}: "first.items" must be an array.`);
 
-  const versions = rawVersions.map((entry, index) =>
-    parseWith(versionSchema, entry, `${source}: ag:versions[${index}]`),
-  );
+  const versions = rawVersions.map((entry, index) => {
+    const version = parseWith(versionSchema, entry, `${source}: ag:versions[${index}]`);
+    versionPositions.set(version, index);
+    return version;
+  });
   const annotations = items.map((entry, index) => {
     const where = `${source}: first.items[${index}]`;
     const parsed = parseWith(annotationSchema, entry, where);

@@ -436,3 +436,50 @@ summary, it keeps the original operation, model and timestamp and recomputes its
 summary digest for the normalized tags. It never restores machine attribution
 after a person changed the summary. A subsequent person edit of tags or
 description still drops the summary entry; rebuild preserves that decision.
+
+## Typed asset relationships
+
+Each review record's `ag:versions` entry may carry `lineage`, an array of source
+references. A source names its relation, its library-relative asset id (the review
+record path without `.review.json`), and the exact source version's media hash:
+
+```json
+{
+  "sha256": "<downstream version's 64-hex hash>",
+  "at": "2026-11-19T00:00:00Z",
+  "lineage": [
+    {
+      "relation": "derived-from",
+      "asset": "props/lantern",
+      "sha256": "<source version's 64-hex hash>"
+    }
+  ]
+}
+```
+
+The relations are `derived-from`, `variant-of`, and `part-of`. Each edge points
+from a downstream version to a source version. Asset ids use canonical `/`
+segments inside the library root; sources must exist in repository review
+records. Old versions remain addressable after their asset is replaced. Existing
+records without `lineage` have no edges.
+
+`assetgrove library relations --target <project> --json` (MCP
+`library_relations`) reads this graph directly from review records, without an
+index or model call. `--asset props/lantern` selects all versions of that asset;
+`--sha256 <hash>` selects one exact version. `forward` lists the selected
+versions' sources; `reverse` lists versions that directly depend on them. The
+full graph's `nodes`, `edges`, `changedSources`, and `affected` remain present
+when selecting an asset.
+
+`changedSources` lists edges whose recorded source hash differs from the latest
+recorded version of that source asset, including both hashes. `affected` lists
+the exact downstream versions reached from those edges, transitively, each with
+its recorded source edges and hashes. These lists include historical downstream
+versions; they say nothing about whether an asset needs redoing. `library
+judge-stale` continues to own editorial judgments.
+
+`library check`, `library rebuild`, and `library relations` report invalid
+lineage and every edge participating in a cycle with its review file, exact
+`ag:versions[i].lineage[j]` reference, and offending source. They exit 6 when
+lineage is invalid. A rebuild preserves the source records and reconstructs the
+same graph; it does not silently repair references or infer new links.

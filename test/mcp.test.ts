@@ -972,7 +972,13 @@ export default {
       };
     },
   },
-  ...["library_check", "library_rebuild", "library_stats", "library_drift"].map((tool) => ({
+  ...[
+    "library_check",
+    "library_rebuild",
+    "library_stats",
+    "library_drift",
+    "library_relations",
+  ].map((tool) => ({
     tool,
     prepare: async (): Promise<Args> => {
       const profile = join(work, "library-profile.json");
