@@ -5,6 +5,15 @@
  * when only the tags change, with `ag:action: "card-edit"`, and logged; the card text reaches a
  * tool result only under `sharedText`.
  */
+import { digestOf, requireConfirmation } from "../confirm/index.ts";
+import { PlanChangedError } from "../planning.ts";
+import {
+  acceptedCard,
+  acceptRequest,
+  metadataProposal,
+  readProposal,
+  selectedSuggestionFields,
+} from "../library/suggestions.ts";
 import { canonicalLabels, checkedVocabulary, editLabels } from "../library/labels.ts";
 import { join, resolve } from "node:path";
 import { Budget, runCap } from "../budget.ts";
@@ -28,7 +37,7 @@ import {
 } from "../runs/plan.ts";
 import { ledgerFor } from "../spend.ts";
 import { sha256Hex } from "../library/canonical.ts";
-import { libraryConfig } from "../library/write.ts";
+import { libraryConfig, writeAtomic } from "../library/write.ts";
 import { dryRunOutcome, formatWork } from "./result.ts";
 import type { RunContext } from "./types.ts";
 import {
@@ -43,6 +52,7 @@ import {
   CardFieldOwnedError,
   MACHINE_FIELDS,
   dropSummary,
+  dropSuggestedFields,
   setPersonFields,
 } from "../library/card.ts";
 import { appendAnnotation, nextStamp } from "../library/review.ts";
@@ -161,7 +171,10 @@ confirmation. The card's text is returned only under sharedText.`,
         );
       let card = setPersonFields(asset.card, values, args.body, asset.cardPath);
       // A person's words replace the summary's: the card no longer reads machine-confirmed.
-      if ("description" in values || "tags" in values) card = dropSummary(card, asset.cardPath);
+      if ("description" in values || "tags" in values) {
+        card = dropSummary(card, asset.cardPath);
+        card = dropSuggestedFields(card, Object.keys(values), asset.cardPath);
+      }
       const version = selectVersion(asset.record);
       const input: AnnotationInput = {
         type: "Annotation",
@@ -201,6 +214,7 @@ confirmation. The card's text is returned only under sharedText.`,
 });
 
 interface CardDescribeArgs {
+  propose?: boolean;
   address?: string;
   missing?: boolean;
   target?: string;
@@ -234,6 +248,7 @@ async function prepareDescribe(args: CardDescribeArgs, ctx: RunContext) {
     {
       ...(args.address !== undefined && { address: args.address }),
       ...(missingIn !== undefined && { missingIn }),
+      ...(args.propose && { propose: true }),
     },
     ctx.extensions,
   );
@@ -249,6 +264,7 @@ async function prepareDescribe(args: CardDescribeArgs, ctx: RunContext) {
             p.location.cardPath,
             p.mediaSha256,
             p.images.map((i) => i.sha256),
+            ...(args.propose ? [p.baseline, p.version, p.mediaDigest] : []),
           ]),
         ),
       ),
@@ -281,6 +297,10 @@ forecast, confirmation and caps. The written text is returned only under sharedT
         type: "string",
         description: "the asset's card, media or review record",
         placeholder: "<address>",
+      },
+      propose: {
+        type: "boolean",
+        description: "record field suggestions for human review without changing cards",
       },
       missing: {
         type: "boolean",
@@ -342,6 +362,13 @@ forecast, confirmation and caps. The written text is returned only under sharedT
     );
     const caller = new Caller({ provider, budget, routes, log: ctx.log });
     const described: { asset: string; files: string[] }[] = [];
+    const proposals: {
+      asset: string;
+      proposal: string;
+      fields: string[];
+      model: string;
+      sourceVersion: string;
+    }[] = [];
     const skipped: Skipped[] = [...unviewable];
     const sharedText: SharedText[] = [];
     for (const subject of pending) {
@@ -361,8 +388,32 @@ forecast, confirmation and caps. The written text is returned only under sharedT
         skipped.push({ asset: subject.asset, reason: "no summary in the reply" });
         continue;
       }
-      summary.tags = canonicalLabels(summary.tags, vocabulary, "omit");
+      summary.tags =
+        args.propose && !vocabulary ? [] : canonicalLabels(summary.tags, vocabulary, "omit");
       const model = caller.records[caller.records.length - 1]!.model;
+      if (args.propose) {
+        if (!ctx.run) throw new InputError("proposals require a planned run");
+        const proposal = metadataProposal(subject, summary, model, vocabulary !== undefined);
+        const path = join(
+          ctx.run.dir,
+          `suggestions-${sha256Hex(subject.location.cardPath).slice(0, 16)}.json`,
+        );
+        await writeAtomic(path, `${JSON.stringify(proposal, null, 2)}\n`);
+        proposals.push({
+          asset: subject.asset,
+          proposal: path,
+          fields: Object.keys(proposal.fields),
+          model,
+          sourceVersion: proposal.source.version,
+        });
+        sharedText.push({
+          source: `${subject.asset}.suggestion.description`,
+          text: summary.description,
+        });
+        for (const label of proposal.fields.labels ?? [])
+          sharedText.push({ source: `${subject.asset}.suggestion.labels`, text: label });
+        continue;
+      }
       const written = await writeDescribed(
         subject,
         summary,
@@ -379,7 +430,12 @@ forecast, confirmation and caps. The written text is returned only under sharedT
       for (const tag of summary.tags) sharedText.push({ source: "card.tags", text: tag });
     }
     const human = [
-      `described ${described.length} card(s)`,
+      ...(args.propose
+        ? [
+            `proposed suggestions for ${proposals.length} card(s)`,
+            ...proposals.map((p) => `  ${p.asset}: ${p.proposal}`),
+          ]
+        : [`described ${described.length} card(s)`]),
       ...described.map((d) => `  ${d.asset}: wrote ${d.files.join(", ")}`),
       ...(skipped.length > 0 ? [`skipped ${skipped.length}:`] : []),
       ...skipped.map((s) => `  ${s.asset}: ${s.reason}`),
@@ -387,8 +443,91 @@ forecast, confirmation and caps. The written text is returned only under sharedT
     ].join("\n");
     return {
       exitCode: 0,
-      fields: { described, skipped, spentUsd: budget.spentUsd, sharedText },
+      fields: {
+        described,
+        ...(args.propose && { proposals }),
+        skipped,
+        spentUsd: budget.spentUsd,
+        sharedText,
+      },
       human,
     };
+  },
+});
+
+interface CardAcceptArgs {
+  proposal: string;
+  field: string[];
+}
+
+export const cardAcceptCommand = defineCommand<CardAcceptArgs>({
+  name: "card accept",
+  tool: "card_accept",
+  summary: "accept selected metadata suggestions with a person's confirmation",
+  details: `Applies only the named fields from a card describe --propose JSON file. Give --field
+ description or --field labels (repeatable). Unselected fields stay unchanged. The source version,
+ media bytes and selected fields must still match the proposal's baseline. Labels must belong to
+ the current project vocabulary. Uses the existing human pick confirmation; headless settings do
+ not automatically accept suggestions. Records per-field process attribution and rewrites the indexes.`,
+  input: {
+    type: "object",
+    properties: {
+      proposal: {
+        type: "string",
+        description: "the proposal JSON returned by card describe --propose",
+        placeholder: "<proposal>",
+      },
+      field: {
+        type: "array",
+        items: { type: "string" },
+        description: "description or labels; only these fields are applied",
+        placeholder: "<field>",
+      },
+    },
+    required: ["proposal", "field"],
+    additionalProperties: false,
+  },
+  positionals: [{ name: "proposal" }],
+  effect: { readOnly: false, spends: "never", writes: "target" },
+  confirm: "pick",
+  async run(args, ctx) {
+    const fields = selectedSuggestionFields(args.field);
+    const proposal = readProposal(args.proposal);
+    const location = locateAsset(proposal.card);
+    const asset = await loadAsset(location);
+    const request = acceptRequest(args.proposal, proposal, fields, asset);
+    const confirmation = await requireConfirmation(
+      request,
+      {
+        settings: ctx.settings,
+        ...(ctx.prompt && { prompt: ctx.prompt }),
+      },
+      { person: true },
+    );
+    return withLibraryLock(location, ctx.settings.stateDir, async () => {
+      const current = await loadAsset(locateAsset(proposal.card));
+      const fresh = readProposal(args.proposal);
+      const again = acceptRequest(args.proposal, fresh, fields, current);
+      if (again.id !== request.id)
+        throw new PlanChangedError("the proposal changed after confirmation; review it again");
+      const card = acceptedCard(current, fresh, fields);
+      const written = await writeAsset({ ...current, card }, current.record, { card });
+      const sharedText: SharedText[] = [];
+      for (const field of fields)
+        for (const text of [fresh.fields[field]!].flat())
+          sharedText.push({ source: `card.${field === "labels" ? "tags" : field}`, text });
+      return {
+        exitCode: 0,
+        fields: {
+          asset: current.assetId,
+          accepted: fields,
+          proposal: digestOf(fresh),
+          confirmation,
+          files: written.files,
+          sharedText,
+        },
+        human: `accepted ${fields.join(", ")} for ${current.assetId}`,
+      };
+    });
   },
 });

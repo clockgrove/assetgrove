@@ -11,6 +11,10 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { commands } from "../src/commands/registry.ts";
+import { requireConfirmation } from "../src/confirm/index.ts";
+import { loadAsset, locateAsset } from "../src/library/actions.ts";
+import { acceptRequest, readProposal } from "../src/library/suggestions.ts";
+import { loadSettings } from "../src/settings.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { flagName } from "../src/commands/runner.ts";
 import type { CommandSpec } from "../src/commands/types.ts";
@@ -578,6 +582,45 @@ const rows: Row[] = [
   {
     tool: "card_describe",
     prepare: async () => ({ address: await pickedCard() }),
+  },
+  {
+    tool: "card_accept",
+    prepare: async () => {
+      const describeScript = fileURLToPath(
+        new URL("./fixtures/describe-script.ts", import.meta.url),
+      );
+      approve(describeScript);
+      const result = await cli([
+        "card",
+        "describe",
+        await pickedCard(),
+        "--propose",
+        "--provider-script",
+        describeScript,
+        "--runs",
+        join(work, "suggestion-runs"),
+        "--json",
+      ]);
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      const proposed = JSON.parse(result.stdout) as Doc;
+      const path = (proposed["proposals"] as { proposal: string }[])[0]!.proposal;
+      const proposal = readProposal(path);
+      const request = acceptRequest(
+        path,
+        proposal,
+        ["description"],
+        await loadAsset(locateAsset(proposal.card)),
+      );
+      await requireConfirmation(
+        request,
+        { settings: loadSettings(), prompt: { method: "tty", confirm: async () => true } },
+        { person: true },
+      );
+      return {
+        proposal: path,
+        field: ["description"],
+      };
+    },
   },
   {
     tool: "request_change",

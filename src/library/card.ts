@@ -7,7 +7,8 @@
  */
 import { dirname, isAbsolute } from "node:path";
 import { canonicalLabels, checkedVocabulary } from "./labels.ts";
-import { summaryDigest } from "./summary.ts";
+import { SUMMARY_BY, summaryDigest } from "./summary.ts";
+import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { Document, isMap, isSeq, parse as parseYaml, parseDocument, type Node } from "yaml";
 import { z } from "zod";
 import { splitFrontMatter } from "../bible.ts";
@@ -324,9 +325,23 @@ export function rewriteMachineFields(
   source: string,
 ): Card {
   const verified = fields["verified"];
-  if (Array.isArray(verified) && !verified.some(isSummaryEntry)) {
+  if (Array.isArray(verified)) {
     const kept = matchingSummaryEntry(card.data);
-    if (kept) return rewrite(card, { ...fields, verified: [...verified, kept] }, source);
+    const suggestions = matchingSuggestedFields(card).filter(
+      (entry) => !verified.some((v) => canonicalJson(v) === canonicalJson(entry)),
+    );
+    return rewrite(
+      card,
+      {
+        ...fields,
+        verified: [
+          ...verified,
+          ...(kept && !verified.some(isSummaryEntry) ? [kept] : []),
+          ...suggestions,
+        ],
+      },
+      source,
+    );
   }
   return rewrite(card, fields, source);
 }
@@ -534,4 +549,66 @@ export function dropSummary(card: Card, source: string): Card {
     verified.filter((v) => !isSummaryEntry(v)),
     source,
   );
+}
+
+export const SUGGESTION_BY = "process:assetgrove-suggestion:";
+
+export interface SuggestedFieldEntry {
+  by: string;
+  at: string;
+  field: "description" | "tags";
+  value: string;
+  sourceVersion: string;
+  proposal?: string;
+}
+
+export function matchingSuggestedFields(card: Card): SuggestedFieldEntry[] {
+  return verifiedOfCard(card).filter((entry): entry is SuggestedFieldEntry => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const value = entry as Partial<SuggestedFieldEntry>;
+    return (
+      typeof value.by === "string" &&
+      value.by.startsWith(SUGGESTION_BY) &&
+      (value.field === "description" || value.field === "tags") &&
+      value.value === sha256Hex(canonicalJson(card.data[value.field]))
+    );
+  });
+}
+
+export function dropSuggestedFields(card: Card, fields: string[], source: string): Card {
+  const verified = verifiedOfCard(card).filter((entry) => {
+    const value = entry as Partial<SuggestedFieldEntry> | null;
+    return !(
+      typeof value?.by === "string" &&
+      value.by.startsWith(SUGGESTION_BY) &&
+      value.field !== undefined &&
+      fields.includes(value.field)
+    );
+  });
+  return withVerified(card, verified, source);
+}
+
+export function applySuggestedFields(
+  card: Card,
+  values: Record<string, unknown>,
+  entries: SuggestedFieldEntry[],
+  source: string,
+): Card {
+  const legacy = matchingSummaryEntry(card.data);
+  const retained: SuggestedFieldEntry[] = legacy
+    ? (["description", "tags"] as const)
+        .filter((field) => !(field in values))
+        .map((field) => ({
+          by: `${SUGGESTION_BY}${legacy.by.slice(SUMMARY_BY.length)}`,
+          at: legacy.at,
+          field,
+          value: sha256Hex(canonicalJson(card.data[field])),
+          sourceVersion: String(
+            (card.data["lock"] as { sha256?: string } | undefined)?.sha256 ?? "",
+          ),
+        }))
+    : [];
+  const clean = dropSuggestedFields(dropSummary(card, source), Object.keys(values), source);
+  const next = setPersonFields(clean, values, undefined, source);
+  return withVerified(next, [...verifiedOfCard(next), ...retained, ...entries], source);
 }

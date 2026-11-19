@@ -17,6 +17,7 @@ import { applySettingsChange, rebuiltSettingsRequest } from "../settings-write.t
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 import { writeRequest } from "./write-families.ts";
+import { rebuildAcceptRequest } from "../library/suggestions.ts";
 import { rebuildAdoptRequest } from "../library/adopt.ts";
 
 /**
@@ -70,12 +71,16 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
     let rebuilt: KindRequest;
     if (
       request.kind === "pick" &&
-      (body["command"] === "approve" || body["command"] === "library adopt")
+      (body["command"] === "approve" ||
+        body["command"] === "library adopt" ||
+        body["command"] === "card accept")
     ) {
       const again =
         body["command"] === "approve"
           ? await rebuildApproveRequest(body)
-          : await rebuildAdoptRequest(body);
+          : body["command"] === "card accept"
+            ? await rebuildAcceptRequest(body)
+            : await rebuildAdoptRequest(body);
       if (again === undefined) return undefined;
       rebuilt = again;
     } else if (request.kind === "pick") {
