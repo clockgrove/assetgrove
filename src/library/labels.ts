@@ -111,7 +111,7 @@ export function editLabels(
 export function labelFilters(filters: string[], vocabulary: Vocabulary | undefined): string[] {
   return filters.map((filter) =>
     filter.replace(
-      /^\s*(tag|label)\s*=([^=].*|)$/s,
+      /^\s*(tag|label)\s*=(.*)$/s,
       (_all, _field: string, value: string) =>
         `tag=${canonicalLabel(value.trim(), vocabulary) ?? value.trim()}`,
     ),

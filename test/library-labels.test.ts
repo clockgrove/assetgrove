@@ -30,7 +30,7 @@ import { fixtureLibrary, GAME } from "./fixtures/library.ts";
 const vocabulary = {
   format: "assetgrove-labels/1",
   labels: [
-    { name: "object", aliases: ["prop", "props", "old-object"] },
+    { name: "object", aliases: ["prop", "props", "old-object", "=props"] },
     { name: "light", aliases: ["lamp"] },
   ],
 };
@@ -164,6 +164,13 @@ test("browse, model summaries and filter aliases share canonical labels; collisi
       { ...ctx(), extensions },
       { sheet: false },
     );
+    for (const filter of ["tag==props", "tag = =props"]) {
+      await runFind(
+        { target: lib.dir, where: [filter] },
+        { ...ctx(), extensions },
+        { sheet: false },
+      );
+    }
     const parsed = parseVocabulary(JSON.stringify(vocabulary), config);
     assert.deepEqual(labelFilters(["label=props", "tag=lamp", "kind=still"], parsed), [
       "tag=object",
