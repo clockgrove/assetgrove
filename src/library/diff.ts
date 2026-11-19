@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { posix, resolve } from "node:path";
 import { InputError } from "../errors.ts";
-import { parseCard } from "./card.ts";
+import { isCardText, parseCard } from "./card.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { parseLfsPointer } from "./lfs.ts";
 import { parseReview } from "./review.ts";
@@ -11,12 +11,15 @@ function git(cwd: string, args: string[]): Buffer {
   try {
     return execFileSync("git", args, {
       cwd,
+      env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
       timeout: 30_000,
       maxBuffer: 64 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch {
-    throw new InputError(`Cannot read Git revision (${args[0]}).`);
+    throw new InputError(
+      `Cannot read local Git revision (${args[0]}); required objects may be unavailable.`,
+    );
   }
 }
 const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -90,7 +93,7 @@ export function libraryDiff(target: string, base: string, head: string) {
     for (const path of [...files.keys()].sort(order)) {
       if (!path.endsWith(".md")) continue;
       const text = bytes(path).toString();
-      if (!/^format:\s*['"]?assetgrove-card\/1['"]?\s*$/m.test(text)) continue;
+      if (!isCardText(text)) continue;
       const card = parseCard(text, path).data;
       const resource = card.resource as string;
       if (
