@@ -280,24 +280,20 @@ test("content credentials count development and settings signers, and the note n
 test("versioned release fixture scopes store evidence and retains legacy summaries", async () => {
   const fixture = JSON.parse(
     await readFile(new URL("./fixtures/disclosure-v1.json", import.meta.url), "utf8"),
-  ) as { version: number; missing: string };
+  ) as {
+    version: number;
+    missing: string;
+    records: Array<[string, Partial<Provenance>]>;
+    selected: string[];
+    expected: { godot: Record<string, unknown>; playdate: Record<string, unknown> };
+  };
   assert.equal(fixture.version, 1);
-  const target = await library();
-  const { scanCards } = await import("../src/library/write.ts");
-  const { relative } = await import("node:path");
-  const cards = scanCards(target);
-  const selected = cards
-    .filter((c) => c.id.includes("shelter"))
-    .map((c) => relative(target, join(c.dir, c.resource!)).split("\\").join("/"));
-  assert.equal(selected.length, 1);
+  const target = await library(fixture.records);
+  const selected = fixture.selected;
   const summary = await disclose(target, { selected });
   assert.equal(summary.assets, 1);
-  assert.deepEqual(summary.godot.affectedAssets, selected);
-  assert.deepEqual(summary.playdate.affectedAssets, selected);
-  assert.equal(summary.playdate.status, "resolved");
-  assert.equal(summary.godot.status, "unresolved");
-  assert.deepEqual(summary.godot.unresolvedAssets, selected);
-  assert.match(summary.godot.how, /openai\/gpt-image-2/);
+  assert.deepEqual(summary.godot, fixture.expected.godot);
+  assert.deepEqual(summary.playdate, fixture.expected.playdate);
   const missing = await disclose(target, { selected: [fixture.missing] });
   assert.equal(missing.godot.status, "unresolved");
   assert.deepEqual(missing.godot.unresolvedAssets, [fixture.missing]);
@@ -348,4 +344,28 @@ test("release evidence names unclassified, unknown-source and changed media", as
   const result = await disclose(unknown, { selected: [unknownName] });
   assert.deepEqual(result.playdate.unresolvedAssets, [unknownName]);
   assert.equal(result.playdate.status, "unresolved");
+});
+
+test("whole-library unreadable cards remain unresolved without changing legacy summaries", async () => {
+  const target = await library([["broken", {}]]);
+  const { scanCards } = await import("../src/library/write.ts");
+  const { relative } = await import("node:path");
+  const card = scanCards(target)[0]!;
+  const path = join(card.dir, `${card.id}.md`);
+  await writeFile(
+    path,
+    (await readFile(path, "utf8")).replace("assetgrove-card/1", "assetgrove-card/999"),
+  );
+  const empty = await disclose(target, { selected: [] });
+  assert.equal(empty.playdate.status, "resolved");
+  assert.deepEqual(empty.playdate.unresolvedAssets, []);
+  const result = await disclose(target);
+  const name = relative(target, path).split("\\").join("/");
+  assert.equal(result.assets, 0);
+  assert.equal(result.steam, "Pre-generated AI content: none recorded in 0 library assets.");
+  assert.deepEqual(result.itch, { tags: [], text: "No AI-generated assets recorded." });
+  for (const store of [result.godot, result.playdate]) {
+    assert.equal(store.status, "unresolved");
+    assert.deepEqual(store.unresolvedAssets, [name]);
+  }
 });

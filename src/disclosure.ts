@@ -13,7 +13,7 @@ import { markableMediaType } from "./handoff/mark-check.ts";
 import { readDigitalSourceType, readMarkedModels, parseDigitalSourceType } from "./metadata.ts";
 import { parseCard } from "./library/card.ts";
 import { libraryPath } from "./library/paths.ts";
-import { scanCards } from "./library/write.ts";
+import { scanLibrary } from "./library/write.ts";
 import { adapterOf } from "./providers/adapter.ts";
 import type { Settings } from "./settings.ts";
 
@@ -121,7 +121,7 @@ export async function disclose(
   const withoutProvenance: string[] = [];
   const signers = new Map<string, DisclosureSigner>();
   let approvedAi = 0;
-  const allCards = scanCards(root);
+  const { cards: allCards, unreadable } = scanLibrary(root);
   const mediaName = (card: (typeof allCards)[number]): string =>
     relative(resolve(root), resolve(card.dir, card.resource ?? `${card.id}.md`))
       .split("\\")
@@ -129,7 +129,9 @@ export async function disclose(
   const selected = options.selected === undefined ? undefined : new Set(options.selected);
   const unresolvedAssets: string[] =
     selected === undefined
-      ? []
+      ? unreadable
+          .filter((record) => record.code === "card_invalid")
+          .map((record) => relative(resolve(root), record.file).split("\\").join("/"))
       : [...selected].filter((name) => !allCards.some((card) => mediaName(card) === name));
   const affectedAssets: string[] = [];
   const cards = allCards
