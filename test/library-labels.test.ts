@@ -1,4 +1,8 @@
 import "./fixtures/env.ts";
+import { execFileSync } from "node:child_process";
+import { stateDir } from "./fixtures/env.ts";
+import { createLibraryReader } from "../src/search/reader.ts";
+import { parseWhere } from "../packages/assetgrove-search/src/where.ts";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -186,6 +190,69 @@ test("browse, model summaries and filter aliases share canonical labels; collisi
       /collisions/,
     );
     assert.equal(readFileSync(path, "utf8"), before);
+  } finally {
+    await rm(lib.dir, { recursive: true, force: true });
+  }
+});
+
+test("label filter whitespace resolves through the search parser", () => {
+  const parsed = parseVocabulary(JSON.stringify(vocabulary), "labels");
+  for (const filter of ["tag=props", "tag = props", "label = props", "  label\t= props  "]) {
+    assert.deepEqual(parseWhere(labelFilters([filter], parsed)), [
+      { field: "tags", op: "has", value: "object" },
+    ]);
+  }
+});
+
+test("vocabulary-only renames invalidate a shared index and dirty vocabulary prevents publication", async () => {
+  const lib = fixtureLibrary();
+  const git = (...args: string[]) =>
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        ...args,
+      ],
+      { cwd: lib.dir, encoding: "utf8" },
+    ).trim();
+  try {
+    git("add", "-A");
+    git("commit", "-qm", "fixture");
+    const reader = await createLibraryReader({
+      dir: lib.dir,
+      stateDir,
+      settings: { folders: [], candidates: false },
+    });
+    const built = await reader.head();
+    assert.deepEqual((await reader.list(["pick"])).find((r) => r.id === "lantern")?.tags, [
+      "prop",
+      "light",
+    ]);
+    writeFileSync(join(lib.dir, ".assetgrove/labels.json"), JSON.stringify(vocabulary));
+    assert.equal(await reader.clean(), false);
+    git("add", "-A");
+    git("commit", "-qm", "rename label");
+    assert.equal(await reader.clean(), true);
+    assert.equal(await reader.changedSince(built), true);
+    const renamed = await createLibraryReader({
+      dir: lib.dir,
+      stateDir,
+      settings: { folders: [], candidates: false },
+    });
+    assert.deepEqual((await renamed.list(["pick"])).find((r) => r.id === "lantern")?.tags, [
+      "object",
+      "light",
+    ]);
+    writeFileSync(
+      join(lib.dir, ".assetgrove/labels.json"),
+      JSON.stringify({ ...vocabulary, labels: [] }),
+    );
+    assert.equal(await renamed.clean(), false);
   } finally {
     await rm(lib.dir, { recursive: true, force: true });
   }
