@@ -393,9 +393,11 @@ export async function readLibrary(
       if (fields) {
         const next = rewriteMachineFields(asset.card.parsed, fields, asset.cardPath);
         expected.push({ path: asset.cardPath, kind: "card", text: writeCard(next) });
-        const differs = MACHINE_FIELDS.some(
-          (key) => !isDeepStrictEqual(asset.card!.parsed.data[key], next.data[key]),
-        );
+        const differs = MACHINE_FIELDS.some((key) => {
+          // Older cards can omit the additive origin projection and request a rebuild.
+          if (key === "origin" && !Object.hasOwn(asset.card!.parsed.data, key)) return false;
+          return !isDeepStrictEqual(asset.card!.parsed.data[key], next.data[key]);
+        });
         if (differs) problem(asset.cardPath, "machine_field_mismatch");
       }
       // A provenance (a file of its own, or a manifest that embeds it) left by an adopt that

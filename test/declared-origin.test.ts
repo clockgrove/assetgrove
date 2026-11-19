@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { importSheet, readImport, writeFamilies } from "../src/sheet/import.ts";
 import { parseCard, rewriteMachineFields, writeCard } from "../src/library/card.ts";
@@ -83,6 +83,20 @@ for (const kind of ["human-made", "third-party", "unknown", "ai-generated"] as c
         digitalSourceType: record.digitalSourceType,
       };
       assert.deepEqual(before.data["origin"], expected);
+      await writeFile(
+        cardPath,
+        writeCard({ ...before, entries: before.entries.filter((entry) => entry.key !== "origin") }),
+      );
+      const legacy = await readLibrary(profile, root);
+      assert.deepEqual(legacy.problems, []);
+      assert.deepEqual(legacy.needsRebuild, [
+        relative(legacy.config.root, cardPath).split(sep).join("/"),
+      ]);
+      await rebuildLibrary(legacy);
+      assert.deepEqual(
+        parseCard(await readFile(cardPath, "utf8"), cardPath).data["origin"],
+        expected,
+      );
       await writeFile(
         cardPath,
         writeCard(
