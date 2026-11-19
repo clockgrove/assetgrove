@@ -169,7 +169,7 @@ test("library diff discovers committed buildRendition outputs with unchanged sou
       recipes: join(root, "recipes"),
       recipe: "thumb",
       out: join(root, "out"),
-      digitalSourceType: "digitalCreation",
+      digitalSourceType: "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation",
     });
     git("add", ".");
     git("commit", "-m", "rendition");
