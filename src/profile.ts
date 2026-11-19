@@ -8,11 +8,14 @@ import { InputError } from "./errors.ts";
 import { refuseSettingsBlocks } from "./shared-settings.ts";
 import type { TargetProfile } from "./types.ts";
 
+import { projectRulesSchema } from "./project-rules.ts";
+
 const section = z.record(z.string(), z.unknown());
 
 const profileSchema = z.strictObject({
   format: z.string(),
   name: z.string().optional(),
+  rules: projectRulesSchema.optional(),
   license: z.string().optional(),
   acceptedLicenses: z.array(z.string()).optional(),
   style: section.optional(),
@@ -58,5 +61,5 @@ export function validateProfile(value: Record<string, unknown>, source: string):
       cause: parsed.error,
     });
   }
-  return value as unknown as TargetProfile;
+  return parsed.data as unknown as TargetProfile;
 }

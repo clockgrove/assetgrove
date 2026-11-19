@@ -1,3 +1,4 @@
+import { evaluateProjectRules, enforceProjectRules } from "./project-rules.ts";
 import {
   DIGITAL_SOURCE_TYPES,
   embedDigitalSourceType,
@@ -440,6 +441,13 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
       : (await loadProfile(options.profilePath)).value,
   );
   // Before any paid call: the paths the hand-off will write for this spec can be written.
+  enforceProjectRules(
+    evaluateProjectRules({
+      rules: profile.rules,
+      asset: spec.assetId,
+      spec: spec as unknown as Record<string, unknown>,
+    }),
+  );
   checkLayout(profile, spec);
   const routes = routesOf(options);
   const kinds = options.kinds ?? CORE_REGISTRY;
