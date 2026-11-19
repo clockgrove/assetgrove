@@ -1,3 +1,4 @@
+import { libraryDiff, formatLibraryDiff } from "../library/diff.ts";
 /**
  * `library check`, `library rebuild`, `library stats`, `library drift` and `library adopt` (design
  * sections 1.4 and 4): the library's records against their projections, reports computed from the
@@ -764,5 +765,28 @@ versions and their recorded sources. These are facts, not freshness judgments. R
         error: { code: "library_check_failed", message: human, problems: fields.problems },
       };
     return { exitCode: 0, fields, human };
+  },
+});
+
+export const libraryDiffCommand = defineCommand<{ target?: string; base: string; head: string }>({
+  name: "library diff",
+  details:
+    "Reads committed cards and records across the repository, plus local LFS objects. Produces Markdown or JSON without checkout, fetch, provider calls or comment posting.",
+  tool: "library_diff",
+  summary: "compare committed asset versions, labels, reviews and tracked renditions",
+  input: {
+    type: "object",
+    properties: {
+      target: TARGET,
+      base: { type: "string", description: "base Git revision" },
+      head: { type: "string", description: "head Git revision" },
+    },
+    required: ["base", "head"],
+    additionalProperties: false,
+  },
+  effect: { readOnly: true, spends: "never", writes: "none" },
+  async run(args) {
+    const fields = libraryDiff(args.target ?? ".", args.base, args.head);
+    return { exitCode: 0, fields, human: formatLibraryDiff(fields) };
   },
 });

@@ -17,6 +17,7 @@ import { identityEvalCommand } from "./identity-eval.ts";
 import { importCommand } from "./import.ts";
 import { initCommand } from "./init.ts";
 import {
+  libraryDiffCommand,
   libraryAdoptCommand,
   libraryCheckCommand,
   libraryDriftCommand,
@@ -88,6 +89,7 @@ export const commands: readonly CommandSpec[] = [
   libraryRelationsCommand,
   libraryDriftCommand,
   libraryJudgeStaleCommand,
+  libraryDiffCommand,
   libraryAdoptCommand,
   libraryLabelsCommand,
   settingsCommand,

@@ -423,6 +423,16 @@ Browse recorded `derived-from`, `variant-of` and `part-of` links in both directi
 
 MCP tool: `library_relations`, arguments `target`, `profile`, `asset`, `sha256`.
 
+### `library diff`
+
+```text
+library diff [--target <dir>] --base <ref> --head <ref> [--json]
+```
+
+Compare committed asset versions, labels, reviews and tracked renditions in the target Git repository (default current directory). Print Markdown for a pull request or structured JSON. Available previews identify a commit and path, and missing or corrupt local LFS objects are reported without previews. Read-only.
+
+MCP tool: `library_diff`, arguments `target`, `base`, `head`.
+
 ### `library drift`
 
 ```text
