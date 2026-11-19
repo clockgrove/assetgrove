@@ -469,11 +469,21 @@ test("rebuild run twice on the round-trip fixture library changes nothing the se
       ...["--profile", join(fixture.dir, ".assetgrove", "profile.json"), "--json"],
     ]);
   const first = await rebuild();
-  // The root folder (lantern, rock, walk, boat, and escape.md, whose resource leaves the root) is
-  // among the projections rebuilt, as well as props/.
+  // The first rebuild restores the folder projections and backfills evidence on legacy cards.
   assert.deepEqual(
     [...doc(first)["rebuilt"]].sort(),
-    ["index.md", "log.md", "props/index.md", "props/log.md"],
+    [
+      "big.md",
+      "boat.md",
+      "index.md",
+      "lantern.md",
+      "log.md",
+      "props/fern.md",
+      "props/index.md",
+      "props/log.md",
+      "rock.md",
+      "walk.md",
+    ],
     first.stdout + first.stderr,
   );
   const second = await rebuild();
