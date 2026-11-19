@@ -1,0 +1,13 @@
+{
+  "name": "@clockgrove/assetgrove-local-style",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "assetgrove": {
+    "api": 2,
+    "entry": "src/index.ts"
+  },
+  "peerDependencies": {
+    "@clockgrove/assetgrove": "^0.2.0"
+  }
+}

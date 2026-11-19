@@ -276,3 +276,7 @@ Commands, transform operations, formats, spend, confirmation, licences, the prom
 `assetgrove init` lists every loaded pack's adapters under the field `adapters` (`{adapter, extension, package, hosts, endpointFromSettings, keyEnv}`) and in its data flows, accepts them in `--providers`, and includes their hosts and key variables in the key recipes. `keyEnv` is the variable the adapter will read: a configured provider's `keyEnv` when one using the adapter sets it, else the adapter's `defaultKeyEnv`.
 
 Why settings alone load code: [decisions](decisions.md#extensions-load-only-from-developer-settings).
+
+### Approved provider commands
+
+`AdapterContext.run`, when the invocation supplies its command scope, runs only tools declared by that adapter's own extension. It uses the same byte-bound approvals and scratch-only execution as preset tools. It is absent in inspection and conformance contexts; an adapter requiring a local command must refuse a generation without it. `providerSet` supplies the current settings approval gate and loaded tool registry. The [local style route](local-style.md) demonstrates a settings-selected graph whose path is a command argument, so graph changes invalidate approval.

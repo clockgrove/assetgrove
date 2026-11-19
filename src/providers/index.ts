@@ -34,6 +34,7 @@ export async function providerSet(
     promptAllow: ctx.settings.promptPolicy.allow,
     ...(script && { script }),
     ...(ctx.extensions && {
+      toolScope: { tools: ctx.extensions.tools, gate: ctx, projectDir: process.cwd() },
       adapters: ctx.extensions.adapters,
       operations: ctx.extensions.operations,
     }),
