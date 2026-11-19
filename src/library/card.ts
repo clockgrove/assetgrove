@@ -16,6 +16,7 @@ import type { ReviewRecord } from "./review.ts";
 import { libraryPath } from "./paths.ts";
 import { isSummaryEntry, matchingSummaryEntry } from "./summary.ts";
 import type { CardSummary, SummaryEntry } from "./summary.ts";
+import type { MediaEvidence } from "./media-metadata.ts";
 
 /** The fields Assetgrove writes, in the order a card lists them. */
 export const MACHINE_FIELDS = [
@@ -33,6 +34,7 @@ export const MACHINE_FIELDS = [
   "bible",
   "license",
   "lock",
+  "media",
 ] as const;
 
 /** The fields a person edits; any other key is kept as written. */
@@ -83,6 +85,24 @@ const cardSchema = z.looseObject({
   bible: z.string().optional(),
   license: z.string().optional(),
   lock: z.looseObject({ sha256: hex64, bible: z.string().optional() }).optional(),
+  media: z
+    .discriminatedUnion("status", [
+      z.object({
+        format: z.literal("assetgrove-media/1"),
+        sha256: hex64,
+        status: z.literal("available"),
+        mediaType: nonEmpty,
+        width: z.number().int().positive().optional(),
+        height: z.number().int().positive().optional(),
+      }),
+      z.object({
+        format: z.literal("assetgrove-media/1"),
+        sha256: hex64,
+        status: z.literal("unavailable"),
+        reason: nonEmpty,
+      }),
+    ])
+    .optional(),
 });
 
 function lineStart(text: string, offset: number): number {
@@ -183,6 +203,7 @@ export interface MachineInput {
   animationFamily?: string;
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
+  media?: MediaEvidence;
 }
 
 /**
@@ -259,6 +280,7 @@ export function machineFields(input: MachineInput): Record<string, unknown> {
     bible: provenance.bibleVersion,
     license: provenance.license,
     lock: { sha256: current.sha256, bible: provenance.bibleVersion },
+    ...(input.media !== undefined && { media: input.media }),
   };
 }
 
@@ -413,6 +435,15 @@ export function refreshFromReview(
   fields["state"] = versionStatus(review, current.sha256);
   fields["version"] = versionNumber(review, current.sha256);
   fields["lock"] = { sha256: current.sha256, ...(bible !== undefined && { bible }) };
+  const media = fields["media"] as MediaEvidence | undefined;
+  if (media && media.sha256 !== current.sha256) {
+    fields["media"] = {
+      format: "assetgrove-media/1",
+      sha256: current.sha256,
+      status: "unavailable",
+      reason: "version_changed",
+    };
+  }
   return rewriteMachineFields(card, fields, source);
 }
 
