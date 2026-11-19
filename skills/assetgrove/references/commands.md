@@ -349,8 +349,7 @@ MCP. Existing source provenance is retained when supplied explicitly or found at
 `--digital-source-type`. Local raster operations only: no model call, external tool or spend.
 Does not approve assets or add library versions.
 
-MCP tool: `rendition`, arguments `recipes`, `recipe`, `source`, `sourceSha256`, `out`,
-`sourceProvenance`, `profile`, `digitalSourceType`, `preview`.
+MCP tool: `rendition`, arguments `recipes`, `recipe`, `source`, `sourceSha256`, `out`, `sourceProvenance`, `profile`, `digitalSourceType`, `preview`.
 
 ### `ops`
 
