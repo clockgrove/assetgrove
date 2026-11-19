@@ -293,6 +293,68 @@ asset://<game>/                          views, counts and the root index.md
 - **Listing.** `resources/list` returns the game root, every folder address and every card address, 200 per page by cursor, so an @-mention finds an asset; `resources/templates/list` names the asset, view and candidate address templates. The search paths (`find/`, `like/`, `where/`) belong to the search package.
 - **Live.** The server compares the project's cards, review records and run folders before and after each of its own tool calls (and at each progress update) and sends `notifications/resources/updated` for each changed `<asset>/` (a new version or annotation) and `runs/<run>/` (a staged candidate), on a 2025-era connection only to addresses the client subscribed to; a 2026-era connection's `subscriptions/listen` filter decides. It sends `notifications/resources/list_changed` after a `pick` or `write_families` it served, or when the listing changed. Other changes show at the next read. A refused read answers JSON-RPC `-32602` with `data.code` `invalid_input`.
 
+### Facets and staged candidate links
+
+`assetgrove-library://facets` is listed as a JSON resource. It returns
+`{game, total, kinds, labels}` for the mounted project: `total` counts library
+assets, `kinds` maps each supported kind to its count (including zero), and
+`labels` maps canonical tags to asset counts. Aliases collapse to their canonical
+label, and a tag counts once per asset. Counts come from current cards, without
+rewriting them, building a search index or asking a model.
+
+Staging results carry MCP `resource_link` content for staged candidates. A pick
+confirmation's form message also carries `candidateResources` links so the person can
+inspect the candidates before answering. Each `assetgrove-candidate://` link
+identifies a staged candidate and its recorded sha256; `resources/read` returns
+the exact full media bytes covered by the existing pick confirmation, rather
+than a thumbnail. It verifies the bytes against that hash on every read and
+refuses changed or missing media. The link is an inspection aid, never approval:
+the existing sealed confirmation still binds the pick to the candidate bytes.
+
+Candidate links issued by tool calls last for that server process; listed links
+are rebuilt from the mounted project's runs. A read-only mount can inspect those
+existing candidates but cannot stage or pick. The 64 KB encoded read limit still
+applies: oversized media returns a JSON pointer with `address`, `mediaType`,
+`sha256`, `bytes`, `tooLarge: true` and `limit`, not truncated media. A host without
+resource-link rendering can use `resources/read`; a host without form
+elicitation keeps the existing `confirmation_required` result and
+`assetgrove confirm <id>` terminal path. Resource support does not replace human
+confirmation.
+
+## Read-only MCP mounting
+
+Run `assetgrove mcp --read-only --target <project>` to mount the library without
+exposing edit, generation, paid search or pick tools. The default `mcp` mount
+continues serving the full command registry. The read-only mount lists only tools
+whose registry effect is read-only, never spends and writes nothing, plus `cat`,
+whose file-writing `--out` option is CLI only. Calling an omitted tool directly
+is refused; hiding it from `tools/list` is not the authorization boundary.
+
+Every exposed read-only tool has these effects:
+
+| Tool            | Effect                                                                                                   |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| `ls`            | Lists one library folder and its next-page address.                                                      |
+| `cat`           | Reads a resource's JSON, text or media; takes no `out` argument.                                         |
+| `library_check` | Checks records, cards, indexes, logs and media; repairs nothing.                                         |
+| `library_stats` | Counts assets by kind and state and reports change-request outcomes.                                     |
+| `library_drift` | Reads bible-version differences and cached staleness decisions; makes no judgement call.                 |
+| `runs_list`     | Lists existing runs and their states.                                                                    |
+| `runs_show`     | Reads an existing run's request, state, record and journal.                                              |
+| `estimate`      | Runs a paid command's free plan step; makes no provider call or ledger entry and writes nothing.         |
+| `ops`           | Lists media operations, parameters and engines; executes none.                                           |
+| `extensions`    | Lists already loaded extensions and their registered capabilities; installs nothing.                     |
+| `settings`      | Reads settings and paths; `check` can read provider limits, without paid generation or settings changes. |
+| `spend`         | Reads ledger/cap status or provider limits; spends nothing and writes nothing.                           |
+| `search_status` | With the search extension loaded, reports the existing index, embedder and model status; builds nothing. |
+
+`resources/list`, `resources/templates/list` and `resources/read` remain available
+for browsing. Resource reads make no paid calls and never pick or edit a library
+asset; the existing thumbnail cache may be populated under the state directory.
+Search resources that would invoke search are unavailable on this mount. This
+mode controls effects, not filesystem isolation: paths in permitted tool inputs
+are local to the server and follow their existing command contracts.
+
 ## Review actions
 
 `review`, `approve`, `library adopt` and `card edit` act on the library's records after a pick. Each takes an address: the asset's card, media or review record. `--version` names a version by number or sha256, the current one by default. A candidate is addressed by its run directory and `--candidate`; its record is read and written holding a lock beside it (`<candidate>.review.json.lock`), and a second annotator waits for it rather than losing its line. The library root and the game are found from the root `index.md`, and the log is written when the folder already has a `log.md`. Each holds the library write lock and ends by rewriting the card, the indexes and the log. Tool results carry annotation and card text only under `sharedText`.

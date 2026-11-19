@@ -17,6 +17,28 @@ Run `pnpm install` once. The server runs from the checkout with `node /abs/path/
 
 The calls use the developer's own settings (see `docs/settings.md`): a provider key, and a low run cap such as `--cap 0.10`. Generate one candidate (`candidates: 1`). The `stage` call spends a few cents. Prepare a spec, a style bible and a target profile, and give `pick` a scratch target directory, not a real project.
 
+## Read-only discovery check
+
+For a client that should inspect an existing library, use
+`node /abs/path/to/repo/src/cli.ts mcp --read-only --target /abs/path/to/project`
+instead. No generation key is needed for library resource reads. The exposed
+tools and their effects are listed in [Read-only MCP mounting](library.md#read-only-mcp-mounting).
+
+- [ ] `resources/list` and `resources/templates/list` expose the library; read the
+      root, a `by-kind` folder and a card with `resources/read`.
+- [ ] `ls` and `cat` browse the same library when the host does not render resources.
+- [ ] Read `assetgrove-library://facets` and compare its `kinds` and canonical
+      `labels` counts with the fixture cards, including supported kinds with zero assets.
+- [ ] Read a listed `assetgrove-candidate://` link and compare its decoded bytes
+      with the staged candidate's sha256. Changing the file makes that link refuse
+      the read. Oversized media reports a pointer with its hash and size.
+- [ ] Direct calls to `card_edit`, `stage` and `pick` are refused, including in
+      headless mode; no edit, generation spend or pick is made.
+- [ ] Reconnect without `--read-only` to test the spend and pick forms below.
+      A client without form elicitation still receives `confirmation_required`
+      and the terminal command `assetgrove confirm <id>`; resource support alone
+      does not authorize a pick.
+
 ## Claude Code, local
 
 Register at user scope, with the key in the server's env (`key:claude-code.user-scope`):
@@ -96,6 +118,7 @@ Ask the harness to call `stage` with one candidate and a low cap, then `pick` on
 - [ ] Mark honoured in auto mode: with the harness in its auto, yolo or full-auto mode, it still asks you before calling `stage` and `pick` (both carry `_meta["anthropic/requiresUserInteraction"]`).
 - [ ] Progress seen: progress shows in the harness while `stage` runs.
 - [ ] Contact sheet reaches the person: record how, as an image rendered inline, a path only, or not at all.
+- [ ] Candidate links reach the person: inspect the staging result's `resource_link` content and the pick form's `candidateResources`; read a link before answering the sealed form.
 - [ ] Unattended (headless) session: with headless settings (`headless.operator`, see `docs/settings.md`), `stage` runs without a form and `pick` must name its candidate. Record whether the harness can run it unattended.
 - [ ] Disconnect: start a `stage` call, then stop or interrupt it mid-run. Note what the harness shows and what the server leaves behind.
 
