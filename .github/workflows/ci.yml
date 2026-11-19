@@ -352,6 +352,7 @@ jobs:
     steps:
       # With no pack, the pack job is skipped; once the list holds one, every leg must succeed.
       - name: Require check, every test leg, every pack leg and the search bench
+        shell: bash
         env:
           CHECK: ${{ needs.check.result }}
           TEST: ${{ needs.test.result }}
@@ -359,12 +360,15 @@ jobs:
           PACK: ${{ needs.pack.result }}
           LIST: ${{ needs.packs.outputs.list }}
           BENCH: ${{ needs.search-bench.result }}
+          BENCH_REQUIRED: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         run: |
           echo "check: $CHECK, test: $TEST, packs: $PACKS, pack: $PACK, search-bench: $BENCH"
-          test "$CHECK" = success && test "$TEST" = success && test "$PACKS" = success
+          test "$CHECK" = success
+          test "$TEST" = success
+          test "$PACKS" = success
           if [ "$LIST" = "[]" ]; then test "$PACK" = skipped; else test "$PACK" = success; fi
-          # Skipped in the merge queue and on main; on a pull request it must succeed.
-          test "$BENCH" = success || test "$BENCH" = skipped
+          # Match the search-bench job's event condition when accepting a skip.
+          [[ "$BENCH" == success || ( "$BENCH" == skipped && "$BENCH_REQUIRED" == false ) ]]
 
   # Licence metadata: every file must have a licence and copyright under REUSE 3.3, which the root
   # REUSE.toml assigns by path. A separate job, so the required `ci` check is unchanged.
