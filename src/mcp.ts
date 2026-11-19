@@ -376,6 +376,7 @@ async function callTool(
   server: McpServer,
   codec: RequestStateCodec<SealedRequest>,
   marked: boolean,
+  tree: TreeServer,
   progress: () => void = () => {},
 ): Promise<Outcome | ReturnType<typeof inputRequired>> {
   const tool = spec.tool!;
@@ -417,8 +418,21 @@ async function callTool(
   const outcome = await runCommand(spec, full, callCtx);
   const asked = port?.asked();
   if (asked === undefined || outcome.error?.code !== "confirmation_required") return outcome;
+  let links: Awaited<ReturnType<TreeServer["candidateLinks"]>> = [];
+  try {
+    if (asked.kind === "pick" && typeof asked.details["run"] === "string") {
+      const inputs = asked.body?.["inputs"] as { candidates?: string } | undefined;
+      links = await tree.candidateLinks(asked.details["run"], inputs?.candidates);
+    }
+  } catch (error) {
+    return errorOutcome(error);
+  }
+  const shown =
+    links.length === 0
+      ? asked
+      : { ...asked, details: { ...asked.details, candidateResources: links } };
   return inputRequired({
-    inputRequests: { [FORM_KEY]: inputRequired.elicit(confirmForm(asked)) },
+    inputRequests: { [FORM_KEY]: inputRequired.elicit(confirmForm(shown)) },
     requestState: await codec.mint({ tool, args: argsDigest, kind: asked.kind, id: asked.id }),
   });
 }
@@ -435,6 +449,7 @@ function createServer(
   codec: RequestStateCodec<SealedRequest>,
   tree: TreeServer,
   era: "legacy" | "modern",
+  readOnly = false,
 ): McpServer {
   const { name, version } = packageInfo();
   const headless = ctx.settings.mode === "headless";
@@ -454,6 +469,15 @@ function createServer(
   // A search-only command is listed only when a loaded extension fills the search slot.
   for (const spec of availableCommands(commands, ctx.extensions)) {
     if (spec.tool === null) continue;
+    if (
+      readOnly &&
+      !(
+        spec.effect.readOnly &&
+        spec.effect.spends === "never" &&
+        (spec.effect.writes === "none" || spec.tool === "cat")
+      )
+    )
+      continue;
     const input = fromJsonSchema<Arguments>(toolInputSchema(spec));
     // tools/list shows the schema; the handler checks it, so a refusal is a result document too.
     const listed = {
@@ -488,6 +512,7 @@ function createServer(
                   server,
                   codec,
                   marked,
+                  tree,
                   progress,
                 ),
               (result) => !isInputRequiredResult(result) && result.exitCode === 0,
@@ -497,8 +522,12 @@ function createServer(
         if (spec.tool === "cat") return catResult(document);
         // The run's contact sheet goes with the result as image content (design section 10).
         const sheet = await contactImage(document);
+        const links =
+          document["ok"] === true && typeof document["runDir"] === "string"
+            ? await tree.candidateLinks(document["runDir"])
+            : [];
         return {
-          content: [{ type: "text", text: JSON.stringify(document) }, ...sheet],
+          content: [{ type: "text", text: JSON.stringify(document) }, ...sheet, ...links],
           structuredContent: document,
           isError: document["ok"] !== true,
         };
@@ -519,7 +548,7 @@ export async function serveMcp(
   ctx: RunContext,
   input: Readable = process.stdin,
   output: Writable = process.stdout,
-  options: { target?: string } = {},
+  options: { target?: string; readOnly?: boolean } = {},
 ): Promise<void> {
   checkContextEnvironment(ctx);
   checkTrackedKeys(process.cwd(), { settings: ctx.settings, ...(ctx.env && { env: ctx.env }) });
@@ -535,8 +564,14 @@ export async function serveMcp(
       createServer(
         ctx,
         codec,
-        new TreeServer(dir, ctx.settings.stateDir, searchRunner(ctx, dir), ctx.extensions),
+        new TreeServer(
+          dir,
+          ctx.settings.stateDir,
+          options.readOnly ? undefined : searchRunner(ctx, dir),
+          ctx.extensions,
+        ),
         era,
+        options.readOnly,
       ),
     {
       transport: new StdioServerTransport(input, output),
