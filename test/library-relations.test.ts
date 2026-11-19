@@ -204,3 +204,34 @@ test("invalid lineage and cycles name exact offending version references through
     await rm(lib.dir, { recursive: true, force: true });
   }
 });
+
+test("reordered raw versions retain exact lineage references", async () => {
+  const lib = fixtureLibrary();
+  try {
+    const path = join(lib.root, "lantern.review.json");
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    raw["ag:versions"].reverse();
+    raw["ag:versions"][0].lineage = [
+      { relation: "derived-from", ...ref(lib, "walk") },
+      { relation: "invalid", ...ref(lib, "walk") },
+    ];
+    writeFileSync(path, JSON.stringify(raw));
+    const result = await cli(lib, "relations");
+    assert.equal(result.value.edges[0]!.reference, "lantern.review.json:ag:versions[0].lineage[0]");
+    assert.equal(result.value.problems[0]!.reference, "ag:versions[0].lineage[1]");
+    const checked = await cli(lib, "check");
+    assert.deepEqual(
+      checked.value.problems.filter((p) => p.code.startsWith("lineage_")),
+      result.value.problems,
+    );
+    await cli(lib, "rebuild");
+    const rebuilt = JSON.parse(readFileSync(path, "utf8"));
+    const rebuiltIndex = rebuilt["ag:versions"].findIndex(
+      (v: { lineage?: unknown }) => v.lineage !== undefined,
+    );
+    const after = await cli(lib, "relations");
+    assert.equal(after.value.problems[0]!.reference, `ag:versions[${rebuiltIndex}].lineage[1]`);
+  } finally {
+    await rm(lib.dir, { recursive: true, force: true });
+  }
+});

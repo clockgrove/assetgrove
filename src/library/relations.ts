@@ -2,7 +2,7 @@ import { relative, sep } from "node:path";
 import { z } from "zod";
 import { InputError } from "../errors.ts";
 import { libraryPath } from "./paths.ts";
-import type { ReviewRecord } from "./review.ts";
+import { versionSourceIndex, type ReviewRecord } from "./review.ts";
 
 export const RELATIONS = ["derived-from", "variant-of", "part-of"] as const;
 const lineageSchema = z.object({
@@ -59,7 +59,7 @@ export function relationshipGraph(root: string, assets: readonly RecordAsset[]) 
     record.versions.forEach((version, index) => {
       const lineage = version["lineage"];
       if (lineage === undefined) return;
-      const location = `ag:versions[${index}].lineage`;
+      const location = `ag:versions[${versionSourceIndex(version, index)}].lineage`;
       if (!Array.isArray(lineage)) {
         problems.push({
           file,
