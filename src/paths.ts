@@ -6,10 +6,12 @@
  * names an alternate data stream. Long paths need nothing here: on Windows, Node's fs namespaces
  * absolute paths itself.
  */
-import { posix, relative, sep } from "node:path";
+import { posix, relative, resolve, sep } from "node:path";
 import { InputError } from "./errors.ts";
 import { DEFAULT_HANDOFF } from "./handoff/presets/index.ts";
 import { lookup } from "./template.ts";
+import { libraryConfig, within } from "./library/write.ts";
+import { libraryPath } from "./library/paths.ts";
 import type { AssetSpec, TargetProfile } from "./types.ts";
 
 /** `rel` as records and JSON output carry it: `/`-separated. */
@@ -111,6 +113,42 @@ export function embedsProvenance(template: unknown): boolean {
   return false;
 }
 
+/** The shared layout with this kind's media and optional manifest override. */
+export function layoutFor(profile: TargetProfile, kind: string): TargetProfile["layout"] {
+  const override = profile.kinds?.[kind]?.layout;
+  return override === undefined ? profile.layout : { ...profile.layout, ...override };
+}
+
+/** Checks only overridden fields; the library root always comes from the global layout. */
+export function checkKindLayoutPaths(
+  profile: TargetProfile,
+  kind: string,
+  render: (template: string) => string = (template) => template.replace(/\{\{[^{}]*\}\}/g, "value"),
+  targetDir?: string,
+): void {
+  const override = profile.kinds?.[kind]?.layout;
+  if (override === undefined) return;
+  const base = resolve(targetDir ?? ".");
+  const root = libraryConfig(profile, base).root;
+  for (const field of ["media", "manifest"] as const) {
+    const template = override[field];
+    if (template === undefined) continue;
+    const path = render(template);
+    const normalized = path.replaceAll("\\", "/");
+    if (
+      posix.isAbsolute(normalized) ||
+      /^[a-z]:/i.test(normalized) ||
+      !within(root, resolve(base, normalized)) ||
+      resolve(base, normalized) === root
+    ) {
+      throw new InputError(`kinds.${kind}.layout.${field} path "${path}" leaves the library root`);
+    }
+    if (targetDir !== undefined) {
+      libraryPath(root, base, path, `kinds.${kind}.layout.${field}`);
+    }
+  }
+}
+
 const SPEC_VALUE = /\{\{\s*spec\.([\w.-]+)(\?)?\s*\}\}/g;
 const WHOLE_OPTIONAL = /^\{\{\s*[\w.-]+\?\s*\}\}$/;
 
@@ -138,9 +176,13 @@ export function checkSpecValues(profile: TargetProfile, spec: AssetSpec): void {
       for (const [key, item] of Object.entries(template)) check(`${field}.${key}`, item);
     }
   };
-  const layout = profile.layout as Partial<TargetProfile["layout"]> | undefined;
+  const layout = layoutFor(profile, spec.kind) as Partial<TargetProfile["layout"]> | undefined;
   for (const key of ["media", "manifest", "provenance"] as const) {
-    if (typeof layout?.[key] === "string") check(`layout.${key}`, layout[key]);
+    if (typeof layout?.[key] === "string") {
+      const overridden =
+        key !== "provenance" && profile.kinds?.[spec.kind]?.layout?.[key] !== undefined;
+      check(overridden ? `kinds.${spec.kind}.layout.${key}` : `layout.${key}`, layout[key]);
+    }
   }
   const handoff: unknown = profile.handoff ?? DEFAULT_HANDOFF;
   const rendersManifest =
@@ -161,7 +203,7 @@ export function checkSpecValues(profile: TargetProfile, spec: AssetSpec): void {
  */
 export function checkLayout(profile: TargetProfile, spec: AssetSpec): void {
   checkSpecValues(profile, spec);
-  const layout = profile.layout as Partial<TargetProfile["layout"]> | undefined;
+  const layout = layoutFor(profile, spec.kind) as Partial<TargetProfile["layout"]> | undefined;
   if (typeof layout?.media !== "string" || typeof layout.manifest !== "string") return;
   const context = {
     spec: { ...spec.fields, ...spec },
@@ -173,6 +215,7 @@ export function checkLayout(profile: TargetProfile, spec: AssetSpec): void {
       if (value === undefined) return path;
       return typeof value === "string" ? value : JSON.stringify(value);
     });
+  checkKindLayoutPaths(profile, spec.kind, stub);
   const media = stub(layout.media);
   const rels = [media, stub(layout.manifest)];
   if (typeof layout.provenance === "string") rels.push(stub(layout.provenance));

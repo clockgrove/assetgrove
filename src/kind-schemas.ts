@@ -177,7 +177,7 @@ export function validateKindSpec(kind: Generator, spec: AssetSpec): void {
   });
 }
 
-/** Refuses a `kinds.<kind>` profile block its kind's `profileSchema` does not accept. */
+/** Refuses a `kinds.<kind>` profile block its kind's `profileSchema` does not accept, excluding shared fields. */
 export function validateKindProfile(
   kind: Generator,
   profile: TargetProfile,
@@ -187,7 +187,8 @@ export function validateKindProfile(
   if (block === undefined) return;
   const where = `target profile${source !== undefined ? ` ${source}` : ""}`;
   if (!isRecord(block)) throw new InputError(`${where} kinds.${kind.kind} must be an object`);
-  const { values, ...rest } = block;
+  const { values, layout: _layout, ...rest } = block;
+  void _layout;
   if (values !== undefined && !isRecord(values))
     throw new InputError(`${where} kinds.${kind.kind}.values must be an object`);
   if (kind.profileSchema !== undefined) {
@@ -202,6 +203,6 @@ export function validateKindProfile(
   const [unknown] = Object.keys(rest);
   if (unknown !== undefined)
     throw new InputError(
-      `${where} kinds.${kind.kind} has unknown field "${unknown}"; kind ${kind.kind} declares no profile fields, so the block accepts only values`,
+      `${where} kinds.${kind.kind} has unknown field "${unknown}"; kind ${kind.kind} declares no profile fields, so the block accepts only values and layout`,
     );
 }
