@@ -26,6 +26,9 @@ export interface DescribeSubject {
   subject?: string;
   mediaSha256: string | null;
   images: LoadedReference[];
+  baseline?: { description: string | null; labels: string[] };
+  version?: string;
+  mediaDigest?: string;
 }
 
 export interface Skipped {
@@ -90,7 +93,7 @@ export async function describeViews(
 
 /** The cards that need a summary, and those skipped with the reason. */
 export async function selectDescribed(
-  input: { address?: string; missingIn?: string },
+  input: { address?: string; missingIn?: string; propose?: boolean },
   traits?: Parameters<typeof stalenessThumbnail>[1],
 ): Promise<{ pending: DescribeSubject[]; skipped: Skipped[] }> {
   const pending: DescribeSubject[] = [];
@@ -99,11 +102,31 @@ export async function selectDescribed(
     const asset = await loadAsset(location);
     if (missing && text(asset.card.data["description"]) !== undefined) return;
     const state = summaryState(asset.card.data);
-    if (state.state === "person") {
+    if (state.state === "person" && !input.propose) {
       skipped.push({ asset: asset.assetId, reason: state.reason });
       return;
     }
+    let mediaDigest: string | undefined;
+    if (input.propose) {
+      try {
+        mediaDigest = sha256Hex(readFileSync(asset.mediaPath));
+      } catch {
+        skipped.push({ asset: asset.assetId, reason: "no image view" });
+        return;
+      }
+    }
     const images = await describeViews(asset, traits);
+    if (input.propose) {
+      try {
+        if (sha256Hex(readFileSync(asset.mediaPath)) !== mediaDigest) {
+          skipped.push({ asset: asset.assetId, reason: "media changed while preparing its views" });
+          return;
+        }
+      } catch {
+        skipped.push({ asset: asset.assetId, reason: "no image view" });
+        return;
+      }
+    }
     if (images.length === 0) {
       skipped.push({ asset: asset.assetId, reason: "no image view" });
       return;
@@ -116,6 +139,15 @@ export async function selectDescribed(
       ...(text(asset.card.data["subject"]) && { subject: text(asset.card.data["subject"])! }),
       mediaSha256: typeof lock?.sha256 === "string" ? lock.sha256 : null,
       images,
+      baseline: {
+        description:
+          typeof asset.card.data["description"] === "string"
+            ? asset.card.data["description"]
+            : null,
+        labels: Array.isArray(asset.card.data["tags"]) ? (asset.card.data["tags"] as string[]) : [],
+      },
+      version: asset.record.versions.at(-1)!.sha256,
+      mediaDigest: mediaDigest ?? "",
     });
   };
   if (input.address !== undefined) {
