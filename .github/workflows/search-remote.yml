@@ -39,7 +39,10 @@ jobs:
           ASSETGROVE_R2_ENDPOINT: ${{ secrets.ASSETGROVE_R2_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.ASSETGROVE_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.ASSETGROVE_R2_SECRET_ACCESS_KEY }}
-        run: node bench/search/remote.ts write
+        run: >-
+          node bench/search/remote.ts write
+          --bucket "$ASSETGROVE_R2_BUCKET" --endpoint "$ASSETGROVE_R2_ENDPOINT"
+          --prefix "$ASSETGROVE_R2_PREFIX"
 
   read:
     needs: write
@@ -70,7 +73,10 @@ jobs:
           ASSETGROVE_R2_ENDPOINT: ${{ secrets.ASSETGROVE_R2_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.ASSETGROVE_R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.ASSETGROVE_R2_SECRET_ACCESS_KEY }}
-        run: node bench/search/remote.ts read
+        run: >-
+          node bench/search/remote.ts read
+          --bucket "$ASSETGROVE_R2_BUCKET" --endpoint "$ASSETGROVE_R2_ENDPOINT"
+          --prefix "$ASSETGROVE_R2_PREFIX"
 
   cleanup:
     needs: [write, read]

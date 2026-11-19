@@ -19,7 +19,11 @@ import { fetchImages, type ImageSource } from "./fetch.ts";
 import { buildFixtureManifest, fixtureSource } from "./fixture.ts";
 import { checkManifest, readManifest, type Manifest } from "./manifest.ts";
 
-function storeFor(writer: boolean, fixturePath: string | undefined): SearchStoreSettings {
+function storeFor(
+  writer: boolean,
+  options: { "fixture-store"?: string; bucket?: string; endpoint?: string; prefix?: string },
+): SearchStoreSettings {
+  const { "fixture-store": fixturePath, bucket, endpoint, prefix } = options;
   if (fixturePath !== undefined) {
     return {
       uri: pathToFileURL(resolve(fixturePath)).href,
@@ -28,8 +32,6 @@ function storeFor(writer: boolean, fixturePath: string | undefined): SearchStore
       writer,
     };
   }
-  const { ASSETGROVE_R2_BUCKET: bucket, ASSETGROVE_R2_ENDPOINT: endpoint } = process.env;
-  const prefix = process.env.ASSETGROVE_R2_PREFIX;
   assert(bucket && /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket), "Set ASSETGROVE_R2_BUCKET");
   assert(
     endpoint &&
@@ -127,21 +129,23 @@ async function verifyQueries(
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { "fixture-store": { type: "string" } },
+  options: {
+    "fixture-store": { type: "string" },
+    bucket: { type: "string" },
+    endpoint: { type: "string" },
+    prefix: { type: "string" },
+  },
 });
 const [phase] = positionals;
 assert(positionals.length === 1 && (phase === "write" || phase === "read"), "Use write or read");
 const writer = phase === "write";
-const fixturePath = values["fixture-store"];
-const store = storeFor(writer, fixturePath);
-const offline = fixturePath !== undefined;
+const store = storeFor(writer, values);
+const offline = values["fixture-store"] !== undefined;
 assert.equal(git("rev-parse", "--is-shallow-repository"), "false", "Use a complete Git checkout");
 const head = git("rev-parse", "HEAD");
 const origin = git("rev-list", "--max-parents=0", head).split("\n").sort().join(" ");
 const worktree = git("rev-parse", "--show-toplevel");
-const stateDir = await mkdtemp(
-  join(process.env.RUNNER_TEMP ?? tmpdir(), "assetgrove-search-remote-"),
-);
+const stateDir = await mkdtemp(join(tmpdir(), "assetgrove-search-remote-"));
 try {
   const manifest = offline
     ? buildFixtureManifest()
@@ -171,7 +175,10 @@ try {
       folders: [],
       store,
     },
-    env: process.env,
+    env: {
+      AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+      AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+    },
     log: () => undefined,
   };
   if (writer) {
