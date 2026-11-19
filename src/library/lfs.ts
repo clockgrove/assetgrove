@@ -4,6 +4,7 @@
  * `git lfs`, fetches, or returns pointer text as media, so reads never touch the network or the
  * work tree.
  */
+import { isGitMarker } from "../git-marker.ts";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -61,6 +62,7 @@ export function parseLfsPointer(bytes: Uint8Array): LfsPointer | undefined {
 }
 
 function gitDirOf(dotGit: string): string | undefined {
+  if (!isGitMarker(dotGit)) return undefined;
   let stat;
   try {
     stat = statSync(dotGit);

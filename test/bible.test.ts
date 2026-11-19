@@ -456,6 +456,7 @@ test("a spec's key pose outside the project root exits 2 invalid_input before an
   const { world, files } = await worldFiles();
   t.after(() => rm(world.dir, { recursive: true, force: true }));
   await mkdir(join(world.dir, ".git"));
+  await writeFile(join(world.dir, ".git", "HEAD"), "ref: refs/heads/main\n");
   const outside = await mkdtemp(join(tmpdir(), "assetgrove-private-pose-"));
   t.after(() => rm(outside, { recursive: true, force: true }));
   const secret = join(outside, "private.png");
@@ -482,6 +483,7 @@ test("a reference path outside the project root exits 2 invalid_input before any
   t.after(() => rm(world.dir, { recursive: true, force: true }));
   // The project is the world directory (it holds .git); a private file sits outside it.
   await mkdir(join(world.dir, ".git"));
+  await writeFile(join(world.dir, ".git", "HEAD"), "ref: refs/heads/main\n");
   const outside = await mkdtemp(join(tmpdir(), "assetgrove-private-"));
   t.after(() => rm(outside, { recursive: true, force: true }));
   const secret = join(outside, "secret.png");
@@ -534,6 +536,7 @@ test("the project root stops below the home directory and falls back to the shar
   t.after(() => rm(home, { recursive: true, force: true }));
   // A dotfiles repository at the home directory does not make the home directory the project.
   await mkdir(join(home, ".git"));
+  await writeFile(join(home, ".git", "HEAD"), "ref: refs/heads/main\n");
   const art = join(home, "work", "art");
   await mkdir(join(home, "work", "refs"), { recursive: true });
   await mkdir(art, { recursive: true });

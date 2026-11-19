@@ -107,6 +107,7 @@ test("size, tiling and the palette each change the call key", () => {
 test("the scripted provider receives the parameters, the palette with its bytes, and the journal keys them", async () => {
   const dir = await tempDir();
   mkdirSync(join(dir, ".git"));
+  await writeFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
   const paletteBytes = new Uint8Array([1, 2, 3, 4]);
   await writeFile(join(dir, "pal.gpl"), paletteBytes);
   const provider = scripted();
@@ -149,6 +150,7 @@ test("the scripted provider receives the parameters, the palette with its bytes,
 test("a changed palette file is a new call key", async () => {
   const dir = await tempDir();
   mkdirSync(join(dir, ".git"));
+  await writeFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
   const keyOf = async (bytes: string) => {
     await writeFile(join(dir, "pal.gpl"), bytes);
     const runDir = await tempDir();
@@ -186,6 +188,7 @@ test("a palette outside the project is refused before any call", async () => {
   const parent = await tempDir();
   const project = join(parent, "project");
   mkdirSync(join(project, ".git"), { recursive: true });
+  await writeFile(join(project, ".git", "HEAD"), "ref: refs/heads/main\n");
   await writeFile(join(parent, "outside.gpl"), "x");
   const provider = scripted();
   const budget = new Budget(1);
@@ -202,6 +205,7 @@ test("a palette outside the project is refused before any call", async () => {
 test("an unreadable palette is an input error naming the file", async () => {
   const dir = await tempDir();
   mkdirSync(join(dir, ".git"));
+  await writeFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
   const provider = scripted();
   await assert.rejects(
     callerOf(provider).image("sprite", "a gem", [], undefined, {
@@ -272,6 +276,7 @@ test("a palette's bytes enter the request digest through the plan's reads; one o
   const parent = await tempDir();
   const dir = join(parent, "project");
   mkdirSync(join(dir, ".git"), { recursive: true });
+  await writeFile(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
   const calls = [
     {
       operation: "sprite",

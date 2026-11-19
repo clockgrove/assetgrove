@@ -68,6 +68,7 @@ test("`settings show --json` with a key value in the environment never contains 
 test("HOME set to a project does not exempt it: the project's own settings file is refused", async () => {
   const project = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-home-project-")));
   await mkdir(join(project, ".git"));
+  await writeFile(join(project, ".git", "HEAD"), "ref: refs/heads/main\n");
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: project, USERPROFILE: project };
   for (const name of ["ASSETGROVE_CONFIG", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "APPDATA"])
     delete env[name];

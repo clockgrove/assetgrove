@@ -27,6 +27,7 @@ function childAcquire(target: string, state: string): string {
 test("the library lock holds our pid and refuses a second live process", () => {
   const root = mkdtempSync(join(tmpdir(), "library-lock-"));
   mkdirSync(join(root, ".git"));
+  writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
   const state = join(root, "state");
   const lock = acquireLibraryLock(root, state);
   const path = join(root, ".git", "assetgrove", "library.lock");
@@ -40,6 +41,7 @@ test("the library lock holds our pid and refuses a second live process", () => {
 test("a dead process's library lock is taken over", () => {
   const root = mkdtempSync(join(tmpdir(), "library-lock-"));
   mkdirSync(join(root, ".git", "assetgrove"), { recursive: true });
+  writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
   writeFileSync(join(root, ".git", "assetgrove", "library.lock"), "2147483646\n");
   const lock = acquireLibraryLock(root, join(root, "state"));
   assert.equal(lock.tookOver, true);

@@ -112,6 +112,7 @@ async function stagedWorld(validator: string[]) {
 /** One repository's files under `top`, with a `.git` directory marking its top level. */
 async function checkout(top: string, tool: string): Promise<string> {
   await mkdir(join(top, ".git"), { recursive: true });
+  await writeFile(join(top, ".git", "HEAD"), "ref: refs/heads/main\n");
   await mkdir(join(top, "tools"), { recursive: true });
   await writeFile(join(top, "tools", "check.mjs"), tool);
   return top;

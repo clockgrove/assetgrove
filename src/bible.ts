@@ -1,3 +1,4 @@
+import { isGitMarker } from "./git-marker.ts";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -292,7 +293,7 @@ export function projectRoot(dir: string, home: string = homeDir()): string {
   const start = realish(resolve(dir));
   const stop = realish(resolve(home));
   for (let current = start; current !== stop; current = dirname(current)) {
-    if (existsSync(join(current, ".git")) || existsSync(join(current, ".assetgrove")))
+    if (isGitMarker(join(current, ".git")) || existsSync(join(current, ".assetgrove")))
       return current;
     if (dirname(current) === current) break;
   }
