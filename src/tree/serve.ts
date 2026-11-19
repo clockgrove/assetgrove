@@ -10,6 +10,16 @@
  * the client subscribed to are sent; on a 2026-era one the SDK's listen router filters. Other
  * changes show at the next read.
  */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { libraryPath } from "../library/paths.ts";
+import { PlanChangedError } from "../planning.ts";
+import { readRun } from "../loop.ts";
+import { digestOf } from "../confirm/records.ts";
+import { sha256Hex } from "../library/canonical.ts";
+import { READ_LIMIT, base64Length } from "./thumbs.ts";
+import { loadAssets } from "./project.ts";
+import { runIds } from "./read.ts";
 import { ProtocolError } from "@modelcontextprotocol/server";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { EXIT, InputError } from "../errors.ts";
@@ -59,6 +69,10 @@ export class TreeServer {
   readonly dir: string;
   private readonly stateDir: string;
   private readonly subscribed = new Set<string>();
+  private readonly candidates = new Map<
+    string,
+    { dir: string; file: string; sha256: string; mimeType: string; name: string }
+  >();
   private server?: McpServer;
   private legacy = true;
   private last?: ReturnType<typeof fingerprint>;
@@ -97,6 +111,92 @@ export class TreeServer {
     }
   }
 
+  /** Registers hash-bound links without granting reads of arbitrary client-supplied paths. */
+  async candidateLinks(runDir: string, expectedCandidatesDigest?: string) {
+    let run;
+    try {
+      run = await readRun(runDir);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(run.candidates)) return [];
+    if (
+      expectedCandidatesDigest !== undefined &&
+      digestOf(run.candidates.map((c) => ({ id: c.id, sha256: c.sha256 }))) !==
+        expectedCandidatesDigest
+    )
+      throw new PlanChangedError(
+        "the pick candidates changed while preparing their resource links",
+      );
+    return run.candidates
+      .filter(
+        (c) =>
+          typeof c.id === "string" && typeof c.file === "string" && /^[a-f0-9]{64}$/.test(c.sha256),
+      )
+      .map((c) => {
+        const uri = `assetgrove-candidate://${c.sha256}/${digestOf({ run: runDir, id: c.id })}`;
+        this.candidates.set(uri, {
+          dir: runDir,
+          file: c.file,
+          sha256: c.sha256,
+          mimeType: c.mediaType,
+          name: c.id,
+        });
+        return {
+          type: "resource_link" as const,
+          uri,
+          name: c.id,
+          mimeType: c.mediaType,
+          description: `Staged candidate ${c.id}, sha256 ${c.sha256}`,
+        };
+      });
+  }
+
+  private async candidateRead(uri: string) {
+    const candidate = this.candidates.get(uri);
+    if (!candidate) throw new InputError(`${uri}: unknown candidate resource`);
+    const file = libraryPath(candidate.dir, candidate.dir, candidate.file, uri);
+    const bytes = await readFile(file);
+    if (sha256Hex(bytes) !== candidate.sha256)
+      throw new InputError(`${uri}: candidate bytes changed since staging`);
+    if (base64Length(bytes.length) > READ_LIMIT) {
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify({
+              address: uri,
+              kind: "file",
+              mediaType: candidate.mimeType,
+              sha256: candidate.sha256,
+              bytes: bytes.length,
+              tooLarge: true,
+              limit: READ_LIMIT,
+            }),
+          },
+        ],
+      };
+    }
+    return { contents: [{ uri, mimeType: candidate.mimeType, blob: bytes.toString("base64") }] };
+  }
+
+  private async facets() {
+    const project = await this.project();
+    const assets = [...loadAssets(project).values()];
+    const kinds = Object.fromEntries(
+      [...this.traits.kinds]
+        .sort((a, b) => a.kind.localeCompare(b.kind))
+        .map((k) => [k.kind, assets.filter((a) => a.kind === k.kind).length]),
+    );
+    const labels = Object.fromEntries(
+      [...new Set(assets.flatMap((a) => a.tags))]
+        .sort()
+        .map((label) => [label, assets.filter((a) => a.tags.includes(label)).length]),
+    );
+    return { game: project.library.game, total: assets.length, kinds, labels };
+  }
+
   /** Installs the resource handlers on `server`, for a connection of the given era. */
   attach(server: McpServer, era: "legacy" | "modern"): void {
     this.server = server;
@@ -105,6 +205,19 @@ export class TreeServer {
     low.setRequestHandler("resources/list", async (request) => {
       const project = await this.tryProject();
       const all = project ? listTree(project) : [];
+      if (project) {
+        all.push({
+          uri: "assetgrove-library://facets",
+          name: "Library facets",
+          mimeType: "application/json",
+        });
+        for (const run of runIds(project)) {
+          const links = await this.candidateLinks(join(project.runsDir, run));
+          all.push(...links.map(({ uri, name, mimeType }) => ({ uri, name, mimeType })));
+        }
+      }
+      for (const [uri, c] of this.candidates)
+        if (!all.some((r) => r.uri === uri)) all.push({ uri, name: c.name, mimeType: c.mimeType });
       const cursor = request.params?.cursor;
       const start = cursor === undefined ? 0 : Number.parseInt(cursor, 10);
       if (!Number.isInteger(start) || start < 0 || start > all.length) {
@@ -147,6 +260,29 @@ export class TreeServer {
     low.setRequestHandler("resources/read", async (request) => {
       const uri = request.params.uri;
       try {
+        if (uri === "assetgrove-library://facets") {
+          let text = JSON.stringify(await this.facets());
+          const bytes = Buffer.byteLength(text);
+          if (bytes > READ_LIMIT)
+            text = JSON.stringify({
+              address: uri,
+              kind: "file",
+              mediaType: "application/json",
+              bytes,
+              tooLarge: true,
+              limit: READ_LIMIT,
+            });
+          return { contents: [{ uri, mimeType: "application/json", text }] };
+        }
+        if (uri.startsWith("assetgrove-candidate://")) {
+          if (!this.candidates.has(uri)) {
+            const project = await this.tryProject();
+            if (project)
+              for (const run of runIds(project))
+                await this.candidateLinks(join(project.runsDir, run));
+          }
+          return await this.candidateRead(uri);
+        }
         const path = this.search && parseSearchPath(uri, (await this.project()).library.game);
         if (path && this.search) {
           const document = { address: path.address, ...(await this.search(path.query)) };

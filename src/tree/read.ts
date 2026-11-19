@@ -8,6 +8,7 @@
  * thumbnail of at most 512 px and `image/full` the file. No read's encoded content exceeds 64 KB:
  * content that would is replaced by a JSON pointer naming the file and its size.
  */
+import { libraryPath } from "../library/paths.ts";
 import { canonicalLabel, checkedVocabulary } from "../library/labels.ts";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
@@ -338,10 +339,11 @@ function candidates(record: JsonObject | undefined): CandidateInfo[] {
 
 /** A file inside the run directory, or undefined when the record names one outside it. */
 function runFile(runDir: string, name: string): string | undefined {
-  const path = join(runDir, name);
-  const back = relative(runDir, path);
-  if (back.startsWith("..") || back === "" || /^[\\/]/.test(back)) return undefined;
-  return path;
+  try {
+    return libraryPath(runDir, runDir, name, "run candidate");
+  } catch {
+    return undefined;
+  }
 }
 
 /** A run's candidate files: each candidate of `run.json` that names a file inside the run folder. */
@@ -582,6 +584,8 @@ async function readRuns(view: View, at: Address, r: Reader): Promise<void> {
     ...(found.artifacts.length > 0 && { artifacts: found.artifacts }),
   });
   const bytes = readBytes(file);
+  if (bytes && found.sha256 !== sha256Hex(bytes))
+    throw new InputError(`${r.address}: candidate bytes changed since staging`);
   const shape = stripShape(spec["kind"], found.parameters, view.traits);
   if (bytes && found.mediaType?.startsWith("image/")) {
     r.thumb([bytes], shape);
