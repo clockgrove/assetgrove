@@ -184,3 +184,44 @@ Scripted runs (`--provider-script`) are not real spend, so they are excluded: th
 The optional `style.materials` data is validated against the material profile schema. The `materials` command defaults to all standard channels (`normal`, `height`, `emissive`, `roughness`, `wind`), scales `[1, 2]`, and a flicker bound of `0.03` when settings are absent. `channels` can omit any channel or be empty; `scales` may additionally include 4. This does not cause ordinary generation commands to run materials automatically.
 
 Per-channel `encoding` declares `unorm8` and an ordered normalized `range`. `compression` declares the format (`ktx2` or `basis`, delivered in KTX2), version and argv command; `preview` declares its version and argv command. `lightRig` is target-owned JSON data consumed by the preview renderer from the material report. No target light rig is available yet; tests use an explicit synthetic rig. Commands never use shell interpolation and have bounded runtimes. See [materials.md](materials.md) for derivation inputs, defaults, rendition limits and `--dry-run` cost forecasts.
+
+### Project rules (initial planning support)
+
+An optional `rules` array declares data-only constraints. Every rule has a unique
+`id`, a `kind`, and `severity` (`error` by default, or `warning`). Unknown rule
+fields are refused. Rules cannot supply executable hooks or configuration.
+
+```json
+{
+  "rules": [
+    {
+      "id": "role",
+      "kind": "required",
+      "source": "spec",
+      "field": "fields.role",
+      "values": ["actor", "prop"]
+    },
+    { "id": "title", "kind": "required", "source": "card", "field": "title" },
+    {
+      "id": "labels",
+      "kind": "labels",
+      "required": ["actor"],
+      "allowed": ["actor", "prop"],
+      "severity": "warning"
+    },
+    { "id": "bytes", "kind": "media", "metric": "bytes", "max": 1048576 }
+  ]
+}
+```
+
+Required fields use dot-separated own-property paths. Missing, null and empty
+string values fail; `values`, when supplied, compares exact scalar values. Label
+rules check card `tags`. Media metrics are `bytes`, `width` and `height` and use
+an inclusive maximum. The evaluator reports the rule, asset, severity, evidence
+source and `passed`, `failed` or `unavailable` status; unavailable evidence is
+never guessed from a declaration.
+
+Planning currently enforces required spec errors before paid calls. Card and
+measured-media enforcement in write paths and library checks is delivered in the
+next Objective part; declaring those rules in this initial part does not yet
+block writes. The evaluator retains warnings without blocking.

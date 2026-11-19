@@ -135,6 +135,7 @@ export interface StyleProfile {
 }
 
 export interface TargetProfile {
+  rules?: import("./project-rules.ts").ProjectRule[];
   /** `assetgrove-target-profile/<n>`; required in a file, optional in memory. */
   format?: string;
   name: string;
