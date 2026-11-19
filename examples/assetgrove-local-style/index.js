@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+import { URL } from "node:url";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
