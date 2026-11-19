@@ -1,3 +1,5 @@
+import { parseOrigin } from "../origin.ts";
+import { readJson } from "../json.ts";
 import { join, resolve } from "node:path";
 import { Budget, runCap } from "../budget.ts";
 import { Caller } from "../calls.ts";
@@ -77,6 +79,7 @@ export function formatImport(record: ImportRecord, importDir: string, grouping: 
 }
 
 interface ImportArgs {
+  origin?: string;
   sheet: string;
   profile: string;
   asset: string;
@@ -103,6 +106,10 @@ interface ImportArgs {
 
 /** Import's plan step: its inputs, the calls it can make and its WorkPlan, with no call. */
 async function prepare(args: ImportArgs, ctx: RunContext) {
+  const origin =
+    args.origin === undefined
+      ? undefined
+      : parseOrigin((await readJson<unknown>(args.origin)).value, args.origin);
   const capUsd = runCap(args.cap, ctx.settings);
   const slice = sliceOptions(args.grid, args.components, args.frames);
   const profile = await loadProfile(args.profile);
@@ -152,7 +159,7 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
       : [];
   const work = await buildWorkPlan(importCommand, args, {
     promptAllow: ctx.settings.promptPolicy.allow,
-    inputs: ["sheet", "profile", "bible", "lockBible"],
+    inputs: ["sheet", "profile", "bible", "lockBible", "origin"],
     reads: {
       ...(bible ? styleBibleReads("bible", bible) : {}),
       ...(lock && lockBible !== undefined
@@ -171,6 +178,7 @@ async function prepare(args: ImportArgs, ctx: RunContext) {
   });
   return {
     capUsd,
+    origin,
     slice,
     blobCalls,
     profile,
@@ -209,6 +217,11 @@ below the threshold, off skips scoring.`,
   input: {
     type: "object",
     properties: {
+      origin: {
+        type: "string",
+        description: "JSON file recording declared origin evidence, source and licence",
+        placeholder: "<origin.json>",
+      },
       sheet: { type: "string", description: "the contact sheet image", placeholder: "<sheet.png>" },
       profile: { type: "string", description: "the target profile", placeholder: "<profile.json>" },
       asset: { type: "string", description: "the asset id", placeholder: "<id>" },
@@ -300,6 +313,7 @@ below the threshold, off skips scoring.`,
     const ledger = spendLedger(ctx, args.workItem);
     const {
       capUsd,
+      origin,
       slice,
       blobCalls,
       profile,
@@ -348,6 +362,7 @@ below the threshold, off skips scoring.`,
     const { record, importDir, grouping } = await importSheet({
       sheet,
       sheetPath: args.sheet,
+      ...(origin && { origin }),
       tool: args.tool,
       ...(digitalSourceType !== undefined && { digitalSourceType }),
       assetId: args.asset,

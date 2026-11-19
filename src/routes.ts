@@ -1,3 +1,4 @@
+import type { ModelDeclarations } from "./model-declarations.ts";
 /**
  * Model routes (design section 12): which provider and model serve each operation. Routes come
  * only from the developer settings: `settings.routes[op]` over `settings.roles[role]` over the
@@ -87,6 +88,7 @@ export interface Route {
   /** The settings id of the provider that serves it; set on every resolved route. */
   provider?: string;
   model: string;
+  modelDeclarations?: ModelDeclarations;
   /** Upper estimate of one call's cost in USD; reserved against the cap before the call. */
   estimatedCostUsd: number;
   /**
@@ -913,6 +915,9 @@ export function resolveRoute(
         ...(override.outputGrant !== undefined && {
           outputGrant: structuredClone(override.outputGrant) as OutputGrant,
         }),
+        ...(override.modelDeclarations !== undefined && {
+          modelDeclarations: structuredClone(override.modelDeclarations),
+        }),
         ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
         ...(override.providerTermsAsOf !== undefined && {
           providerTermsAsOf: override.providerTermsAsOf,
@@ -929,6 +934,9 @@ export function resolveRoute(
         estimatedCostUsd: override.estimatedCostUsd ?? 0,
         ...(override.outputGrant !== undefined && {
           outputGrant: structuredClone(override.outputGrant) as OutputGrant,
+        }),
+        ...(override.modelDeclarations !== undefined && {
+          modelDeclarations: structuredClone(override.modelDeclarations),
         }),
         ...(override.providerTerms !== undefined && { providerTerms: override.providerTerms }),
         ...(override.providerTermsAsOf !== undefined && {

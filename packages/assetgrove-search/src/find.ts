@@ -40,6 +40,12 @@ export interface FindHit {
     | "state"
     | "bible"
     | "license"
+    | "origin"
+    | "declaredOrigin"
+    | "originEvidence"
+    | "originSource"
+    | "originLicense"
+    | "digitalSourceType"
     | "width"
     | "height"
     | "mediaType"
@@ -290,6 +296,12 @@ export class SearchIndex {
           state: row.state,
           bible: row.bible,
           license: row.license,
+          origin: row.origin,
+          declaredOrigin: row.declaredOrigin,
+          originEvidence: row.originEvidence,
+          originSource: row.originSource,
+          originLicense: row.originLicense,
+          digitalSourceType: row.digitalSourceType,
           width: row.width,
           height: row.height,
           mediaType: row.mediaType,

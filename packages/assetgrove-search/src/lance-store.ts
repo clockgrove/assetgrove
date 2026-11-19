@@ -59,6 +59,12 @@ const ROW_STRINGS = [
   "state",
   "bible",
   "license",
+  "origin",
+  "declaredOrigin",
+  "originEvidence",
+  "originSource",
+  "originLicense",
+  "digitalSourceType",
   "title",
   "description",
   "text",
@@ -70,6 +76,14 @@ const ROW_STRINGS = [
   "mediaStatus",
   "mediaReason",
 ] as const;
+const ORIGIN_COLUMNS = [
+  "origin",
+  "declaredOrigin",
+  "originEvidence",
+  "originSource",
+  "originLicense",
+  "digitalSourceType",
+];
 const REQUIRED = new Set(["key", "tree", "id", "address", "source", "path", "sha256"]);
 /** Scalar indexes of design section 7.3; `tree` has many values, the others few. */
 const SCALAR_INDEXES = [
@@ -245,6 +259,20 @@ export class LanceStore implements Store {
   ): Promise<void> {
     if (records.length === 0) return;
     const t = (await this.table(name, "write")) as Lance.Table;
+    if (name === this.rowsName) {
+      const existing = new Set((await t.schema()).fields.map((field) => field.name));
+      const missing = this.schemas(name).fields.filter(
+        (field) => ORIGIN_COLUMNS.includes(field.name) && !existing.has(field.name),
+      );
+      if (missing.length)
+        await t.addColumns(
+          missing.map((field) => ({
+            name: field.name,
+            valueSql:
+              field.name === "origin" ? "CAST('unknown' AS STRING)" : "CAST(NULL AS STRING)",
+          })),
+        );
+    }
     const data = this.m.lancedb.makeArrowTable(records, { schema: this.schemas(name) });
     await t.mergeInsert(on).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute(data);
   }
@@ -264,6 +292,7 @@ export class LanceStore implements Store {
     const records = rows.map((r) => {
       const o: Record<string, unknown> = {};
       for (const n of ROW_STRINGS) o[n] = r[n] ?? null;
+      o.origin = r.origin ?? "unknown";
       o.width = r.width ?? null;
       o.height = r.height ?? null;
       o.tags = r.tags ?? null;
@@ -295,13 +324,41 @@ export class LanceStore implements Store {
     for (const n of ["imageVec", "textVec"]) {
       if (o[n] !== null && o[n] !== undefined) r[n] = Float32Array.from(list(o[n]) as number[]);
     }
+    r.origin ??= "unknown";
     return r as unknown as Row;
   }
 
   async query(q: StoreQuery): Promise<Hit[]> {
     const t = await this.table(this.rowsName, "read");
     if (!t) return [];
-    const where = compileFilter(q.filter ?? []);
+    const fields = new Set((await t.schema()).fields.map((field) => field.name));
+    const filters = [];
+    for (const term of q.filter ?? []) {
+      if (fields.has(term.field)) {
+        filters.push(term);
+        continue;
+      }
+      if (!ORIGIN_COLUMNS.includes(term.field)) {
+        filters.push(term);
+        continue;
+      }
+      const value = term.field === "origin" ? "unknown" : undefined;
+      const matches =
+        term.op === "in"
+          ? value !== undefined && term.value.includes(value)
+          : term.op === "!="
+            ? value === undefined || value !== term.value
+            : value !== undefined &&
+              (term.op === "="
+                ? value === term.value
+                : term.op === "<"
+                  ? value < String(term.value)
+                  : term.op === ">"
+                    ? value > String(term.value)
+                    : false);
+      if (!matches) return [];
+    }
+    const where = compileFilter(filters);
     let hits: Hit[];
     if (q.vector) {
       // Exact, flat search: no vector index is ever built (design section 7.3).

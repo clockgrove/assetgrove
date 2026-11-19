@@ -363,3 +363,8 @@ Settings and the refusal rule read the environment through `src/env.ts`. The onl
 ## Tests
 
 `test/fixtures/env.ts` makes one temporary directory outside any repository and puts a settings file and that file's `stateDir` in it, then points `ASSETGROVE_CONFIG` there. The ledger is `<stateDir>/spend.jsonl`. The base settings declare a limit for the scripted provider: `providers.scripted.limit = {kind: "prepaid", usd: 100}`. The fixture unsets every variable `checkEnvironment` refuses, in both cases, for the test process and its children. Its helpers `writeSettings`, `useHeadless`, `approveCommand` and `declareLimit` rewrite the settings file; `approve` and `approveProfile` write approval records to `<configDir>/approvals/<hex>.json` for a provider script, a validator or a material command, and those last for the whole test file; `resetSettings` restores the base settings and runs before every top-level test, so a helper's change lasts only for the test that made it and its subtests.
+
+A role or route may also supply `modelDeclarations` with optional `source` and `trainingData`
+facts, each containing non-empty `statement` and `evidence` strings. These documentary claims
+are preserved in call provenance and missing facts are recorded as unknown; they do not
+change `outputGrant` or licence checks. See [Documented model declarations](models.md#documented-model-declarations).

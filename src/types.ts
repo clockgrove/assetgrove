@@ -221,6 +221,7 @@ export interface QaResult {
 
 /** One provider call as recorded in provenance. */
 export interface CallRecord {
+  modelDeclarations?: import("./model-declarations.ts").ModelDeclarationRecord;
   operation: string;
   model: string;
   route: string;
@@ -323,6 +324,7 @@ export interface SheetSource {
 }
 
 export interface Provenance {
+  origin?: import("./origin.ts").OriginRecord;
   digitalSourceType?: DigitalSourceType;
   /** The prompt policy's check of the prompts that made the file (design section 16). */
   promptPolicy?: import("./policy/text.ts").PromptPolicyRecord;

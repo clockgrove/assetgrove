@@ -102,6 +102,13 @@ export interface SearchLibraryItem {
   state?: string;
   bible?: string;
   license?: string;
+  origin?: string;
+  declaredOrigin?: string;
+  originEvidence?: string;
+  originSource?: string;
+  originLicense?: string;
+  digitalSourceType?: string;
+
   title?: string;
   description?: string;
   width?: number;

@@ -1,3 +1,4 @@
+import { libraryOriginSchema, originSchema, originSourceType } from "../origin.ts";
 /**
  * Library maintenance (design sections 1.2, 1.4 and 4): `library check` compares the records
  * (provenance and review records) with their projections (card machine fields, `index.md`,
@@ -145,7 +146,16 @@ function cardData(card: Card): Record<string, unknown> {
   return card.data;
 }
 
-type ProvenanceFields = Pick<Provenance, "route" | "bibleVersion" | "license" | "finishedAt">;
+type ProvenanceFields = Pick<
+  Provenance,
+  | "route"
+  | "bibleVersion"
+  | "license"
+  | "finishedAt"
+  | "origin"
+  | "digitalSourceType"
+  | "sourceDeclaration"
+>;
 
 /**
  * The provenance the current version's records name, and the fields read from it. A version picked
@@ -188,10 +198,7 @@ async function currentProvenance(
   return { ...(resource !== undefined && { resource }), ...(fields && { fields }) };
 }
 
-function findProvenance(
-  value: unknown,
-  depth: number,
-): Pick<Provenance, "route" | "bibleVersion" | "license" | "finishedAt"> | undefined {
+function findProvenance(value: unknown, depth: number): ProvenanceFields | undefined {
   if (value === null || typeof value !== "object" || depth > 4) return undefined;
   const o = value as Record<string, unknown>;
   const { route, bibleVersion, license, finishedAt } = o;
@@ -201,7 +208,23 @@ function findProvenance(
     typeof license === "string" &&
     typeof finishedAt === "string"
   ) {
-    return { route, bibleVersion, license, finishedAt };
+    const origin = originSchema.safeParse(o["origin"]);
+    const digitalSourceType = originSourceType(o["digitalSourceType"]);
+    const declaration = o["sourceDeclaration"] as Record<string, unknown> | undefined;
+    const declarationType = originSourceType(declaration?.["value"]);
+    return {
+      route,
+      bibleVersion,
+      license,
+      finishedAt,
+      ...(origin.success && { origin: origin.data }),
+      ...(digitalSourceType !== undefined && { digitalSourceType }),
+      ...(declarationType !== undefined &&
+        declarationType !== "undeclared" &&
+        typeof declaration?.["declaredBy"] === "string" && {
+          sourceDeclaration: { value: declarationType, declaredBy: declaration["declaredBy"] },
+        }),
+    };
   }
   for (const child of Object.values(o)) {
     const found = findProvenance(child, depth + 1);
@@ -257,6 +280,11 @@ async function expectedFields(
     }),
     assetgrove: byMatch?.[1] ?? assetgroveVersion(),
   });
+  // A manifest outside the library root is not readable here; its card is the only projection.
+  if (current.fields === undefined) {
+    const retained = libraryOriginSchema.safeParse(data["origin"]);
+    if (retained.success) fields["origin"] = retained.data;
+  }
   // kind, subject and animationFamily have no record besides the card: they stay as it has them.
   for (const key of ["kind", "subject", "animationFamily"])
     if (typeof data[key] !== "string") delete fields[key];
@@ -365,9 +393,11 @@ export async function readLibrary(
       if (fields) {
         const next = rewriteMachineFields(asset.card.parsed, fields, asset.cardPath);
         expected.push({ path: asset.cardPath, kind: "card", text: writeCard(next) });
-        const differs = MACHINE_FIELDS.some(
-          (key) => !isDeepStrictEqual(asset.card!.parsed.data[key], next.data[key]),
-        );
+        const differs = MACHINE_FIELDS.some((key) => {
+          // Older cards can omit the additive origin projection and request a rebuild.
+          if (key === "origin" && !Object.hasOwn(asset.card!.parsed.data, key)) return false;
+          return !isDeepStrictEqual(asset.card!.parsed.data[key], next.data[key]);
+        });
         if (differs) problem(asset.cardPath, "machine_field_mismatch");
       }
       // A provenance (a file of its own, or a manifest that embeds it) left by an adopt that

@@ -98,3 +98,20 @@ Use `import --digital-source-type trainedAlgorithmicMedia` for an untagged model
 The sheet prompt states the family's motion template: its description and beats, a held pose when the template allows only a small silhouette change (`shelter`, `idle`), and the loop. `--brief <brief.json>` adds the author's brief (purpose, where it appears, what happens), checked as `plan` checks a brief, so the model draws the motion the author asked for rather than its own idea of the family.
 
 `generate-sheet` makes one `sheet` call (default `openai/gpt-image-2` at 1536x1024, estimated at $0.30) and one `vision` call for the grouping ($0.02). Both are reserved against the cap (default $5) before either is made. `import` makes the one grouping call, unless `--no-propose` is given. Both make one `sheet-blob` decision (estimated at $0.001) per blob slicing cannot tell by area, at most 24 per sheet: `import` forecasts exactly as many as its sheet has, `generate-sheet` the 24 upper bound, since its sheet is not made yet. A clean sheet makes none, so `import --no-propose` on one needs no key; on a sheet with ambiguous blobs (number labels, a detached part) it needs a decisions route. With `--bible`, either command first makes the prompt policy's model check (one `prompt-policy` decide call, estimated at $0.001), even with `--no-propose`, so that import then needs a decisions route. With `--lock-bible` and a locked character, either command adds one `identity` decision call (estimated at $0.001), reserved with the rest. That call is made in the default shadow mode too, so `import --no-propose --lock-bible` on a locked character needs a gateway key; add `--identity-mode off` to import it without one.
+
+## Declared origins
+
+`import --origin <origin.json>` records supplied evidence alongside the sheet's IPTC source type:
+
+```json
+{
+  "kind": "third-party",
+  "evidence": "The original artist supplied this licence with the download.",
+  "source": "https://example.test/art/fern",
+  "license": "CC-BY-4.0"
+}
+```
+
+Use `"kind": "human-made"` with the person's declaration in `evidence` for explicitly declared human-made media. Evidence and licence text are kept verbatim in the import, family provenance and library card; the origin file's bytes enter the request digest. A third-party record requires `source`, and does not assert human authorship: declare the applicable IPTC source type separately with `--digital-source-type` before exporting an otherwise unclassified sheet. Missing facts stay unknown. Supplied licence text records evidence; it does not infer ownership, commercial permission or permission to relabel, and does not replace the existing output-grant checks.
+
+An embedded AI source type wins over a conflicting human-made declaration. Both the original declaration evidence and AI lineage remain in provenance, while the card classifies the media as `ai-generated`.

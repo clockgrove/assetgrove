@@ -256,3 +256,15 @@ To answer before building:
 - whether LanceDB's Node SDK combines vector and full-text ranking in one query, or Assetgrove merges the two;
 - which image-and-text model to start with, and the licence of its weights;
 - how Cursor, VS Code and Codex handle MCP resources and @-mentions, next to Claude Code.
+
+Declared origins are indexed from the card's machine-owned `origin` record. Use
+`find --where origin=human-made` or `--where origin=third-party`; unclassified
+files have `origin=unknown`, and generated lineage is `origin=ai-generated`.
+Results expose `origin`, `originEvidence`, `originSource`, `originLicense` and
+`digitalSourceType` without interpreting licence text. Source, licence and IPTC
+source type can also be filtered using `originSource`, `originLicense` and
+`digitalSourceType`. Editing only the declaration refreshes the indexed record.
+
+The optional `declaredOrigin` filter retains the supplied declaration kind even when
+the effective `origin` is `ai-generated`; for example, `--where declaredOrigin=third-party`
+finds externally sourced AI media without hiding its lineage.

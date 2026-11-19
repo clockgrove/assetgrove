@@ -101,3 +101,31 @@ The `clips3d` route's `library` maps gait → family → `{ clip, loop }`. Tripo
 So a quadruped `idle` is reported missing, not faked. When the provider adds clips, the library in `src/routes.ts` gains them.
 
 Each route records its provider terms in provenance. The values name the provider's current terms; check and update them when a route changes.
+
+## Documented model declarations
+
+A configured route can record a model's documented source and training-data claims in
+`modelDeclarations`, independently of its output grant. Each supplied fact has a verbatim
+`statement` and `evidence` (the document or reference supporting that statement):
+
+```json
+{
+  "modelDeclarations": {
+    "source": {
+      "statement": "Derived from Example Base v2.",
+      "evidence": "https://example.invalid/model-card#source"
+    },
+    "trainingData": {
+      "statement": "Provider reports licensed and synthetic images.",
+      "evidence": "https://example.invalid/model-card#training"
+    }
+  }
+}
+```
+
+Supply this optional object on a settings role or operation route. Each new call's provenance
+records both facts: supplied ones have `status: "documented"`; missing ones have
+`status: "unknown"`. Older call records can omit the object; omission means unknown.
+The record preserves a declaration, not verification of its accuracy. It grants no output
+rights and does not imply any licence. Changing provider or model does not inherit another
+model's declarations; an explicit same-model object replaces the previous object in full.
