@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { posix, resolve } from "node:path";
+import { withoutVariables } from "../env.ts";
 import { InputError } from "../errors.ts";
 import { isCardText, parseCard } from "./card.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
@@ -11,7 +12,7 @@ function git(cwd: string, args: string[]): Buffer {
   try {
     return execFileSync("git", args, {
       cwd,
-      env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
+      env: { ...withoutVariables(["GIT_NO_LAZY_FETCH"]), GIT_NO_LAZY_FETCH: "1" },
       timeout: 30_000,
       maxBuffer: 64 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
