@@ -10,7 +10,6 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { InputError } from "../errors.ts";
-import { isGitMarker } from "../git-marker.ts";
 import { isLfsPointer } from "../request.ts";
 
 export interface LfsPointer {
@@ -88,8 +87,7 @@ function gitDirOf(dotGit: string): string | undefined {
 export function findGitDir(start: string): string | undefined {
   let dir = resolve(start);
   for (;;) {
-    const dotGit = join(dir, ".git");
-    const found = isGitMarker(dotGit) ? gitDirOf(dotGit) : undefined;
+    const found = gitDirOf(join(dir, ".git"));
     if (found !== undefined) return found;
     const parent = dirname(dir);
     if (parent === dir) return undefined;
