@@ -484,11 +484,10 @@ lineage and every edge participating in a cycle with its review file, exact
 lineage is invalid. A rebuild preserves the source records and reconstructs the
 same graph; it does not silently repair references or infer new links.
 
-<<<<<<< HEAD
 ## Origin evidence
 
 The machine-owned `origin` field records the classification (`human-made`, `third-party`, `ai-generated` or `unknown`), supplied `declaredKind`, `evidence`, `source` and `license` where present, and the IPTC `digitalSourceType` where known. The `import --origin <origin.json>` intake described in [sheet-import.md](sheet-import.md#declared-origins) supplies the evidence. A declaration is a recorded claim, not verification or approval. An unclassified file remains unknown; a hand edit of generated media remains AI-derived. Rebuild derives this field from the current provenance, keeping the original supplied evidence and licence rather than inferring them from a model or tool name.
-=======
+
 ## Reviewing committed library changes
 
 `assetgrove library diff --target <repository> --base <ref> --head <ref>` prints a
@@ -506,4 +505,3 @@ on GitHub when the repository has a GitHub origin, or a `git:<commit>:<path>`
 object address otherwise. LFS availability reflects this machine's local object
 store; identical commits and local objects produce identical output. The command
 needs no provider credentials and never grants approval.
->>>>>>> 18e0ca9 (Add read-only library revision diff with fixture commit proof)
