@@ -1,3 +1,4 @@
+import { toolRunner, type ToolRunner, type ToolScope } from "../extension/tools.ts";
 /**
  * Provider adapters (design section 11): each makes provider instances from a settings entry and
  * declares how their calls are billed (`billing`: where a cost comes from, whether it can be looked
@@ -42,6 +43,7 @@ export type Capability =
 
 /** What an adapter is given to make one provider instance. */
 export interface AdapterContext {
+  run?: ToolRunner;
   providerId: string;
   apiKey?: string;
   /** The variable the key is read from, named in errors when it is unset. */
@@ -385,6 +387,7 @@ export function createProvider(
     script?: Script;
     path?: string;
     adapters?: readonly ProviderAdapter[];
+    toolScope?: Omit<ToolScope, "pack">;
   } = {},
 ): ConfiguredProvider {
   const adapters = options.adapters ?? CORE_ADAPTERS;
@@ -407,6 +410,9 @@ export function createProvider(
   const keyEnv = entry.keyEnv ?? adapter.defaultKeyEnv;
   const apiKey = keyEnv !== undefined ? keyValue(keyEnv, options.env) || undefined : undefined;
   const created = adapter.create({
+    ...(options.toolScope && {
+      run: toolRunner({ ...options.toolScope, pack: extensionOf(adapter.id) }),
+    }),
     providerId: id,
     settings: entry,
     adapterSettings,
@@ -461,7 +467,12 @@ export function createProvider(
  */
 export function createProviders(
   settings: Pick<Settings, "providers" | "path">,
-  options: { env?: Env; script?: Script; adapters?: readonly ProviderAdapter[] } = {},
+  options: {
+    env?: Env;
+    script?: Script;
+    adapters?: readonly ProviderAdapter[];
+    toolScope?: Omit<ToolScope, "pack">;
+  } = {},
 ): ConfiguredProvider[] {
   return Object.keys(settings.providers)
     .sort()

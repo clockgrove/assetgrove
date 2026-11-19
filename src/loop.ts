@@ -1,3 +1,4 @@
+import { ConfirmationError } from "./approvals.ts";
 import { ReferenceViewCache } from "./model3d/views.ts";
 import { ClipMapCache } from "./model3d/clip-map.ts";
 import type { PromptPolicyRecord } from "./policy/text.ts";
@@ -551,6 +552,7 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       // So does a stopped job or a spend hold: the journaled job waits to be collected, and a
       // held run may spend nothing new, so no other candidate is paid for.
       if (
+        error instanceof ConfirmationError ||
         error instanceof InputError ||
         error instanceof ProviderLimitError ||
         error instanceof JobStoppedError ||

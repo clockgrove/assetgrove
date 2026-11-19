@@ -1,3 +1,4 @@
+import type { ToolScope } from "../extension/tools.ts";
 /**
  * The providers of the developer settings and the routes they serve (design section 12). A
  * `ProviderSet` resolves each operation to its route and serves each call on the route's provider;
@@ -89,6 +90,7 @@ export class ProviderSet implements GenerationProvider {
       promptPolicy?: Pick<Settings["promptPolicy"], "cuts">;
     },
     options: {
+      toolScope?: Omit<ToolScope, "pack">;
       env?: Env;
       script?: Script;
       adapters?: readonly ProviderAdapter[];
