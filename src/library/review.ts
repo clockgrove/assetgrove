@@ -6,12 +6,16 @@
  */
 import { z } from "zod";
 import { InputError } from "../errors.ts";
-import { readFormat } from "../formats.ts";
+import { readFormat, registerMigration } from "../formats.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { libraryPath } from "./paths.ts";
 
 /** Every library file kind that carries a format line, with the version this build reads. */
-export const LIBRARY_FORMATS = { card: 1, review: 1 } as const;
+export const LIBRARY_FORMATS = { card: 1, review: 2 } as const;
+
+// A /1 review record is valid as /2: the anchors /2 adds (`ag:frames`, `ag:cell`, a `t=` selector)
+// are optional, so every version, note and resolution of a /1 record reads unchanged.
+registerMigration("review", 1, (value) => value);
 
 const CONTEXT = [
   "http://www.w3.org/ns/anno.jsonld",
@@ -56,13 +60,18 @@ const selectorSchema = z
     value: z.string(),
   })
   .superRefine((selector, ctx) => {
-    const problem = boxProblem(selector.value);
+    const problem = fragmentProblem(selector.value);
     if (problem) ctx.addIssue({ code: "custom", message: problem, path: ["value"] });
   });
 
+const NUMBER = "(\\d+(?:\\.\\d+)?)";
+
+function fragmentProblem(value: string): string | undefined {
+  return value.startsWith("t=") ? timeProblem(value) : boxProblem(value);
+}
+
 function boxProblem(value: string): string | undefined {
-  const number = "(\\d+(?:\\.\\d+)?)";
-  const match = new RegExp(`^xywh=(pixel:|percent:)?${number},${number},${number},${number}$`).exec(
+  const match = new RegExp(`^xywh=(pixel:|percent:)?${NUMBER},${NUMBER},${NUMBER},${NUMBER}$`).exec(
     value,
   );
   if (!match) return `"${value}" is not a media-fragment box (xywh=[pixel:|percent:]x,y,w,h)`;
@@ -74,12 +83,48 @@ function boxProblem(value: string): string | undefined {
   return undefined;
 }
 
+/** A Media Fragments temporal range in seconds: `t=start,end` or `t=npt:start,end`. */
+export interface TimeRange {
+  start: number;
+  end: number;
+}
+
+/** The time range a `t=` fragment names, or undefined when the value is not one. */
+export function parseTimeFragment(value: string): TimeRange | undefined {
+  const match = new RegExp(`^t=(?:npt:)?${NUMBER},${NUMBER}$`).exec(value);
+  if (!match) return undefined;
+  return { start: Number(match[1]), end: Number(match[2]) };
+}
+
+function timeProblem(value: string): string | undefined {
+  const range = parseTimeFragment(value);
+  if (range === undefined) {
+    return `selector "${value}" is not a media-fragment time range (t=[npt:]start,end in seconds)`;
+  }
+  if (range.end <= range.start) {
+    return `selector "${value}": a time range needs its end after its start`;
+  }
+  return undefined;
+}
+
+const frameIndex = z.number().int().nonnegative();
+
+const framesSchema = z
+  .looseObject({ from: frameIndex, to: frameIndex })
+  .refine((frames) => frames.from <= frames.to, {
+    message: "ag:frames needs from at or before to",
+  });
+
+const cellSchema = z.looseObject({ column: frameIndex, row: frameIndex });
+
 const targetObject = z.looseObject({
   source: z.string().min(1),
   "ag:version": hex64.optional(),
   "ag:frame": z.number().int().nonnegative().optional(),
   "ag:view": z.number().int().nonnegative().optional(),
   "ag:mask": z.string().min(1).optional(),
+  "ag:frames": framesSchema.optional(),
+  "ag:cell": cellSchema.optional(),
   selector: selectorSchema.optional(),
 });
 
@@ -174,8 +219,25 @@ export function withId<T extends Record<string, unknown>>(annotation: T): T & { 
   return { id: annotationId(annotation), ...content } as unknown as T & { id: string };
 }
 
+type Issue = z.core.$ZodIssue;
+
+/**
+ * A union's issues come from the branch of the input's own type (a target object, not a target
+ * path), so a bad anchor is reported by its member rather than as "Invalid input".
+ */
+function flatten(issue: Issue, prefix: PropertyKey[]): Issue[] {
+  const path = [...prefix, ...issue.path];
+  if (issue.code !== "invalid_union") return [{ ...issue, path }];
+  const branches = issue.errors.filter(
+    (branch) => !branch.every((i) => i.code === "invalid_type" && i.path.length === 0),
+  );
+  if (branches.length !== 1) return [{ ...issue, path }];
+  return branches[0]!.flatMap((inner) => flatten(inner, path));
+}
+
 function issues(error: z.ZodError): string {
   return error.issues
+    .flatMap((issue) => flatten(issue, []))
     .map((issue) => `${issue.path.length ? issue.path.join(".") : "(root)"}: ${issue.message}`)
     .join("; ");
 }

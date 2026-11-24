@@ -9,6 +9,14 @@ import { confirmationPath, digestOf, requireConfirmation } from "../confirm/inde
 import type { KindRequest } from "../confirm/index.ts";
 import { InputError } from "../errors.ts";
 import {
+  anchorMembers,
+  anchorOf,
+  checkAnchor,
+  describeAnchor,
+  versionExtent,
+} from "../library/extent.ts";
+import type { Anchor } from "../library/extent.ts";
+import {
   annotateCandidate,
   loadAsset,
   locateAsset,
@@ -36,6 +44,7 @@ import { defineCommand } from "./types.ts";
 /** An annotation as a tool result names it: by id, motivation and action, never its text. */
 export function annotationFields(annotation: Annotation): Record<string, unknown> {
   const target = annotation.target;
+  const anchor = anchorOf(target);
   return {
     id: annotation.id,
     motivation: annotation.motivation,
@@ -44,6 +53,7 @@ export function annotationFields(annotation: Annotation): Record<string, unknown
     ...(typeof target === "string"
       ? { target }
       : target["ag:version"] !== undefined && { version: target["ag:version"] }),
+    ...(anchor !== undefined && { anchor }),
   };
 }
 
@@ -77,6 +87,69 @@ interface ReviewArgs {
   reply?: string;
   resolve?: string;
   reject?: string;
+  frames?: string;
+  cell?: string;
+  time?: string;
+}
+
+const NUMBER = /^\d+(\.\d+)?$/;
+const INTEGER = /^\d+$/;
+
+/** The anchor the `--frames`, `--cell` and `--time` options ask for, strictly parsed. */
+function parseAnchor(args: ReviewArgs): Anchor | undefined {
+  const anchor: Anchor = {};
+  if (args.frames !== undefined) {
+    const parts = args.frames.trim().split("-");
+    const [from, to] = parts.length === 1 ? [parts[0]!, parts[0]!] : [parts[0]!, parts[1]!];
+    if (parts.length > 2 || !INTEGER.test(from) || !INTEGER.test(to) || Number(from) > Number(to)) {
+      throw new InputError(
+        `--frames must be <from>-<to> (or one frame), whole numbers from 0 with from at or before to, got "${args.frames}"`,
+      );
+    }
+    anchor.frames = { from: Number(from), to: Number(to) };
+  }
+  if (args.cell !== undefined) {
+    const parts = args.cell.trim().split(",");
+    if (parts.length !== 2 || !parts.every((p) => INTEGER.test(p.trim()))) {
+      throw new InputError(
+        `--cell must be <column>,<row>, whole numbers from 0, got "${args.cell}"`,
+      );
+    }
+    anchor.cell = { column: Number(parts[0]), row: Number(parts[1]) };
+  }
+  if (args.time !== undefined) {
+    const parts = args.time.trim().split(",");
+    const [start, end] = parts.map((p) => p.trim());
+    if (
+      parts.length !== 2 ||
+      !NUMBER.test(start!) ||
+      !NUMBER.test(end!) ||
+      Number(start) >= Number(end)
+    ) {
+      throw new InputError(
+        `--time must be <start>,<end> in seconds, non-negative with start before end, got "${args.time}"`,
+      );
+    }
+    anchor.time = { start: Number(start), end: Number(end) };
+  }
+  return Object.keys(anchor).length === 0 ? undefined : anchor;
+}
+
+/** Anchors go only with a new comment on a version; this refuses them anywhere else. */
+function requireNewComment(args: ReviewArgs): Anchor | undefined {
+  const anchor = parseAnchor(args);
+  if (
+    anchor !== undefined &&
+    (args.candidate !== undefined ||
+      args.reply !== undefined ||
+      args.resolve !== undefined ||
+      args.reject !== undefined)
+  ) {
+    throw new InputError(
+      "--frames, --cell and --time anchor a new --comment on a version; they do not go with --reply, --resolve, --reject or --candidate",
+    );
+  }
+  return anchor;
 }
 
 /** The annotation a review's options ask for, against `target` (the version or the candidate). */
@@ -155,7 +228,10 @@ by number or sha256, the current one by default); for a candidate, <run>/reviews
 (the address is the run directory, with --candidate). --comment <text> comments; --reply <id> with
 --comment <text> replies to an annotation; --resolve <id> closes a request (--comment is its note);
 --reject <reason> rejects. Existing lines never change. For a version it then rewrites the card's
-state, the folder indexes and log.md. No confirmation. The text is returned only under sharedText.`,
+state, the folder indexes and log.md. No confirmation. The text is returned only under sharedText.
+A new --comment on a version may anchor to part of it: --frames <from>-<to> (0-based, inclusive),
+--cell <column>,<row> (0-based) and --time <start>,<end> (seconds); each is checked against the
+version's own bytes and refused, naming the valid range, when it falls outside.`,
   input: {
     type: "object",
     properties: {
@@ -186,6 +262,21 @@ state, the folder indexes and log.md. No confirmation. The text is returned only
         placeholder: "<id>",
       },
       reject: { type: "string", description: "reject, with this reason", placeholder: "<reason>" },
+      frames: {
+        type: "string",
+        description: "anchor a new comment to a frame range of a version, 0-based and inclusive",
+        placeholder: "<from>-<to>",
+      },
+      cell: {
+        type: "string",
+        description: "anchor a new comment to an atlas cell of a version, 0-based",
+        placeholder: "<column>,<row>",
+      },
+      time: {
+        type: "string",
+        description: "anchor a new comment to a time range of a version, in seconds",
+        placeholder: "<start>,<end>",
+      },
     },
     required: ["address"],
     additionalProperties: false,
@@ -193,6 +284,7 @@ state, the folder indexes and log.md. No confirmation. The text is returned only
   positionals: [{ name: "address" }],
   effect: { readOnly: false, spends: "never", writes: "target" },
   async run(args, ctx) {
+    const anchor = requireNewComment(args);
     if (args.candidate !== undefined) {
       if (args.version !== undefined)
         throw new InputError("--version names a version, not a candidate");
@@ -222,12 +314,12 @@ state, the folder indexes and log.md. No confirmation. The text is returned only
     return withLibraryLock(location, ctx.settings.stateDir, async () => {
       const asset = await loadAsset(location);
       const version = selectVersion(asset.record, args.version);
-      const input = reviewAnnotation(
-        args,
-        asset.record,
-        versionTarget(asset, version),
-        nextStamp(asset.record),
-      );
+      let target: { source: string; "ag:version": string } = versionTarget(asset, version);
+      if (anchor !== undefined) {
+        checkAnchor(anchor, await versionExtent(asset, version), asset.assetId);
+        target = { ...target, ...anchorMembers(anchor) };
+      }
+      const input = reviewAnnotation(args, asset.record, target, nextStamp(asset.record));
       const record = appendAnnotation(asset.record, input);
       const annotation = newest(record, input);
       const written = await writeAsset(asset, record);
@@ -245,7 +337,9 @@ state, the folder indexes and log.md. No confirmation. The text is returned only
           sharedText: annotationText(annotation),
         },
         human: [
-          `${annotation.motivation} ${annotation.id} on version ${number} of ${asset.assetId}`,
+          `${annotation.motivation} ${annotation.id} on version ${number} of ${asset.assetId}${
+            anchor === undefined ? "" : ` (${describeAnchor(anchor)})`
+          }`,
           ...written.files.map((f) => `wrote ${f}`),
         ].join("\n"),
       };

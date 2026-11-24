@@ -1011,6 +1011,7 @@ export default {
     "library_check",
     "library_rebuild",
     "library_stats",
+    "library_worklist",
     "library_drift",
     "library_relations",
   ].map((tool) => ({
