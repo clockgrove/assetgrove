@@ -577,6 +577,14 @@ const rows: Row[] = [
       return { run: join(runs, run!), candidate: "c1", target };
     },
   },
+  {
+    tool: "intake",
+    prepare: async () => ({
+      file: join(work, "target", "assets/source/fern/shelter.png"),
+      target: join(work, "target"),
+      profile: join(paths.world(), "profile.json"),
+    }),
+  },
   { tool: "review", prepare: async () => ({ address: await pickedCard(), comment: "a row" }) },
   { tool: "approve", prepare: async () => ({ address: await pickedCard() }), exitCode: 8 },
   { tool: "card_edit", prepare: async () => ({ address: await pickedCard(), title: "A row" }) },
