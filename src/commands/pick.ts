@@ -58,18 +58,20 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
   const candidates = run.candidates.filter(
     (c) => args.candidate === undefined || c.id === args.candidate,
   );
-  const hashes: string[] = [];
+  // Only bytes that still match the run's record are compared. A changed staged file is refused
+  // by pick at write time, and a changed run shows as a new request digest (plan_changed).
+  const verified = new Set<string>();
   for (const candidate of candidates) {
     const media = await readMedia(join(runDir, readRecordPath(candidate.file, "staged file")));
-    if (media.kind === "lfs-pointer" || media.sha256 !== candidate.sha256)
-      throw new InputError(`staged file ${candidate.file} changed or has no local media bytes`);
-    hashes.push(media.sha256);
+    if (media.kind !== "lfs-pointer" && media.sha256 === candidate.sha256)
+      verified.add(candidate.id);
   }
+  const hashes = candidates.filter((c) => verified.has(c.id)).map((c) => c.sha256);
   const matches = (await exactMatches(run.profile, resolve(args.target), hashes)).filter(
     (m) => m.assetId !== current.assetId || m.sha256 !== current.sha256,
   );
   const duplicates = candidates.flatMap((c) =>
-    current.run === run.runId && current.candidate === c.id
+    !verified.has(c.id) || (current.run === run.runId && current.candidate === c.id)
       ? []
       : matches.filter((m) => m.sha256 === c.sha256).map((m) => ({ candidate: c.id, ...m })),
   );
@@ -253,7 +255,11 @@ approves it. A human runs pick; agents never do.`,
       },
       { person: duplicates !== undefined },
     );
-    if ((await pickRequest(args)).id !== request.id)
+    const recheck = await pickRequest(args).then(
+      (rebuilt) => rebuilt.id,
+      () => undefined,
+    );
+    if (recheck !== request.id)
       return refusal(
         "plan_changed",
         "the candidate or matching library versions changed; pick again",
