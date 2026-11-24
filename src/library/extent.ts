@@ -4,11 +4,15 @@
  * strip (`ag:frames`), a cell of an atlas (`ag:cell`) or a time range of a track (a `t=` selector).
  * The valid range is measured from the version's own bytes, never assumed: frames and cells from
  * the image size and the frame layout its provenance records, the duration through music-metadata.
+ * The image size is read from the header, never by decoding: PNG, JPEG and WebP through the
+ * repository's header reader, KTX2 through ktx-parse. Bytes neither reader nor music-metadata
+ * measures are named as unmeasured, so a refusal says the type could not be measured.
  */
 import { readFile } from "node:fs/promises";
+import { read as readKtx2 } from "ktx-parse";
 import { parseBuffer } from "music-metadata";
 import { InputError } from "../errors.ts";
-import { decodeImage } from "../image/raster.ts";
+import { imageSize } from "../model3d/scene.ts";
 import type { LoadedAsset } from "./actions.ts";
 import { findProvenance } from "./adopt.ts";
 import { sha256Hex } from "./canonical.ts";
@@ -92,13 +96,7 @@ export async function versionExtent(asset: LoadedAsset, version: Version): Promi
     extent.unmeasured = `the bytes of version ${number} are neither the working file nor in the local Git LFS store`;
     return extent;
   }
-  let image: { width: number; height: number } | undefined;
-  try {
-    const raster = decodeImage(bytes);
-    image = { width: raster.width, height: raster.height };
-  } catch {
-    image = undefined;
-  }
+  const image = sizeOf(bytes);
   if (image !== undefined) {
     extent.image = image;
     // The card's provenance describes the current version; an older one's layout is not recorded.
@@ -120,9 +118,25 @@ export async function versionExtent(asset: LoadedAsset, version: Version): Promi
       extent.duration = format.duration;
     }
   } catch {
-    // Neither an image nor a track music-metadata reads: no anchor fits it.
+    // Not a track music-metadata reads.
+  }
+  if (extent.duration === undefined) {
+    extent.unmeasured = `the media type of version ${number} could not be measured: no reader here gives its image size or its duration`;
   }
   return extent;
+}
+
+/** Width and height from an image header, or undefined when no reader here knows the type. */
+function sizeOf(bytes: Uint8Array): { width: number; height: number } | undefined {
+  const size = imageSize(bytes);
+  if (size !== undefined && size.width > 0 && size.height > 0) return size;
+  try {
+    const ktx = readKtx2(bytes);
+    if (ktx.pixelWidth > 0) return { width: ktx.pixelWidth, height: Math.max(ktx.pixelHeight, 1) };
+  } catch {
+    // Not a KTX2 container.
+  }
+  return undefined;
 }
 
 const seconds = (n: number) => `${Number(n.toFixed(3))}`;

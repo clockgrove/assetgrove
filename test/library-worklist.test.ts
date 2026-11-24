@@ -135,8 +135,21 @@ test("the work list links each note to its source version and its recorded resol
     link: "asset://test-grove/walk/versions/2",
     confirmation: { method: "tty", digest: "c".repeat(64) },
   });
-  assert.equal(closed["resolution"].by, "resolve");
-  assert.match(closed["resolution"].link, /^asset:\/\/test-grove\/walk\/review#[0-9a-f]{16}$/);
+  assert.deepEqual(closed["resolution"], {
+    by: "resolve",
+    annotation: closed["resolution"].annotation,
+    created: "2099-01-04T09:00:00Z",
+    link: "asset://test-grove/walk/review",
+  });
+  assert.match(closed["resolution"].annotation, /^#[0-9a-f]{16}$/);
+  // Every link the work list writes is an address the tree reads.
+  const links = walk(all).flatMap((n) => [n["source"].link, n["resolution"]?.link]);
+  for (const link of links.filter((l): l is string => typeof l === "string")) {
+    const read = await cli(["cat", link, "--target", lib.dir]);
+    assert.equal(read["error"], undefined, `${link}: ${JSON.stringify(read["error"])}`);
+  }
+  const reviewDoc = await cli(["cat", "asset://test-grove/walk/review", "--target", lib.dir]);
+  assert.ok(JSON.stringify(reviewDoc).includes(closed["resolution"].annotation));
   assert.equal(open["resolution"], undefined);
   assert.equal(all["counts"].open >= 1, true);
 

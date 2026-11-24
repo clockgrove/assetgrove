@@ -45,18 +45,28 @@ function wav(seconds: number): Uint8Array {
   return out;
 }
 
-function library() {
-  const lib = fixtureLibrary();
-  libs.push(lib.dir);
-  const provenancePath = join(lib.root, "walk.png.provenance.json");
-  const provenance = JSON.parse(readFileSync(provenancePath, "utf8")) as Record<string, unknown>;
-  provenance["parameters"] = { frame: { width: 32, height: 32 }, frameCount: 4 };
-  writeFileSync(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
+/** A lossless WebP header (VP8L) of `width` x `height`; enough for a size reader. */
+function webp(width: number, height: number): Uint8Array {
+  const out = Buffer.alloc(40);
+  out.write("RIFF", 0);
+  out.writeUInt32LE(out.length - 8, 4);
+  out.write("WEBPVP8L", 8);
+  out.writeUInt32LE(out.length - 20, 16);
+  out[20] = 0x2f;
+  out.writeUInt32LE((width - 1) | ((height - 1) << 14), 21);
+  return out;
+}
 
-  const bytes = wav(2.5);
-  writeFileSync(join(lib.root, "tune.wav"), bytes);
+/** A picked asset `id` whose one version is `bytes`, with a card, provenance and review record. */
+function addAsset(
+  root: string,
+  provenance: Record<string, unknown>,
+  input: { id: string; file: string; bytes: Uint8Array; kind: string; parameters: unknown },
+): string {
+  const { id, file, bytes } = input;
+  writeFileSync(join(root, file), bytes);
   const sha = sha256(bytes);
-  let review = emptyReview(`asset://${GAME}/tune/review`);
+  let review = emptyReview(`asset://${GAME}/${id}/review`);
   review = appendVersion(review, {
     sha256: sha,
     at: "2026-11-11T10:00:00Z",
@@ -69,26 +79,41 @@ function library() {
     created: "2026-11-11T10:00:00Z",
     motivation: "moderating",
     "ag:action": "pick",
-    target: { source: "tune.wav", "ag:version": sha },
+    target: { source: file, "ag:version": sha },
   });
-  writeFileSync(join(lib.root, "tune.review.json"), writeReview(review));
-  const tuneProvenance = { ...provenance, generator: "audio", parameters: {} };
-  writeFileSync(
-    join(lib.root, "tune.wav.provenance.json"),
-    `${JSON.stringify(tuneProvenance, null, 2)}\n`,
-  );
+  writeFileSync(join(root, `${id}.review.json`), writeReview(review));
+  const own = { ...provenance, generator: input.kind, parameters: input.parameters };
+  writeFileSync(join(root, `${file}.provenance.json`), `${JSON.stringify(own, null, 2)}\n`);
   const fields = machineFields({
-    resource: "tune.wav",
-    provenance: tuneProvenance as never,
-    provenanceResource: "tune.wav.provenance.json",
+    resource: file,
+    provenance: own as never,
+    provenanceResource: `${file}.provenance.json`,
     review,
-    reviewResource: "tune.review.json",
-    kind: "audio",
-    subject: "tune",
+    reviewResource: `${id}.review.json`,
+    kind: input.kind,
+    subject: id,
     assetgrove: "0.2.0",
   });
-  writeFileSync(join(lib.root, "tune.md"), writeCard(newCard({ title: "Tune", tags: [] }, fields)));
-  return { lib, walkSha: lib.versions["walk"]![0]!, tuneSha: sha };
+  writeFileSync(join(root, `${id}.md`), writeCard(newCard({ title: id, tags: [] }, fields)));
+  return sha;
+}
+
+function library() {
+  const lib = fixtureLibrary();
+  libs.push(lib.dir);
+  const provenancePath = join(lib.root, "walk.png.provenance.json");
+  const provenance = JSON.parse(readFileSync(provenancePath, "utf8")) as Record<string, unknown>;
+  provenance["parameters"] = { frame: { width: 32, height: 32 }, frameCount: 4 };
+  writeFileSync(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
+
+  const sha = addAsset(lib.root, provenance, {
+    id: "tune",
+    file: "tune.wav",
+    bytes: wav(2.5),
+    kind: "audio",
+    parameters: {},
+  });
+  return { lib, walkSha: lib.versions["walk"]![0]!, tuneSha: sha, provenance };
 }
 
 async function review(lib: { root: string }, id: string, ...argv: string[]) {
@@ -166,4 +191,36 @@ test("anchors go only with a new comment on a version", async () => {
   assert.notEqual(done.exitCode, 0);
   assert.match(done.error?.message ?? "", /anchor a new --comment on a version/);
   assert.deepEqual(readFileSync(recordOf(lib, "walk")), before);
+});
+
+test("an image type other than PNG or JPEG is measured from its header, and an unmeasured type says so", async () => {
+  const { lib, provenance } = library();
+  addAsset(lib.root, provenance, {
+    id: "run",
+    file: "run.webp",
+    bytes: webp(128, 64),
+    kind: "sprite-strip",
+    parameters: { frame: { width: 32, height: 32 }, frameCount: 8 },
+  });
+  const inside = await review(lib, "run", "--comment", "arm", "--frames", "4-7", "--cell", "3,1");
+  assert.equal(inside.exitCode, 0, inside.error?.message);
+  const outside = await review(lib, "run", "--comment", "arm", "--frames", "6-8");
+  assert.equal(
+    outside.error?.message,
+    "ag:frames 6-8 is outside version 1 of run: valid frames are 0-7",
+  );
+
+  addAsset(lib.root, provenance, {
+    id: "blob",
+    file: "blob.bin",
+    bytes: new Uint8Array(64).fill(7),
+    kind: "still",
+    parameters: {},
+  });
+  const unmeasured = await review(lib, "blob", "--comment", "x", "--cell", "0,0");
+  assert.notEqual(unmeasured.exitCode, 0);
+  assert.match(
+    unmeasured.error?.message ?? "",
+    /^ag:cell needs an image, but the media type of version 1 could not be measured/,
+  );
 });
