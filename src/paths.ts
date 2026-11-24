@@ -10,7 +10,7 @@ import { posix, relative, resolve, sep } from "node:path";
 import { InputError } from "./errors.ts";
 import { DEFAULT_HANDOFF } from "./handoff/presets/index.ts";
 import { lookup } from "./template.ts";
-import { libraryConfig, within } from "./library/write.ts";
+import { staticPrefix, within } from "./library/write.ts";
 import { libraryPath } from "./library/paths.ts";
 import type { AssetSpec, TargetProfile } from "./types.ts";
 
@@ -119,17 +119,34 @@ export function layoutFor(profile: TargetProfile, kind: string): TargetProfile["
   return override === undefined ? profile.layout : { ...profile.layout, ...override };
 }
 
-/** Checks only overridden fields; the library root always comes from the global layout. */
+/**
+ * Refuses a kind's layout override that renders outside the library root, naming the kind and the
+ * field. Only overridden fields are checked; the root is `library.root` or the fixed prefix of the
+ * shared `layout.media`. At profile load the default render fills `{{profile.*}}` from the
+ * profile's values and name, and every other value with a plain segment.
+ */
 export function checkKindLayoutPaths(
   profile: TargetProfile,
   kind: string,
-  render: (template: string) => string = (template) => template.replace(/\{\{[^{}]*\}\}/g, "value"),
+  render: (template: string) => string = loadRender(profile),
   targetDir?: string,
 ): void {
   const override = profile.kinds?.[kind]?.layout;
   if (override === undefined) return;
   const base = resolve(targetDir ?? ".");
-  const root = libraryConfig(profile, base).root;
+  const shared = (profile.layout as Partial<TargetProfile["layout"]> | undefined)?.media;
+  const rootTemplate =
+    profile.library?.root ?? (typeof shared === "string" ? staticPrefix(shared) : undefined);
+  if (rootTemplate === undefined) {
+    throw new InputError(
+      `kinds.${kind}.layout.media needs a library root: set library.root or layout.media`,
+    );
+  }
+  const rootRel = rootTemplate.replaceAll("\\", "/");
+  if (posix.isAbsolute(rootRel) || /^[a-z]:/i.test(rootRel)) {
+    throw new InputError(`library.root "${rootRel}" must be a path inside the target`);
+  }
+  const root = resolve(base, rootRel);
   for (const field of ["media", "manifest"] as const) {
     const template = override[field];
     if (template === undefined) continue;
@@ -147,6 +164,17 @@ export function checkKindLayoutPaths(
       libraryPath(root, base, path, `kinds.${kind}.layout.${field}`);
     }
   }
+}
+
+/** The load-time render: `{{profile.*}}` from the profile, any other value as `value`. */
+function loadRender(profile: TargetProfile): (template: string) => string {
+  const context = { profile: { ...profile.values, name: profile.name } };
+  return (template) =>
+    template.replace(/\{\{\s*([^{}]*?)\s*\}\}/g, (_, path: string) => {
+      const value = path.startsWith("profile.") ? lookup(context, path) : undefined;
+      if (value === undefined || value === null) return "value";
+      return typeof value === "string" ? value : JSON.stringify(value);
+    });
 }
 
 const SPEC_VALUE = /\{\{\s*spec\.([\w.-]+)(\?)?\s*\}\}/g;

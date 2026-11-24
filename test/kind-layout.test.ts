@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { InputError } from "../src/errors.ts";
 import { loadProfile } from "../src/inputs.ts";
 import { checkKindLayoutPaths, checkLayout, checkSpecValues, layoutFor } from "../src/paths.ts";
 import { PROFILE_PATH, PROFILE_PRESETS } from "../src/init.ts";
@@ -198,6 +199,53 @@ test("profile loading refuses escaping media and manifest overrides, naming kind
         );
       }
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("profile loading resolves profile values in an override before checking the library root", async () => {
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-kind-values-")));
+  try {
+    const path = join(dir, "profile.json");
+    const p = profile();
+    p.values = { ...p.values, dir: "../../outside" };
+    p.kinds!["fixture:tile"]!.layout!.media = "assets/{{profile.dir}}/{{spec.assetId}}.png";
+    await writeFile(path, JSON.stringify(p));
+    await assert.rejects(
+      loadProfile(path),
+      (e: unknown) =>
+        e instanceof InputError &&
+        e.message.includes("kinds.fixture:tile.layout.media") &&
+        e.message.includes("library root"),
+    );
+    p.values = { ...p.values, dir: "inside" };
+    await writeFile(path, JSON.stringify(p));
+    await loadProfile(path);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("profile loading checks an override without a profile name and refuses one without a root", async () => {
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-kind-root-")));
+  try {
+    const path = join(dir, "profile.json");
+    const unnamed: Record<string, unknown> = { ...profile(), library: { root: "assets" } };
+    delete unnamed["name"];
+    await writeFile(path, JSON.stringify(unnamed));
+    await loadProfile(path);
+    const rootless: Record<string, unknown> = { ...profile() };
+    delete rootless["layout"];
+    delete rootless["library"];
+    await writeFile(path, JSON.stringify(rootless));
+    await assert.rejects(
+      loadProfile(path),
+      (e: unknown) =>
+        e instanceof InputError &&
+        e.message.includes("kinds.fixture:tile.layout.media") &&
+        e.message.includes("library root"),
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

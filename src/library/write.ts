@@ -111,7 +111,7 @@ export interface LibraryConfig {
 }
 
 /** The directory segments of a layout template before the first one holding a placeholder. */
-function staticPrefix(template: string): string {
+export function staticPrefix(template: string): string {
   const segments = template.replaceAll("\\", "/").split("/").slice(0, -1);
   const fixed: string[] = [];
   for (const segment of segments) {

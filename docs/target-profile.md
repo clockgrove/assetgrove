@@ -153,7 +153,7 @@ For example, a profile can hand off icons through the built-in `still` kind with
 
 An icon spec can then be `{ "kind": "still", "assetId": "acorn" }`. If the global manifest includes `animationFamily`, make that value optional (`"animationFamily": "{{spec.animationFamily?}}"`) so the manifest does not require it for icons. Other required spec values in the selected layout and manifest are still checked before any spend, with exit 2 `invalid_input` naming the template field and missing spec field.
 
-Each override path must stay under the library root. Loading a profile refuses an escaping override as invalid input, naming the kind and the `media` or `manifest` field. The root is the explicit `library.root`, or the prefix derived from the top-level `layout.media`; overrides do not change it. `init` writes only the top-level layout and no kind override.
+Each override path must stay under the library root. Loading a profile refuses an escaping override as invalid input, naming the kind and the `media` or `manifest` field. The load check fills `{{profile.*}}` from the profile's `values` and `name`, so a profile value that leads outside is refused there too; values known only at hand-off are checked again before spend and when the hand-off writes. The root is the explicit `library.root`, or the prefix derived from the top-level `layout.media`; overrides do not change it. A profile with an override and neither is refused when it loads, naming `kinds.<kind>.layout.media`. `init` writes only the top-level layout and no kind override.
 
 ## Library
 
