@@ -41,6 +41,7 @@ import { BIBLE_PATH } from "../init.ts";
 import { loadStyleBible } from "../inputs.ts";
 import { imageSize } from "../model3d/scene.ts";
 import { loadAsset, locateAsset, withLibraryLock, writeAsset } from "../library/actions.ts";
+import { freeChecks } from "../library/adopt.ts";
 import type { LoadedAsset } from "../library/actions.ts";
 import { sha256Hex } from "../library/canonical.ts";
 import { parseLfsPointer } from "../library/lfs.ts";
@@ -70,6 +71,7 @@ import {
   styleBibleReads,
 } from "../runs/plan.ts";
 import type { PlanJob } from "../runs/plan.ts";
+import { roleOf } from "../routes.ts";
 import { ledgerFor } from "../spend.ts";
 import { projectDir } from "../tree/project.ts";
 import { registrationPin, templatesFor, thresholdsFor } from "../animation/templates.ts";
@@ -81,6 +83,10 @@ import type { RunContext } from "./types.ts";
 
 export const DEFAULT_CHANGE_CANDIDATES = 2;
 
+/** Core image QA's deterministic checks (src/qa.ts), which an edit can run on its own bytes. */
+const FREE_CHECKS = new Set(["transparency", "frame-count", "palette"]);
+/** The roles whose calls make media, which an edit's check never needs (src/routes.ts). */
+const GENERATION_ROLES = new Set(["image", "edit", "model3d", "rig3d", "clips3d"]);
 const MEDIA_FRAGMENTS = "http://www.w3.org/TR/media-frags/";
 const SAFE_SEGMENT = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
 
@@ -218,7 +224,12 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   let bible: Awaited<ReturnType<typeof loadStyleBible>> | undefined;
   let biblePath: string | undefined;
   let changeQa:
-    | { generator: Generator; checks: KindCheck[]; plannedCalls: ReadonlyMap<string, number> }
+    | {
+        generator: Generator;
+        checks: KindCheck[];
+        free: string[];
+        plannedCalls: ReadonlyMap<string, number>;
+      }
     | undefined;
   let palettes: Record<string, string> = {};
   const registry = ctx.extensions ?? CORE_REGISTRY;
@@ -286,23 +297,38 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       const generator = generators.find((g) => g.kind === source.spec.kind);
       if (generator === undefined && kindExtension(source.spec.kind) !== undefined)
         throw unavailableId(source.spec.kind, "asset kind", ctx.settings.path);
-      const checks = (generator?.checks ?? []).filter(
-        (check) => check.run !== undefined && check.mode !== "gated",
-      );
-      if (generator !== undefined && checks.length > 0) {
+      const declared = generator?.checks ?? [];
+      const checks = declared.filter((check) => check.run !== undefined && check.mode !== "gated");
+      // Exact checks whose reasons core's image QA computes in `generate` (src/qa.ts): run free on
+      // the edited bytes, as `library adopt` does. Other declarations without `run` come from a
+      // generation an edit does not make.
+      const free = declared
+        .filter((check) => check.run === undefined && check.mode === "exact")
+        .map((check) => check.name)
+        .filter((name) => FREE_CHECKS.has(name));
+      if (generator !== undefined && (checks.length > 0 || free.length > 0)) {
         const plannedCalls = new Map([["edit", 1]]);
-        changeQa = { generator, checks, plannedCalls };
-        biblePath = args.bible ?? join(projectDir(undefined, asset.dir), BIBLE_PATH);
-        if (args.bible === undefined && !existsSync(biblePath))
-          throw new InputError(
-            `the checks of ${generator.kind} need ${biblePath} or a style bible given with --bible`,
-          );
-        bible = await loadStyleBible(biblePath);
+        changeQa = { generator, checks, free, plannedCalls };
+        const projectBible = join(projectDir(undefined, asset.dir), BIBLE_PATH);
+        if (checks.length > 0) {
+          biblePath = args.bible ?? projectBible;
+          if (args.bible === undefined && !existsSync(biblePath))
+            throw new InputError(
+              `the checks of ${generator.kind} need ${biblePath} or a style bible given with --bible`,
+            );
+        } else {
+          // The palette check needs a bible; without one it is skipped, as `library adopt` does.
+          biblePath = args.bible ?? (existsSync(projectBible) ? projectBible : undefined);
+        }
+        if (biblePath !== undefined) bible = await loadStyleBible(biblePath);
         if (checks.some((check) => check.mode === "model")) {
-          // The kind's plan does not separate generation from check calls. Reserve the complete
-          // forecast so a model check can use auxiliary operations listed there.
+          // The kind's plan does not separate generation from check calls: reserve only its
+          // judging calls (every role but generation's), since an edit makes no generation call.
           const planned = generator
             .planCandidate(source.spec, source.profile, routes)
+            .filter(
+              (call) => !GENERATION_ROLES.has(roleOf(call.operation, registry.operations) ?? ""),
+            )
             .map((call) => {
               const { operation } = call;
               const route = routes[operation];
@@ -333,6 +359,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       ...(changeQa && {
         kindChecks: sha256Hex(
           canonicalJson({
+            free: changeQa.free,
             checks: changeQa.checks.map(({ name, mode, version, operation, source }) => ({
               name,
               mode,
@@ -367,6 +394,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     providers,
     capUsd,
     bible,
+    biblePath,
     changeQa,
     generators,
     work,
@@ -556,7 +584,8 @@ sha256 and each region, note, mask and reference are in the request's digest; th
 prompt policy before the confirmation, and the spend form shows each region and note. Each region
 becomes an editing annotation on the version (its state turns changes-requested), its mask and
 references copied into <assetId>.review/<sha256>.<ext>. Still edits run the kind's registered exact
-and model checks on the edited image. Exact checks and model checks with qualified stability can
+and model checks on the edited image, and a core image kind's free transparency, frame-count and
+palette checks (palette with a style bible). Exact checks and model checks with qualified stability can
 filter candidates. The run lists their rejections and writes only passing candidates as c<n>.<ext>
 with provenance, contact.png and compare.png. The report shows each staged candidate's outsideChange
 (above 0.05 with the advisory reason changed_outside_region). The same request again resumes from the
@@ -713,7 +742,8 @@ version is appended with answers naming the requests. The run that made the asse
       errors.push(...run.errors);
     } else {
       const qaRegistry = changeQa && kindQaRegistry(changeQa.generator, CORE_REGISTRY.kinds);
-      const editBibleVersion = changeQa ? prepared.bible!.value.version : source.bibleVersion;
+      const editBibleVersion =
+        changeQa && prepared.bible ? prepared.bible.value.version : source.bibleVersion;
       let filtering: NonNullable<RunRecord["filtering"]> = [];
       const rejections: NonNullable<RunRecord["rejections"]> = [];
       before = decodeImage(prepared.bytes);
@@ -838,25 +868,42 @@ version is appended with answers naming the requests. The run that made the asse
             });
             const decoded = decodeImage(image.bytes);
             if (changeQa && qaRegistry) {
-              const reasons = await runKindChecks(
-                changeQa.checks,
-                {
-                  spec: source.spec,
-                  profile: source.profile,
-                  bible: prepared.bible!.value,
-                  output: {
-                    bytes: image.bytes,
-                    mediaType: image.mediaType,
-                    extension: extensionOf(image.mediaType),
-                    fields: sourceCandidate?.fields ?? {},
-                  },
-                },
-                caller,
-                () =>
-                  new RefusingCaller(
-                    `an exact check of ${source.spec.kind} makes no provider call`,
-                  ),
-              );
+              const free = new Set(changeQa.free);
+              const reasons = (
+                free.size === 0
+                  ? []
+                  : await freeChecks(
+                      image.bytes,
+                      sourceCandidate?.provenance ?? ({} as Provenance),
+                      prepared.biblePath,
+                      {
+                        ...(source.profile.style && { style: source.profile.style }),
+                        original: prepared.bytes,
+                      },
+                    )
+              ).filter((reason) => free.has(reason.check));
+              if (changeQa.checks.length > 0)
+                reasons.push(
+                  ...(await runKindChecks(
+                    changeQa.checks,
+                    {
+                      spec: source.spec,
+                      profile: source.profile,
+                      bible: prepared.bible!.value,
+                      output: {
+                        bytes: image.bytes,
+                        mediaType: image.mediaType,
+                        extension: extensionOf(image.mediaType),
+                        fields: sourceCandidate?.fields ?? {},
+                      },
+                    },
+                    caller,
+                    () =>
+                      new RefusingCaller(
+                        `an exact check of ${source.spec.kind} makes no provider call`,
+                      ),
+                  )),
+                );
               const qa = applyStability(reasons, providers.routes, {
                 checks: qaRegistry.checks,
                 entries: qaRegistry.entries,

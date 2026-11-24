@@ -268,6 +268,44 @@ for (const requiredRed of [250, 90]) {
   });
 }
 
+for (const palette of [["#5a78a0"], ["#5a78a0", "#fa0a0a"]]) {
+  const passes = palette.length === 2;
+  test(`a core still whose edit ${passes ? "keeps" : "breaks"} its palette ${passes ? "is staged" : "is listed without staging"}`, async () => {
+    const p = await project();
+    const s = await script(p.dir);
+    const biblePath = join(p.dir, BIBLE_PATH);
+    await mkdir(dirname(biblePath), { recursive: true });
+    await writeStyleBible(biblePath, { version: "synthetic-1", palette, references: [] });
+    await inProject(p.dir, async () => {
+      const outcome = await runCommand(
+        requestChangeCommand,
+        {
+          address: p.card,
+          region: ["0,0,10,10 : make the corner red"],
+          runs: p.runs,
+          providerScript: s.path,
+          candidates: 1,
+        },
+        context(),
+      );
+      const dir = outcome.fields["runDir"] as string;
+      const run = await readRun(dir);
+      assert.equal((await s.calls()).length, 1, "the checks make no provider call");
+      if (passes) {
+        assert.equal(outcome.exitCode, 0, outcome.error?.message);
+        assert.ok(run.candidates[0]?.reasons.every((r) => r.passed));
+        assert.ok(existsSync(join(dir, "c1.png")));
+        return;
+      }
+      assert.equal(outcome.error?.code, "qa_found_nothing");
+      assert.equal(run.candidates.length, 0);
+      assert.equal(run.rejections?.[0]?.candidate, 1);
+      assert.match(outcome.human, /candidate 1 filtered: .*palette: .*#fa0a0a/);
+      assert.ok(!existsSync(join(dir, "c1.png")));
+    });
+  });
+}
+
 for (const stable of [false, true]) {
   test(`a failing ${stable ? "qualified" : "unqualified"} model check of an edited candidate ${stable ? "filters" : "remains advisory"}`, async () => {
     const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
@@ -352,7 +390,11 @@ for (const stable of [false, true]) {
       assert.equal(visionJob?.count, 1);
       assert.equal(visionJob?.estimatedCostUsd, estimatedCostUsd);
       assert.equal(jobs.find((job) => job.operation === "edit-probe:inspect")?.count, 1);
-      assert.equal(jobs.find((job) => job.operation === "still")?.count, 1);
+      // The kind's generation call is not reserved: an edit makes none.
+      assert.equal(
+        jobs.find((job) => job.operation === "still"),
+        undefined,
+      );
       assert.equal((await s.calls()).length, 0);
       const outcome = await runCommand(requestChangeCommand, args, ctx);
       const run = await readRun(outcome.fields["runDir"] as string);
@@ -508,7 +550,14 @@ test("a box region on a still with a mask-capable route makes masked edits; the 
     assert.equal(f.candidates.length, 2);
     for (const c of f.candidates) {
       assert.equal(c.outsideChange, 0);
-      assert.deepEqual(c.reasons, []);
+      // The still's free exact checks ran on the edit; with no bible, the palette check is skipped.
+      assert.deepEqual(
+        c.reasons.map((r: { check: string; passed: boolean }) => [r.check, r.passed]),
+        [
+          ["transparency", true],
+          ["frame-count", true],
+        ],
+      );
     }
     // The request is an editing annotation; the version turns changes-requested.
     const record = parseReview(await readFile(p.review, "utf8"), p.review);

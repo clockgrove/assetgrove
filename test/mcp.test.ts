@@ -150,9 +150,12 @@ async function writeScript(dir: string): Promise<string> {
     path,
     `import { pathToFileURL } from "node:url";
 const { drawSubject } = await import(pathToFileURL(${JSON.stringify(synthetic)}));
-const { encodePng } = await import(pathToFileURL(${JSON.stringify(raster)}));
+const { decodeImage, encodePng } = await import(pathToFileURL(${JSON.stringify(raster)}));
 export default {
   image(request) {
+    // A request-change edit answers with the current version, keeping its size and transparency.
+    if (request.references?.[0] && request.prompt.startsWith("Reference image 1 is the current version"))
+      return { images: [{ mediaType: "image/png", bytes: encodePng(decodeImage(request.references[0].bytes)) }] };
     const m = /frame (\\d+) of/.exec(request.prompt);
     return { images: [{ mediaType: "image/png", bytes: encodePng(drawSubject(96, m?.[1] ? Number(m[1]) : 0)) }] };
   },
