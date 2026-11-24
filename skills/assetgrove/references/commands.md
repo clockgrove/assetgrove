@@ -108,12 +108,12 @@ MCP tool: `intake`, arguments `file`, `target`, `profile`.
 ### `review`
 
 ```text
-review <address> [--candidate <id>] [--version <n|sha256>] [--comment <text>] [--reply <id>] [--resolve <id>] [--reject <reason>] [--json]
+review <address> [--candidate <id>] [--version <n|sha256>] [--comment <text>] [--reply <id>] [--resolve <id>] [--reject <reason>] [--frames <from-to>] [--cell <column,row>] [--time <start,end>] [--json]
 ```
 
-Appends one annotation to a review record, never changing an existing line. The address is an asset's card, media or review record, or, with `--candidate`, a run directory. `--version` names the version by number or sha256 (the current one by default; not with `--candidate`). `--comment` comments; `--reply` with `--comment` replies to the annotation it names; `--resolve` closes a request, with `--comment` as its note; `--reject` rejects with its reason and takes no `--comment`. Give one of `--reply`, `--resolve` or `--reject`. For a version it then rewrites the card's state, the folder indexes and `log.md`. No confirmation, no model call and no spend. The annotation's text is returned only under `sharedText`.
+Appends one annotation to a review record, never changing an existing line. The address is an asset's card, media or review record, or, with `--candidate`, a run directory. `--version` names the version by number or sha256 (the current one by default; not with `--candidate`). `--comment` comments; `--reply` with `--comment` replies to the annotation it names; `--resolve` closes a request, with `--comment` as its note; `--reject` rejects with its reason and takes no `--comment`. Give one of `--reply`, `--resolve` or `--reject`. A new `--comment` on a version may anchor the note to part of it: `--frames` a frame range of a strip, `--cell` a cell of an atlas, `--time` a time range of a track in seconds; each is checked against that exact version, and one outside it exits 2 naming the selector and the valid range. For a version it then rewrites the card's state, the folder indexes and `log.md`. No confirmation, no model call and no spend. The annotation's text is returned only under `sharedText`.
 
-MCP tool: `review`, arguments `address`, `candidate`, `version`, `comment`, `reply`, `resolve`, `reject`.
+MCP tool: `review`, arguments `address`, `candidate`, `version`, `comment`, `reply`, `resolve`, `reject`, `frames`, `cell`, `time`.
 
 ### `approve`
 
@@ -422,6 +422,16 @@ library stats [--target <dir>] [--profile <profile.json>] [--json]
 Counts assets by `kind` and `state`, and reports `changeRequests` `{total, approvedWithinTwoVersions, share}`: a change request counts when one of the next two versions after the one it targets is approved. Read-only.
 
 MCP tool: `library_stats`, arguments `target`, `profile`.
+
+### `library worklist`
+
+```text
+library worklist [--target <dir>] [--profile <profile.json>] [--open] [--json]
+```
+
+Lists every review note of the library (each `editing` or `commenting` annotation on a version) with its `state` (`open` or `resolved`), its anchor, `source` (the version it was written on, with its `asset://<game>/<asset>/versions/<n>` link) and, when one is recorded, `resolution` (the answering version and its confirmation, or the `resolve` annotation). `--open` lists only open notes. Note text is returned only under `sharedText`. Read-only.
+
+MCP tool: `library_worklist`, arguments `target`, `profile`, `open`.
 
 ### `library relations`
 

@@ -1,4 +1,6 @@
 import { libraryDiff, formatLibraryDiff } from "../library/diff.ts";
+import { describeAnchor } from "../library/extent.ts";
+import { worklist } from "../library/worklist.ts";
 /**
  * `library check`, `library rebuild`, `library stats`, `library drift` and `library adopt` (design
  * sections 1.4 and 4): the library's records against their projections, reports computed from the
@@ -229,6 +231,58 @@ Read-only.`,
     return { exitCode: 0, fields: { ...stats }, human };
   },
 });
+
+export const libraryWorklistCommand = defineCommand<LibraryArgs & { open?: boolean }>({
+  name: "library worklist",
+  tool: "library_worklist",
+  summary: "list review notes with their source version and recorded resolution",
+  details: `Lists every editing and commenting note in the library's review records: its asset, anchor,
+the version it was made on (with an asset:// link), and, when one is recorded, the version that
+answered it (with its confirmation) or the resolve annotation that closed it. Note text is returned
+only as sharedText. --open keeps the notes still open. Read-only.`,
+  input: {
+    ...input(false),
+    properties: {
+      ...input(false).properties,
+      open: { type: "boolean", description: "only notes still open" },
+    },
+  },
+  effect: { readOnly: true, spends: "never", writes: "none" },
+  async run(args) {
+    const { targetDir, profile } = await open(args);
+    const state = await readLibrary(profile, targetDir);
+    const { notes, text } = worklist(state, args.open === undefined ? {} : { open: args.open });
+    const counts = {
+      open: notes.filter((n) => n.state === "open").length,
+      resolved: notes.filter((n) => n.state === "resolved").length,
+    };
+    const human = [
+      ...notes.map((n) => {
+        const where = [
+          n.source.version === null ? "unknown version" : `version ${n.source.version}`,
+          ...(n.anchor ? [`(${describeAnchor(n.anchor) || anchorSlot(n.anchor)})`] : []),
+        ].join(" ");
+        const closed =
+          n.resolution === undefined
+            ? ""
+            : n.resolution.by === "answer"
+              ? ` resolved by version ${n.resolution.version} ${n.resolution.link}`
+              : ` resolved by ${n.resolution.annotation} ${n.resolution.link}`;
+        return `${n.asset} ${n.id} ${n.state} ${where}${n.source.link === null ? "" : ` → ${n.source.link}`}${closed}`;
+      }),
+      `${counts.open} open, ${counts.resolved} resolved`,
+    ].join("\n");
+    return {
+      exitCode: 0,
+      fields: { library: state.config.rootRel || ".", notes, counts, sharedText: text },
+      human,
+    };
+  },
+});
+
+function anchorSlot(anchor: { frame?: number; view?: number }): string {
+  return anchor.frame !== undefined ? `frame ${anchor.frame}` : `view ${anchor.view}`;
+}
 
 /** The style bible's path and version for drift and judge-stale; a named bible must have one. */
 function currentBible(args: LibraryArgs, targetDir: string) {
