@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pickCommand } from "../src/commands/pick.ts";
@@ -20,10 +20,16 @@ import { runCommand } from "../src/commands/runner.ts";
 import type { RunContext } from "../src/commands/types.ts";
 import type { ConfirmPort, ConfirmRequest } from "../src/confirm/prompt.ts";
 import { writeToTarget } from "../src/handoff.ts";
-import { createRaster, decodePng, encodePng, setPixel } from "../src/image/raster.ts";
+import { EXTENSION_API } from "../src/extension/api.ts";
+import { CORE_ENTRY, ExtensionRegistry, checkExtension } from "../src/extensions/registry.ts";
+import type { Generator } from "../src/generators/generator.ts";
+import { createRaster, decodePng, encodePng, getPixel, setPixel } from "../src/image/raster.ts";
+import { BIBLE_PATH } from "../src/init.ts";
 import { parseReview, versionStatus } from "../src/library/review.ts";
+import { readRun } from "../src/loop.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
+import { providerSet } from "../src/providers/index.ts";
 import { loadSettings } from "../src/settings.ts";
 import type { AssetSpec, Provenance, StyleBible, TargetProfile } from "../src/types.ts";
 import { libraryProfile } from "./fixtures/library.ts";
@@ -158,6 +164,354 @@ async function inProject<T>(dir: string, body: () => Promise<T>): Promise<T> {
   }
 }
 
+const CHECKED_KIND = "edit-probe:tile";
+
+function checkedContext(over: Partial<Generator>): RunContext {
+  const extension = checkExtension(
+    {
+      api: EXTENSION_API,
+      name: "edit-probe",
+      kinds: [
+        {
+          kind: CHECKED_KIND,
+          planCandidate: () => [],
+          async generate() {
+            throw new Error("request-change edits the picked version instead of generating anew");
+          },
+          ...over,
+        },
+      ],
+    },
+    "change check fixture",
+  );
+  return {
+    ...context(),
+    extensions: new ExtensionRegistry([
+      CORE_ENTRY,
+      { extension, info: { package: "edit-probe", version: "1.0.0", entry: "fixture" } },
+    ]),
+  };
+}
+
+for (const requiredRed of [250, 90]) {
+  test(`an edited tile ${requiredRed === 250 ? "passing" : "failing"} its exact check ${requiredRed === 250 ? "is staged" : "is listed without staging"}`, async () => {
+    const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+    const s = await script(p.dir);
+    const biblePath = join(p.dir, BIBLE_PATH);
+    const ctx = checkedContext({
+      checks: [
+        {
+          name: "edit-tile-marker",
+          mode: "exact",
+          run: (input) => {
+            assert.equal(input.spec.kind, CHECKED_KIND);
+            assert.equal(input.profile.name, libraryProfile().name);
+            assert.equal(input.bible.version, "synthetic-1");
+            const [red] = getPixel(decodePng(input.output.bytes), 0, 0);
+            return [
+              {
+                check: "edit-tile-marker",
+                passed: red === requiredRed,
+                reason: `expected red ${requiredRed}, edited pixel has red ${red}`,
+                source: "deterministic",
+              },
+            ];
+          },
+        },
+      ],
+    });
+    await inProject(p.dir, async () => {
+      const args = {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+      };
+      const missing = await runCommand(requestChangeCommand, { ...args, dryRun: true }, ctx);
+      assert.match(missing.error?.message ?? "", /style bible given with --bible/);
+      assert.equal((await s.calls()).length, 0);
+      await mkdir(dirname(biblePath), { recursive: true });
+      await writeStyleBible(biblePath, {
+        version: "synthetic-1",
+        palette: ["#fa0a0a"],
+        references: [],
+      });
+      const preview = await runCommand(requestChangeCommand, { ...args, dryRun: true }, ctx);
+      assert.equal(preview.exitCode, 0, preview.error?.message);
+      const inputs = preview.fields["inputs"] as Record<string, string>;
+      assert.equal(inputs["bible"], sha(await readFile(biblePath)));
+      assert.match(inputs["kindChecks"]!, /^[a-f0-9]{64}$/);
+      const outcome = await runCommand(requestChangeCommand, args, ctx);
+      const dir = outcome.fields["runDir"] as string;
+      const run = await readRun(dir);
+      assert.equal((await s.calls()).length, 1);
+      if (requiredRed === 250) {
+        assert.equal(outcome.exitCode, 0, outcome.error?.message);
+        assert.equal(run.candidates[0]?.reasons[0]?.passed, true);
+        assert.equal(run.filtered, 0);
+        assert.ok(existsSync(join(dir, "c1.png")));
+        return;
+      }
+      assert.equal(outcome.error?.code, "qa_found_nothing");
+      assert.equal(run.candidates.length, 0);
+      assert.equal(run.filtered, 1);
+      assert.equal(run.rejections?.[0]?.candidate, 1);
+      assert.equal(run.rejections[0]!.reasons[0]?.passed, false);
+      assert.deepEqual(outcome.fields["rejections"], run.rejections);
+      assert.match(outcome.human, /candidate 1 filtered: edit-tile-marker: .*red 250/);
+      for (const file of ["c1.png", "c1.provenance.json", "contact.png", "compare.png"])
+        assert.ok(!existsSync(join(dir, file)), `rejected c1 did not write ${file}`);
+      const pick = await runCommand(pickCommand, { run: dir, candidate: "c1", target: p.dir }, ctx);
+      assert.match(pick.error?.message ?? "", /is not a QA-passing candidate/);
+    });
+  });
+}
+
+for (const palette of [["#5a78a0"], ["#5a78a0", "#fa0a0a"]]) {
+  const passes = palette.length === 2;
+  test(`a core still whose edit ${passes ? "keeps" : "breaks"} its palette ${passes ? "is staged" : "is listed without staging"}`, async () => {
+    const p = await project();
+    const s = await script(p.dir);
+    const biblePath = join(p.dir, BIBLE_PATH);
+    await mkdir(dirname(biblePath), { recursive: true });
+    await writeStyleBible(biblePath, { version: "synthetic-1", palette, references: [] });
+    await inProject(p.dir, async () => {
+      const outcome = await runCommand(
+        requestChangeCommand,
+        {
+          address: p.card,
+          region: ["0,0,10,10 : make the corner red"],
+          runs: p.runs,
+          providerScript: s.path,
+          candidates: 1,
+        },
+        context(),
+      );
+      const dir = outcome.fields["runDir"] as string;
+      const run = await readRun(dir);
+      assert.equal((await s.calls()).length, 1, "the checks make no provider call");
+      if (passes) {
+        assert.equal(outcome.exitCode, 0, outcome.error?.message);
+        assert.ok(run.candidates[0]?.reasons.every((r) => r.passed));
+        assert.ok(existsSync(join(dir, "c1.png")));
+        return;
+      }
+      assert.equal(outcome.error?.code, "qa_found_nothing");
+      assert.equal(run.candidates.length, 0);
+      assert.equal(run.rejections?.[0]?.candidate, 1);
+      assert.match(outcome.human, /candidate 1 filtered: .*palette: .*#fa0a0a/);
+      assert.ok(!existsSync(join(dir, "c1.png")));
+    });
+  });
+}
+
+for (const stable of [false, true]) {
+  test(`a failing ${stable ? "qualified" : "unqualified"} model check of an edited candidate ${stable ? "filters" : "remains advisory"}`, async () => {
+    const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+    const s = await script(p.dir);
+    const bible = await writeStyleBible(join(p.dir, "BIBLE.md"), {
+      version: "synthetic-1",
+      palette: ["#fa0a0a"],
+      references: [],
+    });
+    const { model, estimatedCostUsd } = (await providerSet(s.path, context())).routes.vision;
+    const ctx = checkedContext({
+      operations: { "edit-probe:inspect": "vision" },
+      planCandidate: (_spec, _profile, routes) =>
+        ["still", "vision", "edit-probe:inspect"].map((operation) => ({
+          operation,
+          model: routes[operation]!.model,
+          estimatedCostUsd: 0,
+        })),
+      checks: [
+        {
+          name: "edit-tile-look",
+          mode: "model",
+          operation: "vision",
+          source: "vision",
+          async run({ output }, call) {
+            assert.equal(
+              await call.vision("edit-probe:inspect", "Inspect the tile shape.", []),
+              "ok",
+            );
+            const text = await call.vision("vision", "Inspect the edited tile.", [
+              { role: "edit", path: "edit", ...output, sha256: sha(output.bytes) },
+            ]);
+            assert.equal(text, "ok");
+            return [
+              {
+                check: "edit-tile-look",
+                passed: false,
+                reason: "the model did not like the edited tile",
+                source: "vision",
+              },
+            ];
+          },
+        },
+      ],
+      ...(stable && {
+        stability: [
+          {
+            checkId: "edit-tile-look",
+            version: "1",
+            model,
+            cases: 40,
+            passCases: 20,
+            failCases: 20,
+            falsePasses: 1,
+            falseFails: 2,
+            repeats: 3,
+            agreement: 0.95,
+            measuredAt: "2026-11-14T00:00:00.000Z",
+            measuredBy: "synthetic fixture",
+            labelledSetSha256: "a".repeat(64),
+          },
+        ],
+      }),
+    });
+    await inProject(p.dir, async () => {
+      const args = {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+        bible,
+      };
+      const preview = await runCommand(requestChangeCommand, { ...args, dryRun: true }, ctx);
+      assert.equal(preview.exitCode, 0, preview.error?.message);
+      const jobs = preview.fields["jobs"] as Array<{
+        operation: string;
+        count: number;
+        estimatedCostUsd: number;
+      }>;
+      const visionJob = jobs.find((job) => job.operation === "vision");
+      assert.equal(visionJob?.count, 1);
+      assert.equal(visionJob?.estimatedCostUsd, estimatedCostUsd);
+      assert.equal(jobs.find((job) => job.operation === "edit-probe:inspect")?.count, 1);
+      // The kind's generation call is not reserved: an edit makes none.
+      assert.equal(
+        jobs.find((job) => job.operation === "still"),
+        undefined,
+      );
+      assert.equal((await s.calls()).length, 0);
+      const outcome = await runCommand(requestChangeCommand, args, ctx);
+      const run = await readRun(outcome.fields["runDir"] as string);
+      assert.equal(run.filtering?.[0]?.state, stable ? "filtering" : "advisory");
+      if (stable) {
+        assert.equal(outcome.error?.code, "qa_found_nothing");
+        assert.equal(run.candidates.length, 0);
+        assert.equal(run.rejections?.[0]?.reasons[0]?.shadow, undefined);
+      } else {
+        assert.equal(outcome.exitCode, 0, outcome.error?.message);
+        const [candidate] = run.candidates;
+        assert.equal(candidate?.reasons[0]?.shadow, true);
+        assert.deepEqual(
+          candidate?.provenance.calls.map((call) => call.operation),
+          ["edit", "edit-probe:inspect", "vision"],
+        );
+        assert.equal(run.rejections, undefined);
+      }
+    });
+  });
+}
+
+test("a model check cannot spend beyond its planned call count", async () => {
+  const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+  const s = await script(p.dir);
+  const bible = await writeStyleBible(join(p.dir, "BIBLE.md"), {
+    version: "synthetic-1",
+    palette: ["#fa0a0a"],
+    references: [],
+  });
+  const ctx = checkedContext({
+    planCandidate: (_spec, _profile, routes) => [{ ...routes.vision, operation: "vision" }],
+    checks: [
+      {
+        name: "edit-tile-look",
+        mode: "model",
+        operation: "vision",
+        async run(_input, call) {
+          await call.vision("vision", "First inspection", []);
+          await call.vision("vision", "Second inspection", []);
+          return [];
+        },
+      },
+    ],
+  });
+  await inProject(p.dir, async () => {
+    const outcome = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+        bible,
+      },
+      ctx,
+    );
+    assert.match(outcome.error?.message ?? "", /vision call was refused.*confirmed plan/);
+    const dir = outcome.fields["runDir"] as string;
+    const callsDir = join(dir, "calls");
+    const records = await Promise.all(
+      readdirSync(callsDir)
+        .filter((file) => file.endsWith(".json"))
+        .map(
+          async (file) =>
+            JSON.parse(await readFile(join(callsDir, file), "utf8")) as { operation: string },
+        ),
+    );
+    assert.equal(records.filter(({ operation }) => operation === "vision").length, 1);
+    assert.ok(!existsSync(join(dir, "c1.png")));
+  });
+});
+
+test("changing source fields after a change check is confirmed refuses before annotation or edit", async () => {
+  const p = await project({ kind: CHECKED_KIND, assetId: "lamp" });
+  const s = await script(p.dir);
+  const bible = await writeStyleBible(join(p.dir, "custom-bible.md"), {
+    version: "synthetic-1",
+    palette: ["#fa0a0a"],
+    references: [],
+  });
+  const review = await readFile(p.review, "utf8");
+  const sourceDir = join(p.runs, "r1");
+  useAttended();
+  const ctx = checkedContext({
+    checks: [{ name: "edit-tile-size", mode: "exact", run: () => [] }],
+  });
+  const prompt: ConfirmPort = {
+    method: "tty",
+    async confirm(request) {
+      assert.equal(request.kind, "spend");
+      const source = await readRun(sourceDir);
+      source.candidates[0]!.fields["tileSize"] = 24;
+      await writeFile(join(sourceDir, "run.json"), JSON.stringify(source));
+      return true;
+    },
+  };
+  await inProject(p.dir, async () => {
+    const outcome = await runCommand(
+      requestChangeCommand,
+      {
+        address: p.card,
+        region: ["0,0,10,10 : make the corner red"],
+        runs: p.runs,
+        providerScript: s.path,
+        candidates: 1,
+        bible,
+      },
+      { ...ctx, prompt },
+    );
+    assert.equal(outcome.error?.code, "plan_changed", outcome.error?.message);
+    assert.equal((await s.calls()).length, 0);
+    assert.equal(await readFile(p.review, "utf8"), review);
+  });
+});
+
 test("a box region on a still with a mask-capable route makes masked edits; the run is recorded, compared and resumed", async () => {
   const p = await project();
   const s = await script(p.dir);
@@ -196,7 +550,14 @@ test("a box region on a still with a mask-capable route makes masked edits; the 
     assert.equal(f.candidates.length, 2);
     for (const c of f.candidates) {
       assert.equal(c.outsideChange, 0);
-      assert.deepEqual(c.reasons, []);
+      // The still's free exact checks ran on the edit; with no bible, the palette check is skipped.
+      assert.deepEqual(
+        c.reasons.map((r: { check: string; passed: boolean }) => [r.check, r.passed]),
+        [
+          ["transparency", true],
+          ["frame-count", true],
+        ],
+      );
     }
     // The request is an editing annotation; the version turns changes-requested.
     const record = parseReview(await readFile(p.review, "utf8"), p.review);
