@@ -166,6 +166,50 @@ test("intake and pick report exact bytes across cards and historical versions", 
   assert.deepEqual(await snapshot(f.target), before);
 });
 
+test("a signed version matches the exact bytes it was signed over", async () => {
+  const f = await setup();
+  // As handoff records it with a signer: sha256 names the signed file, contentSha256 what was signed.
+  const signedFile = encodePng(drawSubject(32, 3));
+  const root = join(f.target, "assets");
+  const record = appendVersion(emptyReview("asset://test-grove/signed/review"), {
+    sha256: sha256(signedFile),
+    contentSha256: sha256(different),
+    at: "2026-01-01T00:00:00Z",
+    run: "old-signed",
+    candidate: "c1",
+    confirmation: { method: "tty" },
+  });
+  await writeFile(join(root, "signed.review.json"), writeReview(record));
+  await writeFile(join(root, "signed.png"), signedFile);
+  await writeFile(
+    join(root, "signed.md"),
+    `---\ntype: Game Asset\nformat: assetgrove-card/1\ntitle: Signed\nresource: signed.png\nversion: 1\nlock: { sha256: ${sha256(signedFile)} }\n---\n`,
+  );
+  const before = await snapshot(f.target);
+  const input = await runCommand(
+    intakeCommand,
+    { file: join(f.run, "c2.png"), target: f.target, profile: f.profilePath },
+    context(),
+  );
+  ok(input);
+  assert.deepEqual(references(input), [
+    ["lantern", 2],
+    ["signed", 1],
+  ]);
+  const pick = await runCommand(pickCommand, { ...f.args, candidate: "c2" }, context());
+  assert.notEqual(pick.exitCode, 0, "headless pick must not admit a signed duplicate");
+  assert.deepEqual(
+    (pick.fields["duplicates"] as { candidate: string; assetId: string; version: number }[]).map(
+      (m) => [m.candidate, m.assetId, m.version],
+    ),
+    [
+      ["c2", "lantern", 2],
+      ["c2", "signed", 1],
+    ],
+  );
+  assert.deepEqual(await snapshot(f.target), before);
+});
+
 test("duplicate outcomes are explicit and confirmed; decline, exit and existing-version leave the library unchanged", async () => {
   const f = await setup();
   const before = await snapshot(f.target);

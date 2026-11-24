@@ -73,7 +73,9 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
   const duplicates = candidates.flatMap((c) =>
     !verified.has(c.id) || (current.run === run.runId && current.candidate === c.id)
       ? []
-      : matches.filter((m) => m.sha256 === c.sha256).map((m) => ({ candidate: c.id, ...m })),
+      : matches
+          .filter((m) => m.sha256 === c.sha256 || m.contentSha256 === c.sha256)
+          .map((m) => ({ candidate: c.id, ...m })),
   );
   if (args.existingVersion !== undefined && args.duplicate !== "existing-version")
     throw new InputError("--existing-version requires --duplicate existing-version");

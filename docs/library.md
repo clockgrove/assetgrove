@@ -512,7 +512,9 @@ needs no provider credentials and never grants approval.
 media without writing to the library or calling a model. Its result reports the SHA-256
 of the complete bytes and `matches` with `assetId`, `version`, `sha256` and `card`. It compares all recorded versions, including historical versions whose
 media is no longer local; a card without a review record uses its lock hash and
-version. Unreadable unrelated records are skipped, as on library writes. Run
+version. A version written with a signer also matches the exact bytes it was signed
+over (its `contentSha256`, which the match then carries), so a staged candidate whose
+unsigned bytes were already admitted is reported. Unreadable unrelated records are skipped, as on library writes. Run
 `library check` to find and repair those records. LFS inputs must have validated local
 bytes; pointer text is never compared as media. Names, decoded pixels and similarity
 rankings do not establish identity: differently encoded or differently credentialled
