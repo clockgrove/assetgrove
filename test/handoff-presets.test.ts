@@ -446,8 +446,8 @@ test("a preset's warnings are listed under its handoff entry and never fail the 
     });
     assert.ok(existsSync(join(world.targetDir, "validator-ran")));
     // A preset without warnings lists none.
-    assert.equal(result.handoff[0]!.warnings, undefined);
-    assert.deepEqual(result.handoff[1], {
+    assert.equal(result.handoff?.[0]!.warnings, undefined);
+    assert.deepEqual(result.handoff?.[1], {
       preset: "ext:warn",
       files: ["warn.txt"],
       ...(lines.length > 0 && { warnings: lines }),

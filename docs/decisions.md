@@ -518,3 +518,12 @@ Godot's exit codes do not report import errors, and a hand-written `.tres` with 
 - **What core writes.** The resource, and the `.import` of each strip the target had none for; an existing `.import` is never returned, so it is never touched.
 - **Core additions.** A families preset needs this run's media before core writes it, so `HandedOffFamily.content` carries each family's current bytes. Godot publishes SHA512 sums, so a pinned download takes `sha512` as the alternative to `sha256`, exactly one of them.
 - **Libraries.** The setup unpacks Godot's release zip with `fflate` (MIT, pure JavaScript, no install script). The `.import` and `.tres` lines the pack reads (a UID, a header, a path) are parsed with two regular expressions: no maintained JavaScript library reads Godot's resource text format, and the pack only reads what Godot wrote.
+
+## The Godot pack sets new 2D files' import options and warns of a linear texture filter (#461)
+
+A pixel-art game wants its sprites imported lossless, without mipmaps and filtered nearest-neighbour. Godot 4 keeps the first two in each source's `.import` file and the filter in the project setting `rendering/textures/canvas_textures/default_texture_filter`.
+
+- **Import options as data, Godot writing them.** `godot:sprite-frames` and `godot:tile-set` take `import`, as `godot:gltf` does. In scratch, the build script sets the options on the `.import` Godot made for each new source, through `ConfigFile`, and reimports it. An existing `.import` still reaches scratch only as data and is never returned.
+- **A warning, never an edit.** The project setting belongs to the game, so the pack never writes `project.godot`. It only reads it, for a pixel-art profile (`style.edges` `crisp` with `style.color.rule` `palette`). A filter other than Nearest (`0`), or none (Godot's default, Linear), is a warning in the hand-off result.
+- **Core addition.** A preset could return files and problems but nothing advisory. So `EnginePreset` gains an optional `warnings(ctx, options, read)`, which core calls beside `check`, listing the result under `handoff[i].warnings`. It is additive: a preset without it, and a reader of the result, work as before.
+- **Libraries.** The `project.godot` line the pack reads is parsed like the `.import` lines above, by a small line reader. The same exception applies: no maintained JavaScript library reads Godot's `ConfigFile` text, and the pack reads one key.

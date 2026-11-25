@@ -45,11 +45,12 @@ One SpriteFrames per asset, holding every animation family handed off so far: ha
 }
 ```
 
-| Option     | Default          | What                                                                                                        |
-| ---------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| `project`  | `""`             | The Godot project's folder (where `project.godot` is), relative to the target. The media must be inside it. |
-| `resource` | `{assetId}.tres` | The SpriteFrames, relative to the target, `{assetId}` replaced; inside the project, ending in `.tres`.      |
-| `loop`     | `true`           | Whether each animation loops.                                                                               |
+| Option     | Default          | What                                                                                                                                  |
+| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`  | `""`             | The Godot project's folder (where `project.godot` is), relative to the target. The media must be inside it.                           |
+| `resource` | `{assetId}.tres` | The SpriteFrames, relative to the target, `{assetId}` replaced; inside the project, ending in `.tres`.                                |
+| `loop`     | `true`           | Whether each animation loops.                                                                                                         |
+| `import`   | `{}`             | Godot texture import options by their `.import` key, applied to new strips only ([Import options](#import-options-for-new-2d-files)). |
 
 Frames are the profile's `frames.width` × `frames.height`, side by side in each strip; Godot counts them from the texture's width. Each animation plays at `1000 / frames.durationMs` frames per second (10 without a duration).
 
@@ -81,10 +82,11 @@ One Godot `TileSet` per `tiles:terrain` asset (the [tiles pack](../assetgrove-ti
 }
 ```
 
-| Option     | Default          | What                                                                                                        |
-| ---------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| `project`  | `""`             | The Godot project's folder (where `project.godot` is), relative to the target. The atlas must be inside it. |
-| `resource` | `{assetId}.tres` | The TileSet, relative to the target, `{assetId}` replaced; inside the project, ending in `.tres`.           |
+| Option     | Default          | What                                                                                                                                   |
+| ---------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `project`  | `""`             | The Godot project's folder (where `project.godot` is), relative to the target. The atlas must be inside it.                            |
+| `resource` | `{assetId}.tres` | The TileSet, relative to the target, `{assetId}` replaced; inside the project, ending in `.tres`.                                      |
+| `import`   | `{}`             | Godot texture import options by their `.import` key, applied to a new atlas only ([Import options](#import-options-for-new-2d-files)). |
 
 The preset reads the corner-16 layout as data: tile `i` sits at column `i % 4`, row `floor(i / 4)`, its corner bits NW 1, NE 2, SW 4, SE 8 set where the corner is the upper terrain. The tile size is `output.fields.tileSize` (else the profile's `kinds["tiles:terrain"].tileSize`), and the terrains are the spec's `fields.terrains`.
 
@@ -101,6 +103,32 @@ As for `godot:sprite-frames`, with the same tool run, approval and failures (exi
 4. The preset returns the TileSet, and the atlas's `.import` only when the target had none. An existing `.import` is never returned, so it is never touched; a replaced atlas keeps the TileSet's UID and the atlas's.
 
 The preset's check reads the written resource back: a TileSet with a UID, referencing the atlas by the UID its `.import` gives it.
+
+## Import options for new 2D files
+
+Godot writes a new source file's `.import` with its default import options. A pixel-art game wants lossless compression and no mipmaps, so `godot:sprite-frames` and `godot:tile-set` take `import`: Godot texture import options by their `.import` key, with string, number or boolean values (an integral number becomes an int), as `godot:gltf` takes scene options.
+
+```json
+{
+  "preset": "godot:sprite-frames",
+  "options": {
+    "resource": "characters/{assetId}.tres",
+    "import": { "compress/mode": 0, "mipmaps/generate": false }
+  }
+}
+```
+
+The options apply only to a source file the target has no `.import` for: a new strip or a new atlas. In scratch, Godot's editor imports it, and the build script writes the options into the `.import` Godot made, through `ConfigFile`. It then reimports the file and reads each value back. A value Godot does not keep fails the hand-off (exit 6). The preset returns that `.import`, so the game gets the file Godot wrote. An existing `.import` reaches scratch as data and is never returned, so it is left byte for byte, its options and UID as they were.
+
+## The texture filter warning
+
+In Godot 4 the texture filter is not an import option. It is the project setting `rendering/textures/canvas_textures/default_texture_filter`, and its default, Linear, blurs pixel art. When the target profile's style is pixel art (`style.edges` `crisp` and `style.color.rule` `palette`), `godot:sprite-frames` and `godot:tile-set` read the game's `project.godot` as data, at their `project` folder. If its default texture filter is anything but Nearest (`0`), the hand-off result carries a warning under the preset's entry, `handoff[i].warnings`. That covers an unset filter (Godot's default, Linear) as well as Linear (`1`), Linear Mipmap (`2`) and Nearest Mipmap (`3`). `pick`, `library adopt` and `write-families` print it as a `warning:` line:
+
+```
+warning: godot:sprite-frames: project.godot leaves rendering/textures/canvas_textures/default_texture_filter at Godot's default, Linear (1); a pixel-art profile (style.edges crisp, a palette) wants Nearest (0): set it in Project Settings > Rendering > Textures > Canvas Textures > Default Texture Filter, or add textures/canvas_textures/default_texture_filter=0 under [rendering]
+```
+
+The warning never fails the hand-off, and the pack never edits `project.godot`: the setting is the game's. A profile that is not pixel art, a project set to Nearest, or a target without `project.godot` at the project folder gets no warning. `godot:gltf` gives none.
 
 ## The `godot:gltf` preset
 
@@ -135,4 +163,4 @@ As for `godot:sprite-frames`, with the same pinned Godot 4.7.2, setup, `godot:en
 
 ## Tests
 
-`pnpm test` runs the conformance suite (with a scripted tool run), setup, the output readers and what `godot:tile-set` hands Godot (`test/tile-set-input.test.ts`) anywhere. `test/gltf.test.ts` hands a synthetic skinned `.glb` (built with glTF Transform) off with `godot:gltf`, its `write` and `check` run with a tool runner that does what core's does: two animations imported with both and the options in the new `.import`, a declared animation the file lacks failing and named, a re-hand-off keeping the UID and the existing `.import` byte for byte, a GLB with no declared facts checked against its own, clips shaped without a `name` read from the file, an unskinned GLB handed off, and more meshes than declared failing. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI, and `test/tile-set.test.ts` hands corner-16 atlases off with the tiles pack, built from `packages/assetgrove-tiles` and installed beside this one: a new TileSet from a fixture atlas, a re-hand-off that keeps a developer-added physics layer, custom-data layer, second source and alternative tile, a replaced atlas keeping its UID, a deliberately wrong peering bit failing the read-back, an existing TileSet whose own terrain sets (a Match Sides set and an unrelated Match Corners set) are kept while the preset adds its own, and the paint test. The paint test has Godot paint, with `TileMapLayer.set_cells_terrain_connect`, a map holding every neighbour pair Godot's terrain painting can make (every pair whose shared corners agree and each of whose upper corners belongs to a cell that can be all upper; the test enumerates them) and compares `get_cell_atlas_coords` of every cell with the expected map, where a corner is upper exactly where a painted cell touches it. These tests need Godot: they run the first Godot 4.7.2 on `PATH` (as `godot`, or by the release's own executable name; on Windows only an `.exe`), which CI's `chickensoft-games/setup-godot` step puts there, and skip with the reason without one. The tests read no environment variable of their own: core allows a fixed list (`test/env-names.test.ts`).
+`pnpm test` runs the conformance suite (with a scripted tool run), setup, the output readers and what `godot:tile-set` hands Godot (`test/tile-set-input.test.ts`) anywhere. `test/gltf.test.ts` hands a synthetic skinned `.glb` (built with glTF Transform) off with `godot:gltf`, its `write` and `check` run with a tool runner that does what core's does: two animations imported with both and the options in the new `.import`, a declared animation the file lacks failing and named, a re-hand-off keeping the UID and the existing `.import` byte for byte, a GLB with no declared facts checked against its own, clips shaped without a `name` read from the file, an unskinned GLB handed off, and more meshes than declared failing. `test/texture-filter.test.ts` reads `project.godot` files and checks when the filter warning is given. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI, with `import` options that each new strip's `.import` carries and that leave the existing `.import` files byte for byte, and `test/tile-set.test.ts` hands corner-16 atlases off with the tiles pack, built from `packages/assetgrove-tiles` and installed beside this one: a new TileSet from a fixture atlas, a re-hand-off that keeps a developer-added physics layer, custom-data layer, second source and alternative tile, a replaced atlas keeping its UID, a deliberately wrong peering bit failing the read-back, the new atlas's `.import` carrying the `import` options, the filter warning for a pixel-art profile with a Linear project and none with Nearest or a profile that is not pixel art (with `project.godot` left as it was), an existing TileSet whose own terrain sets (a Match Sides set and an unrelated Match Corners set) are kept while the preset adds its own, and the paint test. The paint test has Godot paint, with `TileMapLayer.set_cells_terrain_connect`, a map holding every neighbour pair Godot's terrain painting can make (every pair whose shared corners agree and each of whose upper corners belongs to a cell that can be all upper; the test enumerates them) and compares `get_cell_atlas_coords` of every cell with the expected map, where a corner is upper exactly where a painted cell touches it. These tests need Godot: they run the first Godot 4.7.2 on `PATH` (as `godot`, or by the release's own executable name; on Windows only an `.exe`), which CI's `chickensoft-games/setup-godot` step puts there, and skip with the reason without one. The tests read no environment variable of their own: core allows a fixed list (`test/env-names.test.ts`).
