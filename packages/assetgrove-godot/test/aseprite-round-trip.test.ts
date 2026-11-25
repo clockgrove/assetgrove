@@ -8,7 +8,14 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -112,9 +119,9 @@ function run(script: string): string {
 
 /** The asset's review versions: each version's media sha256 and lineage. */
 function versions(review: string): Array<{ sha256: string; lineage?: unknown }> {
-  return (JSON.parse(text(review)) as { "ag:versions": Array<{ sha256: string; lineage?: unknown }> })[
-    "ag:versions"
-  ];
+  return (
+    JSON.parse(text(review)) as { "ag:versions": Array<{ sha256: string; lineage?: unknown }> }
+  )["ag:versions"];
 }
 
 before(() => {
