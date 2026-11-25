@@ -7,6 +7,9 @@ import type { ExactMatch } from "../library/exact.ts";
 import { readRecordPath } from "../paths.ts";
 import { InputError } from "../errors.ts";
 import { pick } from "../handoff.ts";
+import { replacementUsage } from "../handoff/usage.ts";
+import type { PresetUsage } from "../handoff/usage.ts";
+import type { PresetRegistry, UsageReference } from "../handoff/presets/index.ts";
 import { AssetIdError, changeVersionChanged, currentVersion } from "../library/write.ts";
 import { readRun } from "../loop.ts";
 import { refusal } from "./result.ts";
@@ -25,9 +28,13 @@ interface PickArgs {
  * target and the named candidate (null when the person chooses), and it shows the run, its contact
  * sheet and the digest. A pick into an asset that already has a version names that version's
  * sha256 in the body, so in the digest (design section 3.2), and warns when the working file
- * differs from the card's `lock.sha256`, since replacing it discards an outside change.
+ * differs from the card's `lock.sha256`, since replacing it discards an outside change. It also
+ * lists each preset's known usage of the replaced asset (`details.usage`), outside the digest.
  */
-export async function pickRequest(args: PickArgs): Promise<KindRequest> {
+export async function pickRequest(
+  args: PickArgs,
+  usageInput?: { registry?: PresetRegistry; stateDir: string },
+): Promise<KindRequest> {
   if (
     args.duplicate !== undefined &&
     !["existing-version", "keep-separate", "exit"].includes(args.duplicate)
@@ -111,10 +118,24 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
     ...(current.sha256 !== undefined && { replaces: current.sha256 }),
   };
   const id = digestOf(body);
+  const usage =
+    current.sha256 !== undefined &&
+    current.media !== undefined &&
+    usageInput?.registry !== undefined
+      ? await replacementUsage({
+          profile: run.profile,
+          assetId: current.assetId,
+          media: current.media,
+          targetDir: resolve(args.target),
+          registry: usageInput.registry,
+          stateDir: usageInput.stateDir,
+        })
+      : [];
   const replacing =
     current.sha256 === undefined
       ? ""
-      : `, replacing version ${current.version} of ${current.assetId} (sha256 ${current.sha256})`;
+      : `, replacing version ${current.version} of ${current.assetId} (sha256 ${current.sha256})` +
+        usage.map(usageSummary).join("");
   const outsideChange = current.outsideChange
     ? `the working file of ${current.assetId} differs from its card's lock.sha256: replacing it discards an outside change`
     : undefined;
@@ -152,6 +173,7 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
       ...(current.sha256 !== undefined && {
         replaces: { assetId: current.assetId, version: current.version, sha256: current.sha256 },
       }),
+      ...(usage.length > 0 && { usage }),
       ...(outsideChange !== undefined && { outsideChange: true }),
       ...(unchecked.length > 0 && { licenceGrantUnchecked: unchecked }),
       ...(warning !== undefined && { warning }),
@@ -167,6 +189,27 @@ export async function pickRequest(args: PickArgs): Promise<KindRequest> {
     body,
     choices: ids,
   };
+}
+
+function referenceText(ref: UsageReference): string {
+  const where = [ref.line === undefined ? ref.file : `${ref.file}:${ref.line}`, ref.path, ref.uid]
+    .filter((part) => part !== undefined)
+    .join(" ");
+  const locations = ref.locations.length > 0 ? ` (${ref.locations.join(", ")})` : "";
+  const reason = ref.reason === undefined ? "" : ` (${ref.reason})`;
+  if (ref.status === "resolved") return `${where}${locations}`;
+  return `${ref.status === "unresolved" ? "UNRESOLVED" : "UNREADABLE"} ${where}${locations}${reason}`;
+}
+
+/** One preset's usage as a summary clause: the known references, then the unresolved and unreadable. */
+function usageSummary({ preset, report, error }: PresetUsage): string {
+  if (report === undefined) return `; usage unknown (${preset}): ${error ?? "no report"}`;
+  if (report.references.length === 0) return `; no known usage (${preset})`;
+  const known = report.references.filter((r) => r.status === "resolved");
+  const rest = report.references.filter((r) => r.status !== "resolved");
+  const head =
+    known.length > 0 ? `; known usage (${preset}): ${known.map(referenceText).join(", ")}` : "";
+  return `${head}${rest.map((r) => `; ${referenceText(r)}`).join("")}`;
 }
 
 export const pickCommand = defineCommand<PickArgs>({
@@ -229,7 +272,10 @@ approves it. A human runs pick; agents never do.`,
   effect: { readOnly: false, spends: "never", writes: "target" },
   confirm: "pick",
   async run(args, ctx) {
-    const request = await pickRequest(args);
+    const request = await pickRequest(args, {
+      ...(ctx.extensions && { registry: ctx.extensions }),
+      stateDir: ctx.settings.stateDir,
+    });
     const duplicates = request.details["duplicates"] as
       (ExactMatch & { candidate: string })[] | undefined;
     if (duplicates !== undefined && args.duplicate === undefined)
