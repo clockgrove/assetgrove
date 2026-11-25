@@ -1,12 +1,13 @@
 {
   "name": "@clockgrove/assetgrove-godot",
   "version": "0.2.0",
-  "description": "Godot hand-off for Assetgrove: SpriteFrames and TileSets built, saved and reloaded by a pinned headless Godot.",
+  "description": "Godot hand-off for Assetgrove: SpriteFrames and TileSets built, saved and reloaded, and glTF characters imported and checked, by a pinned headless Godot.",
   "keywords": [
     "assetgrove",
     "godot",
     "spriteframes",
     "tileset",
+    "gltf",
     "gamedev"
   ],
   "license": "MIT",
@@ -56,6 +57,7 @@
   "devDependencies": {
     "@clockgrove/assetgrove": "link:../..",
     "@eslint/js": "10.0.1",
+    "@gltf-transform/core": "4.5.1",
     "@types/node": "24.19.2",
     "eslint": "10.14.0",
     "prettier": "3.9.10",

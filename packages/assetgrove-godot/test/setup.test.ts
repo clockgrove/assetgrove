@@ -121,7 +121,7 @@ test("assetgrove extensions setup godot runs the built pack's setup through core
     const godot = (listed.json?.["extensions"] as Array<Record<string, unknown>>).find(
       (e) => e["name"] === "godot",
     );
-    assert.deepEqual(godot?.["presets"], ["godot:sprite-frames", "godot:tile-set"]);
+    assert.deepEqual(godot?.["presets"], ["godot:sprite-frames", "godot:tile-set", "godot:gltf"]);
     assert.deepEqual(godot?.["tools"], ["godot:engine"]);
     assert.equal(godot?.["setup"], true);
     const result = await project.cli(["extensions", "setup", "godot", "--json"]);

@@ -1,4 +1,5 @@
 export * from "./godot-text.ts";
+export * from "./gltf.ts";
 export * from "./output.ts";
 export * from "./run.ts";
 export * from "./scratch.ts";
