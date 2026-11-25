@@ -60,7 +60,9 @@ after(async () => {
   await rm(stage, { recursive: true, force: true });
 });
 
-const git = (...args: string[]) => execFileSync("git", args, { cwd: project.dir, stdio: "ignore" });
+/** Runs git in the project; a failure's error carries git's own message. */
+const git = (...args: string[]) =>
+  execFileSync("git", args, { cwd: project.dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 const text = (path: string) => readFileSync(join(project.dir, path), "utf8");
 
 /** Runs a core command; a tool run it needs approved is added to the settings, as a person would. */
@@ -273,7 +275,10 @@ test("a pixel-art profile's strip warns when the project's default texture filte
   } finally {
     writeFileSync(recordPath, record);
     writeFileSync(godotFile, linear);
-    git("commit", "--quiet", "-am", "linear filtering again");
+    // Only after the Nearest commit is there a change to commit back; a failure before it must
+    // fail the test with its own error, not with git's "nothing to commit".
+    if (git("status", "--porcelain", "--", "project.godot") !== "")
+      git("commit", "--quiet", "-am", "linear filtering again");
   }
 });
 
