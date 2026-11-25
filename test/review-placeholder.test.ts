@@ -4,8 +4,9 @@
  */
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { reviewCommand } from "../src/commands/review.ts";
@@ -17,10 +18,12 @@ import { fixtureLibrary } from "./fixtures/library.ts";
 const libs: string[] = [];
 after(() => Promise.all(libs.map((d) => rm(d, { recursive: true, force: true }))));
 
-async function review(root: string, ...argv: string[]) {
-  const { args } = parseCommandLine(reviewCommand, [join(root, "lantern.md"), ...argv]);
+async function reviewAt(address: string, ...argv: string[]) {
+  const { args } = parseCommandLine(reviewCommand, [address, ...argv]);
   return runCommand(reviewCommand, args, { settings: loadSettings(), log: () => {} });
 }
+
+const review = (root: string, ...argv: string[]) => reviewAt(join(root, "lantern.md"), ...argv);
 
 const read = (root: string) => readFileSync(join(root, "lantern.review.json"), "utf8");
 
@@ -64,16 +67,41 @@ test("--placeholder with --reject, --reply, --resolve, --candidate or an anchor 
   const lib = fixtureLibrary();
   libs.push(lib.dir);
   const before = read(lib.root);
-  const cases = [
-    ["--reject", "bad"],
-    ["--reply", "#1", "--comment", "x"],
-    ["--resolve", "#1"],
-    ["--candidate", "c1"],
-    ["--frames", "0-1"],
+  const versionCases: [string[], RegExp][] = [
+    [["--reject", "bad"], /--placeholder marks a version; it does not go with/],
+    [["--reply", "#1", "--comment", "x"], /--placeholder marks a version; it does not go with/],
+    [["--resolve", "#1"], /--placeholder marks a version; it does not go with/],
+    [["--frames", "0-1"], /--placeholder marks the whole version; it takes no --frames/],
   ];
-  for (const extra of cases) {
+  for (const [extra, message] of versionCases) {
     const done = await review(lib.root, "--placeholder", ...extra);
     assert.equal(done.exitCode, 2, extra.join(" "));
+    assert.match(done.error?.message ?? "", message, extra.join(" "));
     assert.equal(read(lib.root), before, extra.join(" "));
   }
+
+  // A real run directory with a QA-passing candidate c1: without --placeholder the same
+  // address and candidate are reviewed, so the refusal below is --placeholder's own.
+  const runDir = mkdtempSync(join(tmpdir(), "placeholder-run-"));
+  libs.push(runDir);
+  mkdirSync(join(runDir, "candidates"));
+  writeFileSync(join(runDir, "candidates", "c1.png"), "c1");
+  writeFileSync(
+    join(runDir, "run.json"),
+    JSON.stringify({
+      runId: "r1",
+      candidates: [{ id: "c1", file: "candidates/c1.png", sha256: "a".repeat(64) }],
+    }),
+  );
+  const recordPath = join(runDir, "reviews", "c1.review.json");
+  const refused = await reviewAt(runDir, "--candidate", "c1", "--placeholder");
+  assert.equal(refused.exitCode, 2);
+  assert.match(
+    refused.error?.message ?? "",
+    /--placeholder marks a version; it does not go with --candidate/,
+  );
+  assert.equal(existsSync(recordPath), false, "nothing is written for the candidate");
+  const commented = await reviewAt(runDir, "--candidate", "c1", "--comment", "x");
+  assert.equal(commented.exitCode, 0, commented.error?.message);
+  assert.equal(existsSync(recordPath), true);
 });
