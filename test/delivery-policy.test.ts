@@ -391,7 +391,7 @@ test("the profile's release policy is checked when the profile is read", () => {
       release: {
         requireApproval: true,
         timeZone: "Europe/Berlin",
-        licenseWindows: [{ license: "X", until: "2027-01-31" }],
+        licenseWindows: [{ license: "LicenseRef-X", until: "2027-01-31" }],
       },
     },
     "p.json",
@@ -400,21 +400,54 @@ test("the profile's release policy is checked when the profile is read", () => {
   for (const release of [
     {
       timeZone: "UTC",
-      licenseWindows: [{ license: "X", from: "2027-02-01", until: "2027-01-31" }],
+      licenseWindows: [{ license: "LicenseRef-X", from: "2027-02-01", until: "2027-01-31" }],
     },
-    { timeZone: "UTC", licenseWindows: [{ license: "X", until: "2027-02-30" }] },
-    { timeZone: "UTC", licenseWindows: [{ license: "X", until: "31/01/2027" }] },
-    { timeZone: "Mars/Olympus_Mons", licenseWindows: [{ license: "X" }] },
+    { timeZone: "UTC", licenseWindows: [{ license: "LicenseRef-X", until: "2027-02-30" }] },
+    { timeZone: "UTC", licenseWindows: [{ license: "LicenseRef-X", until: "31/01/2027" }] },
+    { timeZone: "Mars/Olympus_Mons", licenseWindows: [{ license: "LicenseRef-X" }] },
+    // The window's licence is parsed as the card's is: a typo or an expression is refused.
+    { timeZone: "UTC", licenseWindows: [{ license: "mit" }] },
+    { timeZone: "UTC", licenseWindows: [{ license: "Vendor EULA" }] },
+    { timeZone: "UTC", licenseWindows: [{ license: "MIT OR Apache-2.0" }] },
+    { timeZone: "UTC", licenseWindows: [{ license: "" }] },
     { requireApproval: "yes" },
     { gate: true },
   ]) {
     assert.throws(() => validateProfile({ ...syntheticProfile(), release }, "p.json"));
   }
+  for (const [license, message] of [
+    ["mit", /release\.licenseWindows\.0\.license: is not an SPDX licence id/],
+    ["MIT OR Apache-2.0", /release\.licenseWindows\.0\.license: must name one SPDX licence id/],
+  ] as const) {
+    assert.throws(
+      () =>
+        validateProfile(
+          { ...syntheticProfile(), release: { timeZone: "UTC", licenseWindows: [{ license }] } },
+          "p.json",
+        ),
+      message,
+    );
+  }
+  // A window's licence is kept in its parsed form, so it matches the card's parsed leaf.
+  const parsed = validateProfile(
+    {
+      ...syntheticProfile(),
+      release: {
+        timeZone: "UTC",
+        licenseWindows: [{ license: "(GPL-2.0-only WITH Classpath-exception-2.0)" }],
+      },
+    },
+    "p.json",
+  );
+  assert.equal(
+    parsed.release?.licenseWindows?.[0]?.license,
+    "GPL-2.0-only WITH Classpath-exception-2.0",
+  );
   // A licence window needs the zone its date is read in; the refusal names the field.
   assert.throws(
     () =>
       validateProfile(
-        { ...syntheticProfile(), release: { licenseWindows: [{ license: "X" }] } },
+        { ...syntheticProfile(), release: { licenseWindows: [{ license: "LicenseRef-X" }] } },
         "p.json",
       ),
     /release\.timeZone: is required when licenseWindows is set/,

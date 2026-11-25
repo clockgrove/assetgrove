@@ -23,8 +23,38 @@ const isoDate = z
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
   }, "is not a calendar date");
 
+/** One SPDX licence, as an SPDX expression's leaf is written: `id`, `id+` or `id WITH exception`. */
+const leafText = (node: LicenseNode) =>
+  `${node.license}${node.plus === true ? "+" : ""}${node.exception === undefined ? "" : ` WITH ${node.exception}`}`;
+
+/**
+ * A window's licence, parsed with the card's parser so the window side fails closed too: text that
+ * is not one SPDX licence id (or `id WITH exception`) is refused when the profile is read, rather
+ * than matching no card and letting every asset under that licence pass. Kept in its parsed form.
+ */
+const windowLicense = z.string().transform((value, ctx) => {
+  let node: Expression;
+  try {
+    node = parseLicense(value);
+  } catch (error) {
+    const reason =
+      error instanceof TypeError ? "the expression ends early" : (error as Error).message;
+    ctx.addIssue({ code: "custom", message: `is not an SPDX licence id: ${reason}` });
+    return z.NEVER;
+  }
+  if (!("license" in node)) {
+    ctx.addIssue({
+      code: "custom",
+      message:
+        "must name one SPDX licence id (or `id WITH exception`), not an AND or OR expression",
+    });
+    return z.NEVER;
+  }
+  return leafText(node);
+});
+
 const licenseWindowSchema = z
-  .strictObject({ license: z.string().min(1), from: isoDate.optional(), until: isoDate.optional() })
+  .strictObject({ license: windowLicense, from: isoDate.optional(), until: isoDate.optional() })
   .refine((w) => w.from === undefined || w.until === undefined || w.from <= w.until, {
     message: "from must be on or before until",
   });
@@ -197,9 +227,6 @@ type Finding = (
   message: string,
   evidence: ReleaseEvidence,
 ) => ReleaseFinding;
-
-const leafText = (node: LicenseNode) =>
-  `${node.license}${node.plus === true ? "+" : ""}${node.exception === undefined ? "" : ` WITH ${node.exception}`}`;
 
 /** An expression written back as SPDX text, with parentheses around nested conjunctions. */
 function expressionText(node: Expression, nested = false): string {

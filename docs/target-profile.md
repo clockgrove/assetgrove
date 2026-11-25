@@ -228,7 +228,9 @@ placeholder version, which is always refused ([transform.md](transform.md#the-re
 ```
 
 `requireApproval` refuses a selected version whose status is not `approved`. Each
-`licenseWindows` entry names a licence id and an optional `from` and `until` date (`YYYY-MM-DD`,
+`licenseWindows` entry names one SPDX licence id (or `id WITH exception`, parsed as the card's
+licence is, so a typo such as `mit` or an `AND`/`OR` expression is refused when the profile is read)
+and an optional `from` and `until` date (`YYYY-MM-DD`,
 both inclusive, `from` on or before `until`). `timeZone`, an IANA zone name, is required when
 `licenseWindows` is set: the delivery date is the calendar date in that zone at delivery time, so
 choose the licence's zone, not the machine's. The asset card's `license` is read as an SPDX
