@@ -30,6 +30,8 @@ export interface RenditionOptions extends Pick<RunOptions, "style" | "frame" | "
   out: string;
   preview?: boolean;
   digitalSourceType?: DigitalSourceType;
+  /** Output file stem (default `rendition`); names only, not part of the digest. */
+  name?: string;
 }
 
 async function read(path: string): Promise<Uint8Array> {
@@ -153,7 +155,7 @@ export async function buildRendition(options: RenditionOptions) {
     ...options,
     recipe,
     inputs: [source],
-    inputName: "rendition",
+    inputName: options.name ?? "rendition",
     out: join(resolve(options.out), "planned"),
     digitalSourceType: disclosure,
     dryRun: true,
@@ -228,8 +230,8 @@ export async function buildRendition(options: RenditionOptions) {
       build,
     },
   };
+  const files = plan.plannedFiles.map((file, i) => ({ ...file, path: outputs[i]!.path }));
   if (!options.preview) {
-    const files = plan.plannedFiles.map((file, i) => ({ ...file, path: outputs[i]!.path }));
     const protectedPaths = [source, recipePath, ...(provenanceBytes ? [sidecar] : [])];
     const protectedStats = await Promise.all(protectedPaths.map((p) => stat(p)));
     // Check all existing targets before writing anything, including links to an input.
@@ -267,5 +269,5 @@ export async function buildRendition(options: RenditionOptions) {
     }
     await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
   }
-  return { record, provenancePath, digest, preview: options.preview ?? false };
+  return { record, provenancePath, digest, preview: options.preview ?? false, files };
 }
