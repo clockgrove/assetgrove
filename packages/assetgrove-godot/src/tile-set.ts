@@ -146,7 +146,9 @@ async function write(
   const uid = before === undefined ? undefined : resourceHeader(before)?.uid;
   if (before !== undefined) {
     files[resourceAt] = before;
-    imports.push(...(await dependencies(project, before, read, files, new Set([at, resourceAt]))));
+    imports.push(
+      ...(await dependencies(project, resourceAt, before, read, files, new Set([at, resourceAt]))),
+    );
   }
   const input: TileSetInput = {
     build: "tile-set",

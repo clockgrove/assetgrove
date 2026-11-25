@@ -139,3 +139,46 @@ test("a conflict the build reports fails the hand-off before anything is written
     return true;
   });
 });
+
+test("an existing SpriteFrames that carries or references a script is refused before Godot runs", async () => {
+  const header = `[gd_resource type="SpriteFrames" format=3 uid="uid://frames"]`;
+  const cases: Array<[Record<string, string>, RegExp]> = [
+    [
+      {
+        "game/characters/fern.tres": `${header}\n[ext_resource type="Script" path="res://tools/hook.gd" id="1"]\n`,
+      },
+      /characters\/fern\.tres carries a script/,
+    ],
+    [
+      {
+        "game/characters/fern.tres": `${header}\n[ext_resource type="Texture2D" path="res://art/baked.res" id="1"]\n`,
+      },
+      /characters\/fern\.tres references art\/baked\.res/,
+    ],
+    [
+      {
+        "game/characters/fern.tres": `${header}\n[sub_resource type="GDScript" id="1"]\nscript/source = "@tool"\n`,
+      },
+      /characters\/fern\.tres carries a script/,
+    ],
+    [
+      {
+        "game/characters/fern.tres": `${header}\n[ext_resource type="SpriteFrames" path="res://art/more.tres" id="1"]\n`,
+        "game/art/more.tres": `[gd_resource type="SpriteFrames" format=3]\n\n[resource]\nscript = ExtResource("1")\n`,
+      },
+      /art\/more\.tres carries a script/,
+    ],
+  ];
+  for (const [target, message] of cases) {
+    const seen: ToolRunOptions[] = [];
+    await assert.rejects(
+      write(context(scripted(seen, { ok: true, errors: [] })), options, targetReader(target)),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "invalid_input");
+        assert.match((error as Error).message, message);
+        return true;
+      },
+    );
+    assert.equal(seen.length, 0);
+  }
+});

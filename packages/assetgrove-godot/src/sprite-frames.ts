@@ -101,7 +101,7 @@ async function write(
       seen.add(at);
       seen.add(`${at}.import`);
     }
-    imports.push(...(await dependencies(project, before, read, files, seen)));
+    imports.push(...(await dependencies(project, resourceAt, before, read, files, seen)));
   }
   const input: BuildInput = {
     godot: GODOT_RELEASE.release,

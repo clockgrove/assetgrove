@@ -151,7 +151,11 @@ func _build_frames(input: Dictionary) -> Dictionary:
 	if not conflicts.is_empty():
 		_errors.append_array(conflicts)
 		return {"conflicts": Array(conflicts)}
+	# Families not in this hand-off keep what the preset last wrote for them.
 	var written := {}
+	var kept = record.get("animations", {})
+	if kept is Dictionary:
+		written = (kept as Dictionary).duplicate(true)
 	var families := []
 	var textures := {}
 	for animation in input["animations"]:
@@ -185,6 +189,8 @@ func _build_frames(input: Dictionary) -> Dictionary:
 		written[String(name)] = {
 			"texture": texture_path,
 			"frames": count,
+			"width": frame_width,
+			"height": frame_height,
 			"speed": float(animation["speed"]),
 			"loop": bool(animation["loop"]),
 		}
@@ -217,8 +223,8 @@ func _record(frames: SpriteFrames) -> Dictionary:
 
 ## What differs between the input's family animations that `frames` already has and what the
 ## preset last wrote: its record's entry, or for a resource from before the record, the preset's
-## own shape (the input's texture, the animation's current frame count, the input's speed and
-## loop). One sentence each.
+## own shape (the input's texture, the animation's current frame count, the input's frame size,
+## speed and loop). One sentence each, its numbers written by `_number`.
 func _conflicts(
 	path: String,
 	frames: SpriteFrames,
@@ -240,13 +246,16 @@ func _conflicts(
 			wrote = {}
 		var texture_path := String(wrote.get("texture", animation["texture"]))
 		var count := int(wrote.get("frames", frames.get_frame_count(name)))
+		var width := int(wrote.get("width", frame_width))
+		var height := int(wrote.get("height", frame_height))
 		var speed := float(wrote.get("speed", animation["speed"]))
 		var loops := bool(wrote.get("loop", animation["loop"]))
 		var where := path.trim_prefix("res://")
 		var now_speed := frames.get_animation_speed(name)
 		if not is_equal_approx(now_speed, speed):
 			conflicts.append(
-				'animation "%s": speed is %s in %s, the preset wrote %s' % [name, now_speed, where, speed]
+				'animation "%s": speed is %s in %s, the preset wrote %s'
+				% [name, _number(now_speed), where, _number(speed)]
 			)
 		if frames.get_animation_loop(name) != loops:
 			conflicts.append(
@@ -260,7 +269,7 @@ func _conflicts(
 			)
 			continue
 		for i in count:
-			var problem := _frame_problem(frames, name, i, texture_path, frame_width, frame_height)
+			var problem := _frame_problem(frames, name, i, texture_path, width, height)
 			if problem != "":
 				conflicts.append('animation "%s": frame %d %s in %s' % [name, i, problem, where])
 				break
@@ -283,10 +292,26 @@ func _frame_problem(
 		return "is not a region of %s" % texture_path
 	var region := Rect2(index * frame_width, 0, frame_width, frame_height)
 	if frame.region != region:
-		return "is the region %s, the preset wrote %s" % [frame.region, region]
+		return "is the region %s, the preset wrote %s" % [_rect(frame.region), _rect(region)]
 	if not is_equal_approx(frames.get_frame_duration(name, index), 1.0):
-		return "has duration %s, the preset wrote 1" % frames.get_frame_duration(name, index)
+		return "has duration %s, the preset wrote 1" % _number(frames.get_frame_duration(name, index))
 	return ""
+
+
+## `value` as a conflict sentence writes it, the same in every Godot version: a whole number
+## without a decimal (`3`), any other with up to three decimals and no trailing zeros (`2.5`).
+func _number(value: float) -> String:
+	if is_equal_approx(value, roundf(value)):
+		return "%d" % int(roundf(value))
+	return String.num(value, 3)
+
+
+## `rect` as a conflict sentence writes it: `x,y wxh` in `_number`s.
+func _rect(rect: Rect2) -> String:
+	return (
+		"%s,%s %sx%s"
+		% [_number(rect.position.x), _number(rect.position.y), _number(rect.size.x), _number(rect.size.y)]
+	)
 
 
 ## Reloads the saved resource from disk and checks it holds what was built: every animation with

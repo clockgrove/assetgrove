@@ -182,6 +182,20 @@ test("a first hand-off writes idle and walk", async (t) => {
   assert.equal(done.code, 0, done.stderr + done.stdout);
   firstUid = headerUid("characters/fern.tres");
   assert.ok(firstUid);
+  // The record keeps the frame size it wrote, so a later profile with another size is no conflict.
+  const script = join(stage, "read-record.gd");
+  writeFileSync(
+    script,
+    `extends SceneTree
+func _init():
+\tvar wrote = load("res://characters/fern.tres").get_meta(&"assetgrove_godot")["animations"]
+\tfor name in ["idle", "walk"]:
+\t\tprint("RECORD ", name, " ", int(wrote[name]["frames"]), " ", int(wrote[name]["width"]), "x", int(wrote[name]["height"]))
+\tquit()
+`,
+  );
+  const records = [...run(script).matchAll(/^RECORD .+$/gm)].map((m) => m[0]);
+  assert.deepEqual(records, ["RECORD idle 4 32x40", "RECORD walk 3 32x40"]);
 });
 
 test("the developer adds an animation, a scene and an import option in Godot", (t) => {
@@ -258,10 +272,9 @@ test("a hand-off that would overwrite the developer's retimed idle reports the c
   assert.equal(failed.code, 6, failed.stderr + failed.stdout);
   const error = failed.json?.["error"] as { code?: string; problems?: Array<{ problem: string }> };
   assert.equal(error.code, "handoff_check_failed");
-  const problems = (error.problems ?? []).map((p) => p.problem);
-  assert.ok(
-    problems.some((p) => /^conflict:/.test(p) && /idle/.test(p) && /speed/.test(p)),
-    problems.join("\n"),
+  assert.deepEqual(
+    (error.problems ?? []).map((p) => p.problem),
+    ['conflict: animation "idle": speed is 3 in characters/fern.tres, the preset wrote 10'],
   );
   assert.deepEqual(snapshot("assets", "characters", "scenes"), before);
 });
