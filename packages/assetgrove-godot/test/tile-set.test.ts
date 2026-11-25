@@ -309,6 +309,10 @@ test("a re-hand-off keeps a developer-added physics layer, custom-data layer, se
   if (!usable) return t.skip(SKIP!);
   mkdirSync(join(project.dir, "tiles"), { recursive: true });
   writeFileSync(join(project.dir, "tiles", "rock.png"), flatPng(TILE, [0x80, 0x80, 0x80, 255]));
+  const uid = headerUid(TRES);
+  assert.ok(uid);
+  // Godot's editor keeps a resource's UID when it saves; a headless ResourceSaver.save over an
+  // existing file does not, so the edit puts it back as the editor would.
   godotScript(
     "edit.gd",
     `extends SceneTree
@@ -330,14 +334,15 @@ func _initialize():
 \tvar saved = ResourceSaver.save(ts, "res://${TRES}")
 \tif saved != OK:
 \t\tpush_error("could not save")
+\telif ResourceSaver.set_uid("res://${TRES}", ResourceUID.text_to_id("${uid}")) != OK:
+\t\tpush_error("could not keep the UID")
 \tquit()
 `,
   );
   const edited = describe();
   assert.equal(edited["SOURCES"], "2");
+  assert.equal(headerUid(TRES), uid);
 
-  const uid = headerUid(TRES);
-  assert.ok(uid);
   const done = await handOff(cornerAtlas(TILE, LOWER, UPPER));
   assert.equal(done.code, 0, done.stderr + done.stdout);
   const seen = describe();
