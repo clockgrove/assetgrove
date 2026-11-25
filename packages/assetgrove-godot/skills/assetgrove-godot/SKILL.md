@@ -76,3 +76,7 @@ A `pick` that replaces an asset's version lists, in its confirmation (`details.u
 - The resource, and the `.import` of each strip or atlas the project had none for, written by core with the media. An existing `.import` is never touched; a replaced resource keeps its UID.
 - Any `ERROR` line from Godot (`ERROR:`, `SCRIPT ERROR:`, `SHADER ERROR:` or any other type), a Godot that is not 4.7.2-stable, a resource that does not load back, or a missing result fails the hand-off with exit 6 `handoff_check_failed`, whatever Godot's exit code, and nothing is written. Read the problems: they quote Godot's lines.
 - An option that puts the resource, a strip or the atlas outside the Godot project exits 2 `invalid_input`.
+
+## Check the project
+
+Run `assetgrove doctor --profile profile.json --target .` before a hand-off or when Godot reports a missing UID, a tracked `.godot/` cache or text it cannot parse. It is read-only and needs no Godot. Each finding of the three presets has an exact path (and line), the problem and a correction for the developer to make: `orphan-uid` and `duplicate-uid` (sidecars, `.import` files and `[ext_resource]` UIDs), `tracked-engine-cache`, and `lfs-text-resource` (a `.import`, `.uid`, `.tres`, `.tscn`, `.gd`, `.gdshader` or `project.godot` stored in Git LFS). Never apply a correction yourself without the developer; the doctor never edits `project.godot` or `.gitattributes`.

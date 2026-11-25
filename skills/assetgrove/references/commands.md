@@ -495,6 +495,16 @@ Proposes a change that only a person's confirmation writes: the caps (`caps.runU
 
 MCP tool: `settings_change` (marked as requiring the person), arguments `runUsd`, `dailyUsd`, `workItemUsd`, `provider`, `limitKind`, `limitUsd`, `limitPeriod`, `acceptUnlimited`, `acknowledgeHolds`, `acknowledgeBlobs`.
 
+### `doctor`
+
+```text
+doctor --profile <profile.json> [--target <target directory>] [--json]
+```
+
+Asks each hand-off preset of the profile that has a `doctor` (the Godot pack's presets do) to check the target, and lists every finding under `findings`: `{code, path, line?, problem, correction, presets}`, the exact path relative to the target and a safe correction for the developer to make; a preset whose doctor fails is listed under `errors` and does not stop the others. `--target` defaults to the current directory. Read-only: it writes nothing in the target, its settings or `.git`, and exits 0 with or without findings. Local: no model call, no spend.
+
+MCP tool: `doctor`, arguments `profile`, `target`.
+
 ### `extensions`
 
 ```text

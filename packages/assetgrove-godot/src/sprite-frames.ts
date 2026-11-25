@@ -25,6 +25,7 @@ import {
   savedFile,
 } from "./run.ts";
 import { GODOT_RELEASE } from "./setup.ts";
+import { godotDoctor } from "./doctor.ts";
 import { godotUsage } from "./usage.ts";
 import {
   INPUT_PATH,
@@ -146,5 +147,7 @@ export function spriteFramesPreset(context: ExtensionContext): EnginePreset<Spri
       textureFilterWarning(ctx.profile, relativePath(options.project, "options.project"), read),
     usage: (ctx, options, read) =>
       godotUsage(ctx, relativePath(options.project, "options.project"), read),
+    doctor: (ctx, options, read) =>
+      godotDoctor(ctx, relativePath(options.project, "options.project"), read),
   };
 }

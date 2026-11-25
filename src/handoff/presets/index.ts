@@ -107,6 +107,44 @@ interface PresetShape<Options, Context> {
    * target. Optional: a preset without it reports no usage.
    */
   usage?(ctx: UsageContext, options: Options, read: TargetRead): Promise<UsageReport>;
+  /**
+   * Read-only: the hygiene problems of the target this preset hands off to, each with the path it
+   * is at and a safe correction, for `assetgrove doctor`. `read` reads the target as it is; the
+   * doctor never writes the target, its settings or its Git state. Optional: a preset without it
+   * reports no findings.
+   */
+  doctor?(ctx: DoctorContext, options: Options, read: TargetRead): Promise<DoctorFinding[]>;
+}
+
+/** What a preset's `doctor` reads. */
+export interface DoctorContext {
+  profile: TargetProfile;
+  /** As `UsageContext.list`. */
+  list(dir: string): Promise<TargetEntry[]>;
+  /**
+   * The files Git tracks under `dir` (relative to the target, `""` for all), relative to the
+   * target with `/`, sorted; empty outside Git or for a folder outside the target, in `.git` or in
+   * the settings or state directories.
+   */
+  tracked(dir: string): Promise<string[]>;
+  /**
+   * The given target-relative paths Git routes to LFS (its `filter` attribute is `lfs`), whether
+   * or not the files exist; empty outside Git. A path outside the target is dropped.
+   */
+  lfs(paths: readonly string[]): Promise<string[]>;
+}
+
+/** One problem a preset's `doctor` found. */
+export interface DoctorFinding {
+  /** A short kebab-case id, such as `orphan-uid`. */
+  code: string;
+  /** The file at fault, relative to the target, with `/`. */
+  path: string;
+  /** The 1-based line, when the problem is at one. */
+  line?: number;
+  problem: string;
+  /** A safe correction the developer can make. */
+  correction: string;
 }
 
 /** One file of the target, as `UsageContext.list` gives it: its path and its stat, never its bytes. */

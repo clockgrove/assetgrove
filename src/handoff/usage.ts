@@ -101,7 +101,7 @@ async function headCommit(dir: string): Promise<string> {
  * A read of the target that refuses `.git`, a path outside it, a path through a link out of it and
  * a path in the settings or state directories, as a hand-off write's read does.
  */
-function usageRead(root: string, realTarget: string, guarded: string[]): TargetRead {
+export function usageRead(root: string, realTarget: string, guarded: string[]): TargetRead {
   return async (rel) => {
     const full = resolve(root, rel);
     const within = relative(root, full);
@@ -122,7 +122,7 @@ function usageRead(root: string, realTarget: string, guarded: string[]): TargetR
   };
 }
 
-async function listTarget(
+export async function listTarget(
   root: string,
   realTarget: string,
   dir: string,
