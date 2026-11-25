@@ -1,0 +1,26 @@
+{
+  "name": "demo-garden",
+  "license": "MIT",
+  "acceptedLicenses": ["CC-BY-4.0"],
+  "style": {
+    "alpha": { "mode": "binary" },
+    "color": { "rule": "palette" },
+    "edges": "crisp"
+  },
+  "frames": { "width": 32, "height": 32, "durationMs": 125 },
+  "layout": {
+    "media": "game/assets/{{spec.assetId}}/{{spec.animationFamily}}.{{output.extension}}",
+    "manifest": "assets/manifests/{{spec.assetId}}/{{spec.animationFamily}}.json"
+  },
+  "handoff": [
+    { "preset": "manifest" },
+    {
+      "preset": "godot:sprite-frames",
+      "options": {
+        "project": "game",
+        "resource": "game/characters/{assetId}.tres",
+        "import": { "compress/mode": 0, "mipmaps/generate": false }
+      }
+    }
+  ]
+}

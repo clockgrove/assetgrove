@@ -2,6 +2,8 @@
 
 The Godot pack for Assetgrove: Godot builds or imports the hand-off's resources itself, a SpriteFrames of a character's animations, a TileSet of a terrain tile set, or the import of a 3D character's `.glb`. Copying files into a Godot project is not enough, because Godot's exit codes do not report import errors and a hand-written `.tres` with a wrong UID breaks silently in the editor. So this pack never writes a Godot resource by hand: a pinned, headless Godot 4.7.2 builds each one through its own API, saves it with `ResourceSaver` and loads it back with `ResourceLoader`.
 
+The [launch guide](../../docs/launch-guide.md) walks the whole workflow on a synthetic game: generated, hand-drawn and third-party art into a Godot project, with review, provenance, licence records, where data goes and what disclosure cannot promise. The pack is an independent project, not affiliated with or endorsed by the Godot Engine project or the Godot Foundation.
+
 ## Extension API
 
 The package declares `"assetgrove": { "api": 2 }` and a peer range on `@clockgrove/assetgrove`. It imports only core's public exports: its types from `@clockgrove/assetgrove/extension` and, in its tests, the pack test kit `@clockgrove/assetgrove/testing` (a temporary project, core's CLI and the conformance suite in `test/conformance.test.ts`). The tests run with `node --conditions=assetgrove-source`, which resolves the linked core to its TypeScript source.

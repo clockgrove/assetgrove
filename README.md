@@ -222,7 +222,7 @@ Exit 1 is an unexpected internal error; please [report it](https://github.com/cl
 - **Changes and variations.** `request-change` edits marked regions of a picked asset, `vary` makes variations of a candidate, `compare` measures a candidate against the version before, and `audit` scores a set for style and identity.
 - **Local image operations.** `op` and `recipe` matte, trim, scale, slice and convert any image, generated or not, with a provenance record and no model call ([docs/transform.md](docs/transform.md)).
 - **Search.** The optional [`@clockgrove/assetgrove-search`](packages/assetgrove-search/README.md) package finds picked assets and lists near matches before a paid run.
-- **Godot.** The optional [`@clockgrove/assetgrove-godot`](packages/assetgrove-godot/README.md) pack hands strips off to a Godot project as one SpriteFrames per character, every animation family in it, built, saved and reloaded by a pinned headless Godot 4.7.2 so its UIDs match the project's imports.
+- **Godot.** The optional [`@clockgrove/assetgrove-godot`](packages/assetgrove-godot/README.md) pack hands strips off to a Godot project as one SpriteFrames per character, every animation family in it, built, saved and reloaded by a pinned headless Godot 4.7.2 so its UIDs match the project's imports. The [launch guide](docs/launch-guide.md) walks a whole Godot workflow, from generated, hand-drawn and third-party art to review, provenance and disclosure.
 
 `assetgrove --help` lists every command and `assetgrove <command> --help` its options. The [command reference](skills/assetgrove/references/commands.md) says what each one spends and writes.
 
@@ -238,6 +238,7 @@ Exit 1 is an unexpected internal error; please [report it](https://github.com/cl
 
 | To                                                          | Read                                                                                                                           |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Follow one workflow from mixed-origin art into Godot        | [docs/launch-guide.md](docs/launch-guide.md)                                                                                   |
 | Set up through Claude Code or another harness               | [docs/quick-start.md](docs/quick-start.md), [docs/keys.md](docs/keys.md)                                                       |
 | Write a spec, a style bible or a target profile             | [docs/target-profile.md](docs/target-profile.md), [docs/generation-knobs.md](docs/generation-knobs.md)                         |
 | Configure providers, routes, caps and limits                | [docs/settings.md](docs/settings.md), [docs/models.md](docs/models.md)                                                         |

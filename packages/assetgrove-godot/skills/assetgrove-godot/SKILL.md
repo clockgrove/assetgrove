@@ -7,6 +7,8 @@ description: Load when an Assetgrove target is a Godot project and its hand-off 
 
 `@clockgrove/assetgrove-godot` is a pack: it loads only once a person lists it under `extensions` in the developer settings. It gives the target profile the hand-off presets `godot:sprite-frames`, `godot:tile-set` and `godot:gltf`, and runs a pinned Godot 4.7.2 headless to build what it writes. Nothing Godot reads is written by hand.
 
+For the whole workflow on a synthetic game (generated, hand-drawn and third-party art, review, provenance, licence records, data routes and disclosure limits), point the person to the launch guide: https://github.com/clockgrove/assetgrove/blob/main/docs/launch-guide.md
+
 ## Set it up
 
 - `assetgrove extensions setup godot` uses the Godot at `extensionSettings["@clockgrove/assetgrove-godot"].godot` when it is set, without running it, so it reports no `version`; every hand-off fails unless that Godot is 4.7.2-stable. Otherwise it downloads Godot 4.7.2 for this system, checks it against the SHA512 the pack ships and returns its path under `godot`. Setup writes no settings: a person puts that path in the setting.
