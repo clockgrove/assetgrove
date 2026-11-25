@@ -102,6 +102,28 @@ export interface TileSetInput {
   tiles: TileInput[];
 }
 
+/** A scene import option's value, as the `.import` file's `[params]` section holds it. */
+export type ImportOption = string | number | boolean;
+
+/** What the build script reads to import a glTF scene and check it (`godot:gltf`). */
+export interface GltfInput {
+  build: "gltf";
+  /** The Godot release the run must be, as `BuildInput.godot`. */
+  godot: string;
+  /** The `.glb`, `res://...`. */
+  scene: string;
+  /** Whether the target had no `.import` for it: only then are `options` applied. */
+  fresh: boolean;
+  /** Godot scene import options by their `.import` key (`nodes/root_type`), for a fresh source. */
+  options: Record<string, ImportOption>;
+  /**
+   * What the asset declares; a fact left out is read from the file through Godot's
+   * `GLTFDocument`: its animation names, the unique joints over every skin, and the nodes with a
+   * mesh in its scene.
+   */
+  declared: { animations?: string[]; joints?: number; meshes?: number };
+}
+
 /** What the build script writes back. */
 export interface BuildResult {
   ok: boolean;
@@ -117,4 +139,10 @@ export interface BuildResult {
   source?: number;
   terrainSet?: number;
   tiles?: number;
+  /**
+   * For a glTF scene: what was declared and what the imported scene holds, its animation names,
+   * each `Skeleton3D`'s bone count and its meshes.
+   */
+  declared?: { animations: string[]; joints: number; meshes: number };
+  imported?: { animations: string[]; skeletons: number[]; meshes: number };
 }

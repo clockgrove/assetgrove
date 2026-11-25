@@ -1,6 +1,6 @@
 # @clockgrove/assetgrove-godot
 
-The Godot pack for Assetgrove: Godot builds the hand-off's resources itself, a SpriteFrames of a character's animations or a TileSet of a terrain tile set. Copying files into a Godot project is not enough, because Godot's exit codes do not report import errors and a hand-written `.tres` with a wrong UID breaks silently in the editor. So this pack never writes a Godot resource by hand: a pinned, headless Godot 4.7.2 builds each one through its own API, saves it with `ResourceSaver` and loads it back with `ResourceLoader`.
+The Godot pack for Assetgrove: Godot builds or imports the hand-off's resources itself, a SpriteFrames of a character's animations, a TileSet of a terrain tile set, or the import of a 3D character's `.glb`. Copying files into a Godot project is not enough, because Godot's exit codes do not report import errors and a hand-written `.tres` with a wrong UID breaks silently in the editor. So this pack never writes a Godot resource by hand: a pinned, headless Godot 4.7.2 builds each one through its own API, saves it with `ResourceSaver` and loads it back with `ResourceLoader`.
 
 ## Extension API
 
@@ -10,6 +10,7 @@ It declares, as extension `godot`:
 
 - the preset `godot:sprite-frames` (scope `families`);
 - the preset `godot:tile-set`, for a `tiles:terrain` asset of the tiles pack;
+- the preset `godot:gltf`, for a `character-3d` asset or any `.glb`;
 - the tool `godot:engine`, the Godot executable at the pack setting `godot`;
 - a setup, `assetgrove extensions setup godot`.
 
@@ -101,6 +102,37 @@ As for `godot:sprite-frames`, with the same tool run, approval and failures (exi
 
 The preset's check reads the written resource back: a TileSet with a UID, referencing the atlas by the UID its `.import` gives it.
 
+## The `godot:gltf` preset
+
+One hand-off of a `character-3d` asset's `.glb`, or of any `.glb` (`output.mediaType` `model/gltf-binary`, or a media path ending in `.glb`). Anything else is invalid input (exit 2). The preset writes no `.tscn`.
+
+```json
+{
+  "handoff": [
+    { "preset": "manifest" },
+    {
+      "preset": "godot:gltf",
+      "options": { "project": "game", "import": { "nodes/root_type": "CharacterBody3D" } }
+    }
+  ]
+}
+```
+
+| Option    | Default | What                                                                                                                                                                                                                                     |
+| --------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project` | `""`    | The Godot project's folder (where `project.godot` is), relative to the target. The `.glb` must be inside it.                                                                                                                             |
+| `import`  | `{}`    | Godot scene import options by their `.import` key, with string, number or boolean values, e.g. `{ "nodes/root_type": "CharacterBody3D", "animation/import": true }`. An integral number becomes an int. They apply to a new source only. |
+
+### What a hand-off runs
+
+As for `godot:sprite-frames`, with the same pinned Godot 4.7.2, setup, `godot:engine` tool approval and failures:
+
+1. Scratch holds the pack's project and build script, the `.glb` (core passes its bytes), its existing `.import` if the target has one, and the run's input with the `import` options as data.
+2. Godot's editor imports the `.glb` in scratch. For a new source, the build script writes the `import` options into the `.import` Godot made, through `ConfigFile`, and reimports it. An existing `.import` reaches scratch as data, so Godot imports with its options and UID, and the `import` options do not apply.
+3. **The hand-off check**: the run fails, exit 6 `handoff_check_failed` with nothing written, on a load error, on any `ERROR` line, or when the imported scene lacks what the asset declares: every animation family as an animation of the same name, and a `Skeleton3D` with the asset's joint count. It also fails when the scene has more `MeshInstance3D` meshes than the asset declares (the glTF nodes with a mesh in the scene).
+4. The asset declares its animations by `output.clips[].name` and its joints by `output.bones`, when the hand-off gives them (a `character-3d` asset does). Otherwise they are read from the file through Godot's `GLTFDocument`: its animation names, and the unique joints over every skin.
+5. Core writes the `.glb`. The preset returns only the new source's `.import` that Godot made in scratch, with the options. An existing `.import` is never returned, so it is never touched; a replaced `.glb` keeps its UID.
+
 ## Tests
 
-`pnpm test` runs the conformance suite (with a scripted tool run), setup, the output readers and what `godot:tile-set` hands Godot (`test/tile-set-input.test.ts`) anywhere. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI, and `test/tile-set.test.ts` hands corner-16 atlases off with the tiles pack, built from `packages/assetgrove-tiles` and installed beside this one: a new TileSet from a fixture atlas, a re-hand-off that keeps a developer-added physics layer, custom-data layer, second source and alternative tile, a replaced atlas keeping its UID, a deliberately wrong peering bit failing the read-back, an existing TileSet whose own terrain sets (a Match Sides set and an unrelated Match Corners set) are kept while the preset adds its own, and the paint test. The paint test has Godot paint, with `TileMapLayer.set_cells_terrain_connect`, a map holding every neighbour pair Godot's terrain painting can make (every pair whose shared corners agree and each of whose upper corners belongs to a cell that can be all upper; the test enumerates them) and compares `get_cell_atlas_coords` of every cell with the expected map, where a corner is upper exactly where a painted cell touches it. These tests need Godot: they run the first Godot 4.7.2 on `PATH` (as `godot`, or by the release's own executable name; on Windows only an `.exe`), which CI's `chickensoft-games/setup-godot` step puts there, and skip with the reason without one. The tests read no environment variable of their own: core allows a fixed list (`test/env-names.test.ts`).
+`pnpm test` runs the conformance suite (with a scripted tool run), setup, the output readers and what `godot:tile-set` hands Godot (`test/tile-set-input.test.ts`) anywhere. `test/gltf.test.ts` hands a synthetic skinned `.glb` (built with glTF Transform) off with `godot:gltf`, its `write` and `check` run with a tool runner that does what core's does: two animations imported with both and the options in the new `.import`, a declared animation the file lacks failing and named, a re-hand-off keeping the UID and the existing `.import` byte for byte, a GLB with no declared facts checked against its own, and more meshes than declared failing. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI, and `test/tile-set.test.ts` hands corner-16 atlases off with the tiles pack, built from `packages/assetgrove-tiles` and installed beside this one: a new TileSet from a fixture atlas, a re-hand-off that keeps a developer-added physics layer, custom-data layer, second source and alternative tile, a replaced atlas keeping its UID, a deliberately wrong peering bit failing the read-back, an existing TileSet whose own terrain sets (a Match Sides set and an unrelated Match Corners set) are kept while the preset adds its own, and the paint test. The paint test has Godot paint, with `TileMapLayer.set_cells_terrain_connect`, a map holding every neighbour pair Godot's terrain painting can make (every pair whose shared corners agree and each of whose upper corners belongs to a cell that can be all upper; the test enumerates them) and compares `get_cell_atlas_coords` of every cell with the expected map, where a corner is upper exactly where a painted cell touches it. These tests need Godot: they run the first Godot 4.7.2 on `PATH` (as `godot`, or by the release's own executable name; on Windows only an `.exe`), which CI's `chickensoft-games/setup-godot` step puts there, and skip with the reason without one. The tests read no environment variable of their own: core allows a fixed list (`test/env-names.test.ts`).

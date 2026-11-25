@@ -2,7 +2,9 @@
 # project the pack lays out for one hand-off. Godot's headless editor imports the media; this
 # script first checks that it runs on the Godot release the input names (the pinned 4.7.2-stable),
 # then builds the resource the input asks for through Godot's API from the input the pack wrote as
-# data: a SpriteFrames (godot:sprite-frames), or a TileSet (godot:tile-set, `"build": "tile-set"`).
+# data: a SpriteFrames (godot:sprite-frames), or a TileSet (godot:tile-set, `"build": "tile-set"`);
+# or, for a glTF scene (godot:gltf, `"build": "gltf"`), it applies a fresh source's import options,
+# reimports it and checks the imported scene against what the asset declares.
 # It saves it with ResourceSaver (keeping the target's UID when it had one), reloads it with
 # ResourceLoader and checks what came back. It writes `.assetgrove-godot/result.json` and quits:
 # 0 when everything held, 1 otherwise. Every failure is also printed as an ERROR line, which the
@@ -44,8 +46,11 @@ func _run() -> void:
 	if input != null and _errors.is_empty():
 		await _wait_for_import(input)
 		if _errors.is_empty():
-			if String(input.get("build", "")) == "tile-set":
+			var build := String(input.get("build", ""))
+			if build == "tile-set":
 				result = _build_tile_set(input)
+			elif build == "gltf":
+				result = await _import_gltf(input)
 			else:
 				result = _build_frames(input)
 	result["errors"] = _errors
@@ -83,6 +88,8 @@ func _wait_for_import(input: Dictionary) -> void:
 	var paths: Array = []
 	if input.has("imports"):
 		paths = input["imports"]
+	elif input.has("scene"):
+		paths.append(String(input["scene"]))
 	else:
 		for animation in input["animations"]:
 			paths.append(String(animation["texture"]))
@@ -381,3 +388,129 @@ func _reload_tile_set(
 		"terrainSet": terrain_set,
 		"tiles": tiles,
 	}
+
+
+## Imports a glTF scene (godot:gltf): a fresh source's import options go into its `.import` and
+## it is reimported; then the imported scene is loaded, instantiated and checked against what the
+## asset declares (every animation by name, a Skeleton3D of the joint count, no more meshes).
+func _import_gltf(input: Dictionary) -> Dictionary:
+	var path := String(input["scene"])
+	var options: Dictionary = input.get("options", {})
+	if bool(input.get("fresh", false)) and not options.is_empty():
+		var config := ConfigFile.new()
+		var loaded := config.load(path + ".import")
+		if loaded != OK:
+			_fail("cannot read %s.import: %s" % [path, error_string(loaded)])
+			return {}
+		for key in options:
+			config.set_value("params", String(key), _option_value(options[key]))
+		var saved := config.save(path + ".import")
+		if saved != OK:
+			_fail("cannot write %s.import: %s" % [path, error_string(saved)])
+			return {}
+		EditorInterface.get_resource_filesystem().reimport_files(PackedStringArray([path]))
+		await get_tree().process_frame
+		var params := ConfigFile.new()
+		params.load(path + ".import")
+		for key in options:
+			var got = params.get_value("params", String(key), null)
+			if got != _option_value(options[key]):
+				_fail(
+					(
+						"%s.import holds %s = %s after the reimport, not %s"
+						% [path, key, var_to_str(got), var_to_str(_option_value(options[key]))]
+					)
+				)
+	var declared := _declared(path, input.get("declared", {}))
+	if not _errors.is_empty():
+		return {}
+	var packed = ResourceLoader.load(path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE)
+	if not (packed is PackedScene):
+		_fail("%s did not load as a scene" % path)
+		return {}
+	var scene: Node = packed.instantiate()
+	if scene == null:
+		_fail("%s did not instantiate" % path)
+		return {}
+	var animations: Array = []
+	var skeletons: Array = []
+	var meshes := 0
+	var nodes: Array[Node] = [scene]
+	while not nodes.is_empty():
+		var node: Node = nodes.pop_back()
+		if node is AnimationPlayer:
+			for name in node.get_animation_list():
+				animations.append(String(name))
+		elif node is Skeleton3D:
+			skeletons.append(node.get_bone_count())
+		elif node is MeshInstance3D:
+			meshes += 1
+		nodes.append_array(node.get_children(true))
+	scene.free()
+	for name in declared["animations"]:
+		if not animations.has(name):
+			_fail("%s imported without the animation %s (it has %s)" % [path, name, animations])
+	if not skeletons.has(declared["joints"]):
+		_fail(
+			(
+				"%s imported without a Skeleton3D of %d joints (its skeletons have %s bones)"
+				% [path, declared["joints"], skeletons]
+			)
+		)
+	if meshes > int(declared["meshes"]):
+		_fail(
+			(
+				"%s imported with %d meshes, more than the %d it declares"
+				% [path, meshes, declared["meshes"]]
+			)
+		)
+	return {
+		"resource": path,
+		"uid": ResourceUID.id_to_text(ResourceLoader.get_resource_uid(path)),
+		"declared": declared,
+		"imported": {"animations": animations, "skeletons": skeletons, "meshes": meshes},
+	}
+
+
+## An import option's value from the input's JSON: a whole number is an int, as Godot's own.
+func _option_value(value):
+	if typeof(value) == TYPE_FLOAT and value == floor(value):
+		return int(value)
+	return value
+
+
+## What the asset declares: each fact the input gives, else the file's own, read through
+## GLTFDocument: its animation names, the unique joints over every skin, and the nodes with a
+## mesh reachable from its scene's roots.
+func _declared(path: String, given: Dictionary) -> Dictionary:
+	var declared := {}
+	var state := GLTFState.new()
+	var parsed := GLTFDocument.new().append_from_file(path, state)
+	if parsed != OK:
+		_fail("GLTFDocument could not read %s: %s" % [path, error_string(parsed)])
+		return {}
+	if given.has("animations"):
+		declared["animations"] = given["animations"].map(func(n): return String(n))
+	else:
+		declared["animations"] = state.get_animations().map(func(a): return String(a.original_name))
+	if given.has("joints"):
+		declared["joints"] = int(given["joints"])
+	else:
+		var joints := {}
+		for skin in state.get_skins():
+			for joint in skin.joints_original:
+				joints[joint] = true
+		declared["joints"] = joints.size()
+	if given.has("meshes"):
+		declared["meshes"] = int(given["meshes"])
+	else:
+		var gltf_nodes := state.get_nodes()
+		var meshes := 0
+		var pending: Array = Array(state.root_nodes)
+		while not pending.is_empty():
+			var node: GLTFNode = gltf_nodes[int(pending.pop_back())]
+			if node.mesh >= 0:
+				meshes += 1
+			pending.append_array(Array(node.children))
+		declared["meshes"] = meshes
+	return declared

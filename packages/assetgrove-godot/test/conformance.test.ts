@@ -13,6 +13,7 @@ import {
   INPUT_PATH,
   RESULT_PATH,
   type BuildInput,
+  type GltfInput,
   type TileSetInput,
 } from "../src/scratch.ts";
 import { corner16Tiles } from "../src/tile-set.ts";
@@ -24,7 +25,27 @@ const RESOURCE_UID = "uid://b5wyq2abcdxy0";
 function scripted(seen: ToolRunOptions[]) {
   return async (tool: string, options: ToolRunOptions): Promise<ToolResult> => {
     seen.push(options);
-    const input = JSON.parse(String(options.files?.[INPUT_PATH])) as BuildInput | TileSetInput;
+    const input = JSON.parse(String(options.files?.[INPUT_PATH])) as
+      BuildInput | TileSetInput | GltfInput;
+    if ("build" in input && input.build === "gltf")
+      return {
+        exitCode: 0,
+        stdout: "Godot Engine v4.7.2.stable.official\n",
+        stderr: "",
+        files: [
+          {
+            path: `${input.scene.slice("res://".length)}.import`,
+            content: new TextEncoder().encode(
+              `[remap]\n\nimporter="scene"\ntype="PackedScene"\nuid="${RESOURCE_UID}"\n`,
+            ),
+          },
+          {
+            path: RESULT_PATH,
+            content: new TextEncoder().encode(JSON.stringify({ ok: true, errors: [] })),
+          },
+        ],
+        step: { kind: "tool", tool, hash: "0".repeat(64), method: "settings" },
+      };
     const texture = "build" in input ? input.texture : input.animations[0]!.texture;
     const type = "build" in input ? "TileSet" : "SpriteFrames";
     const resource = input.resource.slice("res://".length);
@@ -70,24 +91,57 @@ const tileSetContext = (run: ReturnType<typeof scripted>) => ({
   run,
 });
 
+/** A `character-3d` hand-off's context, as core gives `godot:gltf` one. */
+const gltfContext = (run: ReturnType<typeof scripted>) => ({
+  context: {
+    spec: { kind: "character-3d", assetId: "fern" },
+    output: {
+      path: "characters/fern.glb",
+      mediaType: "model/gltf-binary",
+      bones: 24,
+      clips: [{ name: "idle" }, { name: "walk" }],
+    },
+    provenance: {},
+  },
+  mediaBytes: new Uint8Array([0x67, 0x6c, 0x54, 0x46]),
+  run,
+});
+
 test("the entry passes the conformance suite, its presets building through the tool", async () => {
   const seen: ToolRunOptions[] = [];
   const report = await assertConformance(entry, {
     presets: {
       "godot:sprite-frames": { context: { run: scripted(seen) } },
       "godot:tile-set": { context: tileSetContext(scripted(seen)) },
+      "godot:gltf": {
+        options: { import: { "nodes/root_type": "CharacterBody3D" } },
+        context: gltfContext(scripted(seen)),
+      },
     },
   });
   assert.equal(report.passed, true);
   assert.deepEqual(report.failures, []);
   // The suite wrote once; each run names the project and the plugin's files, and the media and
   // the input reach scratch as data no argument names.
-  const builds = seen.map((o) => (String(o.files?.[INPUT_PATH]).includes('"tile-set"') ? 1 : 0));
-  assert.ok(builds.includes(0) && builds.includes(1), "both presets ran Godot");
+  const builds = seen.map((o) => {
+    const input = JSON.parse(String(o.files?.[INPUT_PATH])) as { build?: string };
+    return input.build ?? "sprite-frames";
+  });
+  assert.deepEqual([...new Set(builds)].sort(), ["gltf", "sprite-frames", "tile-set"]);
   for (const options of seen) {
     assert.deepEqual(options.args, [...GODOT_ARGS]);
-    const input = JSON.parse(String(options.files?.[INPUT_PATH])) as BuildInput | TileSetInput;
-    if ("build" in input)
+    const input = JSON.parse(String(options.files?.[INPUT_PATH])) as
+      BuildInput | TileSetInput | GltfInput;
+    if ("build" in input && input.build === "gltf")
+      assert.deepEqual(input, {
+        build: "gltf",
+        godot: "4.7.2-stable",
+        scene: "res://characters/fern.glb",
+        fresh: true,
+        options: { "nodes/root_type": "CharacterBody3D" },
+        declared: { animations: ["idle", "walk"], joints: 24 },
+      });
+    else if ("build" in input)
       assert.deepEqual(input, {
         build: "tile-set",
         godot: "4.7.2-stable",
