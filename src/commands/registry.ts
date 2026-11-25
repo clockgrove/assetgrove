@@ -48,6 +48,7 @@ import { spendCommand, spendReconcileCommand } from "./spend.ts";
 import { findCommand, searchIndexCommand, searchStatusCommand } from "./search.ts";
 import { requestChangeCommand } from "./request-change.ts";
 import { stageCommand } from "./stage.ts";
+import { stageSourceCommand } from "./stage-source.ts";
 import type { CommandSpec } from "./types.ts";
 import { varyCommand } from "./vary.ts";
 import { writeFamiliesCommand } from "./write-families.ts";
@@ -61,6 +62,7 @@ export const commands: readonly CommandSpec[] = [
   mcpCommand,
   materialsCommand,
   stageCommand,
+  stageSourceCommand,
   pickCommand,
   intakeCommand,
   reviewCommand,

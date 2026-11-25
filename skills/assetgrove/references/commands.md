@@ -85,6 +85,16 @@ Plan step: `--dry-run` prints the request's WorkPlan (`jobs`, `candidates`, `for
 
 MCP tool: `stage`, arguments `spec`, `bible`, `profile`, `candidates`, `note`, `cap`, `runs`, `workItem`, `round`.
 
+### `stage-source`
+
+```text
+stage-source --source <file.aseprite> --spec <spec.json> --profile <profile.json> [--runs .assetgrove/runs] [--digital-source-type <IPTC code or URI>] [--json]
+```
+
+Renders an editable Aseprite file as a staged strip, with no model call: the frames of the tag named the spec's `animationFamily` (every frame when the file has no tags; a file with other tags exits 2 naming them), layers composited with the normal blend, side by side as candidate `c1` of a run directory under `--runs`. The spec must be a `sprite-strip` with an `assetId` and `animationFamily`, and the file's canvas must be the profile's frame size (exit 2 otherwise). The candidate's provenance records `editableSource`: the file's path and sha256, the tag, the source frames and their durations; `pick` keeps that lineage. An `.aseprite` file embeds no source type, so declare it with `--digital-source-type` or it stays undeclared. The run is named from the file's bytes, spec, profile and source type: staging the same bytes again rewrites the same run, an edited source is a new run. Spends nothing. The existing `import` and Aseprite JSON hand-off are unchanged.
+
+MCP tool: `stage_source`, arguments `source`, `spec`, `profile`, `runs`, `digitalSourceType`.
+
 ### `pick`
 
 ```text
