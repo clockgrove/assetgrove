@@ -1,4 +1,5 @@
 import { declarationOption } from "../inputs.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { stageSource } from "../source/stage.ts";
 import { defineCommand } from "./types.ts";
 
@@ -38,13 +39,14 @@ undeclared and pick refuses it. Calls no model and spends nothing.`,
     additionalProperties: false,
   },
   effect: { readOnly: false, spends: "never", writes: "runs" },
-  async run(args) {
+  async run(args, ctx) {
     const declared = declarationOption(args.digitalSourceType);
     const { run, runDir, candidate, editableSource } = await stageSource({
       source: args.source,
       spec: args.spec,
       profile: args.profile,
       runsDir: args.runs ?? ".assetgrove/runs",
+      traits: ctx.extensions ?? CORE_REGISTRY,
       ...(declared !== undefined && { digitalSourceType: declared }),
     });
     return {

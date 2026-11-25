@@ -6,6 +6,8 @@ import { createHash } from "node:crypto";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { InputError } from "../errors.ts";
+import { isStripKind } from "../frames.ts";
+import type { KindTraits } from "../frames.ts";
 import { createRaster, encodePng, getPixel } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { readBytes, readJson, loadProfile } from "../inputs.ts";
@@ -27,6 +29,8 @@ export interface StageSourceOptions {
   profile: string;
   runsDir: string;
   digitalSourceType?: DigitalSourceType;
+  /** The loaded kinds; the spec's kind must be a strip kind. */
+  traits: KindTraits;
   now?: () => Date;
 }
 
@@ -62,9 +66,9 @@ function visibleUnion(strip: Raster, count: number, width: number, height: numbe
 export async function stageSource(options: StageSourceOptions): Promise<StagedSource> {
   const now = (options.now ?? (() => new Date()))();
   const spec = await readJson<AssetSpec>(options.spec);
-  if (spec.value.kind !== "sprite-strip" || spec.value.animationFamily === undefined)
+  if (!isStripKind(spec.value.kind, options.traits) || spec.value.animationFamily === undefined)
     throw new InputError(
-      "stage-source needs a sprite-strip spec with an assetId and an animationFamily",
+      "stage-source needs a spec of a strip kind (such as sprite-strip) with an assetId and an animationFamily",
     );
   const family = spec.value.animationFamily;
   const profile = await loadProfile(options.profile);
