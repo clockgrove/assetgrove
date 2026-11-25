@@ -55,6 +55,7 @@ import {
   assetgroveVersion,
   commitLibraryWrite,
   checkLibraryRules,
+  libraryFile,
   libraryWritePaths,
   prepareLibraryWrite,
   recheckLibraryWrite,
@@ -756,6 +757,15 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     provenance.steps = [...(provenance.steps ?? []), metadataStep(digitalSourceType, hashes)];
   }
   const targetDir = resolve(write.targetDir);
+  // The target's provenance names the editable source by its library-relative path, as the version's
+  // lineage does, never this machine's absolute path; the run keeps the absolute one.
+  const sourcePath = write.provenance.editableSource?.path;
+  if (provenance.editableSource !== undefined && sourcePath !== undefined) {
+    provenance.editableSource = {
+      ...provenance.editableSource,
+      path: libraryFile(profile, targetDir, sourcePath),
+    };
+  }
   const gate = write.gate ?? defaultGate();
   const guard = targetGuard(targetDir, gate.settings, profile.validator?.command);
   // Every PNG, JPEG and WebP is signed with C2PA content credentials beside the IPTC mark.
@@ -924,15 +934,16 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     ...(contentSha256 !== undefined && { contentSha256 }),
     ...(write.replaces !== undefined && { replaces: write.replaces }),
     ...(write.answers && { answers: write.answers }),
-    ...(provenance.editableSource !== undefined && {
-      sources: [
-        {
-          relation: "derived-from" as const,
-          path: provenance.editableSource.path,
-          sha256: provenance.editableSource.sha256,
-        },
-      ],
-    }),
+    ...(provenance.editableSource !== undefined &&
+      sourcePath !== undefined && {
+        sources: [
+          {
+            relation: "derived-from" as const,
+            path: sourcePath,
+            sha256: provenance.editableSource.sha256,
+          },
+        ],
+      }),
   });
   sameFile([...writes.map(([path]) => path), ...libraryFiles(library)]);
   return {

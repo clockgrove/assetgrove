@@ -332,7 +332,10 @@ export interface SheetSource {
 
 /** An editable artwork file a strip was rendered from, and the part of it that was read. */
 export interface EditableSource {
-  /** The file's absolute path when it was staged. */
+  /**
+   * The file's absolute path when it was staged; in the provenance `pick` writes into the target,
+   * its path relative to the library root.
+   */
   path: string;
   /** The sha256 of the file's bytes when it was staged. */
   sha256: string;

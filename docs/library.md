@@ -483,8 +483,13 @@ A `file` is a canonical library-relative path with `/` segments: not absolute, w
 is not a graph node and need not exist to be valid. `pick` writes this edge, as
 `derived-from`, on the version it appends when the candidate is a strip staged from an
 editable source (its provenance's `editableSource`), with the source's sha256 at
-staging. A source outside the library root refuses the pick with exit 2 before any file
-is written.
+staging. A pick whose media is already the current version (a source edit that renders
+the same strip, such as an edit to another tag or to frame timing) appends nothing, but
+replaces that file's edge on the current version with the edited source's sha256, so the
+source is not listed in `changedSources` against a version it still matches. The
+provenance file written into the target names the source by this library-relative path,
+never the absolute path the run recorded. A source outside the library root refuses the
+pick with exit 2 before any file is written.
 
 `assetgrove library relations --target <project> --json` (MCP
 `library_relations`) reads this graph directly from review records, without an
