@@ -430,6 +430,7 @@ test("the skills step installs assetgrove and every pack's skill from the reposi
     [
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove"],
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-godot"],
+      ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-icons"],
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-search"],
     ],
   );

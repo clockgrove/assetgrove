@@ -105,6 +105,43 @@ test("a deterministic exact check that makes no call passes, run twice", async (
   );
 });
 
+test("a kind's own operations take their roles' default routes, as core routes them", async () => {
+  const planned: string[] = [];
+  const report = await runConformance(
+    () => ({
+      api: 2,
+      name: "probe",
+      kinds: [
+        {
+          kind: "probe:dot",
+          operations: { "probe:draw": "image", "probe:judge": "decisions" },
+          planCandidate: (_spec, _profile, routes) =>
+            ["probe:draw", "probe:judge"].map((operation) => {
+              const route = routes[operation]!;
+              planned.push(`${operation} ${route.model}`);
+              return { operation, model: route.model, estimatedCostUsd: route.estimatedCostUsd };
+            }),
+          generate: async (ctx) => {
+            const image = await ctx.call.image("probe:draw", "a dot", [], ctx.seed);
+            return {
+              output: { mediaType: "image/png", extension: "png", bytes: image.bytes, fields: {} },
+              qa: { passed: true, reasons: [] },
+              prompt: "a dot",
+              parameters: {},
+            };
+          },
+        },
+      ],
+    }),
+    probeSample,
+  );
+  assert.deepEqual(report.failures, []);
+  assert.deepEqual(planned, [
+    `probe:draw ${defaultRoutes.still.model}`,
+    `probe:judge ${defaultRoutes.identity!.model}`,
+  ]);
+});
+
 test("an exact check that calls the Caller fails the suite", async () => {
   const calling: KindCheck = {
     name: "asks-a-model",

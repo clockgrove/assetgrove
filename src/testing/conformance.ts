@@ -33,7 +33,7 @@ import type { QaCheck } from "../qa/stability.ts";
 import type { Script } from "../gateway/scripted.ts";
 import { ScriptedProvider } from "../gateway/scripted.ts";
 import { createProvider } from "../providers/adapter.ts";
-import { defaultRoutes } from "../routes.ts";
+import { defaultRoutes, ROLE_DEFAULT_OPERATION } from "../routes.ts";
 import type { Routes } from "../routes.ts";
 import type { ProviderSettings } from "../settings.ts";
 import type { AssetSpec, MediaOutput, Reason, StyleBible, TargetProfile } from "../types.ts";
@@ -170,6 +170,12 @@ function routesFor(ext: Extension): Routes {
   for (const adapter of ext.adapters ?? [])
     for (const [op, route] of Object.entries(adapter.defaultRoutes ?? {}))
       routes[op] ??= { ...route, provider: adapter.id };
+  // A kind's own operation takes its role's default route, as core resolves it (src/routes.ts).
+  for (const kind of ext.kinds ?? [])
+    for (const [op, role] of Object.entries(kind.operations ?? {})) {
+      const fallback = routes[ROLE_DEFAULT_OPERATION[role] ?? ""];
+      if (fallback !== undefined) routes[op] ??= fallback;
+    }
   return routes as unknown as Routes;
 }
 
