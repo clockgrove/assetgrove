@@ -62,7 +62,11 @@ after(async () => {
 
 /** Runs git in the project; a failure's error carries git's own message. */
 const git = (...args: string[]) =>
-  execFileSync("git", args, { cwd: project.dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  execFileSync("git", args, {
+    cwd: project.dir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 const text = (path: string) => readFileSync(join(project.dir, path), "utf8");
 
 /** Runs a core command; a tool run it needs approved is added to the settings, as a person would. */
