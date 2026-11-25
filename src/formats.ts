@@ -13,6 +13,7 @@ export const FORMAT_VERSIONS = {
   recipe: 1,
   settings: 2,
   blocklist: 1,
+  delivery: 1,
 } as const satisfies Record<string, number>;
 
 export type FormatKind = keyof typeof FORMAT_VERSIONS;
