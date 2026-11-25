@@ -132,8 +132,8 @@
     {
       "id": "publish",
       "kind": "manual-owner",
-      "title": "The owner publishes the four 0.2.0 tarballs the release run verified",
-      "evidence": "npm view shows @clockgrove/assetgrove@0.2.0, @clockgrove/assetgrove-search@0.2.0, @clockgrove/assetgrove-godot@0.2.0 and @clockgrove/assetgrove-icons@0.2.0, each the verified tarball (sha256 and attestation checked as docs/release.md says), and the commit is tagged v0.2.0."
+      "title": "The owner publishes the five 0.2.0 tarballs the release run verified",
+      "evidence": "npm view shows @clockgrove/assetgrove@0.2.0, @clockgrove/assetgrove-search@0.2.0, @clockgrove/assetgrove-godot@0.2.0, @clockgrove/assetgrove-icons@0.2.0 and @clockgrove/assetgrove-tiles@0.2.0, each the verified tarball (sha256 and attestation checked as docs/release.md says), and the commit is tagged v0.2.0."
     },
     {
       "id": "invitations",

@@ -432,6 +432,7 @@ test("the skills step installs assetgrove and every pack's skill from the reposi
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-godot"],
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-icons"],
       ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-search"],
+      ["npx", "-y", "skills@1.8.1", "add", root, "assetgrove-tiles"],
     ],
   );
   for (const call of calls) assert.equal(call.cwd, calls[0]!.cwd);

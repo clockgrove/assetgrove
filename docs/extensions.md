@@ -4,11 +4,12 @@ An extension adds asset kinds, engine presets and provider adapters. Core regist
 
 The packs in this repository, each under `packages/` with its own skill:
 
-| Pack                                                                       | Name     | What it adds                                                                                                                                   |
-| -------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`@clockgrove/assetgrove-search`](../packages/assetgrove-search/README.md) | `search` | The [search slot](#the-search-slot) and its model setup.                                                                                       |
-| [`@clockgrove/assetgrove-godot`](../packages/assetgrove-godot/README.md)   | `godot`  | The `godot:sprite-frames` preset, built by the `godot:engine` [tool](#tools) (Godot 4.7.2 headless), and its setup.                            |
-| [`@clockgrove/assetgrove-icons`](../packages/assetgrove-icons/README.md)   | `icons`  | The `icons:family` kind: one icon per asset at one size, with the exact `icons:boundary-contrast` check and the advisory `icons:identifiable`. |
+| Pack                                                                       | Name     | What it adds                                                                                                                                                                |
+| -------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@clockgrove/assetgrove-search`](../packages/assetgrove-search/README.md) | `search` | The [search slot](#the-search-slot) and its model setup.                                                                                                                    |
+| [`@clockgrove/assetgrove-godot`](../packages/assetgrove-godot/README.md)   | `godot`  | The `godot:sprite-frames` preset, built by the `godot:engine` [tool](#tools) (Godot 4.7.2 headless), and its setup.                                                         |
+| [`@clockgrove/assetgrove-icons`](../packages/assetgrove-icons/README.md)   | `icons`  | The `icons:family` kind: one icon per asset at one size, with the exact `icons:boundary-contrast` check and the advisory `icons:identifiable`.                              |
+| [`@clockgrove/assetgrove-tiles`](../packages/assetgrove-tiles/README.md)   | `tiles`  | The `tiles:terrain` kind: a corner-16 terrain tile set as one atlas, with the exact `tiles:grid` and `tiles:class-uniformity` checks and the advisory `tiles:seam-quality`. |
 
 ## Contract
 
