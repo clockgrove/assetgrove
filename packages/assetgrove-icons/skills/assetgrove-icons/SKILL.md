@@ -38,7 +38,8 @@ Then `assetgrove stage --spec <spec.json> --bible <BIBLE.md> --profile <profile.
 
 ## Read the checks
 
-- `icons:boundary-contrast` is exact, free and filters. It composites the icon over each background and takes the boundary at `style.alpha.threshold`. It fails when the lowest WCAG contrast ratio, between boundary pixels and their adjacent background, is below 3:1. There is one reason per background, naming it and the ratio truncated to three decimals (2.9996 reads `2.999:1`). An icon with nothing visible at the threshold fails. Fix the icon or the backgrounds; do not retry the same image.
+- `icons:boundary-contrast` is exact, free and filters. It composites the icon over each background and takes the boundary at `style.alpha.threshold`. It fails when the lowest WCAG contrast ratio, between boundary pixels and their adjacent background, is below 3:1. There is one reason per background, naming it and the ratio truncated to three decimals (2.9996 reads `2.999:1`). An icon with nothing visible at the threshold fails. Do not retry the same image.
+- Set `style.alpha.threshold` (128 judges the half-covered edge) or `style.alpha.mode: "binary"` in the profile before you make icons. Under soft alpha the default threshold is 1: the faint edge pixels that scaling to `size` leaves become the boundary, and they fail on every background even for a well-contrasted icon. When the check fails on every background, look at the threshold first; otherwise fix the icon or the backgrounds.
 - `icons:identifiable` asks a model, once per background, whether the icon is recognisable as its subject. It is advisory (`shadow`) and never filters, as the pack ships no stability entry. Treat its reasons as a prompt for a person.
 
 The first check uses WCAG's formula. It does not prove WCAG conformance, which depends on what the icon conveys and its real surroundings.

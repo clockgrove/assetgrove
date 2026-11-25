@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { bibleMarkdown, sampleProfile, tempProject } from "@clockgrove/assetgrove/testing";
 import type { TempProject } from "@clockgrove/assetgrove/testing";
+import type { TargetProfile } from "@clockgrove/assetgrove/extension";
 import entry from "../src/extension.ts";
 import { fill, iconOutput } from "./helpers/icons.ts";
 
@@ -20,10 +21,13 @@ before(() => {
 });
 after(() => project.close());
 
-/** A provider script whose image is a dark 16px icon and whose identify answer is `probability`. */
-function writeScript(probability: number): string {
-  const icon = iconOutput(16, (r) => fill(r, 4, 12, [0x2b, 0x2b, 0x2b, 255]));
-  const path = join(project.dir, `script-${probability}.mjs`);
+/**
+ * A provider script whose image is a dark square icon (`square` of a `source` px image, 4 to 12 of
+ * 16 unless told otherwise) and whose identify answer is `probability`.
+ */
+function writeScript(probability: number, source = 16, [from, to] = [4, 12]): string {
+  const icon = iconOutput(source, (r) => fill(r, from, to, [0x2b, 0x2b, 0x2b, 255]));
+  const path = join(project.dir, `script-${probability}-${source}-${from}-${to}.mjs`);
   writeFileSync(
     path,
     `const bytes = Buffer.from(${JSON.stringify(Buffer.from(icon.bytes).toString("base64"))}, "base64");
@@ -37,14 +41,29 @@ export default {
   return path;
 }
 
-function stage(backgrounds: string[], probability: number, extra: Record<string, unknown> = {}) {
+function stage(
+  backgrounds: string[],
+  probability: number,
+  {
+    source,
+    square,
+    style,
+    runs = "runs",
+  }: {
+    source?: number;
+    square?: [number, number];
+    style?: TargetProfile["style"];
+    /** A run's id follows its inputs, not the script: a new image needs its own runs folder. */
+    runs?: string;
+  } = {},
+) {
   project.writeSettings({ roles: { image: route, decisions: route } }, { attended: true });
   const write = (name: string, content: string) => {
     const path = join(project.dir, name);
     writeFileSync(path, content);
     return path;
   };
-  mkdirSync(join(project.dir, "runs"), { recursive: true });
+  mkdirSync(join(project.dir, runs), { recursive: true });
   return project.run(
     "stage",
     {
@@ -52,12 +71,16 @@ function stage(backgrounds: string[], probability: number, extra: Record<string,
       bible: write("BIBLE.md", bibleMarkdown()),
       profile: write(
         "profile.json",
-        JSON.stringify(sampleProfile({ kinds: { "icons:family": { size: 16, backgrounds } } })),
+        JSON.stringify(
+          sampleProfile({
+            kinds: { "icons:family": { size: 16, backgrounds } },
+            ...(style !== undefined && { style }),
+          }),
+        ),
       ),
-      runs: join(project.dir, "runs"),
-      providerScript: writeScript(probability),
+      runs: join(project.dir, runs),
+      providerScript: writeScript(probability, source, square),
       candidates: 1,
-      ...extra,
     },
     { extensions: [entry], confirm: () => true },
   );
@@ -88,6 +111,23 @@ test("a candidate passing contrast is kept; identifiable answering no stays advi
   assert.equal(identifiable?.passed, false);
   assert.equal(identifiable?.shadow, true);
   assert.ok(kept?.reasons.some((r) => r.check === "icons:boundary-contrast" && r.passed));
+});
+
+test("scaled from a non-multiple source, the soft edge is judged at the profile's threshold", async () => {
+  // A 60px source scaled to 16px leaves faint edge pixels. Under soft alpha with no threshold
+  // (core's default 1) they are the boundary and fail; at threshold 128 the icon passes, as the
+  // README's "Set the threshold" says.
+  const square: [number, number] = [14, 46];
+  const soft = await stage(["#ffffff"], 0.9, { source: 60, square, runs: "runs-soft" });
+  assert.equal(soft.error?.code, "qa_found_nothing", soft.human);
+  const judged = await stage(["#ffffff"], 0.9, {
+    source: 60,
+    square,
+    runs: "runs-threshold",
+    style: { alpha: { mode: "soft", threshold: 128 } },
+  });
+  assert.equal(judged.exitCode, 0, judged.human);
+  assert.equal(judged.fields["filtered"], 0);
 });
 
 test("a profile without the kind's block is refused at plan as invalid_input", async () => {

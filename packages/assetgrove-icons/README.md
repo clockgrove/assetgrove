@@ -56,6 +56,12 @@ Exact, free, and it filters. For each declared background the icon is composited
 
 The WCAG 2.2 contrast ratio of each pair (WCAG's relative luminance and `(L1 + 0.05) / (L2 + 0.05)`) is computed unrounded. The check fails when the minimum is below 3:1. There is one reason per background, naming the background and the ratio, shown truncated to three decimals and never rounded up: 2.9996 reads `2.999:1`. An icon with nothing visible at the threshold fails.
 
+Set the threshold. Under soft alpha core's default threshold is 1, so every faintly visible pixel is inside. Scaling a source whose side is not a whole multiple of `size` blends its edge into pixels of low alpha, and those become the boundary: composited, they sit close to the background, and the check fails on every background even for a dark icon on white (a `#2b2b2b` square scaled from 60px to 16px fails on `#ffffff`; from 64px, or with binary alpha, it passes at 14.159:1). Set `style.alpha.threshold` in the profile to the alpha at which an edge pixel counts as the icon (128 judges the half-covered edge), or set `style.alpha.mode` to `"binary"`:
+
+```json
+{ "style": { "alpha": { "mode": "soft", "threshold": 128 } } }
+```
+
 It uses WCAG's formula. It does not prove WCAG conformance: non-text contrast in WCAG depends on what the icon conveys and on its real surroundings, which the check cannot know.
 
 ### `icons:identifiable`
