@@ -8,6 +8,9 @@
  * recipe. The manifest holds no time and no absolute path, so repeating a selection reproduces
  * the same files. The library and its review records are only read; a version is staged in a
  * temporary folder so no sidecar of the current pick is applied to an older version.
+ * A release delivery (neither `preview` nor `draft`) is also the release gate (issue #479): a
+ * selected placeholder, and what the profile's `release` policy refuses, is a problem; a preview
+ * or a draft reports the same release findings without refusing on them.
  */
 import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -21,6 +24,8 @@ import { findGitDir, lfsObjectPath, readMedia } from "./library/lfs.ts";
 import { parseDigitalSourceType } from "./metadata.ts";
 import type { DigitalSourceType } from "./metadata.ts";
 import { checkWrites } from "./paths.ts";
+import { evaluateRelease } from "./release-policy.ts";
+import type { ReleaseCheck, ReleaseFinding, ReleasePolicy } from "./release-policy.ts";
 import { buildRendition } from "./transform/rendition.ts";
 import type { RunOptions } from "./transform/run.ts";
 
@@ -31,6 +36,12 @@ export interface DeliveryOptions extends Pick<RunOptions, "style" | "frame" | "e
   out: string;
   /** A dry run: never writes and never creates a directory. */
   preview?: boolean;
+  /** A draft: written like a release but never refused on, or presented as, a release. */
+  draft?: boolean;
+  /** The target profile's `release` section; the placeholder check applies without one. */
+  policy?: ReleasePolicy;
+  /** The time licence windows are checked at; now by default. */
+  now?: Date;
 }
 
 export type DeliveryProblemCode =
@@ -39,7 +50,17 @@ export type DeliveryProblemCode =
   | "object_missing"
   | "recipe_missing"
   | "item_invalid"
-  | "output_collision";
+  | "output_collision"
+  | "placeholder_selected"
+  | "version_unapproved"
+  | "license_window";
+
+/** The problem a failed release check is, in a release delivery. */
+const RELEASE_PROBLEMS: Record<ReleaseCheck, DeliveryProblemCode> = {
+  placeholder: "placeholder_selected",
+  approval: "version_unapproved",
+  "license-window": "license_window",
+};
 
 export interface DeliveryProblem {
   /** The 0-based index of the selection item. */
@@ -69,6 +90,8 @@ export interface DeliveryItem {
 
 export interface DeliveryManifest {
   format: "assetgrove-delivery-manifest/1";
+  /** Present on a draft delivery, which is not a release. */
+  draft?: true;
   items: DeliveryItem[];
 }
 
@@ -83,6 +106,11 @@ interface PartialItem {
 
 export interface DeliveryResult {
   preview: boolean;
+  draft: boolean;
+  /** True only for a release delivery that passed every check and was written. */
+  release: boolean;
+  /** Every release check of every item whose version resolved, passed or failed. */
+  policy: ReleaseFinding[];
   out: string;
   manifestPath: string;
   manifest: DeliveryManifest;
@@ -212,6 +240,9 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
   const recipesDir = resolve(base, recipes);
   const out = resolve(options.out);
   const problems: DeliveryProblem[] = [];
+  const policy: ReleaseFinding[] = [];
+  const now = options.now ?? new Date();
+  const gated = options.preview !== true && options.draft !== true;
   const resultItems: DeliveryResultItem[] = [];
   const entries: Entry[] = [];
   const stage = await mkdtemp(join(tmpdir(), "assetgrove-delivery-"));
@@ -240,6 +271,23 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
       const stack = loaded.record.versions.indexOf(version) + 1;
       partial.version = stack;
       partial.sha256 = version.sha256;
+      for (const finding of evaluateRelease(
+        {
+          item: index,
+          asset: loaded.assetId,
+          version: stack,
+          sha256: version.sha256,
+          record: loaded.record,
+          card: loaded.card.data,
+        },
+        options.policy,
+        now,
+      )) {
+        policy.push(finding);
+        if (gated && finding.status === "failed") {
+          problem(RELEASE_PROBLEMS[finding.check], finding.message, item.asset);
+        }
+      }
       const bytes = await versionBytes(loaded.mediaPath, loaded.dir, version.sha256);
       if (bytes === undefined) {
         problem(
@@ -309,6 +357,7 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
   const complete = resultItems.filter((r): r is DeliveryItem & { item: number } => "outputs" in r);
   const manifest: DeliveryManifest = {
     format: "assetgrove-delivery-manifest/1",
+    ...(options.draft === true && { draft: true as const }),
     items: complete.map(({ item: _item, ...rest }) => rest),
   };
   const manifestBytes = new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);
@@ -326,6 +375,9 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
   }
   return {
     preview: options.preview ?? false,
+    draft: options.draft ?? false,
+    release: gated && written,
+    policy,
     out,
     manifestPath: join(out, "delivery.json"),
     manifest,

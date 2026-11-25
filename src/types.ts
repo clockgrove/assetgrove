@@ -136,6 +136,8 @@ export interface StyleProfile {
 
 export interface TargetProfile {
   rules?: import("./project-rules.ts").ProjectRule[];
+  /** What a release delivery must meet beyond selecting no placeholder (docs/target-profile.md). */
+  release?: import("./release-policy.ts").ReleasePolicy;
   /** `assetgrove-target-profile/<n>`; required in a file, optional in memory. */
   format?: string;
   name: string;

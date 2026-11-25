@@ -209,6 +209,28 @@ The optional `style.materials` data is validated against the material profile sc
 
 Per-channel `encoding` declares `unorm8` and an ordered normalized `range`. `compression` declares the format (`ktx2` or `basis`, delivered in KTX2), version and argv command; `preview` declares its version and argv command. `lightRig` is target-owned JSON data consumed by the preview renderer from the material report. No target light rig is available yet; tests use an explicit synthetic rig. Commands never use shell interpolation and have bounded runtimes. See [materials.md](materials.md) for derivation inputs, defaults, rendition limits and `--dry-run` cost forecasts.
 
+### Release policy
+
+An optional `release` section says what a release delivery (`assetgrove deliver` without
+`--preview` or `--draft`, given this profile with `--profile`) requires beyond selecting no
+placeholder version, which is always refused ([transform.md](transform.md#the-release-gate)):
+
+```json
+{
+  "release": {
+    "requireApproval": true,
+    "licenseWindows": [
+      { "license": "LicenseRef-Vendor-EULA", "from": "2026-01-01", "until": "2026-12-31" }
+    ]
+  }
+}
+```
+
+`requireApproval` refuses a selected version whose status is not `approved`. Each
+`licenseWindows` entry names a licence and an optional `from` and `until` date (`YYYY-MM-DD`, UTC,
+both inclusive, `from` on or before `until`); an asset whose card licence it names is refused on a
+delivery date outside it. Unknown fields and malformed dates are refused when the profile is read.
+
 ### Project rules
 
 An optional `rules` array declares data-only constraints. Every rule has a unique

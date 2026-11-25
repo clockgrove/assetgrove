@@ -149,6 +149,31 @@ with different bytes, or a path used twice, is an `output_collision`.
 
 Delivery only reads the library. It never adds a version or changes the current pick.
 
+### The release gate
+
+A delivery without `--preview` or `--draft` is a release delivery, and it refuses, writing
+nothing, an item whose selected version fails a release check. Every item whose version resolves
+is checked, and the result's `policy` lists each check with its status (`passed` or `failed`), the
+asset id, version number and sha256, a message and its `evidence`:
+
+| Check            | Applies                                             | Fails when                                                                                                                                                               | Problem code           | Evidence                                                                               |
+| ---------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- | -------------------------------------------------------------------------------------- |
+| `placeholder`    | always                                              | a person marked the selected version as a placeholder (`review --placeholder`, [library.md](library.md#review-actions))                                                  | `placeholder_selected` | `marks`: each marking annotation's id and time                                         |
+| `approval`       | the `--profile`'s `release.requireApproval` is true | the version's status ([library.md](library.md#review-records)) is not `approved`                                                                                         | `version_unapproved`   | `state`, and the latest `assessing` annotation's id, action and time when there is one |
+| `license-window` | the `--profile` lists `release.licenseWindows`      | the asset card's `license` (or one of its `AND` components) is named by a window, and the delivery date (UTC) is before its `from` or after its `until` (both inclusive) | `license_window`       | the card's `license`, the date, the windows that apply and the ones it is outside      |
+
+A mark is on one exact version, so selecting another version clears the placeholder failure. An
+asset whose card declares no licence, or whose licence no window names, passes the licence-window
+check, and the evidence says so. The gate only reads approvals a person recorded; it never approves
+anything.
+
+`--preview` and `--draft` report the same `policy` findings but never refuse on them (the other
+problems still refuse). Neither is a release: the result's `release` is true only for a release
+delivery that passed and was written. A draft writes the delivery like a release does, and its
+`delivery.json` carries `"draft": true`; a release manifest has no `draft` member, so it is
+unchanged. The human output ends with the verdict: `release delivery: every release check passed`,
+or, for a preview or a draft, `not a release` with each failed check.
+
 ## Provenance
 
 The record (`generator: "transform"`) lists:
