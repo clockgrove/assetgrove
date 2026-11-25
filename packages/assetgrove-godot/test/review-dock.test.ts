@@ -163,6 +163,7 @@ type Seen = Record<string, unknown> & {
   hasPreview?: boolean;
   ran?: number;
   lastOutcome?: string;
+  status?: string;
   opened?: string[];
   runIds?: string[];
   result?: { outcome?: string; confirmCommand?: string };
@@ -346,6 +347,9 @@ test(
     assert.match(confirmCommand, /^assetgrove confirm [0-9a-f]+$/);
     assert.ok(!existsSync(join(project.dir, "game", "art", "fern.png")));
     assert.equal(asked.state, "pending");
+    // Refresh only re-reads the runs: the person completes the request with the same button.
+    assert.match(String(asked.status), /then press Accept again$/);
+    assert.ok(!String(asked.status).includes("Refresh"), asked.status);
 
     await confirmAsPerson(confirmCommand);
     const done = drive({ phase: "act", command: dockCommand, candidate: "c1", action: "accept" });
@@ -368,6 +372,7 @@ test(
     });
     assert.equal(asked.result?.outcome, "confirm", JSON.stringify(asked.result));
     assert.equal(asked.runIds?.length, 1);
+    assert.match(String(asked.status), /then press Regenerate again$/);
 
     await confirmAsPerson(String(asked.result?.confirmCommand));
     const done = drive({

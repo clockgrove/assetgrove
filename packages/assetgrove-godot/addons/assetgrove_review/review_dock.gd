@@ -18,6 +18,10 @@ var last_result: Dictionary = {}
 var current: Dictionary = {}
 var runs: Array = []
 var pending_argv: PackedStringArray = []
+## The button that asked for the pending command, and for the one running: the person presses it
+## again once they confirm a request at a terminal.
+var pending_button: String = ""
+var _running_button: String = ""
 
 var _list: ItemList
 var _state_label: Label
@@ -178,7 +182,7 @@ func is_busy() -> bool:
 func request_accept() -> void:
 	if not _can_request():
 		return
-	_ask(actions.accept_argv(String(current["run_dir"]), String(current["id"])))
+	_ask(actions.accept_argv(String(current["run_dir"]), String(current["id"])), _accept_button.text)
 
 
 func request_reject(reason: String) -> void:
@@ -187,13 +191,13 @@ func request_reject(reason: String) -> void:
 	if reason.strip_edges() == "":
 		_set_status("Give a reason to reject.")
 		return
-	_ask(actions.reject_argv(String(current["run_dir"]), String(current["id"]), reason))
+	_ask(actions.reject_argv(String(current["run_dir"]), String(current["id"]), reason), _reject_button.text)
 
 
 func request_regenerate() -> void:
 	if not _can_request():
 		return
-	_ask(actions.regenerate_argv(String(current["run_dir"]), String(current["id"])))
+	_ask(actions.regenerate_argv(String(current["run_dir"]), String(current["id"])), _regenerate_button.text)
 
 
 ## What the dialog's confirmed signal calls: runs the pending command on a thread.
@@ -202,6 +206,8 @@ func confirm_pending() -> void:
 		return
 	var argv := pending_argv
 	pending_argv = PackedStringArray()
+	_running_button = pending_button
+	pending_button = ""
 	_set_status("Running: " + " ".join(argv))
 	_thread = Thread.new()
 	_thread.start(_run_argv.bind(argv))
@@ -211,6 +217,7 @@ func confirm_pending() -> void:
 ## What the dialog's canceled signal calls: runs nothing and leaves the records unchanged.
 func cancel_pending() -> void:
 	pending_argv = PackedStringArray()
+	pending_button = ""
 	last_result = {"outcome": "cancelled"}
 	_set_status("Cancelled: nothing ran")
 
@@ -228,7 +235,8 @@ func _finish(result: Dictionary) -> void:
 	var outcome := String(result.get("outcome", ""))
 	if outcome == "confirm":
 		var command := String(result.get("confirmCommand", ""))
-		var text := "Confirm it at a terminal: %s, then press Refresh" % command
+		# Refresh only re-reads the runs; the confirmed request is used when the command runs again.
+		var text := "Confirm it at a terminal: %s, then press %s again" % [command, _running_button]
 		var summary := String(result.get("summary", ""))
 		if summary != "":
 			text = summary + "\n" + text
@@ -243,8 +251,9 @@ func _finish(result: Dictionary) -> void:
 	action_finished.emit(result)
 
 
-func _ask(argv: PackedStringArray) -> void:
+func _ask(argv: PackedStringArray, button: String) -> void:
 	pending_argv = argv
+	pending_button = button
 	_dialog.dialog_text = "Run this command?\n" + " ".join(argv)
 	_set_status("Waiting for your confirmation.")
 	if is_inside_tree():
@@ -262,6 +271,10 @@ func _can_request() -> bool:
 		_set_status("A command is still running.")
 		return false
 	return true
+
+
+func status_text() -> String:
+	return _status_label.text
 
 
 func _set_status(text: String, confirm_command: String = "") -> void:

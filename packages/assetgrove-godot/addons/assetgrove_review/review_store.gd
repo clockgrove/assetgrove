@@ -1,7 +1,8 @@
 # Reads Assetgrove's local run folders for the review dock: the runs under
 # `<target>/.assetgrove/runs`, each candidate with its provenance and QA reasons, and its review
 # record (`assetgrove-review/2`, read tolerantly line by line). It only reads, and only below the
-# runs folder; `opened` lists everything it touched.
+# runs folder; `opened` lists everything it touched. Every read goes through the helpers under
+# "Reads", which record the path first; `test/review-dock-reads.test.ts` holds the addon to that.
 @tool
 extends RefCounted
 
@@ -17,11 +18,7 @@ func _init(dir: String) -> void:
 ## One entry per run: {id, assetId, kind, candidates (ids), picked}, sorted by id.
 func list_runs() -> Array:
 	var out: Array = []
-	opened.append(runs_dir)
-	var dir := DirAccess.open(runs_dir)
-	if dir == null:
-		return out
-	var names := dir.get_directories()
+	var names := _list_dirs(runs_dir)
 	names.sort()
 	for entry in names:
 		if entry.begins_with("."):
@@ -87,8 +84,7 @@ func preview(candidate: Dictionary) -> Texture2D:
 	var file := String(candidate.get("file", ""))
 	if not String(candidate.get("mediaType", "")).begins_with("image/") or file == "":
 		return null
-	opened.append(file)
-	var image := Image.load_from_file(file)
+	var image := _load_image(file)
 	if image == null or image.is_empty():
 		return null
 	return ImageTexture.create_from_image(image)
@@ -132,19 +128,16 @@ func provenance_text(candidate: Dictionary) -> String:
 
 
 func _read_run(run_dir: String):
-	var path := run_dir.path_join("run.json")
-	opened.append(run_dir)
-	var data = _read_json(path)
+	var data = _read_json(run_dir.path_join("run.json"))
 	if data is Dictionary:
 		return data
 	return null
 
 
 func _read_json(path: String):
-	opened.append(path)
-	if not FileAccess.file_exists(path):
+	if not _exists(path):
 		return null
-	return _parse(FileAccess.get_file_as_string(path))
+	return _parse(_read_text(path))
 
 
 func _parse(text: String):
@@ -179,12 +172,11 @@ func _safe_file(run_dir: String, file: String) -> String:
 
 func _read_review(run_dir: String, candidate_id: String, is_picked: bool) -> Dictionary:
 	var path := run_dir.path_join("reviews").path_join(candidate_id + ".review.json")
-	opened.append(path)
 	var items: Array = []
 	var record := ""
-	if FileAccess.file_exists(path):
+	if _exists(path):
 		record = path
-		var text := FileAccess.get_file_as_string(path)
+		var text := _read_text(path)
 		var strict = _parse(text)
 		if strict is Dictionary:
 			var first = strict.get("first")
@@ -284,3 +276,31 @@ func _show(value, join_lists: bool) -> String:
 			parts.append(_show(part, false))
 		return ", ".join(parts)
 	return JSON.stringify(value)
+
+
+# Reads: the only functions here that touch the file system. Each records its path in `opened`
+# before it reads.
+
+
+## The names of the directories in `path`, or none when it cannot be listed.
+func _list_dirs(path: String) -> PackedStringArray:
+	opened.append(path)
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return PackedStringArray()
+	return dir.get_directories()
+
+
+func _exists(path: String) -> bool:
+	opened.append(path)
+	return FileAccess.file_exists(path)
+
+
+func _read_text(path: String) -> String:
+	opened.append(path)
+	return FileAccess.get_file_as_string(path)
+
+
+func _load_image(path: String) -> Image:
+	opened.append(path)
+	return Image.load_from_file(path)

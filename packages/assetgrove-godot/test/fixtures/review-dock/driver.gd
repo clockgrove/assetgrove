@@ -82,6 +82,7 @@ func _run() -> void:
 			var finished = await dock.action_finished
 			result["result"] = finished
 			result["state"] = dock.review_state()
+			result["status"] = dock.status_text()
 			var ids := []
 			for run in dock.runs:
 				ids.append(run.get("id"))
