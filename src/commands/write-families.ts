@@ -158,6 +158,8 @@ undecided") until \`animation-qa --import\` decides the template and runs them.`
         ),
       );
       lines.push(`  onion skin ${f.onionPath}`, `  loop preview ${f.loopPreviewPath}`);
+      for (const { preset, warnings } of f.result.handoff)
+        for (const warning of warnings ?? []) lines.push(`warning: ${preset}: ${warning}`);
       if (f.result.validator) {
         lines.push(
           `  target validator ${f.result.validator.accepted ? "accepted" : "REJECTED"} it` +

@@ -118,6 +118,11 @@ export interface PresetResult {
   files: string[];
   /** Each tool run the preset made through its context's `run`, approved, in order; absent when none. */
   tools?: ToolStep[];
+  /**
+   * What the preset's `warnings` said about the target, such as an engine setting the assets need
+   * changed; advisory, never a failed hand-off. Absent when there are none.
+   */
+  warnings?: string[];
 }
 
 /** What the target's validator said, and the approved command step that ran it. */
@@ -1110,6 +1115,17 @@ async function commitWritten(
           ? []
           : await preset.check(families, options, files, read);
     problems.push(...found.map((problem) => ({ preset: preset.name, problem })));
+    // A preset's warnings are advisory: listed in the result, never a problem.
+    const warned =
+      preset.warnings === undefined
+        ? []
+        : preset.scope !== "families"
+          ? await preset.warnings({ ...presetContext, run: prepared.runnerOf(i) }, options, read)
+          : families === undefined
+            ? []
+            : await preset.warnings(families, options, read);
+    const entry = result.handoff[i];
+    if (warned.length > 0 && entry !== undefined) entry.warnings = [...warned];
     // The mark is read back from the media and from every file this preset wrote that can carry it.
     const expected = {
       digitalSourceType: prepared.provenance.digitalSourceType ?? "undeclared",

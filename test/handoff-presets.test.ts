@@ -413,6 +413,49 @@ test("a preset whose check fails exits 6 handoff_check_failed listing problems, 
   );
 });
 
+test("a preset's warnings are listed under its handoff entry and never fail the hand-off", async () => {
+  const seen: string[] = [];
+  const warning = (lines: string[]): PresetRegistry => ({
+    presets: new Map([
+      ...PRESETS,
+      [
+        "ext:warn",
+        {
+          name: "ext:warn",
+          optionsSchema: z.strictObject({}),
+          write: async () => [{ path: "warn.txt", content: "x\n" }],
+          check: async () => [],
+          // It reads the target as written: the file its write returned is there.
+          warnings: async (_ctx, _options, read) => {
+            seen.push(new TextDecoder().decode(await read("warn.txt")));
+            return lines;
+          },
+        } satisfies HandoffPreset,
+      ],
+    ]),
+  });
+  for (const lines of [["the engine filters linearly"], []]) {
+    const { world, runDir } = await stagedPick((profile) => {
+      profile.handoff = [{ preset: "manifest" }, { preset: "ext:warn" }];
+    });
+    const result = await pick({
+      runDir,
+      candidateId: "c1",
+      targetDir: world.targetDir,
+      registry: warning(lines),
+    });
+    assert.ok(existsSync(join(world.targetDir, "validator-ran")));
+    // A preset without warnings lists none.
+    assert.equal(result.handoff[0]!.warnings, undefined);
+    assert.deepEqual(result.handoff[1], {
+      preset: "ext:warn",
+      files: ["warn.txt"],
+      ...(lines.length > 0 && { warnings: lines }),
+    });
+  }
+  assert.deepEqual(seen, ["x\n", "x\n"]);
+});
+
 test("invalid preset options exit 2 with nothing written", async () => {
   for (const handoff of [
     [{ preset: "manifest", options: { pretty: false } }],

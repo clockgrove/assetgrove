@@ -730,6 +730,8 @@ one path segment, a missing run or a run without the version's candidate exits 2
     for (const f of result.ruleFindings ?? [])
       if (f.status === "failed" && f.severity === "warning")
         lines.push(`warning: project rule ${f.rule}: ${f.asset} (${f.evidence})`);
+    for (const { preset, warnings } of result.handoff ?? [])
+      for (const warning of warnings ?? []) lines.push(`warning: ${preset}: ${warning}`);
     const human = lines.join("\n");
     if (result.validator?.accepted === false) {
       return refusal(

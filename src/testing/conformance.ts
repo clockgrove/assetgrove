@@ -389,6 +389,20 @@ async function checkPreset(
   } catch (error) {
     fail(`check threw: ${messageOf(error)}`);
   }
+  if (preset.warnings === undefined) return;
+  // Warnings are advisory lines about the target: a list of strings, never a throw.
+  const read = async (p: string) => written.get(p);
+  try {
+    const warnings =
+      preset.scope === "families"
+        ? await preset.warnings(familiesCtx(), options, read)
+        : await preset.warnings(assetCtx(), options, read);
+    if (!Array.isArray(warnings) || warnings.some((w) => typeof w !== "string"))
+      fail(`warnings returned ${JSON.stringify(warnings)}, not a list of strings`);
+    ran("warnings returns a list of strings");
+  } catch (error) {
+    fail(`warnings threw: ${messageOf(error)}`);
+  }
 }
 
 function checkAdapter(
