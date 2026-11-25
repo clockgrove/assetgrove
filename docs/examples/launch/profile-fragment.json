@@ -4,13 +4,37 @@
   "acceptedLicenses": ["CC-BY-4.0"],
   "style": {
     "alpha": { "mode": "binary" },
-    "color": { "rule": "palette" },
+    "color": { "rule": "full" },
     "edges": "crisp"
   },
   "frames": { "width": 32, "height": 32, "durationMs": 125 },
   "layout": {
     "media": "game/assets/{{spec.assetId}}/{{spec.animationFamily}}.{{output.extension}}",
     "manifest": "assets/manifests/{{spec.assetId}}/{{spec.animationFamily}}.json"
+  },
+  "manifest": {
+    "assetManifestVersion": 1,
+    "assetId": "{{spec.assetId}}",
+    "animationFamily": "{{spec.animationFamily}}",
+    "source": {
+      "path": "{{output.path}}",
+      "mediaType": "{{output.mediaType}}",
+      "creator": "{{profile.creator}}",
+      "digitalSourceType": "{{provenance.digitalSourceType}}",
+      "origin": "{{provenance.origin?}}",
+      "declaration": "{{provenance.sourceDeclaration?}}"
+    },
+    "license": "{{profile.license}}",
+    "provenance": {
+      "prompt": "{{provenance.prompt}}",
+      "references": "{{provenance.referenceHashes}}"
+    },
+    "review": { "status": "pending" },
+    "frames": "{{output.frames}}",
+    "anchor": "{{output.anchor}}",
+    "bounds": "{{output.bounds}}",
+    "palette": "{{output.palette?}}",
+    "contentHash": "{{output.sha256}}"
   },
   "handoff": [
     { "preset": "manifest" },

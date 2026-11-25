@@ -31,13 +31,37 @@ assetgrove init --directory . --profile-preset sprite-32 --style-preset cozy-sto
 git lfs install
 ```
 
-`init` writes the target profile (`.assetgrove/profile.json`), the style bible (`.assetgrove/art-direction/BIBLE.md`), Git LFS rules for the library's media and `.gitignore` rules for the run folders. Merge [`profile-fragment.json`](examples/launch/profile-fragment.json) into the profile: it sets a pixel-art style, a 32 px frame, media inside the Godot project (`game/assets/…`) and the Godot hand-off.
+`init` writes the target profile (`.assetgrove/profile.json`), the style bible (`.assetgrove/art-direction/BIBLE.md`), Git LFS rules for the library's media and `.gitignore` rules for the run folders. Then copy each top-level field of [`profile-fragment.json`](examples/launch/profile-fragment.json) over the profile's, keeping the fields the fragment does not have (`format`, `values`, `review`). The fragment sets a pixel-art style, a 32 px frame, media inside the Godot project (`game/assets/…`), a manifest that records each asset's source type and origin, and the Godot hand-off.
+
+`init` put its LFS rules in the preset's library folder, `assets/source/`, before the fragment moved the library to `game/assets/`. Move them with it, or every `pick` refuses the media as not stored in LFS:
+
+```sh
+mkdir -p game/assets
+mv assets/source/.gitattributes game/assets/.gitattributes
+```
+
+The fragment's hand-off names `godot:sprite-frames`, which the Godot pack provides, and a command refuses a profile whose pack is not loaded. So set the pack up now, before the first `pick` (section 6 says what it does). List it in the developer settings, run its setup, which downloads the pinned Godot and prints its path, and put that path in the pack's setting:
+
+```json
+{
+  "extensions": ["@clockgrove/assetgrove-godot"],
+  "extensionSettings": {
+    "@clockgrove/assetgrove-godot": { "godot": "/path/printed/by/setup" }
+  }
+}
+```
+
+```sh
+assetgrove extensions setup godot
+```
+
+The Godot pack is optional: without it, drop the `godot:sprite-frames` entry from the profile's `handoff`, and every step but section 6 works the same.
 
 From here on, the source of truth is Git:
 
-- **Media** is stored in Git LFS (`init` maps `*.png`, `*.glb` and the other media types in the library's `.gitattributes`; `pick` refuses media Git would not store in LFS).
+- **Media** is stored in Git LFS (the library's `.gitattributes`, here `game/assets/.gitattributes`, maps `*.png`, `*.glb` and the other media types; `pick` refuses media Git would not store in LFS).
 - **Each asset's versions** are a stack in its review record (`<assetId>.review.json`): every pick, edit or adoption appends a version by its sha256, and older ones stay in Git's history ([library.md](library.md#review-records)).
-- **Editable sources** stay beside their exports: a strip rendered from an `.aseprite` file records that file's path and sha256, so a later edit of the source is staged as a new version of the same asset ([sheet-import.md](sheet-import.md#an-editable-source-aseprite)).
+- **Editable sources** stay beside their exports, inside the library: a strip rendered from an `.aseprite` file records that file's path and sha256, so a later edit of the source is staged as a new version of the same asset ([sheet-import.md](sheet-import.md#an-editable-source-aseprite)). `pick` refuses a source outside the library's root.
 - **Records are text** (`text eol=lf`, union-merged where two branches can append), so they diff and merge like code.
 
 Assetgrove never runs `git add` or `git commit`. You commit what it writes, as any other change.
@@ -61,10 +85,10 @@ A person confirms the spend and picks the candidate; an agent can plan and gener
 
 ### `mole`: drawn by a person
 
-The mole's walk cycle is a person's Aseprite file with a `walk` tag. [`mole-walk.json`](examples/launch/mole-walk.json) names the family. `stage-source` renders the tag into a strip with no model call and no spend:
+The mole's walk cycle is a person's Aseprite file with a `walk` tag on a 32 × 32 canvas, kept in the library at `game/assets/mole/mole.aseprite`. [`mole-walk.json`](examples/launch/mole-walk.json) names the family. `stage-source` renders the tag into a strip with no model call and no spend:
 
 ```sh
-assetgrove stage-source --source art/mole.aseprite --spec mole-walk.json \
+assetgrove stage-source --source game/assets/mole/mole.aseprite --spec mole-walk.json \
   --profile .assetgrove/profile.json --digital-source-type digitalCreation
 assetgrove pick --run .assetgrove/runs/<run> --candidate c1 --target .
 ```
@@ -117,12 +141,13 @@ A person confirms it as they confirm a pick. The new version's provenance keeps 
 
 What each asset now carries:
 
-| Where                     | What                                                                                                                                                                                     |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<media>.provenance.json` | Calls, route, prompt, parameters, reference hashes, request IDs, cost, provider terms and their date, output grant, transform steps, source-type declaration, how the pick was confirmed |
-| The media file            | The IPTC digital source type and models (XMP), and signed C2PA content credentials for PNG, JPEG and WebP                                                                                |
-| `<assetId>.md` (the card) | `origin` (`ai-generated`, `human-made`, `third-party` or `unknown`), the supplied evidence, source and licence, `state`, `version`, `license` and `lock`                                 |
-| `<assetId>.review.json`   | Every version by sha256, every note, request, resolution and approval                                                                                                                    |
+| Where                     | What                                                                                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<media>.provenance.json` | Calls, route, prompt, parameters, reference hashes, request IDs, cost, provider terms and their date, output grant, transform steps, source-type declaration, how the pick was confirmed          |
+| The media file            | The IPTC digital source type and models (XMP), and signed C2PA content credentials for PNG, JPEG and WebP                                                                                         |
+| `<assetId>.md` (the card) | `origin` (`ai-generated`, `human-made`, `third-party` or `unknown`), the supplied evidence, source and licence, `state`, `version`, `license` and `lock`                                          |
+| `<assetId>.review.json`   | Every version by sha256, every note, request, resolution and approval                                                                                                                             |
+| `assets/manifests/…json`  | The file the game reads: the fragment's `source` gives the IPTC digital source type and, for third-party art, the supplier's origin record (`init`'s template would call every asset `generated`) |
 
 ## 5. Licence records
 
@@ -135,22 +160,7 @@ The style bible's `referenceLicense` records the terms of the reference images i
 
 ## 6. Godot import
 
-The Godot pack is optional. List it in the developer settings, run its setup, which downloads the pinned Godot and prints its path, and put that path in the pack's setting:
-
-```json
-{
-  "extensions": ["@clockgrove/assetgrove-godot"],
-  "extensionSettings": {
-    "@clockgrove/assetgrove-godot": { "godot": "/path/printed/by/setup" }
-  }
-}
-```
-
-```sh
-assetgrove extensions setup godot
-```
-
-With `godot:sprite-frames` in the profile's `handoff`, every `pick`, `write-families` and `library adopt` above also builds `game/characters/<assetId>.tres`: Godot 4.7.2, headless in a scratch project, imports the strips, builds one SpriteFrames per asset with an animation per family, saves it with `ResourceSaver` and loads it back. Assetgrove writes no Godot resource by hand, so the UIDs in the `.tres` match the `.import` files Godot made. Running Godot is a command a person approves once ([the pack's README](../packages/assetgrove-godot/README.md#what-a-hand-off-runs)).
+The pack was set up in section 1. With `godot:sprite-frames` in the profile's `handoff`, every `pick`, `write-families` and `library adopt` above also builds `game/characters/<assetId>.tres`: Godot 4.7.2, headless in a scratch project, imports the strips, builds one SpriteFrames per asset with an animation per family, saves it with `ResourceSaver` and loads it back. Assetgrove writes no Godot resource by hand, so the UIDs in the `.tres` match the `.import` files Godot made. Running Godot is a command a person approves once ([the pack's README](../packages/assetgrove-godot/README.md#what-a-hand-off-runs)).
 
 In the Godot project:
 
