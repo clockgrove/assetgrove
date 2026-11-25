@@ -6,11 +6,11 @@ House rules apply: no native dependencies, existing libraries before our own cod
 
 ## Kinds
 
-| Kind | What it is | Brief | What the developer reviews |
-| --- | --- | --- | --- |
-| `sfx` | A one-shot such as a footstep, impact or door latch, up to 30 s | The action, a duration ceiling | Timing, character and the tail |
-| `ambience` | A loop that wraps without a seam: wind, rain, a room tone | The scene, a loop length | The texture and the wrap point |
-| `music` | An instrumental piece. `form` is `track` (a full piece for a menu, level or scene) or `cue` (a sting, transition or motif). A track may set `loop` with `bpm`, `bars` and `beatsPerBar` | Mood, instrumentation, optional section outline, theme, requested tempo, meter and key | Progression, transitions, the ending, or the wrap point of a loop |
+| Kind       | What it is                                                                                                                                                                              | Brief                                                                                  | What the developer reviews                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `sfx`      | A one-shot such as a footstep, impact or door latch, up to 30 s                                                                                                                         | The action, a duration ceiling                                                         | Timing, character and the tail                                    |
+| `ambience` | A loop that wraps without a seam: wind, rain, a room tone                                                                                                                               | The scene, a loop length                                                               | The texture and the wrap point                                    |
+| `music`    | An instrumental piece. `form` is `track` (a full piece for a menu, level or scene) or `cue` (a sting, transition or motif). A track may set `loop` with `bpm`, `bars` and `beatsPerBar` | Mood, instrumentation, optional section outline, theme, requested tempo, meter and key | Progression, transitions, the ending, or the wrap point of a loop |
 
 - A **variant set** (five footsteps, three impacts) is a set of `sfx` assets sharing a `subject`, as icon families share one. Member ids and their order are fixed by the plan: `subject-01` to `subject-NN`.
 - A **soundtrack** is a collection of related `music` assets, each with its own version history.
@@ -31,26 +31,27 @@ Not in 1.0: voice and text-to-speech, synchronized stems, adaptive or layered sc
 1. **A media trait.** Core features that today assume a raster (the contact sheet, the frames trait, plan, apply and vary, the check context) ask the kind's media trait instead. An audio trait gives the check context the decoded PCM, sample rate and channel layout.
 2. **An audio engine in the transform core,** beside the image engine, with a sample hash for exact identity. Libraries, all pure JS or WASM:
 
-   | Need | Library | Licence |
-   | --- | --- | --- |
-   | Read and write WAV, including `smpl` and `_PMX` chunks | `wavefile` | MIT |
-   | Resample | `@alexanderolsen/libsamplerate-js` | MIT (libsamplerate BSD-2-Clause) |
-   | Loudness and true peak | `@audio/loudness-lufs`, trusted only after it passes the EBU Tech 3341 test vectors | MIT |
-   | Container facts for adopted files | `music-metadata` | MIT |
-   | Encode Ogg Vorbis (renditions only) | chosen in Objective 6 from libvorbis WASM builds that carry no LGPL code | — |
+   | Need                                                   | Library                                                                             | Licence                          |
+   | ------------------------------------------------------ | ----------------------------------------------------------------------------------- | -------------------------------- |
+   | Read and write WAV, including `smpl` and `_PMX` chunks | `wavefile`                                                                          | MIT                              |
+   | Resample                                               | `@alexanderolsen/libsamplerate-js`                                                  | MIT (libsamplerate BSD-2-Clause) |
+   | Loudness and true peak                                 | `@audio/loudness-lufs`, trusted only after it passes the EBU Tech 3341 test vectors | MIT                              |
+   | Container facts for adopted files                      | `music-metadata`                                                                    | MIT                              |
+   | Encode Ogg Vorbis (renditions only)                    | chosen in Objective 6 from libvorbis WASM builds that carry no LGPL code            | —                                |
 
    Core never decodes an Ogg: checks judge the master, and the Godot pack's CI proves the delivered file imports and plays.
+
 3. **Audio operations,** each a recipe step that records one provenance step:
 
-   | Op | What it does |
-   | --- | --- |
-   | `trim-silence` | Cuts leading and trailing silence below `floorDb`, keeping `marginMs` |
-   | `fade` | Fades in and out over `inMs` and `outMs` |
-   | `gain` | Gains the file to the profile's loudness target. Gain only, no limiter: when reaching the target would exceed the true-peak ceiling minus the encoder headroom, it refuses, naming both numbers |
-   | `mono` | Folds to one channel |
-   | `resample` | Changes the sample rate |
-   | `loop` | Makes a seamless loop from a file generated with an overhang: cuts at the loop length and folds the overhang into the head with a crossfade of `crossfadeMs`, equal-gain for music and equal-power for ambience |
-   | `encode` | Writes an Ogg Vorbis rendition at `quality` |
+   | Op             | What it does                                                                                                                                                                                                    |
+   | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `trim-silence` | Cuts leading and trailing silence below `floorDb`, keeping `marginMs`                                                                                                                                           |
+   | `fade`         | Fades in and out over `inMs` and `outMs`                                                                                                                                                                        |
+   | `gain`         | Gains the file to the profile's loudness target. Gain only, no limiter: when reaching the target would exceed the true-peak ceiling minus the encoder headroom, it refuses, naming both numbers                 |
+   | `mono`         | Folds to one channel                                                                                                                                                                                            |
+   | `resample`     | Changes the sample rate                                                                                                                                                                                         |
+   | `loop`         | Makes a seamless loop from a file generated with an overhang: cuts at the loop length and folds the overhang into the head with a crossfade of `crossfadeMs`, equal-gain for music and equal-power for ambience |
+   | `encode`       | Writes an Ogg Vorbis rendition at `quality`                                                                                                                                                                     |
 
 4. **An `audio` call kind and role.** `CallKind` gains `audio`, which is an extension API change, so the extension API version goes up by one. `call.audio(op, prompt, { parameters })` takes a closed, typed set: `durationS`, `seed` (where the route has one) and `promptInfluence`. Nothing else passes through. The prompt-policy check covers audio calls as it covers image and model calls.
 5. **Cost.** Each audio call reserves the published rate times the requested duration, or the route's fixed price per generation, before spend. It settles from the vendor's own record where the vendor gives one. Stability prices in credits through `usdPerCredit`. A route whose price can't be read from vendor data isn't enabled.
@@ -74,28 +75,28 @@ Not in 1.0: voice and text-to-speech, synchronized stems, adaptive or layered sc
 
 All run on the master after the kind's recipe.
 
-| Check | Rule |
-| --- | --- |
-| `audio:format` | Decodes; sample rate, channels and bit depth are the profile's |
-| `audio:duration` | An `sfx` is at or under its ceiling; `ambience` and a music loop are exactly their loop length in samples; a track or cue is within the brief's duration ± the profile's tolerance |
-| `audio:true-peak` | At or under the ceiling minus the encoder headroom |
-| `audio:loudness` | Within target ± tolerance, measured as the Loudness section says |
-| `audio:silence` | An `sfx`'s leading and trailing silence are each under the profile's limit |
-| `audio:fade` | An `sfx`'s provenance has a `fade` step, so it never ends on a click |
-| `audio:loop` | An `ambience` or music loop's provenance has a `loop` step leading to the final bytes |
-| `audio:fake-stereo` | A stereo file's channels are not identical |
-| `audio:set-loudness` | Every member of a variant set is within the profile's spread of the set's median, run by `audit` as icon consistency is |
+| Check                | Rule                                                                                                                                                                               |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audio:format`       | Decodes; sample rate, channels and bit depth are the profile's                                                                                                                     |
+| `audio:duration`     | An `sfx` is at or under its ceiling; `ambience` and a music loop are exactly their loop length in samples; a track or cue is within the brief's duration ± the profile's tolerance |
+| `audio:true-peak`    | At or under the ceiling minus the encoder headroom                                                                                                                                 |
+| `audio:loudness`     | Within target ± tolerance, measured as the Loudness section says                                                                                                                   |
+| `audio:silence`      | An `sfx`'s leading and trailing silence are each under the profile's limit                                                                                                         |
+| `audio:fade`         | An `sfx`'s provenance has a `fade` step, so it never ends on a click                                                                                                               |
+| `audio:loop`         | An `ambience` or music loop's provenance has a `loop` step leading to the final bytes                                                                                              |
+| `audio:fake-stereo`  | A stereo file's channels are not identical                                                                                                                                         |
+| `audio:set-loudness` | Every member of a variant set is within the profile's spread of the set's median, run by `audit` as icon consistency is                                                            |
 
 **Loop length.** A music loop's length is Godot's: `floor(bars × beatsPerBar × 60 / bpm × sampleRate)` samples. The residual fraction of a sample is recorded on the card, so tempos such as 140 BPM at 44.1 kHz are allowed. The route generates the loop length plus an overhang, and the `loop` step cuts and folds it. Tempo and downbeat are not checked exactly. The spike measures how often they hold.
 
 ## Routes
 
-| Route | Kinds | Terms, read 2026-11-18 | Price |
-| --- | --- | --- | --- |
-| Stability Stable Audio 2.5, direct, synchronous, 1 to 190 s, `seed` | all three | Stability assigns its rights in output to you; commercial use allowed. Training on inputs and outputs is on by default, with an opt-out. Its watermark, content credentials and other AI markings may not be removed, and output may not be presented as human-made | 8 credits a successful generation at $0.01 a credit; failures aren't charged |
-| Stability Stable Audio 3.0, direct, asynchronous with a job id, up to 380 s, results kept 24 h | `ambience`, `music` | As 2.5 | As 2.5 |
-| ElevenLabs Sound Effects v3, direct | `sfx`, `ambience` | Paid plans may use output commercially; free plans are non-commercial only. You keep the rights in output. ElevenLabs may use content to improve its services, with a "Data use" opt-out that applies from the day it's set. Output may not be unique across users | $0.12 a minute, published; the spike measures how a short clip rounds from the account's usage records |
-| Google Lyria 3.5 | `music` | Read before the route is enabled | Read before the route is enabled |
+| Route                                                                                          | Kinds               | Terms, read 2026-11-18                                                                                                                                                                                                                                              | Price                                                                                                  |
+| ---------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Stability Stable Audio 2.5, direct, synchronous, 1 to 190 s, `seed`                            | all three           | Stability assigns its rights in output to you; commercial use allowed. Training on inputs and outputs is on by default, with an opt-out. Its watermark, content credentials and other AI markings may not be removed, and output may not be presented as human-made | 8 credits a successful generation at $0.01 a credit; failures aren't charged                           |
+| Stability Stable Audio 3.0, direct, asynchronous with a job id, up to 380 s, results kept 24 h | `ambience`, `music` | As 2.5                                                                                                                                                                                                                                                              | As 2.5                                                                                                 |
+| ElevenLabs Sound Effects v3, direct                                                            | `sfx`, `ambience`   | Paid plans may use output commercially; free plans are non-commercial only. You keep the rights in output. ElevenLabs may use content to improve its services, with a "Data use" opt-out that applies from the day it's set. Output may not be unique across users  | $0.12 a minute, published; the spike measures how a short clip rounds from the account's usage records |
+| Google Lyria 3.5                                                                               | `music`             | Read before the route is enabled                                                                                                                                                                                                                                    | Read before the route is enabled                                                                       |
 
 - **Asynchronous routes** persist the provider's job id at submit, so a resumed run fetches the result without a second charge.
 - **ElevenLabs tier.** The adapter reads the account's tier at `doctor` and at plan. It refuses a free tier, records the tier on each asset as the output grant's plan, and refuses a sample rate the tier doesn't allow. Each card says the output is non-exclusive.
