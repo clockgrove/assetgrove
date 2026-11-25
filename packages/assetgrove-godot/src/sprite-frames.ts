@@ -25,7 +25,14 @@ import {
   savedFile,
 } from "./run.ts";
 import { GODOT_RELEASE } from "./setup.ts";
-import { INPUT_PATH, projectFiles, type BuildInput } from "./scratch.ts";
+import {
+  INPUT_PATH,
+  importOptionsSchema,
+  projectFiles,
+  type BuildInput,
+  type ImportOption,
+} from "./scratch.ts";
+import { textureFilterWarning } from "./texture-filter.ts";
 
 export const PRESET = "godot:sprite-frames";
 
@@ -36,6 +43,12 @@ export interface SpriteFramesOptions {
   resource: string;
   /** Whether each animation loops. */
   loop: boolean;
+  /**
+   * Godot texture import options by their `.import` key (`compress/mode`, `mipmaps/generate`),
+   * applied to the `.import` of each source file the target has none for. An existing `.import`
+   * is never changed.
+   */
+  import: Record<string, ImportOption>;
 }
 
 /** The animation speed in frames per second for a frame duration in milliseconds. */
@@ -74,6 +87,8 @@ async function write(
   const input: BuildInput = {
     godot: GODOT_RELEASE.release,
     resource: `res://${inProject(project, resource, "the resource")}`,
+    fresh: fresh.map((media) => `res://${inProject(project, media, "the media")}`),
+    options: options.import,
     ...(uid !== undefined && { uid }),
     frameWidth: ctx.profile.frames.width,
     frameHeight: ctx.profile.frames.height,
@@ -122,8 +137,11 @@ export function spriteFramesPreset(context: ExtensionContext): EnginePreset<Spri
       project: z.string().default(""),
       resource: z.string().min(1).default("{assetId}.tres"),
       loop: z.boolean().default(true),
+      import: importOptionsSchema(z),
     }),
     write,
     check,
+    warnings: (ctx, options, read) =>
+      textureFilterWarning(ctx.profile, relativePath(options.project, "options.project"), read),
   };
 }

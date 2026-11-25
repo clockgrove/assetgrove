@@ -317,6 +317,8 @@ approves it. A human runs pick; agents never do.`,
     for (const f of result.ruleFindings ?? [])
       if (f.status === "failed" && f.severity === "warning")
         lines.push(`warning: project rule ${f.rule}: ${f.asset} (${f.evidence})`);
+    for (const { preset, warnings } of result.handoff ?? [])
+      for (const warning of warnings ?? []) lines.push(`warning: ${preset}: ${warning}`);
     const human = lines.join("\n");
     // The candidate by its id and file only: its provenance and QA reasons hold the bible's text,
     // which a tool result carries only under sharedText (design section 10).

@@ -30,6 +30,19 @@ const NAME = "@clockgrove/assetgrove-godot";
 const { godot: GODOT, skip: SKIP } = findGodot();
 const usable = GODOT !== undefined;
 
+/** Texture import options a pixel-art game sets; `process/fix_alpha_border` is not Godot's default. */
+const PIXEL_IMPORT = {
+  "compress/mode": 0,
+  "mipmaps/generate": false,
+  "process/fix_alpha_border": false,
+};
+/** Asserts an `.import` carries every option of `PIXEL_IMPORT`, as Godot wrote it. */
+function carriesOptions(file: string): void {
+  assert.match(file, /^compress\/mode=0$/m);
+  assert.match(file, /^mipmaps\/generate=false$/m);
+  assert.match(file, /^process\/fix_alpha_border=false$/m);
+}
+
 const stage = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-godot-")));
 const project = tempProject();
 const approved: Array<Record<string, unknown>> = [];
@@ -105,7 +118,10 @@ before(async () => {
     },
     handoff: [
       { preset: "manifest" },
-      { preset: "godot:sprite-frames", options: { resource: "characters/{assetId}.tres" } },
+      {
+        preset: "godot:sprite-frames",
+        options: { resource: "characters/{assetId}.tres", import: PIXEL_IMPORT },
+      },
     ],
   });
   writeFileSync(join(stage, "sheet.png"), contactSheet());
@@ -171,6 +187,7 @@ test("a strip handed off writes the SpriteFrames and each strip's .import, and G
   ] as const) {
     const uid = /^uid="(uid:\/\/[^"]+)"/m.exec(file)?.[1];
     assert.ok(uid, `${family}.import has a UID`);
+    carriesOptions(file);
     assert.match(
       tres,
       new RegExp(
@@ -185,9 +202,22 @@ test("a strip handed off writes the SpriteFrames and each strip's .import, and G
 
 test("a later family keeps the earlier ones in one SpriteFrames", async (t) => {
   if (!usable) return t.skip(SKIP!);
+  // The developer changed an option of the idle strip's .import: the profile's `import` would
+  // set it back, so an unchanged file shows the options never reach an existing .import.
+  const edited = idleImport.replace(
+    /^process\/fix_alpha_border=false$/m,
+    "process/fix_alpha_border=true",
+  );
+  assert.notEqual(edited, idleImport);
+  writeFileSync(join(project.dir, "assets/fern-idle.png.import"), edited);
+  git("add", "assets/fern-idle.png.import");
+  git("commit", "--quiet", "-m", "the developer's own idle import option");
+  idleImport = edited;
   const done = await importFamilies([{ name: "attack", frames: [6, 7, 8] }]);
   assert.equal(done.code, 0, done.stderr + done.stdout);
   assert.deepEqual(animations(loaded()), ["attack:3:true", "idle:4:true", "walk:3:true"]);
+  // The new strip's .import gets the options too.
+  carriesOptions(text("assets/fern-attack.png.import"));
 });
 
 test("a replaced resource keeps its UID and an existing .import is never touched", async (t) => {
@@ -195,6 +225,56 @@ test("a replaced resource keeps its UID and an existing .import is never touched
   assert.equal(headerUid("characters/fern.tres"), firstUid);
   assert.equal(text("assets/fern-idle.png.import"), idleImport);
   assert.equal(text("assets/fern-walk.png.import"), walkImport);
+});
+
+/** The `godot:sprite-frames` entry of each family a write-families run handed off. */
+const spriteFramesEntries = (done: CliResult) =>
+  (
+    done.json?.["families"] as Array<{
+      result: { handoff: Array<{ preset: string; warnings?: string[] }> };
+    }>
+  ).map((f) => f.result.handoff.find((h) => h.preset === "godot:sprite-frames"));
+
+test("a pixel-art profile's strip warns when the project's default texture filter is not Nearest, and never edits project.godot", async (t) => {
+  if (!usable) return t.skip(SKIP!);
+  // The import's profile becomes pixel art: crisp edges with a palette colour rule.
+  const recordPath = join(imported, "import.json");
+  const record = readFileSync(recordPath, "utf8");
+  const parsed = JSON.parse(record) as { profile: { style?: Record<string, unknown> } };
+  parsed.profile.style = {
+    ...parsed.profile.style,
+    edges: "crisp",
+    color: { rule: "palette", palette: ["#6b4a2b", "#4d8a3c"] },
+  };
+  const godotFile = join(project.dir, "project.godot");
+  const linear = readFileSync(godotFile);
+  try {
+    writeFileSync(recordPath, JSON.stringify(parsed));
+    // The fixture project leaves the filter at Godot's default, Linear.
+    const warned = await importFamilies([{ name: "jump", frames: [2, 3] }]);
+    assert.equal(warned.code, 0, warned.stderr + warned.stdout);
+    const [entry] = spriteFramesEntries(warned);
+    assert.equal(entry?.warnings?.length, 1, JSON.stringify(entry));
+    assert.match(
+      entry!.warnings![0]!,
+      /rendering\/textures\/canvas_textures\/default_texture_filter/,
+    );
+    assert.match(entry!.warnings![0]!, /Linear \(1\)/);
+    assert.match(entry!.warnings![0]!, /Nearest \(0\)/);
+    assert.deepEqual(readFileSync(godotFile), linear);
+
+    const nearest = `${linear.toString()}\n[rendering]\n\ntextures/canvas_textures/default_texture_filter=0\n`;
+    writeFileSync(godotFile, nearest);
+    git("commit", "--quiet", "-am", "nearest filtering");
+    const quiet = await importFamilies([{ name: "jump", frames: [3, 4] }]);
+    assert.equal(quiet.code, 0, quiet.stderr + quiet.stdout);
+    assert.equal(spriteFramesEntries(quiet)[0]?.warnings, undefined);
+    assert.equal(text("project.godot"), nearest);
+  } finally {
+    writeFileSync(recordPath, record);
+    writeFileSync(godotFile, linear);
+    git("commit", "--quiet", "-am", "linear filtering again");
+  }
 });
 
 test("an earlier strip Godot cannot decode fails the hand-off with exit 6 and leaves the resource as it was", async (t) => {

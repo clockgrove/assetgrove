@@ -245,6 +245,36 @@ test("a preset whose check passes with nothing written fails the suite", async (
   ]);
 });
 
+test("a preset's warnings must return a list of strings", async () => {
+  const warning =
+    (warnings: () => Promise<string[]>) =>
+    (c: ExtensionContext): Extension => {
+      const pack = packWith(opaque)(c);
+      pack.presets![0]!.warnings = warnings;
+      return pack;
+    };
+  const passing = await runConformance(
+    warning(async () => ["a setting to change"]),
+    probeSample,
+  );
+  assert.deepEqual(passing.failures, []);
+  assert.ok(passing.checked.includes("preset probe:list: warnings returns a list of strings"));
+  const wrong = await runConformance(
+    warning(async () => [1] as unknown as string[]),
+    probeSample,
+  );
+  assert.deepEqual(wrong.failures, [
+    "preset probe:list warnings returned [1], not a list of strings",
+  ]);
+  const throwing = await runConformance(
+    warning(async () => {
+      throw new Error("no project");
+    }),
+    probeSample,
+  );
+  assert.deepEqual(throwing.failures, ["preset probe:list warnings threw: no project"]);
+});
+
 test("core runs a kind's exact checks under a refusing Caller and model ones under the candidate's", async () => {
   const seen: string[] = [];
   const probe = (name: string, mode: KindCheck["mode"]): KindCheck => ({

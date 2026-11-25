@@ -93,6 +93,13 @@ interface PresetShape<Options, Context> {
    * written file by its relative path, or undefined when it is missing.
    */
   check(ctx: Context, options: Options, files: PresetFile[], read: TargetRead): Promise<string[]>;
+  /**
+   * Advisory lines about the target that never fail the hand-off, such as an engine project
+   * setting the hand-off's assets need changed: core calls it once per hand-off beside `check`,
+   * `read` reading the target as written, and lists what it returns under the preset's
+   * `handoff[i].warnings`. Optional: a preset without it warns of nothing.
+   */
+  warnings?(ctx: Context, options: Options, read: TargetRead): Promise<string[]>;
 }
 
 /** A preset that writes for one hand-off: one asset, or one family of it. */

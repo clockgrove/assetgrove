@@ -140,6 +140,8 @@ test("an existing TileSet reaches scratch with every file it references and thei
   assert.equal(input.existing, true);
   assert.equal(input.uid, "uid://tileset");
   assert.equal(input.resource, "res://tiles/grass-dirt.tres");
+  // The atlas has an `.import` in the target: no import option reaches it.
+  assert.deepEqual(input.fresh, []);
   assert.deepEqual(input.imports, [
     "res://tiles/grass-dirt.png",
     "res://tiles/rock.png",

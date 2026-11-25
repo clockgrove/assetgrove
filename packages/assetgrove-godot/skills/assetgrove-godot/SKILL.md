@@ -29,12 +29,13 @@ In the target profile, list it after `manifest`:
 - `project`: the Godot project's folder relative to the target (default the target itself); the media must be inside it.
 - `resource`: where the SpriteFrames goes, `{assetId}` replaced, ending in `.tres` (default `{assetId}.tres`).
 - `loop`: whether animations loop (default true).
+- `import`: Godot texture import options by their `.import` key (default `{}`), such as `{ "compress/mode": 0, "mipmaps/generate": false }` for pixel art. Godot applies them to the `.import` of a new strip only; an existing `.import` is never changed.
 
 It writes one SpriteFrames per asset with every animation family handed off so far, so `write-families` of `attack` after `idle` and `walk` gives all three. A hand-off whose spec names no `animationFamily` exits 2. Frames are the profile's frame size; each frame is an AtlasTexture region of its strip.
 
 ## Hand off a tile set
 
-`godot:tile-set` hands off a `tiles:terrain` asset (the tiles pack's corner-16 atlas) as a Godot `TileSet`; any other asset exits 2. Its options are `project` and `resource` (default `{assetId}.tres`), as above.
+`godot:tile-set` hands off a `tiles:terrain` asset (the tiles pack's corner-16 atlas) as a Godot `TileSet`; any other asset exits 2. Its options are `project`, `resource` (default `{assetId}.tres`) and `import`, as above (`import` applies to a new atlas only).
 
 ```json
 { "preset": "godot:tile-set", "options": { "resource": "tiles/{assetId}.tres" } }
@@ -61,6 +62,10 @@ It writes one SpriteFrames per asset with every animation family handed off so f
 - The options go into a new source's `.import` as data; Godot writes them through `ConfigFile` and reimports. An existing `.import` is never touched: it reaches scratch as data, Godot imports with its options and UID, and a replaced `.glb` keeps its UID. Core writes the `.glb`; the preset returns only the new `.import`.
 - Godot imports the `.glb` in a scratch project. The hand-off fails with exit 6 `handoff_check_failed` and nothing written on a load error, on any `ERROR` line, when the scene lacks an animation of the same name as any declared one or a `Skeleton3D` with the declared joint count (none for an unskinned `.glb`, which declares 0), or when it has more `MeshInstance3D` meshes than declared.
 - Declared animations are `output.clips[].name` and joints are `output.bones`, when the hand-off gives them (a `character-3d` asset does). Otherwise, and when `model3d.handoff.clipFields` shapes the clips without a `name`, they are read from the file through `GLTFDocument`: its animation names and the unique joints over every skin. Declared meshes are the glTF nodes with a mesh in the scene.
+
+## Pixel art and the texture filter
+
+Godot 4 sets the texture filter in the project (`rendering/textures/canvas_textures/default_texture_filter`), not per file. For a pixel-art profile (`style.edges` `crisp` with `style.color.rule` `palette`), `godot:sprite-frames` and `godot:tile-set` read `project.godot` and add a warning under `handoff[i].warnings` when the filter is not Nearest (`0`). An unset filter counts, since Godot's default is Linear. The hand-off still succeeds, and the pack never edits `project.godot`. Tell the person to set Project Settings > Rendering > Textures > Canvas Textures > Default Texture Filter to Nearest.
 
 ## What comes back
 
