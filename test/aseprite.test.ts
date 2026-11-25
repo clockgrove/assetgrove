@@ -169,7 +169,7 @@ test("grayscale files decode value and alpha", () => {
   assert.deepEqual(getPixel(frame, 1, 0), [50, 50, 50, 128]);
 });
 
-test("a visible layer with a blend mode or a tilemap layer is refused by name", () => {
+test("a visible layer or group with a blend mode, a translucent group or a tilemap layer is refused by name", () => {
   const frames = [{ durationMs: 100, cels: [] }];
   refusal(
     asepriteFile({ width: 1, height: 1, layers: [{ name: "glow", blendMode: 1 }], frames }),
@@ -179,6 +179,27 @@ test("a visible layer with a blend mode or a tilemap layer is refused by name", 
     asepriteFile({ width: 1, height: 1, layers: [{ name: "map", type: 2 }], frames }),
     /layer "map".*tilemap/,
   );
+  for (const group of [
+    { name: "tint", type: 1 as const, opacity: 128 },
+    { name: "tint", type: 1 as const, blendMode: 1 },
+  ]) {
+    refusal(
+      asepriteFile({
+        width: 1,
+        height: 1,
+        layers: [group, { name: "child", childLevel: 1 }],
+        frames: [
+          {
+            durationMs: 100,
+            cels: [
+              { layer: 1, x: 0, y: 0, width: 1, height: 1, rgba: Uint8Array.from([9, 9, 9, 255]) },
+            ],
+          },
+        ],
+      }),
+      /group "tint".*only a normal, opaque group/,
+    );
+  }
   const hidden = readAseprite(
     asepriteFile({
       width: 1,

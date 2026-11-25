@@ -41,6 +41,13 @@ export function readAseprite(bytes: Uint8Array, path: string): AsepriteDocument 
         `${path}: layer "${layer.name}" uses blend mode ${layer.blendMode}; only normal is supported`,
       );
     }
+    // A group's own blend mode and opacity apply to its children as one image, which is not drawn
+    // here: refuse it rather than render the children as if it were normal and opaque.
+    if (layer.type === 1 && (layer.blendMode !== 0 || (layerOpacity && layer.opacity < 255))) {
+      throw new InputError(
+        `${path}: group "${layer.name}" uses blend mode ${layer.blendMode} at opacity ${layer.opacity}; only a normal, opaque group is supported`,
+      );
+    }
   });
 
   const frames = file.frames.map((frame) => {
