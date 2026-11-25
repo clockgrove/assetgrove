@@ -12,7 +12,7 @@ func _init() -> void:
 	frames.set_animation_loop(&"hurt", false)
 	frames.add_frame(&"hurt", hurt)
 	frames.add_frame(&"hurt", hurt)
-	if ResourceSaver.save(frames, frames_path) != OK:
+	if save_keeping_uid(frames, frames_path) != OK:
 		push_error("could not save the SpriteFrames")
 		quit(1)
 		return
@@ -53,3 +53,13 @@ func _init() -> void:
 	root.free()
 	print("AUTHORED")
 	quit()
+
+
+# Saves as the editor does, keeping the file's UID. Outside the editor Godot's text saver has no UID
+# source and drops the header's uid, which no developer working in the editor would see happen.
+func save_keeping_uid(resource: Resource, path: String) -> Error:
+	var uid := ResourceLoader.get_resource_uid(path)
+	var saved := ResourceSaver.save(resource, path)
+	if saved != OK or uid == ResourceUID.INVALID_ID:
+		return saved
+	return ResourceSaver.set_uid(path, uid)

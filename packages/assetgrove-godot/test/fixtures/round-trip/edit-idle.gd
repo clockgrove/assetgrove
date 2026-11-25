@@ -6,7 +6,11 @@ func _init() -> void:
 	var path := "res://characters/fern.tres"
 	var frames := load(path) as SpriteFrames
 	frames.set_animation_speed(&"idle", 3.0)
-	if ResourceSaver.save(frames, path) != OK:
+	var uid := ResourceLoader.get_resource_uid(path)
+	# Outside the editor the text saver drops the header's uid; the editor keeps it, so put it back.
+	if ResourceSaver.save(frames, path) != OK or (
+		uid != ResourceUID.INVALID_ID and ResourceSaver.set_uid(path, uid) != OK
+	):
 		push_error("could not save the SpriteFrames")
 		quit(1)
 		return
