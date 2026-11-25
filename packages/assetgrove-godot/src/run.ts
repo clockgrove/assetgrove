@@ -34,6 +34,17 @@ export class GodotRunError extends Error {
   }
 }
 
+/**
+ * A hand-off that would overwrite what the developer changed in a resource. Nothing was written;
+ * exit 6 `handoff_check_failed` like any failed run.
+ */
+export class GodotConflictError extends GodotRunError {
+  constructor(problems: Problem[]) {
+    super(problems);
+    this.message = `The hand-off would overwrite what the developer changed in the resource, so nothing was written: ${problems.map((p) => p.problem).join("; ")}`;
+  }
+}
+
 /** An option or an input the preset cannot use: invalid input (exit 2). */
 export class GodotInputError extends Error {
   readonly code = "invalid_input";
@@ -105,6 +116,10 @@ export async function runGodot(
   } catch {
     result = undefined;
   }
+  if (result?.conflicts !== undefined && result.conflicts.length > 0)
+    throw new GodotConflictError(
+      result.conflicts.map((sentence) => ({ preset, problem: `conflict: ${sentence}` })),
+    );
   if (result === undefined) problems.push({ preset, problem: "Godot left no result of the build" });
   else if (!result.ok && problems.length === 0)
     for (const error of result.errors ?? []) problems.push({ preset, problem: `Godot: ${error}` });

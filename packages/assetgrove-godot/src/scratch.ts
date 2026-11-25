@@ -77,9 +77,23 @@ export interface BuildInput {
   options: Record<string, ImportOption>;
   /** The UID the target's resource already has, kept on the new save. */
   uid?: string;
+  /** Whether the resource exists at its path in scratch, to be loaded and merged into. */
+  existing?: boolean;
+  /** Every file, `res://...`, the editor must have imported before the build loads anything. */
+  imports?: string[];
   frameWidth: number;
   frameHeight: number;
-  animations: Array<{ name: string; texture: string; speed: number; loop: boolean }>;
+  animations: Array<{
+    name: string;
+    texture: string;
+    speed: number;
+    loop: boolean;
+    /**
+     * The frame count of the strip the target held before this hand-off (its width over the frame
+     * width), when it is a PNG: what a resource from before the record is compared with.
+     */
+    previousFrames?: number;
+  }>;
 }
 
 /** One tile of a corner-16 set as the build script writes it: its atlas cell and terrain data. */
@@ -141,6 +155,8 @@ export interface GltfInput {
 export interface BuildResult {
   ok: boolean;
   errors: string[];
+  /** What the hand-off would overwrite of the developer's changes; nothing was saved. */
+  conflicts?: string[];
   resource?: string;
   uid?: string;
   animations?: Record<string, number>;
