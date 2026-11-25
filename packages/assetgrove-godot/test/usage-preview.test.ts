@@ -55,6 +55,33 @@ after(() => {
   rmSync(stage, { recursive: true, force: true });
 });
 
+/** The run that replaces `fern`, staged by the first test and previewed again by the later ones. */
+let second = "";
+
+/** Core's real `pick` preview of `second`: the confirmation request it shows, declined. */
+async function preview(): Promise<ConfirmRequest> {
+  const requests: ConfirmRequest[] = [];
+  const declined = await project.run(
+    "pick",
+    { run: second, candidate: "c1", target: project.dir },
+    {
+      extensions: [godotExtension],
+      confirm: (request) => {
+        requests.push(request);
+        return false;
+      },
+    },
+  );
+  assert.notEqual(declined.exitCode, 0, declined.human);
+  assert.equal(requests.length, 1);
+  return requests[0]!;
+}
+
+const hudFiles = (request: ConfirmRequest) =>
+  (
+    request.details["usage"] as Array<{ report: { references: Array<{ file: string }> } }>
+  )[0]!.report.references.filter((r) => r.file === "game/ui/hud.tscn").length;
+
 /** Stages a `still` of the asset `fern` whose image is a PNG of `size` px, under `handoff`. */
 async function stageRun(n: number, size: number, handoff: unknown[]): Promise<string> {
   const dir = join(stage, `run-${n}`);
@@ -149,7 +176,7 @@ test("the replacement preview lists the Godot pack's known usage and leaves the 
   git("add", "-A");
   git("commit", "--quiet", "-m", "the game uses fern");
 
-  const second = await stageRun(2, 12, [
+  second = await stageRun(2, 12, [
     { preset: "manifest" },
     { preset: "godot:sprite-frames", options: { project: "game" } },
   ]);
@@ -231,4 +258,55 @@ test("the replacement preview lists the Godot pack's known usage and leaves the 
 
   assert.deepEqual(listing(project.dir), before);
   assert.ok(readdirSync(join(project.stateDir, "cache", "usage")).length > 0);
+});
+
+test("assetgrove confirm shows the known usage of the pick a person declined", async () => {
+  const shown = await preview();
+  const requests: ConfirmRequest[] = [];
+  const confirmed = await project.run(
+    "confirm",
+    { id: shown.id },
+    {
+      extensions: [godotExtension],
+      confirm: (request) => {
+        requests.push(request);
+        return false;
+      },
+    },
+  );
+  assert.equal(confirmed.error?.code, "confirmation_declined", confirmed.human);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.id, shown.id);
+  assert.deepEqual(requests[0]!.details["usage"], shown.details["usage"]);
+  assert.match(requests[0]!.summary, /; UNRESOLVED game\/resources\/theme\.tres:3 /);
+  assert.match(requests[0]!.summary, /; UNREADABLE game\/scenes\/old\.scn /);
+});
+
+test("a second preview re-reads a file after an edit and every file after a new commit", async () => {
+  const cacheDir = join(project.stateDir, "cache", "usage");
+  // Each cached parse is marked as finding nothing in hud.tscn: a preview that reuses the cache
+  // loses hud's reference, and one that re-reads hud finds it again.
+  const poison = () => {
+    const files = readdirSync(cacheDir);
+    assert.equal(files.length, 1);
+    const path = join(cacheDir, files[0]!);
+    const cached = JSON.parse(readFileSync(path, "utf8")) as {
+      files: Record<string, { parsed: unknown }>;
+    };
+    cached.files["game/ui/hud.tscn"]!.parsed = { externals: [], literals: [] };
+    writeFileSync(path, JSON.stringify(cached));
+  };
+  assert.equal(hudFiles(await preview()), 1);
+
+  poison();
+  assert.equal(hudFiles(await preview()), 0, "the unchanged file is taken from the cache");
+
+  const hud = join(project.dir, "game/ui/hud.tscn");
+  writeFileSync(hud, `${readFileSync(hud, "utf8")}metadata/note = "edited"\n`);
+  assert.equal(hudFiles(await preview()), 1, "the edited file is read again");
+
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "edit the hud");
+  poison();
+  assert.equal(hudFiles(await preview()), 1, "a new commit reads every file again");
 });
