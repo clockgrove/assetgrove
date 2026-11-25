@@ -389,9 +389,37 @@ async function checkPreset(
   } catch (error) {
     fail(`check threw: ${messageOf(error)}`);
   }
+  const read = async (p: string) => written.get(p);
+  if (preset.doctor !== undefined) {
+    // The doctor is read-only and reports findings; here it sees a target with no files and no Git.
+    try {
+      const findings: unknown = await preset.doctor(
+        {
+          profile: sampleProfile(),
+          list: async () => [],
+          tracked: async () => [],
+          lfs: async () => [],
+        },
+        options,
+        read,
+      );
+      const text = (v: unknown) => typeof v === "string";
+      if (
+        !Array.isArray(findings) ||
+        findings.some((f: Record<string, unknown> | null) =>
+          [f?.["code"], f?.["path"], f?.["problem"], f?.["correction"]].some((v) => !text(v)),
+        )
+      )
+        fail(
+          `doctor returned ${JSON.stringify(findings)}, not a list of findings with a string code, path, problem and correction`,
+        );
+      ran("doctor returns a list of findings");
+    } catch (error) {
+      fail(`doctor threw: ${messageOf(error)}`);
+    }
+  }
   if (preset.warnings === undefined) return;
   // Warnings are advisory lines about the target: a list of strings, never a throw.
-  const read = async (p: string) => written.get(p);
   try {
     const warnings =
       preset.scope === "families"

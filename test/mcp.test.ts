@@ -1115,6 +1115,14 @@ export default {
   // Headless settings: the change exits 8 confirmation_required and writes nothing.
   { tool: "settings_change", prepare: async () => ({ runUsd: 4 }), exitCode: 8 },
   { tool: "extensions", prepare: async () => ({}) },
+  {
+    tool: "doctor",
+    prepare: async () => {
+      const profile = join(work, "library-profile.json");
+      await writeFile(profile, JSON.stringify(syntheticProfile()));
+      return { profile, target: join(work, "target") };
+    },
+  },
   { tool: "spend", prepare: async () => ({ action: "status", workItem: "mcp-row" }) },
   { tool: "spend_reconcile", prepare: async () => ({}) },
   { tool: "disclosure", prepare: async () => ({ root: work }) },

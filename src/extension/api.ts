@@ -364,6 +364,8 @@ export type {
 } from "../call-parameters.ts";
 export type { Raster } from "../image/raster.ts";
 export type {
+  DoctorContext,
+  DoctorFinding,
   FamiliesContext,
   HandedOffFamily,
   PresetContext,

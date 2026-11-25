@@ -7,6 +7,7 @@ import { bibleCommand } from "./bible.ts";
 import { catCommand, lsCommand } from "./browse.ts";
 import { compareCommand } from "./compare.ts";
 import { confirmCommand } from "./confirm.ts";
+import { doctorCommand } from "./doctor.ts";
 import { disclosureCommand } from "./disclosure.ts";
 import { estimateCommand } from "./estimate.ts";
 import { extensionsCommand, extensionsSetupCommand } from "./extensions.ts";
@@ -100,6 +101,7 @@ export const commands: readonly CommandSpec[] = [
   settingsChangeCommand,
   extensionsCommand,
   extensionsSetupCommand,
+  doctorCommand,
   spendCommand,
   spendReconcileCommand,
   runsListCommand,
