@@ -136,7 +136,7 @@ test("a missing tag, a size mismatch and a non-strip spec exit 2", async () => {
   }
 });
 
-test("a staged run is pickable, and an edited source is a new run and strip", async () => {
+test("a staged source is pickable, and an edited source picks as a new version whose lineage names it", async () => {
   const project = tempProject();
   try {
     project.writeSettings();
@@ -163,11 +163,44 @@ test("a staged run is pickable, and an edited source is a new run and strip", as
       first.candidate.provenance.editableSource.sha256,
     );
 
-    const edited = join(s.dir, "edited.aseprite");
-    await writeFile(edited, fernAseprite({ edited: true }));
-    const next = await candidateOf(await project.cli(stageArgs(s, edited)));
+    // The developer edits the source in place; a new stage and pick is a new version of the asset.
+    await writeFile(inProject, fernAseprite({ edited: true }));
+    const next = await candidateOf(await project.cli(stageArgs(s, inProject)));
     assert.notEqual(next.runDir, first.runDir);
     assert.notEqual(next.candidate.sha256, first.candidate.sha256);
+    const repicked = await project.cli([
+      ...["pick", "--run", next.runDir, "--candidate", "c1", "--target", project.dir, "--json"],
+    ]);
+    assert.equal(repicked.code, 0, repicked.stdout + repicked.stderr);
+    const library = repicked.json?.["library"] as { files: string[] };
+    const reviewFile = library.files.find((f) => f.endsWith(".review.json"));
+    assert.ok(reviewFile, JSON.stringify(library.files));
+    const review = JSON.parse(await readFile(join(project.dir, reviewFile), "utf8"));
+    const versions = review["ag:versions"] as Array<Record<string, unknown>>;
+    const sourceSha = (c: { provenance: { editableSource: { sha256: string } } }) =>
+      c.provenance.editableSource.sha256;
+    assert.deepEqual(
+      versions.map((v) => v["lineage"]),
+      // The library root is the profile's assets folder, so the path is relative to it.
+      [first, next].map((r) => [
+        { relation: "derived-from", file: "source/fern.aseprite", sha256: sourceSha(r.candidate) },
+      ]),
+    );
+    const relations = await project.cli([
+      "library",
+      "relations",
+      "--target",
+      project.dir,
+      "--profile",
+      s.profilePath,
+      "--json",
+    ]);
+    assert.equal(relations.code, 0, relations.stdout + relations.stderr);
+    const changed = relations.json?.["changedSources"] as Array<Record<string, unknown>>;
+    assert.deepEqual(
+      changed.map((e) => [(e["downstream"] as { sha256: string }).sha256, e["currentSha256"]]),
+      [[versions[0]!["sha256"], sourceSha(next.candidate)]],
+    );
   } finally {
     project.close();
   }
