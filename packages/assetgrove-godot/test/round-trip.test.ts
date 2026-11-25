@@ -113,12 +113,17 @@ const importFamilies = async (families: Array<{ name: string; frames: number[] }
 };
 
 const godot = (...args: string[]) =>
-  spawnSync(GODOT!, ["--headless", "--path", project.dir, ...args], { encoding: "utf8" });
+  spawnSync(GODOT!, ["--headless", "--path", project.dir, ...args], {
+    encoding: "utf8",
+    // A script that stops on an error never reaches quit(), and headless Godot then waits forever.
+    timeout: 180_000,
+  });
 
 /** Runs a script in the project with Godot and returns what it printed, failing on an ERROR. */
 function run(script: string): string {
   const result = godot("--script", script);
   const out = result.stdout + result.stderr;
+  assert.equal(result.error, undefined, `${String(result.error)}\n${out}`);
   assert.equal(result.status, 0, out);
   assert.doesNotMatch(out, /ERROR/);
   return out;
@@ -183,14 +188,18 @@ test("a first hand-off writes idle and walk", async (t) => {
   firstUid = headerUid("characters/fern.tres");
   assert.ok(firstUid);
   // The record keeps the frame size it wrote, so a later profile with another size is no conflict.
+  const fresh = godot("--import");
+  assert.doesNotMatch(fresh.stdout + fresh.stderr, /ERROR/);
   const script = join(stage, "read-record.gd");
   writeFileSync(
     script,
     `extends SceneTree
 func _init():
-\tvar wrote = load("res://characters/fern.tres").get_meta(&"assetgrove_godot")["animations"]
+\tvar frames = load("res://characters/fern.tres")
+\tvar wrote = frames.get_meta(&"assetgrove_godot", {}).get("animations", {}) if frames else {}
 \tfor name in ["idle", "walk"]:
-\t\tprint("RECORD ", name, " ", int(wrote[name]["frames"]), " ", int(wrote[name]["width"]), "x", int(wrote[name]["height"]))
+\t\tvar entry = wrote.get(name, {})
+\t\tprint("RECORD ", name, " ", entry.get("frames"), " ", entry.get("width"), "x", entry.get("height"))
 \tquit()
 `,
   );
