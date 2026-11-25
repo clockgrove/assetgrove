@@ -9,8 +9,10 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { bibleMarkdown, tempProject } from "@clockgrove/assetgrove/testing";
 import type { TempProject } from "@clockgrove/assetgrove/testing";
+import type { TargetProfile } from "@clockgrove/assetgrove/extension";
 import entry from "../src/extension.ts";
 import { cellBox } from "../src/corner16.ts";
+import type { Pixels } from "../src/corner16.ts";
 import {
   PALETTE_STYLE,
   atlasOutput,
@@ -33,6 +35,8 @@ const TILE = 8;
 const palette = profileOf(TILE, PALETTE_STYLE);
 const GRID = "tiles:grid";
 const CLASSES = "tiles:class-uniformity";
+const PAINTED_SKIP =
+  'skipped: the profile\'s colour rule is "full", not palette-indexed, so edge strips are not compared exactly';
 
 /** The template set with a middle pixel of tile 5's north edge changed: exactly one strip. */
 const oneWrongStrip = () => {
@@ -75,7 +79,10 @@ test("a wrong size fails the grid check naming both sizes", async () => {
   );
   const skipped = await checkReasons(CLASSES, atlasOutput(templateSet(4), 4), palette);
   assert.equal(skipped[0]?.passed, true);
-  assert.match(skipped[0]?.reason ?? "", /^skipped: /);
+  assert.equal(
+    skipped[0]?.reason,
+    "skipped: the atlas is not 4 × 4 tiles of 8px, which tiles:grid reports",
+  );
 });
 
 test("an empty cell fails the grid check naming the cell", async () => {
@@ -94,19 +101,24 @@ test("a painted profile skips class-uniformity with its reason, even on a wrong 
   const reasons = await checkReasons(CLASSES, atlasOutput(oneWrongStrip(), TILE), profileOf(TILE));
   assert.equal(reasons.length, 1);
   assert.equal(reasons[0]?.passed, true);
-  assert.match(reasons[0]?.reason ?? "", /^skipped: /);
+  assert.equal(reasons[0]?.reason, PAINTED_SKIP);
 });
 
-test("a staged set keeps its candidate; seam-quality answering no stays advisory", async () => {
-  const tile = 16;
-  const bytes = atlasOutput(templateSet(tile), tile).bytes;
+/** Stages `image` under the profile with `style`, answered by a provider script. */
+async function stage(
+  image: Pixels,
+  tile: number,
+  style: TargetProfile["style"] | undefined,
+  runs: string,
+) {
+  const bytes = atlasOutput(image, tile).bytes;
   const write = (name: string, content: string) => {
     const path = join(project.dir, name);
     writeFileSync(path, content);
     return path;
   };
   const providerScript = write(
-    "script.mjs",
+    `script-${runs}.mjs`,
     `const bytes = Buffer.from(${JSON.stringify(Buffer.from(bytes).toString("base64"))}, "base64");
 export default {
   image: () => ({ images: [{ mediaType: "image/png", bytes }] }),
@@ -116,18 +128,42 @@ export default {
 `,
   );
   project.writeSettings({ roles: { image: route, decisions: route } }, { attended: true });
-  const outcome = await project.run(
+  return project.run(
     "stage",
     {
       spec: write("spec.json", JSON.stringify(spec)),
       bible: write("BIBLE.md", bibleMarkdown()),
-      profile: write("profile.json", JSON.stringify(profileOf(tile, PALETTE_STYLE))),
-      runs: join(project.dir, "runs"),
+      profile: write(`profile-${runs}.json`, JSON.stringify(profileOf(tile, style))),
+      runs: join(project.dir, runs),
       providerScript,
       candidates: 1,
     },
     { extensions: [entry], confirm: () => true },
   );
+}
+
+test("one wrong strip filters the candidate on a stage run under the palette profile", async () => {
+  const outcome = await stage(oneWrongStrip(), TILE, PALETTE_STYLE, "runs-wrong-strip");
+  assert.equal(outcome.error?.code, "qa_found_nothing", outcome.human);
+  assert.equal(outcome.fields["filtered"], 1);
+  assert.equal((outcome.fields["candidates"] as unknown[]).length, 0);
+});
+
+test("under a painted profile the same wrong strip is kept on a stage run, class-uniformity skipped", async () => {
+  const outcome = await stage(oneWrongStrip(), TILE, undefined, "runs-painted");
+  assert.equal(outcome.exitCode, 0, outcome.human);
+  assert.equal(outcome.fields["filtered"], 0);
+  const [kept] = outcome.fields["candidates"] as Array<{
+    reasons: Array<{ check: string; passed: boolean; reason: string }>;
+  }>;
+  const classes = kept?.reasons.find((r) => r.check === CLASSES);
+  assert.equal(classes?.passed, true);
+  assert.equal(classes?.reason, PAINTED_SKIP);
+});
+
+test("a staged set keeps its candidate; seam-quality answering no stays advisory", async () => {
+  const tile = 16;
+  const outcome = await stage(templateSet(tile), tile, PALETTE_STYLE, "runs");
   assert.equal(outcome.exitCode, 0, outcome.human);
   assert.equal(outcome.fields["filtered"], 0);
   assert.deepEqual(outcome.fields["filtering"], [
