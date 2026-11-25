@@ -168,6 +168,44 @@ test("an existing SpriteFrames that carries or references a script is refused be
       },
       /art\/more\.tres carries a script/,
     ],
+    // Godot's parser skips whitespace before and inside a header and around `=`.
+    [
+      {
+        "game/characters/fern.tres": `${header}\n [sub_resource type="GDScript" id="1"]\n`,
+      },
+      /characters\/fern\.tres carries a script/,
+    ],
+    [
+      {
+        "game/characters/fern.tres": `${header}\n[ sub_resource type = "GDScript" id="1"]\n`,
+      },
+      /characters\/fern\.tres carries a script/,
+    ],
+    [
+      {
+        "game/characters/fern.tres": `${header}\n\n[resource]\n  script = SubResource("1")\n`,
+      },
+      /characters\/fern\.tres carries a script/,
+    ],
+    [
+      {
+        "game/characters/fern.tres": `${header}\n\n[resource]\n"script" = ExtResource("1")\n`,
+      },
+      /characters\/fern\.tres carries a script/,
+    ],
+    // Only images and text resources are copied: compiled GDScript, whatever type the header says.
+    [
+      {
+        "game/characters/fern.tres": `${header}\n[ext_resource type="Resource" path="res://tools/hook.gdc" id="1"]\n`,
+      },
+      /characters\/fern\.tres references tools\/hook\.gdc/,
+    ],
+    [
+      {
+        "game/characters/fern.tres": `${header}\n  [ ext_resource type="Resource" path = "res://tools/hook.gdc" id="1"]\n`,
+      },
+      /characters\/fern\.tres references tools\/hook\.gdc/,
+    ],
   ];
   for (const [target, message] of cases) {
     const seen: ToolRunOptions[] = [];

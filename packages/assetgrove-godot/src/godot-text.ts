@@ -10,7 +10,7 @@ const UID = /^uid:\/\/[a-z0-9]+$/;
 
 /** The value of `key="..."` inside one bracketed header line, or undefined. */
 function attribute(line: string, key: string): string | undefined {
-  const match = new RegExp(`\\b${key}="([^"]*)"`).exec(line);
+  const match = new RegExp(`\\b${key}\\s*=\\s*"([^"]*)"`).exec(line);
   return match?.[1];
 }
 
@@ -60,11 +60,16 @@ export interface ExternalReference {
   path: string | undefined;
 }
 
+/** A section header of a text resource, as Godot's parser reads it: whitespace may come first. */
+export function headerTag(line: string): string | undefined {
+  return /^\s*\[\s*([A-Za-z_]+)/.exec(line)?.[1];
+}
+
 /** Every external resource a text resource references. */
 export function externalReferences(content: Uint8Array | string): ExternalReference[] {
   return text(content)
     .split(/\r?\n/)
-    .filter((line) => line.startsWith("[ext_resource"))
+    .filter((line) => headerTag(line) === "ext_resource")
     .map((line) => ({
       type: attribute(line, "type"),
       uid: attribute(line, "uid"),
