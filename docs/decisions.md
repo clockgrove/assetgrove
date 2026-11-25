@@ -8,7 +8,7 @@ Assetgrove is TypeScript on Node 24, managed with pnpm. Node runs the `.ts` sour
 
 - **pnpm** is pinned through `packageManager` and enabled with corepack. CI installs with `pnpm install --frozen-lockfile --ignore-scripts`, so no dependency may need an install script.
 - **Commands:** `pnpm check` runs Prettier, ESLint (typescript-eslint) and `tsc --noEmit`. `pnpm test` runs `node:test` over `test/**/*.test.ts`, offline, with the scripted provider. `pnpm test:real` runs the opt-in real-provider checks in `test/real/`, which skip without their keys (`AI_GATEWAY_API_KEY`, `TRIPO_API_KEY`).
-- **Runtime dependencies:** `ai` (the Vercel AI SDK, imported only by `src/gateway/vercel.ts`) with `@ai-sdk/anthropic`, `@ai-sdk/openai` and `@ai-sdk/openai-compatible` (its provider packages), `zod` (settings and format validation), `jsonc-parser` (JSONC), `pngjs` and `jpeg-js` (pure-JavaScript image codecs), `yaml` (the bible's front matter), `@modelcontextprotocol/server` (the MCP server), `gltf-validator` (the Khronos glTF validator in 3D QA), `meshoptimizer` (mesh simplification for detail levels), and for C2PA content credentials `@contentauth/c2pa-wasm`, `@auth0/cose`, `pkijs` and `asn1js` ([below](#c2pa-content-credentials-on-the-cais-webassembly-sdk)).
+- **Runtime dependencies:** `ai` (the Vercel AI SDK, imported only by `src/gateway/vercel.ts`) with `@ai-sdk/anthropic`, `@ai-sdk/openai` and `@ai-sdk/openai-compatible` (its provider packages), `zod` (settings and format validation), `jsonc-parser` (JSONC), `spdx-expression-parse` (a card's SPDX licence expression in the release gate), `pngjs` and `jpeg-js` (pure-JavaScript image codecs), `yaml` (the bible's front matter), `@modelcontextprotocol/server` (the MCP server), `gltf-validator` (the Khronos glTF validator in 3D QA), `meshoptimizer` (mesh simplification for detail levels), and for C2PA content credentials `@contentauth/c2pa-wasm`, `@auth0/cose`, `pkijs` and `asn1js` ([below](#c2pa-content-credentials-on-the-cais-webassembly-sdk)).
 - **TypeScript** stays on 6.0, the newest version typescript-eslint supports.
 
 ## Release-age exclusion for the `ai` SDK
@@ -553,3 +553,13 @@ Replacing an asset's media changes every scene and resource that refers to it, a
 
 - **The parser.** `ase-parser` (MIT, no dependencies) reads the file's header, layers, cels, tags and palette. Nothing here is hand-written format code.
 - **The compositing is ours.** No maintained library composites Aseprite frames: the parsers return cels and layers, and the Aseprite desktop and command-line tools are a native binary this repository does not ship. So layer compositing in `src/source/aseprite.ts` is written here, for the normal blend only. A layer with another blend mode, or a visible group with its own blend mode or an opacity below full, is refused rather than drawn wrongly, and a hidden layer is not drawn. The reason to write it is the AGENTS.md "Dependencies" exception: no library fits.
+
+## Licence windows use the licence's time zone and fail closed (#479)
+
+The owner decided the licence-window semantics of the release gate ([transform.md](transform.md#the-release-gate)) on 2026-11-25.
+
+- **Ends:** a window's `from` and `until` are both inclusive.
+- **Delivery date:** the calendar date at delivery time in the target profile's `release.timeZone`, an IANA zone name, computed with `Intl.DateTimeFormat` (no date library). `timeZone` is required when `licenseWindows` is set, and a profile without it is refused naming the field. There is no default, because the right zone is the licence's, not the machine's. The evidence prints the zone and the date.
+- **Matching fails closed:** the card's `license` is parsed with `spdx-expression-parse` (MIT), never by splitting strings, and one that does not parse is refused with the parse error. An `AND` needs every component to pass; an `OR` passes when one alternative passes, and the evidence names it. A licence id no window names passes, and the evidence says so. The window side fails closed too: a window's `license` is parsed with the same library when the profile is read, and one that is not a single licence id (or `id WITH exception`) is refused, naming the field, so a typo cannot leave a licence with no window. With `licenseWindows` set, a card with no `license` refuses a release with `license_window` and "no licence on the card"; `--preview` and `--draft` report it without refusing.
+
+Without `licenseWindows`, the gate checks no licence.

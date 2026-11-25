@@ -118,12 +118,12 @@ MCP tool: `intake`, arguments `file`, `target`, `profile`.
 ### `review`
 
 ```text
-review <address> [--candidate <id>] [--version <n|sha256>] [--comment <text>] [--reply <id>] [--resolve <id>] [--reject <reason>] [--frames <from-to>] [--cell <column,row>] [--time <start,end>] [--json]
+review <address> [--candidate <id>] [--version <n|sha256>] [--comment <text>] [--reply <id>] [--resolve <id>] [--reject <reason>] [--placeholder] [--frames <from-to>] [--cell <column,row>] [--time <start,end>] [--json]
 ```
 
-Appends one annotation to a review record, never changing an existing line. The address is an asset's card, media or review record, or, with `--candidate`, a run directory. `--version` names the version by number or sha256 (the current one by default; not with `--candidate`). `--comment` comments; `--reply` with `--comment` replies to the annotation it names; `--resolve` closes a request, with `--comment` as its note; `--reject` rejects with its reason and takes no `--comment`. Give one of `--reply`, `--resolve` or `--reject`. A new `--comment` on a version may anchor the note to part of it: `--frames` a frame range of a strip, `--cell` a cell of an atlas, `--time` a time range of a track in seconds; each is checked against that exact version, and one outside it exits 2 naming the selector and the valid range. For a version it then rewrites the card's state, the folder indexes and `log.md`. No confirmation, no model call and no spend. The annotation's text is returned only under `sharedText`.
+Appends one annotation to a review record, never changing an existing line. The address is an asset's card, media or review record, or, with `--candidate`, a run directory. `--version` names the version by number or sha256 (the current one by default; not with `--candidate`). `--comment` comments; `--reply` with `--comment` replies to the annotation it names; `--resolve` closes a request, with `--comment` as its note; `--reject` rejects with its reason and takes no `--comment`. Give one of `--reply`, `--resolve` or `--reject`. `--placeholder` marks the exact version, and only that version, as a placeholder (a `tagging` annotation; `--comment` is an optional note) so a release `deliver` refuses it; it takes no `--candidate`, `--reply`, `--resolve`, `--reject` or anchor. A new `--comment` on a version may anchor the note to part of it: `--frames` a frame range of a strip, `--cell` a cell of an atlas, `--time` a time range of a track in seconds; each is checked against that exact version, and one outside it exits 2 naming the selector and the valid range. For a version it then rewrites the card's state, the folder indexes and `log.md`. No confirmation, no model call and no spend. The annotation's text is returned only under `sharedText`.
 
-MCP tool: `review`, arguments `address`, `candidate`, `version`, `comment`, `reply`, `resolve`, `reject`, `frames`, `cell`, `time`.
+MCP tool: `review`, arguments `address`, `candidate`, `version`, `comment`, `reply`, `resolve`, `reject`, `placeholder`, `frames`, `cell`, `time`.
 
 ### `approve`
 
@@ -376,7 +376,7 @@ MCP tool: `rendition`, arguments `recipes`, `recipe`, `source`, `sourceSha256`, 
 ### `deliver`
 
 ```text
-deliver --selection <delivery.json> --out <directory> [--profile <profile.json>] [--preview] [--json]
+deliver --selection <delivery.json> --out <directory> [--profile <profile.json>] [--preview] [--draft] [--json]
 ```
 
 Delivers an explicit set of exact library versions. The selection file lists items of asset card,
@@ -386,10 +386,19 @@ renditions and a `delivery.json` manifest under `--out`, all or nothing. `--prev
 that resolves content hashes and destination paths and writes nothing, also available over MCP.
 A missing object, version, asset or recipe, or an output collision, is reported for every item
 before any write: exit 2 `invalid_input` with `error.problems [{file, code, problem}]`. An existing
-identical file is accepted; a differing one is a collision. Local raster operations only: no model
-call or spend. Does not approve assets, add library versions or change the current pick.
+identical file is accepted; a differing one is a collision. A release delivery (no `--preview`, no
+`--draft`) is also the release gate: a version a person marked as a placeholder (with `review`) is refused
+(`placeholder_selected`), and when the `--profile`'s `release` policy enables them, a version that
+is not approved (`version_unapproved`, `requireApproval`) or whose card licence is outside a
+`licenseWindows` entry on the delivery date in the policy's `timeZone`, read as an SPDX expression
+that fails closed on a missing or unparsable licence (`license_window`); each problem names the asset,
+version, sha256 and evidence, and `policy` lists every check with its evidence. `--preview` and
+`--draft` (which writes the delivery with `"draft": true` in `delivery.json`) report the same
+`policy` findings without refusing on them; `release` is true only for a written release delivery.
+Local raster operations only: no model call or spend. Does not approve assets, add library
+versions or change the current pick.
 
-MCP tool: `deliver`, arguments `selection`, `out`, `profile`, `preview`.
+MCP tool: `deliver`, arguments `selection`, `out`, `profile`, `preview`, `draft`.
 
 ### `ops`
 

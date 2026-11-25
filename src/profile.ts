@@ -10,6 +10,7 @@ import { refuseSettingsBlocks } from "./shared-settings.ts";
 import type { TargetProfile } from "./types.ts";
 
 import { projectRulesSchema } from "./project-rules.ts";
+import { releasePolicySchema } from "./release-policy.ts";
 
 const section = z.record(z.string(), z.unknown());
 
@@ -17,6 +18,7 @@ const profileSchema = z.strictObject({
   format: z.string(),
   name: z.string().optional(),
   rules: projectRulesSchema.optional(),
+  release: releasePolicySchema.optional(),
   license: z.string().optional(),
   acceptedLicenses: z.array(z.string()).optional(),
   style: section.optional(),

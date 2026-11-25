@@ -209,6 +209,35 @@ The optional `style.materials` data is validated against the material profile sc
 
 Per-channel `encoding` declares `unorm8` and an ordered normalized `range`. `compression` declares the format (`ktx2` or `basis`, delivered in KTX2), version and argv command; `preview` declares its version and argv command. `lightRig` is target-owned JSON data consumed by the preview renderer from the material report. No target light rig is available yet; tests use an explicit synthetic rig. Commands never use shell interpolation and have bounded runtimes. See [materials.md](materials.md) for derivation inputs, defaults, rendition limits and `--dry-run` cost forecasts.
 
+### Release policy
+
+An optional `release` section says what a release delivery (`assetgrove deliver` without
+`--preview` or `--draft`, given this profile with `--profile`) requires beyond selecting no
+placeholder version, which is always refused ([transform.md](transform.md#the-release-gate)):
+
+```json
+{
+  "release": {
+    "requireApproval": true,
+    "timeZone": "America/Los_Angeles",
+    "licenseWindows": [
+      { "license": "LicenseRef-Vendor-EULA", "from": "2026-01-01", "until": "2026-12-31" }
+    ]
+  }
+}
+```
+
+`requireApproval` refuses a selected version whose status is not `approved`. Each
+`licenseWindows` entry names one SPDX licence id (or `id WITH exception`, parsed as the card's
+licence is, so a typo such as `mit` or an `AND`/`OR` expression is refused when the profile is read)
+and an optional `from` and `until` date (`YYYY-MM-DD`,
+both inclusive, `from` on or before `until`). `timeZone`, an IANA zone name, is required when
+`licenseWindows` is set: the delivery date is the calendar date in that zone at delivery time, so
+choose the licence's zone, not the machine's. The asset card's `license` is read as an SPDX
+expression and checked as [transform.md](transform.md#the-release-gate) describes: a card with no
+licence, or one that does not parse, is refused. Unknown fields, malformed dates, an unknown zone
+and windows without `timeZone` are refused when the profile is read, naming the field.
+
 ### Project rules
 
 An optional `rules` array declares data-only constraints. Every rule has a unique
