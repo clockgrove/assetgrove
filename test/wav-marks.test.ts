@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import wavefile from "wavefile";
-import { developmentSigner, readCredentials, signCredentials } from "../src/credentials.ts";
+import {
+  developmentSigner,
+  readCredentials,
+  signCredentials,
+  signManifest,
+} from "../src/credentials.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import type { TargetWrite } from "../src/handoff.ts";
 import { markProblems } from "../src/handoff/mark-check.ts";
@@ -118,8 +123,26 @@ test("a WAV hand-off writes Content Credentials and the mark", async () => {
 
 test("a vendor manifest in the source WAV becomes a componentOf ingredient", async () => {
   const signer = await developmentSigner(temp("signer"));
-  const claim = { digitalSourceType: DIGITAL_SOURCE_TYPES.human, models: [], title: "vendor.wav" };
-  const vendor = await signCredentials(toneWav(), "audio/wav", claim, signer, "1");
+  const vendor = await signManifest(
+    toneWav(),
+    "audio/wav",
+    {
+      claim_generator_info: [{ name: "A vendor", version: "1" }],
+      title: "vendor.wav",
+      format: "audio/wav",
+      assertions: [
+        {
+          label: "c2pa.actions.v2",
+          data: {
+            actions: [
+              { action: "c2pa.created", digitalSourceType: DIGITAL_SOURCE_TYPES.generated },
+            ],
+          },
+        },
+      ],
+    },
+    signer,
+  );
   assert.ok(riffChunkIds(vendor).includes("C2PA"));
   const marked = embedDigitalSourceType(vendor, "audio/wav", generated, { models });
   assert.ok(riffChunkIds(marked).includes("C2PA"), "the vendor chunk survives the mark");
@@ -138,4 +161,19 @@ test("a vendor manifest in the source WAV becomes a componentOf ingredient", asy
 
   const plain = await signCredentials(toneWav(), "audio/wav", ours, signer, "1");
   assert.deepEqual((await readCredentials(plain, "audio/wav"))?.ingredients, []);
+});
+
+test("a WAV Assetgrove already handed off gains no vendor ingredient when handed off again", async () => {
+  const first = temp("first");
+  await writeToTarget(handoff(first, toneWav()));
+  const master = new Uint8Array(await readFile(join(first, "assets/source/fern/shelter.wav")));
+  assert.ok(riffChunkIds(master).includes("C2PA"));
+
+  const second = temp("second");
+  await writeToTarget(handoff(second, master));
+  const bytes = new Uint8Array(await readFile(join(second, "assets/source/fern/shelter.wav")));
+  const read = await readCredentials(bytes, "audio/wav");
+  assert.equal(read?.state, "Valid");
+  assert.deepEqual(read?.failures, []);
+  assert.deepEqual(read?.ingredients, []);
 });
