@@ -147,8 +147,7 @@ async function listTarget(
       if (entry.isDirectory()) {
         const sub = join(abs, entry.name);
         if (!guarded.some((g) => isInside(realOf(sub), g))) await walk(sub, path);
-      }
-      else if (entry.isFile()) {
+      } else if (entry.isFile()) {
         try {
           const s = await lstat(join(abs, entry.name));
           found.push({ path, size: s.size, mtimeMs: s.mtimeMs, ctimeMs: s.ctimeMs });

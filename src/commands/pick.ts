@@ -38,10 +38,7 @@ interface PickArgs {
  * differs from the card's `lock.sha256`, since replacing it discards an outside change. It also
  * lists each preset's known usage of the replaced asset (`details.usage`), outside the digest.
  */
-export async function pickRequest(
-  args: PickArgs,
-  usageInput?: UsageInput,
-): Promise<KindRequest> {
+export async function pickRequest(args: PickArgs, usageInput?: UsageInput): Promise<KindRequest> {
   if (
     args.duplicate !== undefined &&
     !["existing-version", "keep-separate", "exit"].includes(args.duplicate)
