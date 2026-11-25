@@ -40,6 +40,8 @@ export interface ReplacementUsageInput {
   targetDir: string;
   registry: PresetRegistry;
   stateDir: string;
+  /** The settings' directory: like the state directory, never read or listed. */
+  configDir: string;
 }
 
 const NO_CACHE: UsageCache = { get: async () => undefined, set: async () => {} };
@@ -61,8 +63,9 @@ export async function replacementUsage(input: ReplacementUsageInput): Promise<Pr
   const media = relMedia.split(sep).join("/");
   const revision = await headCommit(root);
   const cacheable = !isInside(realOf(resolve(stateDir)), realTarget);
-  const read = usageRead(root, realTarget);
-  const list = (dir: string) => listTarget(root, realTarget, dir);
+  const guarded = [input.configDir, stateDir].map((dir) => realOf(resolve(dir)));
+  const read = usageRead(root, realTarget, guarded);
+  const list = (dir: string) => listTarget(root, realTarget, dir, guarded);
   const out: PresetUsage[] = [];
   for (const { preset, options } of presets) {
     const ctx: UsageContext = {
@@ -94,8 +97,11 @@ async function headCommit(dir: string): Promise<string> {
   }
 }
 
-/** A read of the target that refuses `.git`, a path outside it and a path through a link out of it. */
-function usageRead(root: string, realTarget: string): TargetRead {
+/**
+ * A read of the target that refuses `.git`, a path outside it, a path through a link out of it and
+ * a path in the settings or state directories, as a hand-off write's read does.
+ */
+function usageRead(root: string, realTarget: string, guarded: string[]): TargetRead {
   return async (rel) => {
     const full = resolve(root, rel);
     const within = relative(root, full);
@@ -105,6 +111,10 @@ function usageRead(root: string, realTarget: string): TargetRead {
     const real = realOf(full);
     if (real === realTarget || !isInside(real, realTarget))
       throw new InputError(`a preset may not read "${rel}": it leaves the target through a link`);
+    if (guarded.some((dir) => isInside(real, dir)))
+      throw new InputError(
+        `a preset may not read "${rel}": it reaches the Assetgrove settings or state`,
+      );
     return readFile(full).then(
       (bytes) => new Uint8Array(bytes),
       () => undefined,
@@ -112,11 +122,17 @@ function usageRead(root: string, realTarget: string): TargetRead {
   };
 }
 
-async function listTarget(root: string, realTarget: string, dir: string): Promise<TargetEntry[]> {
+async function listTarget(
+  root: string,
+  realTarget: string,
+  dir: string,
+  guarded: string[],
+): Promise<TargetEntry[]> {
   const rel = posix.normalize(dir.replaceAll("\\", "/") || ".");
   if (isAbsolute(dir) || rel === ".." || rel.startsWith("../") || rel.startsWith("/")) return [];
   const start = rel === "." ? root : join(root, ...rel.split("/"));
-  if (!isInside(realOf(start), realTarget)) return [];
+  const realStart = realOf(start);
+  if (!isInside(realStart, realTarget) || guarded.some((g) => isInside(realStart, g))) return [];
   const found: TargetEntry[] = [];
   const walk = async (abs: string, relDir: string): Promise<void> => {
     let entries;
@@ -128,7 +144,10 @@ async function listTarget(root: string, realTarget: string, dir: string): Promis
     for (const entry of entries) {
       if (entry.name === ".git") continue;
       const path = relDir === "" ? entry.name : `${relDir}/${entry.name}`;
-      if (entry.isDirectory()) await walk(join(abs, entry.name), path);
+      if (entry.isDirectory()) {
+        const sub = join(abs, entry.name);
+        if (!guarded.some((g) => isInside(realOf(sub), g))) await walk(sub, path);
+      }
       else if (entry.isFile()) {
         try {
           const s = await lstat(join(abs, entry.name));

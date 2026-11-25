@@ -3,11 +3,11 @@
  * `details.usage` and the summary, outside the digest, with the context a preset's `usage` gets.
  */
 import "./fixtures/env.ts";
-import { approve, approveProfile, stateDir } from "./fixtures/env.ts";
+import { approve, approveProfile, settingsPath, stateDir } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { readdir, realpath, stat, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { mkdir, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -25,6 +25,7 @@ import { shelterSpec, syntheticWorld, writeStyleBible } from "./fixtures/synthet
 import type { World } from "./fixtures/synthetic.ts";
 import { gitTarget } from "./fixtures/git.ts";
 
+const configDir = dirname(settingsPath);
 const root = fileURLToPath(new URL("..", import.meta.url));
 const passingScript = fileURLToPath(new URL("./fixtures/script.ts", import.meta.url));
 approve(passingScript);
@@ -162,7 +163,7 @@ test("the replacement form lists usage, marks unresolved and unreadable, and lea
   });
   const before = await listing(world.targetDir);
   const plain = await pickRequest(args);
-  const request = await pickRequest(args, { registry, stateDir });
+  const request = await pickRequest(args, { registry, stateDir, configDir });
   assert.equal(request.id, plain.id);
   assert.deepEqual(request.body, plain.body);
   const usage = (request.details as Record<string, unknown>)["usage"];
@@ -203,7 +204,7 @@ test("a usage that throws is an advisory and the request still builds", async ()
     throw new Error("cannot scan");
   });
   const plain = await pickRequest(args);
-  const request = await pickRequest(args, { registry, stateDir });
+  const request = await pickRequest(args, { registry, stateDir, configDir });
   assert.equal(request.id, plain.id);
   assert.deepEqual((request.details as Record<string, unknown>)["usage"], [
     { preset: "fake:usage", error: "cannot scan" },
@@ -236,6 +237,7 @@ test("a state directory inside the target is never written, and reads outside it
     targetDir: world.targetDir,
     registry,
     stateDir: inside,
+    configDir,
   });
   assert.equal(out[0]?.report?.references.length, 0);
   assert.equal(cacheGet, undefined);
@@ -249,7 +251,52 @@ test("a state directory inside the target is never written, and reads outside it
       targetDir: world.targetDir,
       registry,
       stateDir,
+      configDir,
     }),
     [],
   );
+});
+
+test("a preset neither reads nor lists the settings or state directories inside the target", async () => {
+  const { world } = await replacement();
+  const settingsInside = join(world.targetDir, "assetgrove-config");
+  const stateInside = join(world.targetDir, "assetgrove-state");
+  for (const dir of [settingsInside, stateInside]) {
+    await mkdir(join(dir, "confirmations"), { recursive: true });
+    await writeFile(join(dir, "confirmations", "secret.json"), "{}");
+  }
+  const refused: string[] = [];
+  let listed: string[] = [];
+  let listedInside: string[] = ["unset"];
+  const registry = fakeRegistry(async () => ({ asset: { path: "x" }, references: [] }));
+  registry.presets.get("fake:usage")!.usage = async (ctx, _o, read) => {
+    listed = (await ctx.list("")).map((e) => e.path);
+    listedInside = (await ctx.list("assetgrove-state")).map((e) => e.path);
+    for (const path of [
+      "assetgrove-config/confirmations/secret.json",
+      "assetgrove-state/confirmations/secret.json",
+    ])
+      await read(path).then(
+        () => refused.push(`read ${path}`),
+        (e: Error) => refused.push(e.message),
+      );
+    return { asset: { path: "x" }, references: [] };
+  };
+  await replacementUsage({
+    profile: { ...world.profile, handoff: HANDOFF } as never,
+    assetId: "fern-shelter",
+    media: join(world.targetDir, "assets/source/fern/shelter.png"),
+    targetDir: world.targetDir,
+    registry,
+    stateDir: stateInside,
+    configDir: settingsInside,
+  });
+  assert.equal(refused.length, 2);
+  for (const message of refused) assert.match(message, /reaches the Assetgrove settings or state/);
+  assert.ok(listed.includes("assets/source/fern/shelter.png"), listed.join(", "));
+  assert.deepEqual(
+    listed.filter((p) => p.startsWith("assetgrove-")),
+    [],
+  );
+  assert.deepEqual(listedInside, []);
 });

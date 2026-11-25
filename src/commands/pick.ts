@@ -15,6 +15,13 @@ import { readRun } from "../loop.ts";
 import { refusal } from "./result.ts";
 import { defineCommand } from "./types.ts";
 
+/** What the replacement preview's usage scan needs: the presets, and the directories it never reads. */
+export interface UsageInput {
+  registry?: PresetRegistry;
+  stateDir: string;
+  configDir: string;
+}
+
 interface PickArgs {
   run: string;
   candidate?: string;
@@ -33,7 +40,7 @@ interface PickArgs {
  */
 export async function pickRequest(
   args: PickArgs,
-  usageInput?: { registry?: PresetRegistry; stateDir: string },
+  usageInput?: UsageInput,
 ): Promise<KindRequest> {
   if (
     args.duplicate !== undefined &&
@@ -129,6 +136,7 @@ export async function pickRequest(
           targetDir: resolve(args.target),
           registry: usageInput.registry,
           stateDir: usageInput.stateDir,
+          configDir: usageInput.configDir,
         })
       : [];
   const replacing =
@@ -275,6 +283,7 @@ approves it. A human runs pick; agents never do.`,
     const request = await pickRequest(args, {
       ...(ctx.extensions && { registry: ctx.extensions }),
       stateDir: ctx.settings.stateDir,
+      configDir: ctx.settings.configDir,
     });
     const duplicates = request.details["duplicates"] as
       (ExactMatch & { candidate: string })[] | undefined;
