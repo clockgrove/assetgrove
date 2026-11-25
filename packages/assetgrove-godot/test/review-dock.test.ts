@@ -193,7 +193,7 @@ function drive(input: {
     `no result (exit ${done.status}): ${done.stdout.slice(-2000)}${done.stderr.slice(-2000)}`,
   );
   const seen = JSON.parse(readFileSync(resultPath, "utf8")) as Seen;
-  assert.equal(seen["dockFound"], true, done.stdout.slice(-2000));
+  assert.equal(seen["dockFound"], true, JSON.stringify(seen) + done.stdout.slice(-2000));
   return seen;
 }
 
