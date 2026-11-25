@@ -14,6 +14,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -97,7 +98,14 @@ test("a broken project is reported with exact paths and corrections, and left un
     scene(
       "uid://main1",
       '[ext_resource type="Texture2D" uid="uid://oldhero" path="res://art/hero.png" id="1"]',
+      // An LFS pointer's UID cannot be read, so the reference is not called an orphan.
+      '[ext_resource type="PackedScene" uid="uid://level1" path="res://levels/level.tscn" id="2"]',
     ),
+  );
+  put("game/art/hero2.png", samplePng());
+  put(
+    "game/art/hero2.png.import",
+    `${importFile("uid://hero1")}path="res://.godot/imported/hero2.ctex"\n\n[params]\n\ncompress/mode=0\n`,
   );
   put("game/a.gd", "extends Node\n");
   put("game/a.gd.uid", "uid://same1\n");
@@ -111,6 +119,7 @@ test("a broken project is reported with exact paths and corrections, and left un
     "version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 3\n",
   );
   put(".gitattributes", "*.tres filter=lfs diff=lfs merge=lfs -text\n");
+  put("game/.gitattributes", "*.tres filter=lfs diff=lfs merge=lfs -text\n");
   git("add", "-f", "game/.godot/imported/x.ctex", "game/.godot/uid_cache.bin");
 
   const before = hashAll(project.dir);
@@ -124,6 +133,7 @@ test("a broken project is reported with exact paths and corrections, and left un
   assert.deepEqual(
     found.map((f) => [f.code, f.path, f.line]),
     [
+      ["duplicate-uid", "game/art/hero2.png.import", undefined],
       ["duplicate-uid", "game/b.gd.uid", undefined],
       ["tracked-engine-cache", "game/.godot", undefined],
       ["orphan-uid", "game/art/missing.png.import", undefined],
@@ -156,11 +166,19 @@ test("a broken project is reported with exact paths and corrections, and left un
   assert.match(by("lfs-text-resource", "game/res/theme.tres").correction, /git add --renormalize/);
   assert.match(by("lfs-text-resource", "game/levels/level.tscn").correction, /git lfs pull/);
 
-  // The corrections, applied as written, clear their findings.
-  const attribute = /add the line "([^"]+)"/.exec(
+  const copy = by("duplicate-uid", "game/art/hero2.png.import").correction;
+  assert.match(copy, /remove only the line uid="uid:\/\/hero1" under \[remap\]/);
+  assert.match(copy, /keeping its other import options/);
+  assert.doesNotMatch(copy, /delete/);
+  assert.match(by("duplicate-uid", "game/b.gd.uid").correction, /delete game\/b\.gd\.uid/);
+
+  // The corrections, applied as written, clear their findings; a deeper .gitattributes rule
+  // routing the file to LFS is overridden by the one the correction names.
+  const [, attribute, attributesFile] = /add the line "([^"]+)" to the end of (\S+)/.exec(
     by("lfs-text-resource", "game/res/theme.tres").correction,
-  )![1]!;
-  put(".gitattributes", `*.tres filter=lfs diff=lfs merge=lfs -text\n${attribute}\n`);
+  )!;
+  assert.equal(attributesFile, "game/res/.gitattributes");
+  put(attributesFile!, `${attribute}\n`);
   git("rm", "-r", "--cached", "--quiet", "--", "game/.godot");
   put("game/.gitignore", ".godot/\n");
   const after = findingsOf(await run("game")).map((f) => [f.code, f.path]);
@@ -175,7 +193,7 @@ test("a broken project is reported with exact paths and corrections, and left un
 });
 
 test("a healthy project has no findings", async () => {
-  const { put, run } = fresh();
+  const { project, put, run } = fresh();
   put("game/project.godot", "config_version=5\n");
   put("game/art/hero.png", samplePng());
   put("game/art/hero.png.import", importFile("uid://hero1"));
@@ -189,6 +207,20 @@ test("a healthy project has no findings", async () => {
       '[ext_resource type="Script" uid="uid://script1" path="res://hero.gd" id="2"]',
     ),
   );
+  // A binary resource carries its UID inside, where the doctor cannot read it.
+  put("game/mesh.res", new Uint8Array([0x52, 0x53, 0x43, 0x43, 0, 1, 2, 3]));
+  put(
+    "game/level.tscn",
+    scene(
+      "uid://level1",
+      '[ext_resource type="ArrayMesh" uid="uid://mesh1" path="res://mesh.res" id="1"]',
+    ),
+  );
+  // A source that is a link to a file of the target is not missing.
+  put("game/shared/real.png", samplePng());
+  put("game/shared/real.png.import", importFile("uid://real1"));
+  symlinkSync(join(project.dir, "game/shared/real.png"), join(project.dir, "game/art/link.png"));
+  put("game/art/link.png.import", importFile("uid://link1"));
   put("game/.gitignore", ".godot/\n");
   put(".gitattributes", "*.png filter=lfs diff=lfs merge=lfs -text\n");
   put("game/.godot/uid_cache.bin", "cache");

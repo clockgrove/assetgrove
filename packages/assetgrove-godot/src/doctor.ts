@@ -26,8 +26,21 @@ const sidecarUid = (content: Uint8Array): string | undefined => {
   return /^uid:\/\/[0-9a-z]+$/.test(uid) ? uid : undefined;
 };
 
-/** The path as a `.gitattributes` pattern at the target's root: anchored, a space escaped. */
-const gitattributesPattern = (path: string) => `/${path.replaceAll(" ", "[[:space:]]")}`;
+const isPointer = (content: Uint8Array) =>
+  decoder.decode(content.subarray(0, LFS_POINTER.length)) === LFS_POINTER;
+
+/**
+ * The `.gitattributes` in the file's own folder and the file's name as a pattern there: anchored,
+ * a space escaped. Git lets a deeper `.gitattributes` override a shallower one, so a line in the
+ * file's own folder wins over a rule from any folder above it.
+ */
+const gitattributesFor = (path: string) => {
+  const slash = path.lastIndexOf("/");
+  return {
+    file: `${path.slice(0, slash + 1)}.gitattributes`,
+    pattern: `/${path.slice(slash + 1).replaceAll(" ", "[[:space:]]")}`,
+  };
+};
 
 export async function godotDoctor(
   ctx: DoctorContext,
@@ -53,6 +66,32 @@ export async function godotDoctor(
       if (bytes !== undefined) contents.set(path, bytes);
     }
     return contents.get(path);
+  };
+  // The listing holds regular files only; a link to a file still answers a read. A read the
+  // target refuses is no proof the file is missing.
+  const exists = async (path: string) => {
+    if (present.has(path)) return true;
+    try {
+      return (await read(path)) !== undefined;
+    } catch {
+      return true;
+    }
+  };
+  /**
+   * Whether the UID `path` answers to cannot be known here: its `.import`, `.uid` or text header
+   * is unreadable or an LFS pointer, or it is a binary `.res` or `.scn` with its UID inside.
+   */
+  const uidUnknowable = async (path: string) => {
+    const holder = present.has(`${path}.import`)
+      ? `${path}.import`
+      : present.has(`${path}.uid`)
+        ? `${path}.uid`
+        : SCENE_OR_RESOURCE.test(path)
+          ? path
+          : undefined;
+    if (holder === undefined) return /\.(res|scn)$/.test(path);
+    const content = await load(holder);
+    return content === undefined || isPointer(content);
   };
 
   // Which files define which UID, and the UID each project file answers to.
@@ -88,7 +127,7 @@ export async function godotDoctor(
     ] as const) {
       if (!file.endsWith(suffix)) continue;
       const source = file.slice(0, -suffix.length);
-      if (present.has(source)) continue;
+      if (await exists(source)) continue;
       findings.push({
         code: "orphan-uid",
         path: file,
@@ -103,51 +142,53 @@ export async function godotDoctor(
     if (!SCENE_OR_RESOURCE.test(file)) continue;
     const content = contents.get(file);
     if (content === undefined) continue;
-    decoder
-      .decode(content)
-      .split(/\r?\n/)
-      .forEach((text, index) => {
-        if (!text.startsWith("[ext_resource")) return;
-        const uid = headerAttribute(text, "uid");
-        if (uid === undefined || uid === "" || definers.has(uid)) return;
-        const line = index + 1;
-        const path = headerAttribute(text, "path");
-        const resolved =
-          path !== undefined && path.startsWith("res://")
-            ? `${prefix}${path.slice("res://".length)}`
-            : undefined;
-        let correction: string;
-        if (resolved === undefined || !present.has(resolved)) {
-          correction = `the reference is broken: ${path ?? "it has no path"} is not in the project; point it at the file that replaced it in the Godot editor, or remove the [ext_resource] line and the ExtResource uses of its id`;
-        } else {
-          const actual = uidOfFile.get(resolved);
-          correction =
-            actual === undefined
-              ? `remove the uid="${uid}" attribute on line ${line} of ${file} so Godot loads ${path} by path`
-              : `change uid="${uid}" to uid="${actual}" on line ${line} of ${file}, or open and re-save ${file} in the Godot editor`;
-        }
-        findings.push({
-          code: "orphan-uid",
-          path: file,
-          line,
-          problem: `${file} line ${line} references ${uid}, which no file of the project defines.`,
-          correction,
-        });
+    const lines = decoder.decode(content).split(/\r?\n/);
+    for (const [index, text] of lines.entries()) {
+      if (!text.startsWith("[ext_resource")) continue;
+      const uid = headerAttribute(text, "uid");
+      if (uid === undefined || uid === "" || definers.has(uid)) continue;
+      const line = index + 1;
+      const path = headerAttribute(text, "path");
+      const resolved =
+        path !== undefined && path.startsWith("res://")
+          ? `${prefix}${path.slice("res://".length)}`
+          : undefined;
+      const found = resolved !== undefined && (await exists(resolved));
+      // The file is there but its UID cannot be read, so the reference may well be right.
+      if (found && (await uidUnknowable(resolved))) continue;
+      let correction: string;
+      if (!found) {
+        correction = `the reference is broken: ${path ?? "it has no path"} is not in the project; point it at the file that replaced it in the Godot editor, or remove the [ext_resource] line and the ExtResource uses of its id`;
+      } else {
+        const actual = uidOfFile.get(resolved);
+        correction =
+          actual === undefined
+            ? `remove the uid="${uid}" attribute on line ${line} of ${file} so Godot loads ${path} by path`
+            : `change uid="${uid}" to uid="${actual}" on line ${line} of ${file}, or open and re-save ${file} in the Godot editor`;
+      }
+      findings.push({
+        code: "orphan-uid",
+        path: file,
+        line,
+        problem: `${file} line ${line} references ${uid}, which no file of the project defines.`,
+        correction,
       });
+    }
   }
 
   // 1d: one UID defined by several files.
   for (const [uid, owners] of definers) {
     const sorted = [...owners].sort(order);
     for (const file of sorted.slice(1)) {
-      const sidecar = file.endsWith(".import") || file.endsWith(".uid");
       findings.push({
         code: "duplicate-uid",
         path: file,
         problem: `${file} defines ${uid}, which ${sorted[0]} already defines; Godot resolves a UID to only one of them.`,
-        correction: sidecar
-          ? `give the copy a new UID: delete ${file} and let the Godot editor generate a new one the next time it opens the project`
-          : `give the copy a new UID: re-save ${file} with "Save As" in the Godot editor, or reimport it`,
+        correction: file.endsWith(".import")
+          ? `give the copy a new UID: remove only the line uid="${uid}" under [remap] in ${file}, keeping its other import options, then reimport ${file.slice(0, -".import".length)} in the Godot editor, which writes a new UID`
+          : file.endsWith(".uid")
+            ? `give the copy a new UID: delete ${file} and let the Godot editor generate a new one the next time it opens the project`
+            : `give the copy a new UID: re-save ${file} with "Save As" in the Godot editor, or reimport it`,
       });
     }
   }
@@ -180,12 +221,11 @@ export async function godotDoctor(
   const routed = new Set(await ctx.lfs(texts));
   for (const file of texts) {
     const content = await load(file);
-    const pointer =
-      content !== undefined &&
-      decoder.decode(content.subarray(0, LFS_POINTER.length)) === LFS_POINTER;
+    const pointer = content !== undefined && isPointer(content);
     if (!routed.has(file) && !pointer) continue;
-    const attribute = `${gitattributesPattern(file)} -filter -diff -merge text`;
-    const store = `add the line "${attribute}" to the end of the .gitattributes at the target's root, so Git stores it as text again, then run git add --renormalize -- ${file} and commit`;
+    const attributes = gitattributesFor(file);
+    const attribute = `${attributes.pattern} -filter -diff -merge text`;
+    const store = `add the line "${attribute}" to the end of ${attributes.file} (create it if it is missing; a line in the file's own folder overrides every .gitattributes above it), so Git stores it as text again, then run git add --renormalize -- ${file} and commit`;
     findings.push({
       code: "lfs-text-resource",
       path: file,
