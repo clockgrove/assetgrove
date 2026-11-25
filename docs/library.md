@@ -471,6 +471,21 @@ segments inside the library root; sources must exist in repository review
 records. Old versions remain addressable after their asset is replaced. Existing
 records without `lineage` have no edges.
 
+A source may instead be a file under the library root, given as `file` (exactly one of
+`asset` or `file`) with the sha256 of its bytes:
+
+```json
+{ "relation": "derived-from", "file": "src/lantern.aseprite", "sha256": "<file's 64-hex hash>" }
+```
+
+A `file` is a canonical library-relative path with `/` segments: not absolute, with no
+`.`, `..` or empty segment, and inside the root (`lineage_invalid` otherwise). A file
+is not a graph node and need not exist to be valid. `pick` writes this edge, as
+`derived-from`, on the version it appends when the candidate is a strip staged from an
+editable source (its provenance's `editableSource`), with the source's sha256 at
+staging. A source outside the library root refuses the pick with exit 2 before any file
+is written.
+
 `assetgrove library relations --target <project> --json` (MCP
 `library_relations`) reads this graph directly from review records, without an
 index or model call. `--asset props/lantern` selects all versions of that asset;
@@ -485,6 +500,11 @@ the exact downstream versions reached from those edges, transitively, each with
 its recorded source edges and hashes. These lists include historical downstream
 versions; they say nothing about whether an asset needs redoing. `library
 judge-stale` continues to own editorial judgments.
+
+`changedSources` also lists a file edge whose recorded sha256 differs from the file's
+current bytes under the library root, with `currentSha256` the current hash, or `null`
+when the file is missing. An unfetched Git LFS pointer counts by its oid. The human
+output prints a file source as `file:<path>@<sha256>`.
 
 `library check`, `library rebuild`, and `library relations` report invalid
 lineage and every edge participating in a cycle with its review file, exact

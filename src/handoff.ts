@@ -924,6 +924,15 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     ...(contentSha256 !== undefined && { contentSha256 }),
     ...(write.replaces !== undefined && { replaces: write.replaces }),
     ...(write.answers && { answers: write.answers }),
+    ...(provenance.editableSource !== undefined && {
+      sources: [
+        {
+          relation: "derived-from" as const,
+          path: provenance.editableSource.path,
+          sha256: provenance.editableSource.sha256,
+        },
+      ],
+    }),
   });
   sameFile([...writes.map(([path]) => path), ...libraryFiles(library)]);
   return {

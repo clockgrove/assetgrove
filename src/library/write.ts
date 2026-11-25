@@ -14,7 +14,7 @@ import {
  * not appended again, and the projections are rewritten from the records.
  */
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import {
   basename,
@@ -310,6 +310,8 @@ export interface LibraryPlan {
   provenanceSource?: string;
   /** The cards in the library before this write. */
   cards: FoundCard[];
+  /** The `lineage` the appended version records, from the editable source; absent without one. */
+  lineage?: Array<{ relation: "derived-from"; file: string; sha256: string }>;
   /** What the write was checked against, checked again under the lock (`recheckLibraryWrite`). */
   expects: VersionExpectations;
 }
@@ -386,6 +388,11 @@ export async function prepareLibraryWrite(input: {
    * `version` exits 2 `version_changed`.
    */
   answers?: { version: string; answers: string[] };
+  /**
+   * The files the version is derived from (an editable source): each must lie inside the library
+   * root, else exit 2 before anything is written.
+   */
+  sources?: Array<{ relation: "derived-from"; path: string; sha256: string }>;
 }): Promise<LibraryPlan> {
   const config = libraryConfig(input.profile, input.targetDir);
   const assetId = assetIdOf(input.spec);
@@ -425,6 +432,11 @@ export async function prepareLibraryWrite(input: {
   if (!existingCard && input.spec.fields?.["tags"] !== undefined)
     editLabels(input.spec.fields["tags"], [], vocabulary);
   const review = await readOwnReview(reviewPath, config.root, dir, undefined);
+  const lineage = input.sources?.map((source) => ({
+    relation: source.relation,
+    file: libraryRelative(config.root, source.path),
+    sha256: source.sha256,
+  }));
   const sha256 = input.mediaBytes && sha256Hex(input.mediaBytes);
   const expects: VersionExpectations = {
     ...(sha256 !== undefined && { sha256 }),
@@ -445,8 +457,30 @@ export async function prepareLibraryWrite(input: {
     reviewPath,
     ...(source !== undefined && { provenanceSource: resolve(source) }),
     cards,
+    ...(lineage?.length && { lineage }),
     expects,
   };
+}
+
+/** The `/`-separated path of an editable source relative to the library root, compared by real path. */
+function libraryRelative(root: string, path: string): string {
+  const real = (p: string) => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  const realRoot = real(root);
+  const rel = relative(realRoot, real(path)).split(sep).join("/");
+  try {
+    libraryPath(realRoot, realRoot, rel, "the editable source");
+  } catch {
+    throw new InputError(
+      `the editable source ${path} lies outside the library root ${root} (library.root); keep it inside the library so the version can record where it came from`,
+    );
+  }
+  return rel;
 }
 
 /** The error for a candidate made on a version that is no longer the asset's current one. */
@@ -782,6 +816,7 @@ async function prepareLibraryVersion(plan: LibraryPlan, input: LibraryVersionInp
         provenanceSha256: sha256Hex(input.provenanceBytes),
       }),
       ...(input.contentSha256 !== undefined && { contentSha256: input.contentSha256 }),
+      ...(plan.lineage !== undefined && { lineage: plan.lineage }),
       run: input.run,
       candidate: input.candidate,
       at,

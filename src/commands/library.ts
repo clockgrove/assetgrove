@@ -65,6 +65,7 @@ import type { JsonSchemaObject, Outcome, RunContext } from "./types.ts";
 import type { LoadedReference } from "../types.ts";
 
 import { browseRelationships, relationshipGraph } from "../library/relations.ts";
+import type { FileReference, VersionReference } from "../library/relations.ts";
 
 interface LibraryArgs {
   target?: string;
@@ -785,28 +786,30 @@ versions and their recorded sources. These are facts, not freshness judgments. R
         message: "cannot build lineage from this review record",
       })),
     );
+    const name = (source: VersionReference | FileReference) =>
+      "file" in source
+        ? `file:${source.file}@${source.sha256}`
+        : `${source.asset}@${source.sha256}`;
     const human = [
       "forward:",
       ...fields.forward.map(
         (edge) =>
-          `  ${edge.downstream.asset}@${edge.downstream.sha256} --${edge.relation}--> ${edge.source.asset}@${edge.source.sha256}`,
+          `  ${edge.downstream.asset}@${edge.downstream.sha256} --${edge.relation}--> ${name(edge.source)}`,
       ),
       "reverse:",
       ...fields.reverse.map(
         (edge) =>
-          `  ${edge.source.asset}@${edge.source.sha256} <--${edge.relation}-- ${edge.downstream.asset}@${edge.downstream.sha256}`,
+          `  ${name(edge.source)} <--${edge.relation}-- ${edge.downstream.asset}@${edge.downstream.sha256}`,
       ),
       "changed sources:",
       ...fields.changedSources.map(
         (edge) =>
-          `  ${edge.downstream.asset}@${edge.downstream.sha256}: ${edge.source.asset} recorded ${edge.source.sha256}, current ${edge.currentSha256}`,
+          `  ${edge.downstream.asset}@${edge.downstream.sha256}: ${"file" in edge.source ? `file:${edge.source.file}` : edge.source.asset} recorded ${edge.source.sha256}, current ${edge.currentSha256 ?? "missing"}`,
       ),
       "affected versions:",
       ...fields.affected.flatMap((node) => [
         `  ${node.asset}@${node.sha256}`,
-        ...node.recordedSources.map(
-          (edge) => `    ${edge.relation}: ${edge.source.asset}@${edge.source.sha256}`,
-        ),
+        ...node.recordedSources.map((edge) => `    ${edge.relation}: ${name(edge.source)}`),
       ]),
       ...fields.problems.map(
         (problem) => `${problem.file}:${problem.reference}: ${problem.code}: ${problem.message}`,
