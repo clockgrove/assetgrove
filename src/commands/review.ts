@@ -30,6 +30,8 @@ import type { LoadedAsset } from "../library/actions.ts";
 import {
   appendAnnotation,
   nextStamp,
+  placeholderBody,
+  placeholderMarks,
   recordHead,
   versionNumber,
   versionStatus,
@@ -87,6 +89,7 @@ interface ReviewArgs {
   reply?: string;
   resolve?: string;
   reject?: string;
+  placeholder?: boolean;
   frames?: string;
   cell?: string;
   time?: string;
@@ -138,6 +141,11 @@ function parseAnchor(args: ReviewArgs): Anchor | undefined {
 /** Anchors go only with a new comment on a version; this refuses them anywhere else. */
 function requireNewComment(args: ReviewArgs): Anchor | undefined {
   const anchor = parseAnchor(args);
+  if (anchor !== undefined && args.placeholder === true) {
+    throw new InputError(
+      "--placeholder marks the whole version; it takes no --frames, --cell or --time",
+    );
+  }
   if (
     anchor !== undefined &&
     (args.candidate !== undefined ||
@@ -159,10 +167,34 @@ function reviewAnnotation(
   target: { source: string; "ag:version": string },
   created: string,
 ): AnnotationInput {
+  if (args.placeholder === true) {
+    if (
+      args.candidate !== undefined ||
+      args.reply !== undefined ||
+      args.resolve !== undefined ||
+      args.reject !== undefined
+    ) {
+      throw new InputError(
+        "--placeholder marks a version; it does not go with --candidate, --reply, --resolve or --reject",
+      );
+    }
+    return {
+      type: "Annotation",
+      motivation: "tagging",
+      created,
+      body: [
+        placeholderBody(),
+        ...(args.comment !== undefined && args.comment.trim() !== ""
+          ? [{ type: "TextualBody" as const, purpose: "commenting", value: args.comment }]
+          : []),
+      ],
+      target,
+    };
+  }
   const actions = [args.reply, args.resolve, args.reject].filter((v) => v !== undefined);
   if (actions.length > 1 || (args.reject !== undefined && args.comment !== undefined)) {
     throw new InputError(
-      "review takes one of --comment, --reply <id> --comment <text>, --resolve <id> or --reject <reason>",
+      "review takes one of --comment, --reply <id> --comment <text>, --resolve <id>, --reject <reason> or --placeholder",
     );
   }
   if (args.reject !== undefined) {
@@ -193,7 +225,7 @@ function reviewAnnotation(
     throw new InputError(
       args.reply !== undefined
         ? "--reply needs its text in --comment"
-        : "review needs --comment, --reply, --resolve or --reject",
+        : "review needs --comment, --reply, --resolve, --reject or --placeholder",
     );
   }
   if (args.reply !== undefined) {
@@ -221,14 +253,18 @@ function versionTarget(asset: LoadedAsset, version: Version) {
 export const reviewCommand = defineCommand<ReviewArgs>({
   name: "review",
   tool: "review",
-  summary: "comment on, reply to, resolve or reject a version or a candidate",
+  summary:
+    "comment on, reply to, resolve or reject a version or a candidate, or mark a version as a placeholder",
   details: `Appends one annotation to a review record (docs/library.md): for a version, the asset's
 <assetId>.review.json (the address is its card, media or review record; --version names the version
 by number or sha256, the current one by default); for a candidate, <run>/reviews/<candidate>.review.json
 (the address is the run directory, with --candidate). --comment <text> comments; --reply <id> with
 --comment <text> replies to an annotation; --resolve <id> closes a request (--comment is its note);
---reject <reason> rejects. Existing lines never change. For a version it then rewrites the card's
-state, the folder indexes and log.md. No confirmation. The text is returned only under sharedText.
+--reject <reason> rejects. --placeholder marks the exact version as a placeholder (a tagging
+annotation with the tag placeholder; --comment is its note), so a release deliver refuses it; it
+takes no --candidate, --reply, --resolve, --reject or anchor. Existing lines never change. For a
+version it then rewrites the card's state, the folder indexes and log.md. No confirmation. The
+text is returned only under sharedText.
 A new --comment on a version may anchor to part of it: --frames <from>-<to> (0-based, inclusive),
 --cell <column>,<row> (0-based) and --time <start>,<end> (seconds); each is checked against the
 version's own bytes and refused, naming the valid range, when it falls outside.`,
@@ -262,6 +298,10 @@ version's own bytes and refused, naming the valid range, when it falls outside.`
         placeholder: "<id>",
       },
       reject: { type: "string", description: "reject, with this reason", placeholder: "<reason>" },
+      placeholder: {
+        type: "boolean",
+        description: "mark the version as a placeholder, so a release delivery refuses it",
+      },
       frames: {
         type: "string",
         description: "anchor a new comment to a frame range of a version, 0-based and inclusive",
@@ -324,6 +364,7 @@ version's own bytes and refused, naming the valid range, when it falls outside.`
       const annotation = newest(record, input);
       const written = await writeAsset(asset, record);
       const number = versionNumber(record, version.sha256)!;
+      const marked = placeholderMarks(record, version.sha256).length > 0;
       return {
         exitCode: 0,
         fields: {
@@ -333,13 +374,14 @@ version's own bytes and refused, naming the valid range, when it falls outside.`
           state: versionStatus(record, version.sha256),
           cardState: written.state,
           annotation: annotationFields(annotation),
+          ...(marked && { placeholder: true }),
           files: written.files,
           sharedText: annotationText(annotation),
         },
         human: [
           `${annotation.motivation} ${annotation.id} on version ${number} of ${asset.assetId}${
             anchor === undefined ? "" : ` (${describeAnchor(anchor)})`
-          }`,
+          }${marked ? `\nversion ${number} is marked as a placeholder` : ""}`,
           ...written.files.map((f) => `wrote ${f}`),
         ].join("\n"),
       };

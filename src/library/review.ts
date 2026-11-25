@@ -584,6 +584,32 @@ export function versionStatus(record: ReviewRecord, sha256: string): VersionStat
   return open ? "changes-requested" : "pending";
 }
 
+/** The tag a person's `tagging` annotation gives a version to mark it as a placeholder. */
+export const PLACEHOLDER_TAG = "placeholder";
+
+/** The body of a placeholder mark: a W3C tag. */
+export function placeholderBody() {
+  return { type: "TextualBody" as const, purpose: "tagging", value: PLACEHOLDER_TAG };
+}
+
+/**
+ * The annotations that mark version `sha256` as a placeholder, oldest first: each `tagging`
+ * annotation targeting that version with a tag body whose value is `placeholder`.
+ */
+export function placeholderMarks(record: ReviewRecord, sha256: string): Annotation[] {
+  return record.annotations.filter((a) => {
+    if (a.motivation !== "tagging" || targetVersion(a) !== sha256) return false;
+    const bodies = a.body === undefined ? [] : Array.isArray(a.body) ? a.body : [a.body];
+    return bodies.some(
+      (b) =>
+        b.type === "TextualBody" &&
+        (b.purpose === undefined || b.purpose === "tagging") &&
+        typeof b.value === "string" &&
+        b.value.trim().toLowerCase() === PLACEHOLDER_TAG,
+    );
+  });
+}
+
 /** Every path the record names: target sources, masks and linked reference files. */
 export function reviewPaths(record: ReviewRecord): string[] {
   const paths = new Set<string>();
