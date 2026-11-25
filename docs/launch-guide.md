@@ -40,7 +40,32 @@ mkdir -p game/assets
 mv assets/source/.gitattributes game/assets/.gitattributes
 ```
 
-The fragment's hand-off names `godot:sprite-frames`, which the Godot pack provides, and a command refuses a profile whose pack is not loaded. So set the pack up now, before the first `pick` (section 6 says what it does). List it in the developer settings, run its setup, which downloads the pinned Godot and prints its path, and put that path in the pack's setting:
+The fragment's hand-off names `godot:sprite-frames`, which the Godot pack provides, and a command refuses a profile whose pack is not loaded. So set the pack up now, before the first `pick` (section 6 says what it does), in three steps.
+
+First install it in the game repository: core loads a listed pack only when its name resolves from the directory you run in (`node_modules/@clockgrove/assetgrove-godot/package.json` there or in a parent; [extensions.md](extensions.md#loading)). The pack is not on npm yet, so pack it in your Assetgrove checkout (run there, so the checkout's pinned pnpm builds it) into the game repository's `vendor/`, and install that tarball. `--legacy-peer-deps` stops npm fetching the pack's peer, `@clockgrove/assetgrove`, which is your checkout and not an npm package yet:
+
+```sh
+(cd /path/to/assetgrove && pnpm --dir packages/assetgrove-godot pack --pack-destination "$OLDPWD/vendor")
+npm install --save-dev --legacy-peer-deps ./vendor/clockgrove-assetgrove-godot-0.2.0.tgz
+```
+
+Commit `package.json`, `package-lock.json` and the tarball, and keep `node_modules/` out of Git.
+
+Then list the pack in the developer settings, with no `godot` setting yet:
+
+```json
+{
+  "extensions": ["@clockgrove/assetgrove-godot"]
+}
+```
+
+and run its setup, which downloads the pinned Godot 4.7.2, checks it and prints its path:
+
+```sh
+assetgrove extensions setup godot
+```
+
+Last, put the path it printed in the pack's setting. Do this only after setup: with a `godot` setting that names no file, setup refuses (`names …, which is not a file`) and downloads nothing.
 
 ```json
 {
@@ -49,10 +74,6 @@ The fragment's hand-off names `godot:sprite-frames`, which the Godot pack provid
     "@clockgrove/assetgrove-godot": { "godot": "/path/printed/by/setup" }
   }
 }
-```
-
-```sh
-assetgrove extensions setup godot
 ```
 
 The Godot pack is optional: without it, drop the `godot:sprite-frames` entry from the profile's `handoff`, and every step but section 6 works the same.

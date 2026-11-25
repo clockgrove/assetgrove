@@ -1,9 +1,11 @@
 /**
  * The launch guide (issue #484, docs/launch-guide.md) with this pack loaded: `init`, the example's
  * profile fragment merged as the guide says (its `godot:sprite-frames` hand-off kept), the guide's
- * LFS step and the pack's settings, then `doctor` on that profile, which needs no Godot, and, with
- * Godot 4.7.2 on PATH (CI's setup-godot puts it there), the guide's `stage-source` and `pick` of the
- * human-made mole, which build its SpriteFrames. Without Godot that test skips with the reason.
+ * LFS step, its install of the pack and the pack's settings as each of its two settings blocks has
+ * them, and its `extensions setup godot` line run before and after the install. Then `doctor` on
+ * that profile, which needs no Godot, and, with Godot 4.7.2 on PATH (CI's setup-godot puts it
+ * there), the guide's `stage-source` and `pick` of the human-made mole, which build its
+ * SpriteFrames. Without Godot that test skips with the reason.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -32,6 +34,8 @@ const NAME = "@clockgrove/assetgrove-godot";
 const { godot: GODOT, skip: SKIP } = findGodot();
 const docs = fileURLToPath(new URL("../../../docs/", import.meta.url));
 const example = join(docs, "examples", "launch");
+const packRoot = fileURLToPath(new URL("..", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const guide = readFileSync(join(docs, "launch-guide.md"), "utf8").replace(/\r\n/g, "\n");
 
 /** The guide's shell lines, continuations joined, each split into words (double quotes kept together). */
@@ -64,20 +68,42 @@ const git = (...args: string[]) =>
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-/** The pack's settings as the guide's JSON block lists them, with the Godot path filled in. */
-function settings() {
-  project.writeSettings({
-    extensions: [NAME],
-    extensionSettings: { [NAME]: { godot: GODOT ?? "/path/printed/by/setup" } },
-    commands: { approved },
-  });
+/** The guide's JSON blocks that list the pack, in the guide's order. */
+const settingsBlocks = [...guide.matchAll(/```json\n([\s\S]*?)```/g)]
+  .map((block) => ({ at: block.index, json: JSON.parse(block[1]!) as Record<string, unknown> }))
+  .filter((block) => Array.isArray(block.json["extensions"]));
+
+/** The pack's settings: the guide's block `index`, its printed-path placeholder replaced. */
+let block = 0;
+function settings(index: number = block) {
+  block = index;
+  const text = JSON.stringify(settingsBlocks[index]!.json).replace(
+    '"/path/printed/by/setup"',
+    JSON.stringify(GODOT ?? "/path/printed/by/setup"),
+  );
+  project.writeSettings({ ...(JSON.parse(text) as object), commands: { approved } });
 }
 
+/** Proxy settings that make every download in the CLI fail at once, so setup never fetches Godot. */
+const offline = {
+  NODE_USE_ENV_PROXY: "1",
+  HTTPS_PROXY: "http://127.0.0.1:9",
+  https_proxy: "http://127.0.0.1:9",
+  HTTP_PROXY: "http://127.0.0.1:9",
+  http_proxy: "http://127.0.0.1:9",
+  NO_PROXY: "",
+  no_proxy: "",
+};
+
 /** Runs one of the guide's lines through the CLI, a tool run it needs approved as a person would. */
-async function cli(line: string[], replace: Record<string, string> = {}): Promise<CliResult> {
+async function cli(
+  line: string[],
+  replace: Record<string, string> = {},
+  env: Record<string, string> = {},
+): Promise<CliResult> {
   const args = [...line.slice(1).map((word) => replace[word] ?? word), "--json"];
   for (let attempt = 0; attempt < 3; attempt++) {
-    const result = await project.cli(args);
+    const result = await project.cli(args, { env });
     if (result.code !== 8) return result;
     const error = (result.json?.["error"] as { confirmation?: { command?: object } }) ?? {};
     const command = error.confirmation?.command as { hash: string; argv: string[] } | undefined;
@@ -105,13 +131,10 @@ function moleAseprite(): Uint8Array {
   });
 }
 
+let setupUninstalled: CliResult;
+let setupInstalled: CliResult;
+
 before(async () => {
-  if (GODOT !== undefined) {
-    const installed = project.install(buildPack(stage), NAME);
-    symlinkSync(packNodeModules, join(installed, "node_modules"), "junction");
-    // The installed pack links to the pack's dependencies; Godot must not scan into them.
-    writeFileSync(join(project.dir, "node_modules", ".gdignore"), "");
-  }
   const init = await cli(guideLine("assetgrove", "init"));
   assert.equal(init.code, 0, init.stdout + init.stderr);
   // The guide's merge: each top-level field of the fragment over init's profile.
@@ -122,7 +145,18 @@ before(async () => {
   mkdirSync(join(project.dir, guideLine("mkdir", "-p")[2]!), { recursive: true });
   const mv = guideLine("mv");
   renameSync(join(project.dir, mv[1]!), join(project.dir, mv[2]!));
-  settings();
+  // The guide's settings before setup, and its setup line, without and then with the install.
+  settings(0);
+  const setup = guideLine("assetgrove", "extensions", "setup");
+  setupUninstalled = await cli(setup, {}, offline);
+  // The guide's install: the packed pack, as npm puts it, under node_modules/<name>.
+  const installed = project.install(buildPack(stage), NAME);
+  symlinkSync(packNodeModules, join(installed, "node_modules"), "junction");
+  // The installed pack links to the pack's dependencies; Godot must not scan into them.
+  writeFileSync(join(project.dir, "node_modules", ".gdignore"), "");
+  setupInstalled = await cli(setup, {}, offline);
+  // The path setup printed, in the guide's last settings block.
+  settings(settingsBlocks.length - 1);
   writeFileSync(
     join(project.dir, "game", "project.godot"),
     'config_version=5\n\n[application]\n\nconfig/name="Demo Garden"\n',
@@ -136,9 +170,54 @@ before(async () => {
   git("commit", "--quiet", "-m", "the guide's setup");
 });
 
-test("the guide sets the pack up before its first pick", () => {
-  assert.ok(guide.indexOf("extensions setup godot") < guide.indexOf("assetgrove pick "));
-  assert.ok(guide.indexOf(`"extensions": ["${NAME}"]`) < guide.indexOf("assetgrove pick "));
+test("the guide installs this pack's own tarball from the checkout, without fetching core", () => {
+  const manifest = JSON.parse(readFileSync(join(packRoot, "package.json"), "utf8")) as {
+    name: string;
+    version: string;
+  };
+  const tarball = `${manifest.name.replace("@", "").replace("/", "-")}-${manifest.version}.tgz`;
+  const pack = lines.find((line) => line.includes("pack"))!;
+  assert.ok(pack, "the guide has no pack line");
+  assert.equal(pack[pack.indexOf("--dir") + 1], "packages/assetgrove-godot");
+  assert.ok(existsSync(join(repoRoot, "packages", "assetgrove-godot", "package.json")));
+  assert.equal(pack[pack.indexOf("--pack-destination") + 1]!.replace(/\)$/, ""), "$OLDPWD/vendor");
+  const install = guideLine("npm", "install");
+  assert.ok(install.includes("--legacy-peer-deps"), "npm would fetch the unpublished core");
+  assert.equal(install.at(-1), `./vendor/${tarball}`);
+});
+
+test("the guide's setup line refuses before the install and downloads Godot after it", () => {
+  assert.equal(setupUninstalled.code, 2, setupUninstalled.stdout + setupUninstalled.stderr);
+  assert.match(setupUninstalled.stdout, /extension_unavailable/);
+  assert.match(setupUninstalled.stdout, /does not resolve/);
+  // With the pack installed and no `godot` setting yet, setup goes to the pinned download (refused
+  // here by the proxy), not the settings' "which is not a file".
+  const out = setupInstalled.stdout + setupInstalled.stderr;
+  assert.match(
+    out,
+    /Godot_v4\.7\.2-stable_[^ ]* \(version 4\.7\.2-stable\) could not be downloaded/,
+  );
+  assert.doesNotMatch(out, /not a file|does not resolve/);
+});
+
+test("the guide's settings name no Godot until its setup has printed the path", () => {
+  assert.equal(settingsBlocks.length, 2);
+  const [first, last] = settingsBlocks;
+  assert.deepEqual(first!.json, { extensions: [NAME] });
+  assert.deepEqual(last!.json["extensionSettings"], {
+    [NAME]: { godot: "/path/printed/by/setup" },
+  });
+  const setupAt = guide.indexOf("assetgrove extensions setup godot");
+  assert.ok(first!.at < setupAt && setupAt < last!.at);
+  assert.ok(last!.at < guide.indexOf("assetgrove pick "));
+});
+
+test("the guide's setup line uses the Godot its last settings block names", async (t) => {
+  if (GODOT === undefined) return t.skip(SKIP!);
+  const result = await cli(guideLine("assetgrove", "extensions", "setup"));
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.equal(result.json?.["godot"], GODOT);
+  assert.equal(result.json?.["source"], "settings");
 });
 
 test("doctor reads the guide's profile with the pack loaded and finds nothing wrong", async () => {
