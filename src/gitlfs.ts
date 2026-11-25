@@ -10,7 +10,17 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { gitDirSet } from "./env.ts";
 import { InputError } from "./errors.ts";
 
-export const LFS_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif", "glb", "ktx2"] as const;
+export const LFS_EXTENSIONS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "glb",
+  "ktx2",
+  "wav",
+  "ogg",
+] as const;
 const MARKER = "# BEGIN assetgrove";
 export const BLOCK_BEGIN = `${MARKER} (managed block: edits inside are replaced)`;
 export const BLOCK_END = "# END assetgrove";

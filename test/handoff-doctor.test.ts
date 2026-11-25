@@ -24,6 +24,7 @@ import type {
   PresetRegistry,
   TargetRead,
 } from "../src/handoff/presets/index.ts";
+import { BLOCK, withBlock } from "../src/gitlfs.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
 import { bareGitTarget } from "./fixtures/git.ts";
 
@@ -251,4 +252,50 @@ test("assetgrove doctor through the CLI exits 0, says no findings for a healthy 
   const doc = JSON.parse(r.stdout) as { findings: unknown[]; errors: unknown[] };
   assert.deepEqual([doc.findings, doc.errors], [[], []]);
   assert.deepEqual(await hashes(dir), before);
+});
+
+const OLD_BLOCK = `${[
+  "# BEGIN assetgrove (managed block: edits inside are replaced)",
+  ...["png", "jpg", "jpeg", "webp", "gif", "glb", "ktx2"].map(
+    (ext) => `*.${ext} filter=lfs diff=lfs merge=lfs -text`,
+  ),
+  "# END assetgrove",
+].join("\n")}\n`;
+
+async function libraryTarget(attributes: string): Promise<string> {
+  const dir = bareGitTarget(await realpath(await mkdtemp(join(tmpdir(), "assetgrove-doctor-"))));
+  await mkdir(join(dir, "assets/source"), { recursive: true });
+  await writeFile(join(dir, "assets/source/.gitattributes"), attributes);
+  return dir;
+}
+
+test("an old managed block without the audio rules is one lfs-rules-outdated finding", async () => {
+  const dir = await libraryTarget(OLD_BLOCK);
+  const before = await hashes(dir);
+  const { findings } = await run(dir, registryOf(), []);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]!.code, "lfs-rules-outdated");
+  assert.equal(findings[0]!.path, "assets/source/.gitattributes");
+  assert.deepEqual(findings[0]!.presets, ["core"]);
+  assert.match(findings[0]!.problem, /\.wav, \.ogg files/);
+  assert.deepEqual(await hashes(dir), before);
+});
+
+test("the current managed block, no block and a target outside Git give no lfs finding", async () => {
+  assert.deepEqual((await run(await libraryTarget(BLOCK), registryOf(), [])).findings, []);
+  assert.deepEqual(
+    (await run(await libraryTarget("*.png binary\n"), registryOf(), [])).findings,
+    [],
+  );
+  const plain = await realpath(await mkdtemp(join(tmpdir(), "assetgrove-doctor-")));
+  await mkdir(join(plain, "assets/source"), { recursive: true });
+  await writeFile(join(plain, "assets/source/.gitattributes"), OLD_BLOCK);
+  assert.deepEqual((await run(plain, registryOf(), [])).findings, []);
+});
+
+test("the finding is gone once init's block update runs", async () => {
+  const dir = await libraryTarget(OLD_BLOCK);
+  assert.equal((await run(dir, registryOf(), [])).findings.length, 1);
+  await writeFile(join(dir, "assets/source/.gitattributes"), withBlock(OLD_BLOCK));
+  assert.deepEqual((await run(dir, registryOf(), [])).findings, []);
 });

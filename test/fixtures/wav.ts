@@ -37,7 +37,7 @@ export function toneWav(options: ToneOptions = {}): Uint8Array {
 export function riffChunkIds(bytes: Uint8Array): string[] {
   const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const ids: string[] = [];
-  for (let at = 12; at + 8 <= b.length; ) {
+  for (let at = 12; at + 8 <= b.length;) {
     const size = b.readUInt32LE(at + 4);
     ids.push(b.toString("latin1", at, at + 4));
     at += 8 + size + (size & 1);
@@ -49,7 +49,7 @@ export function riffChunkIds(bytes: Uint8Array): string[] {
 export function withoutChunk(bytes: Uint8Array, id: string): Uint8Array {
   const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const kept: Buffer[] = [Buffer.from(b.subarray(0, 12))];
-  for (let at = 12; at + 8 <= b.length; ) {
+  for (let at = 12; at + 8 <= b.length;) {
     const size = b.readUInt32LE(at + 4);
     const end = Math.min(b.length, at + 8 + size + (size & 1));
     if (b.toString("latin1", at, at + 4) !== id) kept.push(b.subarray(at, end));

@@ -179,6 +179,7 @@ async function finish(
 export const stillGenerator: Generator = {
   kind: "still",
   checks: IMAGE_KIND_CHECKS,
+  media: "image",
   frames: "single",
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,
@@ -226,6 +227,7 @@ function requireAnimationFamily(spec: AssetSpec): void {
 export const spriteStripGenerator: Generator = {
   kind: "sprite-strip",
   checks: IMAGE_KIND_CHECKS,
+  media: "image",
   frames: "strip",
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,

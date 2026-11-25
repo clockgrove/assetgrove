@@ -17,6 +17,7 @@ const MEDIA_TYPES: Record<string, string> = {
   ".glb": "model/gltf-binary",
   ".gltf": "model/gltf+json",
   ".ktx2": "image/ktx2",
+  ".wav": "audio/wav",
 };
 
 /** The media type of a path in a format that can carry the mark, by its extension. */

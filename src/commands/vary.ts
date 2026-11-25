@@ -12,6 +12,7 @@ import { decodeImage } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { framesOf } from "../frames.ts";
+import { mediaOf } from "../media.ts";
 import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
 import { readRun } from "../loop.ts";
@@ -66,9 +67,15 @@ async function source(
   const candidate = (run.candidates ?? []).find((c) => c.id === args.candidate);
   if (candidate === undefined)
     throw new InputError(`run ${args.run} has no candidate "${args.candidate}"`);
+  const kinds = ctx.extensions ?? CORE_REGISTRY;
+  const media = mediaOf(run.spec.kind, kinds);
+  if (media !== undefined && media !== "image")
+    throw new InputError(
+      `candidate ${candidate.id} is a ${run.spec.kind} candidate, ${media === "audio" ? "an" : "a"} ${media} kind; vary edits images`,
+    );
   if (!candidate.mediaType.startsWith("image/"))
     throw new InputError(`candidate ${candidate.id} is ${candidate.mediaType}; vary edits images`);
-  if (framesOf(run.spec.kind, ctx.extensions ?? CORE_REGISTRY) !== "single")
+  if (framesOf(run.spec.kind, kinds) !== "single")
     throw new InputError(
       `candidate ${candidate.id} is a ${run.spec.kind} candidate; vary edits still candidates`,
     );

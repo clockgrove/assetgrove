@@ -23,6 +23,7 @@ import type {
 } from "../extension/api.ts";
 import { SettingsError } from "../env.ts";
 import { FRAMES_TRAITS } from "../frames.ts";
+import { MEDIA_TRAITS } from "../media.ts";
 import { checkKindSchemas } from "../kind-schemas.ts";
 import { overlaps, parseStability, qaCheckOf, qaRegistry } from "../qa/stability.ts";
 import { OPERATION_ROLES, ROLE_CAPABILITY } from "../routes.ts";
@@ -627,6 +628,15 @@ export function checkExtension(value: unknown, line: string): Extension {
     if (frames !== undefined && !(FRAMES_TRAITS as readonly unknown[]).includes(frames))
       throw refuse(
         `kind ${kind.kind} declares frames ${JSON.stringify(frames)}; a kind's frames are ${FRAMES_TRAITS.map((t) => JSON.stringify(t)).join(" or ")}`,
+      );
+    const media = (kind as { media?: unknown }).media;
+    if (media !== undefined && !(MEDIA_TRAITS as readonly unknown[]).includes(media))
+      throw refuse(
+        `kind ${kind.kind} declares media ${JSON.stringify(media)}; a kind's media is ${MEDIA_TRAITS.map((t) => JSON.stringify(t)).join(", ")}`,
+      );
+    if (frames !== undefined && media !== undefined && media !== "image")
+      throw refuse(
+        `kind ${kind.kind} declares frames ${JSON.stringify(frames)} with media ${JSON.stringify(media)}; only an image kind has frames`,
       );
     checkKindSchemas(kind, refuse);
     const operations = (kind as { operations?: unknown }).operations;

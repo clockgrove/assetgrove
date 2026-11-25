@@ -15,6 +15,8 @@ export const doctorCommand = defineCommand<DoctorArgs>({
   summary: "report hygiene problems of the target the profile's hand-off presets know of",
   details: `Asks each hand-off preset of the profile that has a doctor to check the target and lists
 what it finds: each finding has the exact path (and line), what is wrong and a safe correction.
+Core also checks that Git sends every media type of the library's managed .gitattributes block
+(init's) to LFS, .wav and .ogg included, and names the types it does not (lfs-rules-outdated).
 Read-only: it never writes the target, the settings or Git, and reads nothing in .git or the
 settings and state directories. A report is not a failure: exit 0 with or without findings. A preset
 whose doctor fails is listed as unknown and does not stop the others. Local: no model call, no spend.`,

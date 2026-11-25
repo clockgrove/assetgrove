@@ -22,7 +22,7 @@ A media file that is a Git LFS pointer (spec v1: `version`, `oid sha256:<64 hex>
 
 **Setup (`init`).** `init` needs a Git work tree (else exit 2 `git_required`, nothing written) and runs `git lfs version`; a missing Git LFS is a `needs-person` step naming the install, and missing LFS hooks give a `git lfs install` step for the person to run. It writes one marked block (`# BEGIN assetgrove` … `# END assetgrove`) in `<library.root>/.gitattributes`, never in the repository root; a second run changes nothing, and lines outside the block are kept:
 
-- `filter=lfs diff=lfs merge=lfs -text` for `*.png`, `*.jpg`, `*.jpeg`, `*.webp`, `*.gif`, `*.glb` and `*.ktx2`;
+- `filter=lfs diff=lfs merge=lfs -text` for `*.png`, `*.jpg`, `*.jpeg`, `*.webp`, `*.gif`, `*.glb`, `*.ktx2`, `*.wav` and `*.ogg`;
 - `text eol=lf` for `*.md`, `*.review.json` and `*.provenance.json`, so cards, indexes, logs and records are byte-identical on every system;
 - `merge=union` for `index.md`, `log.md` and `*.review.json`, so two branches that each append a line merge and keep both.
 

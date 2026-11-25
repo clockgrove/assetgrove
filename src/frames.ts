@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import { decodeImage } from "./image/raster.ts";
+import type { MediaTrait } from "./media.ts";
 import type { MediaOutput } from "./types.ts";
 
 /** How a kind's output is cut into frames: one image, or a strip of frames in one row. */
@@ -41,7 +42,11 @@ export const FRAME_LAYOUT_SCHEMA = z.object({
 
 /** The kinds whose traits a frame feature reads: a registry, or a list of kinds. */
 export interface KindTraits {
-  readonly kinds: ReadonlyArray<{ readonly kind: string; readonly frames?: FramesTrait }>;
+  readonly kinds: ReadonlyArray<{
+    readonly kind: string;
+    readonly frames?: FramesTrait;
+    readonly media?: MediaTrait;
+  }>;
 }
 
 /** The kind's declared trait; undefined for a kind that declares none or is not registered. */

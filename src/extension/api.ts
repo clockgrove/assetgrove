@@ -27,6 +27,7 @@ export const EXTENSION_APIS: readonly number[] = [EXTENSION_API];
 export { z };
 
 export type { FrameLayout, FramesTrait } from "../frames.ts";
+export type { AudioContext, MediaTrait } from "../media.ts";
 
 /** An asset kind: one spec `kind`, its planned calls and how one candidate is made. */
 export type AssetKind = Generator;

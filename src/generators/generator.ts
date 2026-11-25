@@ -4,6 +4,7 @@ import type { CallParameters } from "../call-parameters.ts";
 import type { ReferenceViewCache } from "../model3d/views.ts";
 import type { ClipMapCache } from "../model3d/clip-map.ts";
 import type { FramesTrait } from "../frames.ts";
+import type { AudioContext, MediaTrait } from "../media.ts";
 import type { StabilityEntry } from "../qa/stability.ts";
 import type { Routes } from "../routes.ts";
 import type { CardSummary } from "../library/summary.ts";
@@ -78,6 +79,8 @@ export interface KindCheckInput {
   profile: TargetProfile;
   bible: StyleBible;
   output: MediaOutput;
+  /** An `audio` kind's candidate, decoded: its PCM per channel, sample rate and channel layout. */
+  audio?: AudioContext;
 }
 
 /**
@@ -118,10 +121,17 @@ export interface Generator {
   /** The `kind` of asset spec this generator handles. */
   kind: string;
   /**
+   * What the kind's output is: `image`, `model` or `audio` (src/media.ts). Core's raster features
+   * (the contact sheet, the frames trait, plan, apply, vary) ask it, and an `audio` kind's checks
+   * get the decoded WAV as `KindCheckInput.audio`. Absent: `image`.
+   */
+  media?: MediaTrait;
+  /**
    * How the kind's output is cut into frames. A `strip` kind's output carries core's frame layout
    * as `output.fields.frames` (`FrameLayout`, src/frames.ts), which core checks after `generate`,
    * and gets core's frame features: plan/apply, contact-sheet key frames, strip thumbnails and
-   * staleness, the atlas presets. `single`: one image. Absent: the kind has no frames.
+   * staleness, the atlas presets. `single`: one image. Absent: the kind has no frames. Only an
+   * `image` kind declares one.
    */
   frames?: FramesTrait;
   /**

@@ -21,11 +21,11 @@ import "./pure-cbor.ts";
 import { Algorithms, Headers, ProtectedHeaders, Sign1 } from "@auth0/cose";
 import { initSync, WasmBuilder, WasmReader } from "@contentauth/c2pa-wasm";
 import type { DigitalSourceType } from "./metadata.ts";
-import { modelText } from "./metadata.ts";
+import { hasC2paChunk, modelText } from "./metadata.ts";
 import { SettingsError } from "./errors.ts";
 
 /** The media types C2PA credentials are written into. */
-const SIGNABLE = new Set(["image/png", "image/jpeg", "image/webp"]);
+const SIGNABLE = new Set(["image/png", "image/jpeg", "image/webp", "audio/wav"]);
 /** The assertion that names the sha256 of the bytes a manifest was signed over. */
 export const INPUT_ASSERTION = "org.clockgrove.assetgrove.input";
 /** The development certificate's directory under the state directory. */
@@ -320,7 +320,7 @@ export async function resolveSigner(settings: {
     : developmentSigner(settings.stateDir);
 }
 
-/** What a manifest says: how the image was made, and from what. */
+/** What a manifest says: how the file was made, and from what. */
 export interface CredentialClaim {
   digitalSourceType: DigitalSourceType;
   models: readonly string[];
@@ -424,6 +424,18 @@ export async function signCredentials(
         }),
         claim.original.mediaType,
         new BytesBlob(claim.original.bytes),
+      );
+    }
+    if (!claim.original && mediaType === "audio/wav" && hasC2paChunk(bytes)) {
+      // A vendor's manifest in the source is replaced by ours; it stays as an ingredient.
+      await builder.addIngredientFromBlob(
+        JSON.stringify({
+          title: `vendor ${claim.title}`,
+          relationship: "componentOf",
+          label: "vendor",
+        }),
+        mediaType,
+        new BytesBlob(bytes),
       );
     }
     const size = signer.chain.reduce((n, der) => n + der.length, 0) + 4096;
@@ -620,7 +632,7 @@ function expectedActions(expected: ExpectedCredentials): string[] {
 }
 
 /**
- * The bytes to write for an image: `existing` (the file already at the destination) when its
+ * The bytes to write for a file: `existing` (the file already at the destination) when its
  * manifest validates, was signed over these same `bytes` by the same certificate and records the
  * same claim, so an unchanged asset keeps its bytes; else `bytes` newly signed.
  */

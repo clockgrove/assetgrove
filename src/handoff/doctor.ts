@@ -3,10 +3,13 @@
  * target. Read-only: the target is listed and read, Git is only asked, and nothing is written.
  */
 import { execFile, spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { gitReadOnlyEnv } from "../env.ts";
+import { LFS_EXTENSIONS } from "../gitlfs.ts";
 import { realOf } from "../handoff.ts";
+import { libraryConfig } from "../library/write.ts";
 import { inGitDir } from "../paths.ts";
 import { isInside } from "../settings.ts";
 import type { TargetProfile } from "../types.ts";
@@ -49,6 +52,13 @@ export async function projectDoctor(input: DoctorInput): Promise<DoctorReport> {
   };
   const merged = new Map<string, DoctorFinding & { presets: string[] }>();
   const errors: DoctorReport["errors"] = [];
+  const core = await libraryLfsFinding(profile, root, ctx);
+  if (core !== undefined) {
+    merged.set(JSON.stringify([core.code, core.path, null, core.problem, core.correction]), {
+      ...core,
+      presets: ["core"],
+    });
+  }
   for (const { preset, options } of presets) {
     try {
       for (const finding of await preset.doctor!(ctx, options, read)) {
@@ -75,6 +85,56 @@ export async function projectDoctor(input: DoctorInput): Promise<DoctorReport> {
     (a, b) => order(a.path, b.path) || (a.line ?? 0) - (b.line ?? 0) || order(a.code, b.code),
   );
   return { findings, errors };
+}
+
+/** The library's managed block no longer routes every LFS type to LFS (a type added since init). */
+async function libraryLfsFinding(
+  profile: TargetProfile,
+  root: string,
+  ctx: DoctorContext,
+): Promise<DoctorFinding | undefined> {
+  let library: ReturnType<typeof libraryConfig>;
+  try {
+    library = libraryConfig(profile, root);
+  } catch {
+    return undefined;
+  }
+  const file = join(library.root, ".gitattributes");
+  if (!existsSync(file)) return undefined;
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  if (!text.split(/\r?\n/).some((line) => line.startsWith("# BEGIN assetgrove"))) return undefined;
+  if (!(await inWorkTree(root))) return undefined;
+  const prefix = library.rootRel === "" ? "" : `${library.rootRel}/`;
+  const probes = LFS_EXTENSIONS.map((ext) => `${prefix}assetgrove-doctor-probe.${ext}`);
+  const stored = new Set(await ctx.lfs(probes));
+  const missing = LFS_EXTENSIONS.filter((_, i) => !stored.has(probes[i]!));
+  if (missing.length === 0) return undefined;
+  const list = missing.map((ext) => `.${ext}`).join(", ");
+  return {
+    code: "lfs-rules-outdated",
+    path: `${prefix}.gitattributes`,
+    problem: `Git does not store ${list} files in the library in Git LFS`,
+    correction: `run assetgrove init again to update its managed block, or add ${missing
+      .map((ext) => `\`*.${ext} filter=lfs diff=lfs merge=lfs -text\``)
+      .join(", ")}`,
+  };
+}
+
+async function inWorkTree(root: string): Promise<boolean> {
+  try {
+    const { stdout } = await execGit("git", ["rev-parse", "--is-inside-work-tree"], {
+      cwd: root,
+      env: GIT_ENV,
+    });
+    return stdout.trim() === "true";
+  } catch {
+    return false;
+  }
 }
 
 /** A target-relative path made with `/`, or undefined when it leaves the target or is in `.git`. */

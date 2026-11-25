@@ -178,6 +178,7 @@ export const CHARACTER_3D_CHECKS: KindCheck[] = [
 
 export const character3dGenerator: Generator = {
   kind: CHARACTER_3D_KIND,
+  media: "model",
   checks: CHARACTER_3D_CHECKS,
   specSchema: CORE_SPEC_SCHEMA,
   profileSchema: CORE_PROFILE_SCHEMA,
