@@ -1,0 +1,6 @@
+[gd_resource type="Theme" format=3 uid="uid://b1theme"]
+
+[ext_resource type="Texture2D" uid="uid://b1gone" path="res://missing/gone.png" id="1_gone"]
+
+[resource]
+icon = ExtResource("1_gone")

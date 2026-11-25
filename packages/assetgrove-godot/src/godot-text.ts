@@ -71,3 +71,16 @@ export function externalReferences(content: Uint8Array | string): ExternalRefere
       path: attribute(line, "path"),
     }));
 }
+
+/** The value of `key="..."` inside one bracketed header line, or undefined. */
+export const headerAttribute = attribute;
+
+/** The UID in the first line of a text scene (`[gd_scene ...]`) or resource (`[gd_resource ...]`). */
+export function textHeaderUid(content: Uint8Array | string): string | undefined {
+  const first = text(content)
+    .split(/\r?\n/)
+    .find((line) => line.trim() !== "");
+  if (first === undefined || !/^\[gd_(scene|resource)\b/.test(first)) return undefined;
+  const uid = attribute(first, "uid");
+  return uid !== undefined && UID.test(uid) ? uid : undefined;
+}

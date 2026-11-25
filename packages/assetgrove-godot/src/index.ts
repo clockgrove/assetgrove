@@ -7,5 +7,6 @@ export * from "./setup.ts";
 export * from "./sprite-frames.ts";
 export * from "./texture-filter.ts";
 export * from "./tile-set.ts";
+export * from "./usage.ts";
 export { default as godotExtension } from "./extension.ts";
 export type { GodotSettings } from "./extension.ts";
