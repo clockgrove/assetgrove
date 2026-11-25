@@ -40,9 +40,10 @@ export function defaultTextureFilter(content: string): number | undefined {
       continue;
     }
     if (section !== SECTION) continue;
-    const pair = /^([^=]+?)\s*=\s*(.*)$/.exec(line);
-    if (pair === null || pair[1] !== KEY) continue;
-    const text = pair[2]!.trim();
+    // Split at the first `=` without a pattern, so the read stays linear in the line's length.
+    const equals = line.indexOf("=");
+    if (equals <= 0 || line.slice(0, equals).trimEnd() !== KEY) continue;
+    const text = line.slice(equals + 1).trim();
     value = /^-?\d+$/.test(text) ? Number(text) : undefined;
   }
   return value;

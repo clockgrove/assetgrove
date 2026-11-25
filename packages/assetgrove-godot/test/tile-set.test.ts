@@ -378,6 +378,17 @@ func _initialize():
 
 test("a replaced atlas keeps the TileSet's UID, and its existing .import is never touched", async (t) => {
   if (!usable) return t.skip(SKIP!);
+  // The developer changed an option of the atlas's .import: the profile's `import` would set it
+  // back, so an unchanged file shows the options never reach an existing .import.
+  const edited = atlasImport.replace(
+    /^process\/fix_alpha_border=false$/m,
+    "process/fix_alpha_border=true",
+  );
+  assert.notEqual(edited, atlasImport);
+  writeFileSync(join(project.dir, `${ATLAS}.import`), edited);
+  git("add", `${ATLAS}.import`);
+  git("commit", "--quiet", "-m", "the developer's own atlas import option");
+  atlasImport = edited;
   const before = readFileSync(join(project.dir, ATLAS));
   const uid = headerUid(TRES);
   assert.ok(uid);

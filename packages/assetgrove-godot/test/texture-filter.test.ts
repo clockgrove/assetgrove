@@ -26,6 +26,9 @@ test("the parser reads the filter under [rendering] and nothing else", () => {
   assert.equal(defaultTextureFilter(`[rendering]\n${KEY} = 1\n`), 1);
   assert.equal(defaultTextureFilter(`[rendering]\n${KEY}=3\n[display]\nx=1\n`), 3);
   assert.equal(defaultTextureFilter(`[other]\n[rendering]\n${KEY}=2`), 2);
+  // A line with no key, and a long run of spaces, read as nothing in linear time.
+  assert.equal(defaultTextureFilter(`[rendering]\n=0\n<${" ".repeat(10_000)}\n`), undefined);
+  assert.equal(defaultTextureFilter(`[rendering]\n${KEY}${" ".repeat(10_000)}=1\n`), 1);
 });
 
 test("the parser skips ; comments and reads CRLF files", () => {
