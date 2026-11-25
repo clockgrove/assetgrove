@@ -373,6 +373,24 @@ Does not approve assets or add library versions.
 
 MCP tool: `rendition`, arguments `recipes`, `recipe`, `source`, `sourceSha256`, `out`, `sourceProvenance`, `profile`, `digitalSourceType`, `preview`.
 
+### `deliver`
+
+```text
+deliver --selection <delivery.json> --out <directory> [--profile <profile.json>] [--preview] [--json]
+```
+
+Delivers an explicit set of exact library versions. The selection file lists items of asset card,
+version (stack number or sha256), recipe name and destination folder; each version's mezzanine
+bytes come from the library media or the local Git LFS store, never fetched. Writes the
+renditions and a `delivery.json` manifest under `--out`, all or nothing. `--preview` is a dry run
+that resolves content hashes and destination paths and writes nothing, also available over MCP.
+A missing object, version, asset or recipe, or an output collision, is reported for every item
+before any write: exit 2 `invalid_input` with `error.problems [{file, code, problem}]`. An existing
+identical file is accepted; a differing one is a collision. Local raster operations only: no model
+call or spend. Does not approve assets, add library versions or change the current pick.
+
+MCP tool: `deliver`, arguments `selection`, `out`, `profile`, `preview`.
+
 ### `ops`
 
 ```text

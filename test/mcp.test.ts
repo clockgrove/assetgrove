@@ -16,6 +16,8 @@ import { loadAsset, locateAsset } from "../src/library/actions.ts";
 import { acceptRequest, readProposal } from "../src/library/suggestions.ts";
 import { loadSettings } from "../src/settings.ts";
 import { sha256Hex } from "../src/library/canonical.ts";
+import { appendVersion, emptyReview, writeReview } from "../src/library/review.ts";
+import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../src/metadata.ts";
 import { REFUSED_VARIABLES } from "../src/env.ts";
 import { flagName } from "../src/commands/runner.ts";
 import type { CommandSpec } from "../src/commands/types.ts";
@@ -1032,6 +1034,65 @@ export default {
         digitalSourceType: "digitalCreation",
         preview: true,
       };
+    },
+  },
+  {
+    tool: "deliver",
+    prepare: async () => {
+      const project = join(work, "delivery-project");
+      const target = gitTarget(join(project, "target"));
+      const assets = join(target, "assets");
+      await mkdir(assets, { recursive: true });
+      await writeFile(
+        join(target, "index.md"),
+        `---\nokf_version: 0.2\ntype: Asset Library\ngame: ${GAME}\n---\n\n# ${GAME}\n`,
+      );
+      await mkdir(join(project, "recipes"), { recursive: true });
+      await writeFile(
+        join(project, "recipes", "mirror.json"),
+        JSON.stringify({ format: "assetgrove-recipe/1", steps: [{ op: "flip", params: {} }] }),
+      );
+      const bytes = embedDigitalSourceType(
+        encodePng(drawSubject(16, 1)),
+        "image/png",
+        DIGITAL_SOURCE_TYPES.generated,
+      );
+      const sha256 = sha256Hex(bytes);
+      await writeFile(
+        join(assets, "lantern.review.json"),
+        writeReview(
+          appendVersion(emptyReview(`asset://${GAME}/lantern/review`), {
+            sha256,
+            at: "2026-01-01T00:00:00Z",
+            run: "r-lantern",
+            candidate: "c1",
+            confirmation: { method: "tty" },
+          }),
+        ),
+      );
+      await writeFile(join(assets, "lantern.png"), bytes);
+      await writeFile(
+        join(assets, "lantern.md"),
+        `---\ntype: Game Asset\nformat: assetgrove-card/1\ntitle: lantern\nresource: lantern.png\nversion: 1\nlock: { sha256: ${sha256} }\n---\n`,
+      );
+      const selection = join(project, "selection.json");
+      await writeFile(
+        selection,
+        JSON.stringify({
+          format: "assetgrove-delivery/1",
+          recipes: "recipes",
+          items: [
+            {
+              asset: "target/assets/lantern.md",
+              version: 1,
+              recipe: "mirror",
+              to: "icons",
+              name: "lantern",
+            },
+          ],
+        }),
+      );
+      return { selection, out: join(work, "delivered"), preview: true };
     },
   },
   ...[

@@ -60,6 +60,7 @@ const INPUT_PROPERTIES: readonly string[] = [
   "sourceProvenance",
   "run",
   "runOptions",
+  "selection",
   "sheet",
   "spec",
   "strip",
