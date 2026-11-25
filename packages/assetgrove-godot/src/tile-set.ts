@@ -186,7 +186,8 @@ async function write(
   const { ran } = await runGodot(TILE_SET_PRESET, ctx.run, files);
   const output = (target: string) => savedFile(TILE_SET_PRESET, ran, project, target);
   return [
-    { path: resource, content: output(resource) },
+    // Godot saves it in scratch; an unchanged one (a replaced atlas, say) comes back as passed in.
+    { path: resource, content: savedFile(TILE_SET_PRESET, ran, project, resource, before) },
     ...(existingImport === undefined
       ? [{ path: `${atlas.media}.import`, content: output(`${atlas.media}.import`) }]
       : []),

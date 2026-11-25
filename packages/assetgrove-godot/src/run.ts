@@ -114,10 +114,21 @@ export async function runGodot(
   return { result, ran };
 }
 
-/** A file Godot left in scratch, by its target path, or a failed run naming it. */
-export function savedFile(preset: string, ran: ToolResult, project: string, target: string) {
+/**
+ * A file Godot left in scratch, by its target path, or a failed run naming it. The tool runner
+ * returns only files that are new or changed, so a file the pack passed in (`passedIn`) that
+ * Godot saved byte for byte as it was is that content.
+ */
+export function savedFile(
+  preset: string,
+  ran: ToolResult,
+  project: string,
+  target: string,
+  passedIn?: Uint8Array | string,
+): Uint8Array | string {
   const path = inProject(project, target, "a file");
   const file = ran.files.find((f) => f.path === path);
+  if (file === undefined && passedIn !== undefined) return passedIn;
   if (file === undefined)
     throw new GodotRunError([{ preset, problem: `Godot did not write ${path}` }]);
   return file.content;

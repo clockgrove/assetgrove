@@ -146,3 +146,35 @@ test("an existing TileSet reaches scratch with every file it references and thei
     "res://physics/grit.png",
   ]);
 });
+
+test("an existing TileSet Godot saves unchanged, as a replaced atlas leaves it, is written as it was", async () => {
+  const tres = `[gd_resource type="TileSet" format=3 uid="uid://tileset"]\n`;
+  const target: Record<string, string> = {
+    "tiles/grass-dirt.png.import": `[remap]\n\nuid="uid://atlas"\n`,
+    "tiles/grass-dirt.tres": tres,
+  };
+  const read = async (path: string) =>
+    target[path] === undefined ? undefined : encode(target[path]);
+  // Core's tool runner returns only new or changed files: the unchanged TileSet is not among them.
+  const run = async (tool: string): Promise<ToolResult> => ({
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    files: [{ path: RESULT_PATH, content: encode(JSON.stringify({ ok: true, errors: [] })) }],
+    step: { kind: "tool", tool, hash: "0".repeat(64), method: "settings" },
+  });
+  const ctx = context(
+    { kind: "tiles:terrain", assetId: "grass-dirt", terrains: { lower: "dirt", upper: "grass" } },
+    { layout: "corner-16", tileSize: 16, path: "tiles/grass-dirt.png" },
+    run,
+  );
+  const options = preset.optionsSchema.parse({ resource: "tiles/{assetId}.tres" });
+  const files = await write(ctx, options, read);
+  assert.deepEqual(
+    files.map((f) => [
+      f.path,
+      typeof f.content === "string" ? f.content : new TextDecoder().decode(f.content),
+    ]),
+    [["tiles/grass-dirt.tres", tres]],
+  );
+});
