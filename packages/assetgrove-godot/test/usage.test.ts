@@ -29,7 +29,7 @@ import { extensionContext, sampleProfile } from "@clockgrove/assetgrove/testing"
 import { gltfPreset } from "../src/gltf.ts";
 import { spriteFramesPreset } from "../src/sprite-frames.ts";
 import { tileSetPreset } from "../src/tile-set.ts";
-import { scanUsage } from "../src/usage.ts";
+import { parseText, scanUsage } from "../src/usage.ts";
 
 const FIXTURE = join(import.meta.dirname, "fixtures", "usage");
 const MEDIA = "game/characters/fern.png";
@@ -226,4 +226,77 @@ test("all three presets carry the usage hook", async () => {
     assert.equal(report?.asset.uid, "uid://b1fern", preset.name);
     assert.ok((report?.references.length ?? 0) > 0, preset.name);
   }
+});
+
+test("a UID in a .uid sidecar, a folder path and a sub-resource path are not unresolved", async () => {
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "godot-usage-resolves-")));
+  try {
+    await cp(FIXTURE, join(dir, "game"), { recursive: true });
+    await writeFile(join(dir, MEDIA), new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+    await mkdir(join(dir, "game/scripts"), { recursive: true });
+    await writeFile(join(dir, "game/scripts/player.gd"), "extends Node2D\n");
+    await writeFile(join(dir, "game/scripts/player.gd.uid"), "uid://b1player\n");
+    await writeFile(
+      join(dir, "game/scenes/props.tscn"),
+      [
+        `[gd_scene format=3 uid="uid://b1props"]`,
+        ``,
+        `[node name="Props" type="Node2D"]`,
+        `script = "uid://b1player"`,
+        `metadata/folder = "res://characters"`,
+        `metadata/folder_slash = "res://characters/"`,
+        `metadata/sub = "res://scenes/level.tscn::Sub_1"`,
+        `metadata/own = "res://characters/fern.png::AtlasTexture_a"`,
+        `metadata/gone = "res://scenes/gone.tscn::Sub_1"`,
+        ``,
+      ].join("\n"),
+    );
+    const readDir: TargetRead = async (path) => {
+      try {
+        return await readFile(join(dir, path));
+      } catch {
+        return undefined;
+      }
+    };
+    const ctx: UsageContext = {
+      ...context("r1", new Map()),
+      async list(prefix) {
+        return (await walk(dir)).filter((e) => e.path.startsWith(`${prefix}/`));
+      },
+    };
+    const { report } = await scanUsage(ctx, "game", readDir);
+    assert.deepEqual(
+      report.references.filter((r) => r.file === "game/scenes/props.tscn"),
+      [
+        {
+          file: "game/scenes/props.tscn",
+          line: 8,
+          path: "res://characters/fern.png::AtlasTexture_a",
+          status: "resolved",
+          locations: [`node "Props" metadata/own`],
+        },
+        {
+          file: "game/scenes/props.tscn",
+          line: 9,
+          path: "res://scenes/gone.tscn::Sub_1",
+          status: "unresolved",
+          locations: [`node "Props" metadata/gone`],
+          reason: "its UID and path resolve to nothing in the project",
+        },
+      ],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a long line of repeated text parses in linear time", () => {
+  const started = performance.now();
+  const lines = [
+    `!${" ".repeat(50_000)}`,
+    "ExtResource(!".repeat(20_000),
+    `key${" ".repeat(50_000)}x`,
+  ];
+  for (const line of lines) parseText(new TextEncoder().encode(`[node name="N"]\n${line}\n`));
+  assert.ok(performance.now() - started < 1000, `${performance.now() - started} ms`);
 });

@@ -107,11 +107,13 @@ export function parseText(content: Uint8Array): Parsed {
         return;
       }
     } else {
-      const property = /^([^=\s;[][^=]*?)\s*=/.exec(raw);
-      if (property) key = property[1] ?? "";
+      // `key = value`: split at the first `=` rather than with a backtracking pattern.
+      const eq = raw.indexOf("=");
+      const name = eq > 0 ? raw.slice(0, eq).trim() : "";
+      if (name !== "" && !/^[\s;[]/.test(raw)) key = name;
     }
     const where = `${section} ${key}`.trim();
-    for (const use of raw.matchAll(/ExtResource\(\s*"?([^")\s]+)"?\s*\)/g))
+    for (const use of raw.matchAll(/ExtResource\(\s*"?([^"()\s]+)"?\s*\)/g))
       uses.push({ id: use[1] ?? "", line, where });
     for (const literal of raw.matchAll(LITERAL))
       literals.push({ line, value: literal[1] ?? "", where });
@@ -129,6 +131,18 @@ function parseImport(content: Uint8Array): Parsed {
   const uid = importUid(content);
   return uid === undefined ? {} : { uid };
 }
+
+/** A `.uid` sidecar (Godot 4.4+, beside a script or shader): its one line is the owner's UID. */
+function parseSidecar(content: Uint8Array): Parsed {
+  const uid = decoder.decode(content).trim();
+  return /^uid:\/\/[0-9a-z]+$/.test(uid) ? { uid } : {};
+}
+
+/** The file part of a `res://` path: without a `::sub-resource` suffix. */
+const filePart = (path: string) => {
+  const at = path.indexOf("::");
+  return at === -1 ? path : path.slice(0, at);
+};
 
 const isUsageCache = (value: unknown): value is UsageCacheValue =>
   typeof value === "object" &&
@@ -183,11 +197,12 @@ export async function scanUsage(
 
   for (const entry of entries) {
     const isImport = entry.path.endsWith(".import");
+    const isSidecar = entry.path.endsWith(".uid");
     if (BINARY.test(entry.path)) {
       unreadable.set(entry.path, "a binary resource, which the scan does not read");
       continue;
     }
-    if (!isImport && !TEXT.test(entry.path)) continue;
+    if (!isImport && !isSidecar && !TEXT.test(entry.path)) continue;
     const cached = Object.hasOwn(old, entry.path) ? old[entry.path] : undefined;
     if (cached !== undefined && same(cached, entry)) {
       reused.push(entry.path);
@@ -201,7 +216,11 @@ export async function scanUsage(
       unreadable.set(entry.path, "could not be read");
       continue;
     }
-    const parsed = isImport ? parseImport(content) : parseText(content);
+    const parsed = isImport
+      ? parseImport(content)
+      : isSidecar
+        ? parseSidecar(content)
+        : parseText(content);
     files[entry.path] = {
       size: entry.size,
       mtimeMs: entry.mtimeMs,
@@ -213,20 +232,35 @@ export async function scanUsage(
   await ctx.cache.set(key, { version: 1, revision: ctx.revision, files } satisfies UsageCacheValue);
 
   const resPath = (file: string) => `res://${file.slice(prefix.length)}`;
-  const known = new Set(entries.map((entry) => resPath(entry.path)));
+  // Every listed file and every folder above one: a reference to either resolves to something.
+  const known = new Set<string>(["res://"]);
+  for (const entry of entries) {
+    const path = resPath(entry.path);
+    known.add(path);
+    const parts = entry.path.slice(prefix.length).split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const folder = `res://${parts.slice(0, i).join("/")}`;
+      known.add(folder);
+      known.add(`${folder}/`);
+    }
+  }
   const uids = new Map<string, string>();
   let assetUid: string | undefined;
   for (const [file, parsed] of parsedOf) {
     if (parsed.uid === undefined) continue;
     const owner = file.endsWith(".import")
       ? resPath(file.slice(0, -".import".length))
-      : resPath(file);
+      : file.endsWith(".uid")
+        ? resPath(file.slice(0, -".uid".length))
+        : resPath(file);
     uids.set(parsed.uid, owner);
   }
   const imported = await readOrUndefined(read, `${ctx.media}.import`);
   if (imported !== undefined) assetUid = importUid(imported);
 
-  const decide = (path: string | undefined, uid: string | undefined) => {
+  const decide = (fullPath: string | undefined, uid: string | undefined) => {
+    // `res://x.tscn::Sub_1` names a sub-resource of `res://x.tscn`: it resolves as that file does.
+    const path = fullPath === undefined ? undefined : filePart(fullPath);
     const owner = uid === undefined ? undefined : uids.get(uid);
     if (uid !== undefined && assetUid !== undefined && uid === assetUid) return "resolved";
     if (path === assetPath && (uid === undefined || owner === undefined)) return "resolved";
