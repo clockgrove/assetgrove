@@ -67,6 +67,10 @@ It writes one SpriteFrames per asset with every animation family handed off so f
 
 Godot 4 sets the texture filter in the project (`rendering/textures/canvas_textures/default_texture_filter`), not per file. For a pixel-art profile (`style.edges` `crisp` with `style.color.rule` `palette`), `godot:sprite-frames` and `godot:tile-set` read `project.godot` and add a warning under `handoff[i].warnings` when the filter is not Nearest (`0`). An unset filter counts, since Godot's default is Linear. The hand-off still succeeds, and the pack never edits `project.godot`. Tell the person to set Project Settings > Rendering > Textures > Canvas Textures > Default Texture Filter to Nearest.
 
+## Usage before a replacement
+
+A `pick` that replaces an asset's version lists, in its confirmation (`details.usage` and the summary), every `.tscn` and `.tres` in the preset's `project` that refers to the asset's media by `res://` path or by the UID in its `.import`, with each file, line and node or property that uses it. References that resolve to nothing are marked `UNRESOLVED`, and binary or unreadable scenes and resources `UNREADABLE`. The scan only reads the project. Its cache lives in `<stateDir>/cache/usage/` and is dropped on a file edit or a new Git revision.
+
 ## What comes back
 
 - The resource, and the `.import` of each strip or atlas the project had none for, written by core with the media. An existing `.import` is never touched; a replaced resource keeps its UID.
