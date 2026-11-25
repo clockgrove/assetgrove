@@ -22,6 +22,7 @@
     "test",
     "eslint.config.js",
     "../../bench",
-    "../../src/model3d/gltf-validator.d.ts"
+    "../../src/model3d/gltf-validator.d.ts",
+    "../../src/spdx-expression-parse.d.ts"
   ]
 }

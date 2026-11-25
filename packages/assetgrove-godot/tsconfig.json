@@ -16,5 +16,11 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "test", "eslint.config.js", "../../src/model3d/gltf-validator.d.ts"]
+  "include": [
+    "src",
+    "test",
+    "eslint.config.js",
+    "../../src/model3d/gltf-validator.d.ts",
+    "../../src/spdx-expression-parse.d.ts"
+  ]
 }
