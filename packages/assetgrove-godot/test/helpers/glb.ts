@@ -9,6 +9,8 @@ export interface GlbOptions {
   animations: string[];
   /** How many separate box meshes the scene holds, each skinned to the chain; 1 by default. */
   meshes?: number;
+  /** Whether the meshes are skinned to the chain; true by default. Unskinned, the chain is plain nodes. */
+  skin?: boolean;
 }
 
 const BOX_POSITIONS = [
@@ -38,22 +40,26 @@ export async function characterGlb(options: GlbOptions): Promise<Uint8Array> {
   const spine = doc.createNode("spine").setTranslation([0, 0.2, 0]);
   hips.addChild(spine);
   root.addChild(hips);
-  const inverseBinds = doc
-    .createAccessor("inverseBinds")
-    .setType("MAT4")
-    .setBuffer(buffer)
-    .setArray(
-      new Float32Array([
-        ...[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-        ...[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -0.2, 0, 1],
-      ]),
-    );
-  const skin = doc
-    .createSkin("rig")
-    .addJoint(hips)
-    .addJoint(spine)
-    .setSkeleton(hips)
-    .setInverseBindMatrices(inverseBinds);
+  const skin =
+    options.skin !== false
+      ? doc
+          .createSkin("rig")
+          .addJoint(hips)
+          .addJoint(spine)
+          .setSkeleton(hips)
+          .setInverseBindMatrices(
+            doc
+              .createAccessor("inverseBinds")
+              .setType("MAT4")
+              .setBuffer(buffer)
+              .setArray(
+                new Float32Array([
+                  ...[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+                  ...[1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -0.2, 0, 1],
+                ]),
+              ),
+          )
+      : undefined;
 
   for (let m = 0; m < (options.meshes ?? 1); m++) {
     const position = doc
@@ -61,16 +67,18 @@ export async function characterGlb(options: GlbOptions): Promise<Uint8Array> {
       .setType("VEC3")
       .setBuffer(buffer)
       .setArray(new Float32Array(BOX_POSITIONS.flatMap(([x, y, z]) => [x! + m * 0.3, y!, z!])));
-    const joints = doc
-      .createAccessor()
-      .setType("VEC4")
-      .setBuffer(buffer)
-      .setArray(new Uint8Array(BOX_POSITIONS.flatMap(([, y]) => [y! > 0.2 ? 1 : 0, 0, 0, 0])));
-    const weights = doc
-      .createAccessor()
-      .setType("VEC4")
-      .setBuffer(buffer)
-      .setArray(new Float32Array(BOX_POSITIONS.flatMap(() => [1, 0, 0, 0])));
+    const joints = () =>
+      doc
+        .createAccessor()
+        .setType("VEC4")
+        .setBuffer(buffer)
+        .setArray(new Uint8Array(BOX_POSITIONS.flatMap(([, y]) => [y! > 0.2 ? 1 : 0, 0, 0, 0])));
+    const weights = () =>
+      doc
+        .createAccessor()
+        .setType("VEC4")
+        .setBuffer(buffer)
+        .setArray(new Float32Array(BOX_POSITIONS.flatMap(() => [1, 0, 0, 0])));
     const indices = doc
       .createAccessor()
       .setType("SCALAR")
@@ -79,12 +87,13 @@ export async function characterGlb(options: GlbOptions): Promise<Uint8Array> {
     const primitive = doc
       .createPrimitive()
       .setAttribute("POSITION", position)
-      .setAttribute("JOINTS_0", joints)
-      .setAttribute("WEIGHTS_0", weights)
       .setIndices(indices)
       .setMaterial(doc.createMaterial(`body-${m}`).setBaseColorFactor([0.4, 0.6, 0.3, 1]));
+    if (skin) primitive.setAttribute("JOINTS_0", joints()).setAttribute("WEIGHTS_0", weights());
     const mesh = doc.createMesh(`body-${m}`).addPrimitive(primitive);
-    root.addChild(doc.createNode(`body-${m}`).setMesh(mesh).setSkin(skin));
+    const body = doc.createNode(`body-${m}`).setMesh(mesh);
+    if (skin) body.setSkin(skin);
+    root.addChild(body);
   }
 
   for (const name of options.animations) {

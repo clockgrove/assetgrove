@@ -28,7 +28,13 @@ import type {
   ToolRunOptions,
 } from "@clockgrove/assetgrove/extension";
 import { extensionContext, sampleProfile } from "@clockgrove/assetgrove/testing";
-import { GLB_MEDIA_TYPE, GLTF_PRESET, gltfPreset, type GltfOptions } from "../src/gltf.ts";
+import {
+  GLB_MEDIA_TYPE,
+  GLTF_PRESET,
+  gltfAsset,
+  gltfPreset,
+  type GltfOptions,
+} from "../src/gltf.ts";
 import { GodotInputError, GodotRunError, runGodot } from "../src/run.ts";
 import { INPUT_PATH, projectFiles, type GltfInput } from "../src/scratch.ts";
 import { GODOT_RELEASE } from "../src/setup.ts";
@@ -255,6 +261,37 @@ test("any GLB: what the context leaves out is read from the file", async (t) => 
       reader(target()),
     ),
     /without a Skeleton3D of 3 joints/,
+  );
+});
+
+test("clips a profile's clipFields shape without a name declare no animations", async (t) => {
+  // `model3d.handoff.clipFields` may leave `name` out or rename it (`"id": "name"`).
+  const shaped = context(new Uint8Array([1]), {
+    clips: [
+      { id: "idle", durationMs: 1000 },
+      { id: "walk", durationMs: 1000 },
+    ],
+  });
+  assert.deepEqual(gltfAsset(shaped).declared, { joints: 2 });
+  if (!usable) return t.skip(SKIP!);
+  const dir = target();
+  const glb = await characterGlb({ animations: ["idle", "walk"] });
+  const ctx = context(glb, { clips: [{ id: "idle" }, { id: "walk" }] });
+  assert.deepEqual(
+    (await handOff(dir, ctx)).map((f) => f.path),
+    [IMPORT],
+  );
+  assert.equal(describe(dir)["ANIMATIONS"], "idle,walk");
+});
+
+test("an unskinned GLB hands off without a Skeleton3D", async (t) => {
+  if (!usable) return t.skip(SKIP!);
+  const dir = target();
+  const glb = await characterGlb({ animations: ["spin"], skin: false });
+  const ctx = context(glb, { clips: undefined, bones: undefined });
+  assert.deepEqual(
+    (await handOff(dir, ctx, { project: "game" })).map((f) => f.path),
+    [IMPORT],
   );
 });
 

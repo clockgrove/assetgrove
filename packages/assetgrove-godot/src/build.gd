@@ -450,7 +450,8 @@ func _import_gltf(input: Dictionary) -> Dictionary:
 	for name in declared["animations"]:
 		if not animations.has(name):
 			_fail("%s imported without the animation %s (it has %s)" % [path, name, animations])
-	if not skeletons.has(declared["joints"]):
+	# An unskinned scene declares no joints and needs no Skeleton3D.
+	if int(declared["joints"]) > 0 and not skeletons.has(declared["joints"]):
 		_fail(
 			(
 				"%s imported without a Skeleton3D of %d joints (its skeletons have %s bones)"

@@ -50,7 +50,8 @@ export interface GltfAsset {
 /**
  * The asset's `.glb` and declared facts from the hand-off context: the animation families from
  * `output.clips[].name` and the joint count from `output.bones`, as a `character-3d` asset gives
- * them. Media that is not a binary glTF is refused.
+ * them; clips shaped without a `name` declare no animations, which Godot then reads from the file.
+ * Media that is not a binary glTF is refused.
  */
 export function gltfAsset(ctx: PresetContext): GltfAsset {
   const output = record(ctx.context["output"]);
@@ -64,7 +65,9 @@ export function gltfAsset(ctx: PresetContext): GltfAsset {
     );
   const declared: GltfInput["declared"] = {};
   const clips = output["clips"];
-  if (Array.isArray(clips)) {
+  // A profile's `model3d.handoff.clipFields` may leave `name` out of the clips or rename it; with
+  // no clip carrying a `name`, the animation names are read from the file, as with no clips.
+  if (Array.isArray(clips) && clips.some((clip) => "name" in record(clip))) {
     const names = clips.map((clip) => record(clip)["name"]);
     if (!names.every((name): name is string => typeof name === "string" && name !== ""))
       throw new GodotInputError(`the hand-off's output.clips has a clip without a name`);

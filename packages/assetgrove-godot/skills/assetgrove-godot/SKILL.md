@@ -59,8 +59,8 @@ It writes one SpriteFrames per asset with every animation family handed off so f
 ```
 
 - The options go into a new source's `.import` as data; Godot writes them through `ConfigFile` and reimports. An existing `.import` is never touched: it reaches scratch as data, Godot imports with its options and UID, and a replaced `.glb` keeps its UID. Core writes the `.glb`; the preset returns only the new `.import`.
-- Godot imports the `.glb` in a scratch project. The hand-off fails with exit 6 `handoff_check_failed` and nothing written on a load error, on any `ERROR` line, when the scene lacks an animation of the same name as any declared one or a `Skeleton3D` with the declared joint count, or when it has more `MeshInstance3D` meshes than declared.
-- Declared animations are `output.clips[].name` and joints are `output.bones`, when the hand-off gives them (a `character-3d` asset does). Otherwise they are read from the file through `GLTFDocument`: its animation names and the unique joints over every skin. Declared meshes are the glTF nodes with a mesh in the scene.
+- Godot imports the `.glb` in a scratch project. The hand-off fails with exit 6 `handoff_check_failed` and nothing written on a load error, on any `ERROR` line, when the scene lacks an animation of the same name as any declared one or a `Skeleton3D` with the declared joint count (none for an unskinned `.glb`, which declares 0), or when it has more `MeshInstance3D` meshes than declared.
+- Declared animations are `output.clips[].name` and joints are `output.bones`, when the hand-off gives them (a `character-3d` asset does). Otherwise, and when `model3d.handoff.clipFields` shapes the clips without a `name`, they are read from the file through `GLTFDocument`: its animation names and the unique joints over every skin. Declared meshes are the glTF nodes with a mesh in the scene.
 
 ## What comes back
 
