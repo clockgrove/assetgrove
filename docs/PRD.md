@@ -176,6 +176,7 @@ Everything Assetgrove makes becomes a library a developer and their agent can br
 - **Locks and drift:** an asset lock per picked asset, and a drift report when the style bible changes, counting the assets made under another bible version and listing in the tree's `stale` view those `library judge-stale` judged to need redoing.
 - **Storage:**
   - committed: picks, their cards and reviews, the style bible and its references, with media in Git LFS;
+  - each picked media version has a canonical **mezzanine version**. Previews and delivery files generated from it are **renditions**. A card links the mezzanine version and any available renditions to the same asset version;
   - kept out of Git: candidates and run scratch;
   - Git LFS set up and checked by Assetgrove, never committed by it: `init` checks that Git and Git LFS are installed, adds `.gitattributes` rules for the media types Assetgrove writes, keeps its run directory out of Git, and marks folder logs with Git's union merge driver so log entries never conflict. `pick` refuses to hand off a file that Git would store outside LFS. The developer, or their agent, commits the picks as any other change;
   - `init` warns about LFS quota.
@@ -188,6 +189,8 @@ Everything Assetgrove makes becomes a library a developer and their agent can br
 
 Each extension is its own package on the Phase 1 contract, with its own skill. It ships to npm when its own checks pass, and extensions land in whatever order feedback asks for. Required for 1.0: the Godot pack, and the pixel-art, tile and icon kinds.
 
+- **Audio in core:** sound effects, ambience loops and music (full tracks, cues and music loops) are core kinds beside images and 3D models, with lossless WAV masters, exact checks, a human listening and pick flow, and qualified Stability and ElevenLabs routes. The [audio design](PRD-audio.md) defines the kinds, checks, routes and Godot delivery.
+
 - **The Godot pack:** sprite frames, atlas textures, tile sets and glTF, checked in CI by a headless Godot import of a small test project on a pinned version; and replacing an asset in the game without breaking Godot's references to it. A new engine that uses an existing format is data; a new format is a new pack.
 - **Asset-kind packs:**
   - tile sets with seamless-edge checks;
@@ -198,7 +201,7 @@ Each extension is its own package on the Phase 1 contract, with its own skill. I
   - one specialist pixel-art vendor;
   - image-to-3D through fal beside Tripo, which stays for rigging;
   - a free local pre-check for vision QA.
-- **Gate:** the required packs are on npm and pass their checks.
+- **Gate:** the required packs are on npm and pass their checks. Audio proves generation through human pick and library check for a sound effect, an ambience loop, a music loop, a full track and a cue, and each plays in the pinned Godot test project.
 
 ### Phase 4: product marketing and developer relations
 
@@ -214,7 +217,7 @@ Each extension is its own package on the Phase 1 contract, with its own skill. I
 These are real, but not needed for the north star:
 
 - Unity: sliced sprite sheets and glTF. Its sprite IDs are the least stable format to write, and its CI needs a licence;
-- audio: sound effects, ambient loops and music;
+- synchronized music stems and adaptive scoring;
 - effects and flipbooks, portraits and expressions;
 - static 3D props;
 - character turnarounds from a description;
