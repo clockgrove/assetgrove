@@ -563,3 +563,10 @@ The owner decided the licence-window semantics of the release gate ([transform.m
 - **Matching fails closed:** the card's `license` is parsed with `spdx-expression-parse` (MIT), never by splitting strings, and one that does not parse is refused with the parse error. An `AND` needs every component to pass; an `OR` passes when one alternative passes, and the evidence names it. A licence id no window names passes, and the evidence says so. The window side fails closed too: a window's `license` is parsed with the same library when the profile is read, and one that is not a single licence id (or `id WITH exception`) is refused, naming the field, so a typo cannot leave a licence with no window. With `licenseWindows` set, a card with no `license` refuses a release with `license_window` and "no licence on the card"; `--preview` and `--draft` report it without refusing.
 
 Without `licenseWindows`, the gate checks no licence.
+
+## WAV is read and written by `wavefile`, plus a short scan for `C2PA` chunks (#518)
+
+The WAV master carries the AI mark as XMP in a `_PMX` chunk.
+
+- **The library.** `wavefile` (MIT, no dependencies, no native code) reads and writes the WAV and its `_PMX` chunk. Nothing else of the format is hand-written.
+- **The exception.** wavefile 11 keeps only the chunks it knows and drops the rest, notably a vendor's `C2PA` chunk, which holds a C2PA manifest store. No maintained library edits WAV chunks and keeps the unknown ones. So `src/metadata.ts` scans the input's top-level chunks (4-byte id, 4-byte little-endian size, padded to even), appends each `C2PA` chunk after wavefile's write and fixes the RIFF size. The same scan tells the credentials path a source WAV carries a vendor manifest, which becomes a `componentOf` ingredient of Assetgrove's own manifest.

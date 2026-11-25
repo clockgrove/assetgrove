@@ -33,6 +33,7 @@ import type { FilteringState, StabilityEntry } from "./qa/stability.ts";
 import type { GenerationProvider } from "./gateway/provider.ts";
 import { checkFrameLayout, withLayoutParameters } from "./frames.ts";
 import { runKindChecks } from "./generators/generator.ts";
+import { mediaCheckContext } from "./media.ts";
 import type { Generator, PlannedCall } from "./generators/generator.ts";
 import { loadBibleInputs, sha256, sniffMediaType } from "./request.ts";
 import { writeContact } from "./contact.ts";
@@ -436,7 +437,13 @@ export async function stage(options: StageOptions): Promise<{ run: RunRecord; ru
       if (generator.checks !== undefined && generator.checks.length > 0) {
         const extra = await runKindChecks(
           generator.checks,
-          { spec, profile, bible, output: generated.output },
+          {
+            spec,
+            profile,
+            bible,
+            output: generated.output,
+            ...mediaCheckContext(generator.media, generated.output),
+          },
           call,
           () => new RefusingCaller(`an exact check of ${generator.kind} makes no provider call`),
         );

@@ -5,6 +5,14 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { BLOCK, LfsRequiredError } from "../src/gitlfs.ts";
+import { writeToTarget } from "../src/handoff.ts";
+import type { TargetWrite } from "../src/handoff.ts";
+import type { Provenance } from "../src/types.ts";
+import { shelterSpec, syntheticProfile } from "./fixtures/synthetic.ts";
+import { toneWav } from "./fixtures/wav.ts";
 import { InputError } from "../src/errors.ts";
 import { MediaMissingError } from "../src/library/lfs.ts";
 import { findGitDir, lfsObjectPath, parseLfsPointer, readMedia } from "../src/library/lfs.ts";
@@ -143,4 +151,64 @@ test("findGitDir follows a gitdir file and a commondir to the shared store", asy
   await mkdir(join(bare, "real-git"), { recursive: true });
   await writeFile(join(bare, ".git"), "gitdir: real-git\n");
   assert.equal(findGitDir(join(bare, "inner")), join(bare, "real-git"));
+});
+
+const wavProvenance: Provenance = {
+  digitalSourceType: "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+  generator: "tone",
+  route: "scripted",
+  models: [],
+  prompt: "",
+  parameters: {},
+  requestIds: [],
+  referenceHashes: [],
+  bibleVersion: "synthetic-1",
+  license: "MIT",
+  providerTerms: [],
+  startedAt: "2026-01-01T00:00:00.000Z",
+  finishedAt: "2026-01-01T00:00:01.000Z",
+  costUsd: 0,
+  calls: [],
+};
+
+async function wavWrite(attributes: string | undefined): Promise<TargetWrite> {
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "assetgrove-lfs-wav-")));
+  execFileSync("git", ["init", "-q", dir]);
+  if (attributes !== undefined) {
+    await mkdir(join(dir, "assets/source"), { recursive: true });
+    await writeFile(join(dir, "assets/source/.gitattributes"), attributes);
+  }
+  const profile = syntheticProfile();
+  delete profile.validator;
+  return {
+    profile,
+    spec: shelterSpec,
+    bibleVersion: "v1",
+    output: {
+      bytes: toneWav(),
+      mediaType: "audio/wav",
+      extension: "wav",
+      fields: {
+        frames: { width: 16, height: 8, count: 1, durationMs: 120 },
+        anchor: { x: 8, y: 8 },
+        bounds: { x: 0, y: 0, width: 16, height: 8 },
+      },
+    },
+    provenance: wavProvenance,
+    run: { runId: "r1", candidateId: "c1", pickedAt: "2026-01-01T00:00:02.000Z" },
+    targetDir: dir,
+    requireLfs: true,
+  };
+}
+
+test("pick refuses a WAV Git would store outside LFS, and hands it off once the rule exists", async () => {
+  const bare = await wavWrite(undefined);
+  await assert.rejects(
+    writeToTarget(bare),
+    (error) =>
+      error instanceof LfsRequiredError && error.paths.some((path) => path.endsWith(".wav")),
+  );
+  const ready = await wavWrite(BLOCK);
+  const result = await writeToTarget(ready);
+  assert.ok((await readFile(result.mediaPath)).length > 0);
 });

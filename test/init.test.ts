@@ -361,7 +361,7 @@ test("init writes one marked block in the library root's .gitattributes and none
   const path = join(dir, LIBRARY, ".gitattributes");
   const text = await readFile(path, "utf8");
   assert.equal(text.match(/# BEGIN assetgrove/g)?.length, 1);
-  for (const ext of ["png", "jpg", "jpeg", "webp", "gif", "glb", "ktx2"])
+  for (const ext of ["png", "jpg", "jpeg", "webp", "gif", "glb", "ktx2", "wav", "ogg"])
     assert.ok(text.includes(`*.${ext} filter=lfs diff=lfs merge=lfs -text\n`), ext);
   for (const rule of [
     "*.md text eol=lf",

@@ -3,8 +3,11 @@ import { InputError } from "./errors.ts";
 import { inflateSync } from "node:zlib";
 import { read as readKtx2, write as writeKtx2 } from "ktx-parse";
 import type { TransformStep } from "./transform/types.ts";
+import wavefile from "wavefile";
 import { parseGlb, writeGlb } from "./model3d/glb.ts";
 import type { GltfDocument } from "./model3d/glb.ts";
+
+const { WaveFile } = wavefile;
 
 const vocabulary = "http://cv.iptc.org/newscodes/digitalsourcetype/";
 const namespace = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/";
@@ -557,7 +560,52 @@ export function embedDigitalSourceType(
     container.keyValue["KTXwriter"] ??= "assetgrove";
     return writeKtx2Container(container);
   }
+  if (mediaType === "audio/wav") {
+    // The XMP packet lives in the `_PMX` chunk (Adobe's XMP chunk for WAV).
+    const wav = new WaveFile(bytes);
+    const previous = wavXmp(wav);
+    const packet = xmp(value, previous, options);
+    if (previous === packet) return bytes;
+    wav.set_PMX(packet);
+    return keepC2paChunks(bytes, wav.toBuffer());
+  }
   return bytes;
+}
+
+function wavXmp(wav: InstanceType<typeof WaveFile>): string | undefined {
+  const text = wav.get_PMX().replace(/\0+$/, "");
+  return text === "" ? undefined : text;
+}
+
+/** The top-level chunks of a RIFF file, by id: where each starts and ends (padded to even). */
+function riffChunks(bytes: Uint8Array): { id: string; start: number; end: number }[] {
+  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const chunks = [];
+  for (let at = 12; at + 8 <= b.length;) {
+    const end = Math.min(b.length, at + 8 + b.readUInt32LE(at + 4) + (b.readUInt32LE(at + 4) & 1));
+    chunks.push({ id: b.toString("latin1", at, at + 4), start: at, end });
+    at = end;
+  }
+  return chunks;
+}
+
+/** Whether a WAV carries a top-level `C2PA` chunk, which holds a C2PA manifest store. */
+export function hasC2paChunk(bytes: Uint8Array): boolean {
+  return riffChunks(bytes).some((c) => c.id === "C2PA");
+}
+
+/**
+ * wavefile keeps only the chunks it knows and drops a vendor's `C2PA` chunk, so the input's are
+ * appended again after its write and the RIFF size fixed (docs/decisions.md).
+ */
+function keepC2paChunks(input: Uint8Array, written: Uint8Array): Uint8Array {
+  const kept = riffChunks(input)
+    .filter((c) => c.id === "C2PA")
+    .map((c) => input.subarray(c.start, c.end));
+  if (kept.length === 0) return written;
+  const out = Buffer.concat([written, ...kept]);
+  out.writeUInt32LE(out.length - 8, 4);
+  return new Uint8Array(out);
 }
 
 const ktx2Key = "XMP";
@@ -621,6 +669,9 @@ export function readDigitalSourceType(
   } else if (mediaType === "image/ktx2") {
     const xml = ktx2Xmp(readKtx2(bytes).keyValue[ktx2Key]);
     return xml === undefined ? undefined : readXmp(xml);
+  } else if (mediaType === "audio/wav") {
+    const xml = wavXmp(new WaveFile(bytes));
+    return xml === undefined ? undefined : readXmp(xml);
   }
   return undefined;
 }
@@ -640,6 +691,7 @@ function markPacket(
     const json = gltfPacket(gltfDocument(bytes, mediaType));
     return json === undefined ? undefined : { json };
   } else if (mediaType === "image/ktx2") xml = ktx2Xmp(readKtx2(bytes).keyValue[ktx2Key]);
+  else if (mediaType === "audio/wav") xml = wavXmp(new WaveFile(bytes));
   else if (mediaType === "image/webp")
     xml = webpChunks(bytes)
       .find((c) => c.type === "XMP ")

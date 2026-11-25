@@ -21,11 +21,11 @@ import "./pure-cbor.ts";
 import { Algorithms, Headers, ProtectedHeaders, Sign1 } from "@auth0/cose";
 import { initSync, WasmBuilder, WasmReader } from "@contentauth/c2pa-wasm";
 import type { DigitalSourceType } from "./metadata.ts";
-import { modelText } from "./metadata.ts";
+import { hasC2paChunk, modelText } from "./metadata.ts";
 import { SettingsError } from "./errors.ts";
 
 /** The media types C2PA credentials are written into. */
-const SIGNABLE = new Set(["image/png", "image/jpeg", "image/webp"]);
+const SIGNABLE = new Set(["image/png", "image/jpeg", "image/webp", "audio/wav"]);
 /** The assertion that names the sha256 of the bytes a manifest was signed over. */
 export const INPUT_ASSERTION = "org.clockgrove.assetgrove.input";
 /** The development certificate's directory under the state directory. */
@@ -320,7 +320,7 @@ export async function resolveSigner(settings: {
     : developmentSigner(settings.stateDir);
 }
 
-/** What a manifest says: how the image was made, and from what. */
+/** What a manifest says: how the file was made, and from what. */
 export interface CredentialClaim {
   digitalSourceType: DigitalSourceType;
   models: readonly string[];
@@ -388,42 +388,33 @@ async function coseSign(
   return out;
 }
 
-/** Signs `bytes` (already IPTC-marked) with a manifest for `claim`; returns the signed bytes. */
-export async function signCredentials(
+/** An ingredient for `signManifest`: its JSON definition and the bytes it was made from. */
+export interface ManifestIngredient {
+  definition: Record<string, unknown>;
+  mediaType: string;
+  bytes: Uint8Array;
+}
+
+/**
+ * Signs `bytes` with the manifest `definition` and `ingredients` (a C2PA manifest definition as
+ * the SDK's builder takes it); returns the signed bytes. `signCredentials` is Assetgrove's own
+ * manifest; this is the primitive under it.
+ */
+export async function signManifest(
   bytes: Uint8Array,
   mediaType: string,
-  claim: CredentialClaim,
+  definition: Record<string, unknown>,
   signer: ContentSigner,
-  version: string,
+  ingredients: ManifestIngredient[] = [],
 ): Promise<Uint8Array> {
   sdk();
-  const definition = {
-    claim_generator_info: [{ name: "Assetgrove", version }],
-    title: claim.title,
-    format: mediaType,
-    assertions: [
-      { label: "c2pa.actions.v2", data: { actions: actions(claim) } },
-      {
-        label: INPUT_ASSERTION,
-        data: {
-          sha256: sha256(bytes),
-          certificateSha256: signer.record.certificateSha256,
-          development: signer.record.development,
-        },
-      },
-    ],
-  };
   const builder = WasmBuilder.fromJson(JSON.stringify(definition));
   try {
-    if (claim.original) {
+    for (const ingredient of ingredients) {
       await builder.addIngredientFromBlob(
-        JSON.stringify({
-          title: claim.original.title,
-          relationship: "parentOf",
-          label: "original",
-        }),
-        claim.original.mediaType,
-        new BytesBlob(claim.original.bytes),
+        JSON.stringify(ingredient.definition),
+        ingredient.mediaType,
+        new BytesBlob(ingredient.bytes),
       );
     }
     const size = signer.chain.reduce((n, der) => n + der.length, 0) + 4096;
@@ -442,6 +433,60 @@ export async function signCredentials(
   } finally {
     builder.free();
   }
+}
+
+/**
+ * Whether `bytes` carry a C2PA manifest another tool made: a vendor's, not one Assetgrove signed
+ * (Assetgrove's own carries `INPUT_ASSERTION`). Only WAV is asked: the other signable types are
+ * staged unsigned.
+ */
+async function vendorManifest(bytes: Uint8Array, mediaType: string): Promise<boolean> {
+  if (mediaType !== "audio/wav" || !hasC2paChunk(bytes)) return false;
+  const read = await readCredentials(bytes, mediaType);
+  return read !== undefined && read.inputSha256 === undefined;
+}
+
+/** Signs `bytes` (already IPTC-marked) with a manifest for `claim`; returns the signed bytes. */
+export async function signCredentials(
+  bytes: Uint8Array,
+  mediaType: string,
+  claim: CredentialClaim,
+  signer: ContentSigner,
+  version: string,
+): Promise<Uint8Array> {
+  const definition = {
+    claim_generator_info: [{ name: "Assetgrove", version }],
+    title: claim.title,
+    format: mediaType,
+    assertions: [
+      { label: "c2pa.actions.v2", data: { actions: actions(claim) } },
+      {
+        label: INPUT_ASSERTION,
+        data: {
+          sha256: sha256(bytes),
+          certificateSha256: signer.record.certificateSha256,
+          development: signer.record.development,
+        },
+      },
+    ],
+  };
+  const ingredients: ManifestIngredient[] = [];
+  if (claim.original) {
+    ingredients.push({
+      definition: { title: claim.original.title, relationship: "parentOf", label: "original" },
+      mediaType: claim.original.mediaType,
+      bytes: claim.original.bytes,
+    });
+  } else if (await vendorManifest(bytes, mediaType)) {
+    // A vendor's manifest in the source is replaced by ours; it stays as an ingredient. A
+    // manifest Assetgrove signed (a handed-off master fed back in) is only replaced.
+    ingredients.push({
+      definition: { title: `vendor ${claim.title}`, relationship: "componentOf", label: "vendor" },
+      mediaType,
+      bytes,
+    });
+  }
+  return signManifest(bytes, mediaType, definition, signer, ingredients);
 }
 
 /** A manifest as read back and validated. */
@@ -620,7 +665,7 @@ function expectedActions(expected: ExpectedCredentials): string[] {
 }
 
 /**
- * The bytes to write for an image: `existing` (the file already at the destination) when its
+ * The bytes to write for a file: `existing` (the file already at the destination) when its
  * manifest validates, was signed over these same `bytes` by the same certificate and records the
  * same claim, so an unchanged asset keeps its bytes; else `bytes` newly signed.
  */

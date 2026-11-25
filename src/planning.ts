@@ -72,6 +72,7 @@ import type { StabilityEntry } from "./qa/stability.ts";
 import type { RunRecord } from "./loop.ts";
 import { writeContact } from "./contact.ts";
 import { framesOf, isStripKind } from "./frames.ts";
+import { mediaOf } from "./media.ts";
 import type { KindTraits } from "./frames.ts";
 import { CORE_REGISTRY } from "./extensions/registry.ts";
 import { writeRun } from "./loop.ts";
@@ -260,7 +261,7 @@ export interface CreatePlanOptions {
   requestDigest?: string;
   /** The stability entries the style verdict filters by (src/qa/stability.json by default). */
   stability?: readonly StabilityEntry[];
-  /** The kinds' `frames` traits; core's own kinds when absent. */
+  /** The kinds' `media` and `frames` traits; core's own kinds when absent. */
   kinds?: KindTraits;
 }
 
@@ -504,6 +505,12 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
     height: spec.frames?.height ?? profile.frames.height,
   };
   const frameCount = strip ? (spec.frames?.count ?? 1) : 1;
+  // Plan and apply make images: a model or audio kind is not planned, whatever its frames.
+  const media = mediaOf(spec.kind, kinds);
+  if (media !== undefined && media !== "image")
+    throw new InputError(
+      `plan makes images; asset kind ${spec.kind} is ${media === "audio" ? "an" : "a"} ${media} kind, so stage it instead`,
+    );
   if (framesOf(spec.kind, kinds) === undefined)
     throw new InputError(`no planned generator handles asset kind ${spec.kind}`);
   if (strip && (!spec.keyPose || !spec.animationFamily))
@@ -1225,7 +1232,7 @@ export interface ResolveOptions {
   runCapUsd?: number;
   /** The settings' prompt-policy allow terms (`promptPolicy.allow`). */
   promptAllow?: readonly string[];
-  /** The kinds' `frames` traits; core's own kinds when absent. */
+  /** The kinds' `media` and `frames` traits; core's own kinds when absent. */
   kinds?: KindTraits;
 }
 

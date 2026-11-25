@@ -39,6 +39,7 @@ import type { ProviderSettings } from "../settings.ts";
 import type { AssetSpec, MediaOutput, Reason, StyleBible, TargetProfile } from "../types.ts";
 import { sampleBible, samplePng, sampleProfile, sampleScript } from "./samples.ts";
 import { refusingToolRunner } from "../extension/tools.ts";
+import { mediaCheckContext } from "../media.ts";
 
 /** One kind's sample: what the suite plans, generates and checks it with. */
 export interface KindSample {
@@ -250,13 +251,21 @@ async function checkKind(
       return;
     }
   }
+  // An audio kind's checks read the decoded WAV, as `stage` gives it them.
+  let media: ReturnType<typeof mediaCheckContext> = {};
+  try {
+    media = mediaCheckContext(kind.media, output);
+  } catch (error) {
+    if ((kind.checks ?? []).some((c) => c.run !== undefined))
+      fail(`its ${kind.media} output does not decode for its checks: ${messageOf(error)}`);
+  }
   for (const check of kind.checks ?? []) {
     const run = check.run;
     if (run === undefined) {
       ran(`${check.mode} check ${check.name}: declared, its reasons come from generate`);
       continue;
     }
-    const input = { spec: sample.spec, profile, bible, output };
+    const input = { spec: sample.spec, profile, bible, output, ...media };
     if (check.mode !== "exact") {
       // A model check runs once on the scripted provider, so the reasons it returns are checked
       // against the kind's declarations as `stage` judges them.

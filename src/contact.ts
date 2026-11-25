@@ -13,6 +13,7 @@ import { splitStrip } from "./animation/strip.ts";
 import { CORE_REGISTRY } from "./extensions/registry.ts";
 import { frameLayoutOf, isStripKind } from "./frames.ts";
 import type { KindTraits } from "./frames.ts";
+import { mediaOf } from "./media.ts";
 import { drawDigits, textWidth } from "./image/digits.ts";
 import { createRaster, decodeImage, encodePng } from "./image/raster.ts";
 import type { Raster } from "./image/raster.ts";
@@ -222,7 +223,10 @@ export function candidateNumber(id: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** The images of one staged candidate: a 3D character's turntable, a strip kind's key frames. */
+/**
+ * The images of one staged candidate, by its kind's media trait: a model kind's turntable, a strip
+ * kind's key frames, an image; none for an audio kind.
+ */
 async function candidateImages(
   runDir: string,
   spec: AssetSpec,
@@ -230,7 +234,10 @@ async function candidateImages(
   profile: TargetProfile | undefined,
   traits: KindTraits,
 ): Promise<Raster[]> {
-  if (spec.kind === "character-3d") {
+  const media = mediaOf(spec.kind, traits);
+  // An audio candidate has no image cell yet: its waveform cell comes with the audio kinds.
+  if (media === "audio") return [];
+  if (media === "model") {
     // Turntable frames are the view renders; the clip frames are not part of the turntable.
     const views = (candidate.artifacts ?? []).filter(
       (a) => a.endsWith(".png") && !(a.split("/").pop() ?? "").startsWith("clip-"),
@@ -278,7 +285,7 @@ export async function writeContact(
   references: Uint8Array[],
   /** The run's profile: a staged strip's row then always shows the frames animation QA flags. */
   profile?: TargetProfile,
-  /** The kinds' `frames` traits: a strip kind's candidate is shown as its key frames. */
+  /** The kinds' `media` and `frames` traits: a strip kind's candidate is shown as its key frames. */
   traits: KindTraits = CORE_REGISTRY,
 ): Promise<string | undefined> {
   const rows: ContactRow[] = [];

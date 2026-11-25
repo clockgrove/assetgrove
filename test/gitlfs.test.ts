@@ -65,6 +65,15 @@ test("requireLfsMedia asks Git: inside the library passes, outside the rules ref
   );
 });
 
+test("requireLfsMedia covers audio: wav and ogg pass in the library and refuse elsewhere", () => {
+  const root = library();
+  requireLfsMedia([join(root, "assets/source/a.wav"), join(root, "assets/source/a.ogg")]);
+  assert.throws(
+    () => requireLfsMedia([join(root, "elsewhere/a.wav")]),
+    (error) => error instanceof LfsRequiredError && error.code === "lfs_required",
+  );
+});
+
 test("requireLfsMedia outside a work tree is git_required", () => {
   const plain = dir();
   assert.throws(() => requireLfsMedia([join(plain, "new/dir/a.png")]), GitRequiredError);
