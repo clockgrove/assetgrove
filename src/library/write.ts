@@ -493,6 +493,8 @@ export interface CurrentVersion {
   candidate?: string;
   /** Whether the working media differs from the card's `lock.sha256`. */
   outsideChange: boolean;
+  /** The absolute path of the card's resource, when the card has one. */
+  media?: string;
 }
 
 /** The current version of a spec's asset in a target's library, read without writing. */
@@ -535,6 +537,7 @@ export async function currentVersion(
     ...(last?.run !== undefined && { run: last.run }),
     ...(last?.candidate !== undefined && { candidate: last.candidate }),
     outsideChange,
+    ...(card.resource !== undefined && { media: resolve(card.dir, card.resource) }),
   };
 }
 

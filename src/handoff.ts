@@ -144,7 +144,7 @@ function inside(root: string, path: string): string {
 }
 
 /** The real path of `path`, or of its nearest existing ancestor joined with the rest. */
-function realOf(path: string): string {
+export function realOf(path: string): string {
   if (existsSync(path)) return realpathSync.native(path);
   const parent = dirname(path);
   return parent === path ? path : join(realOf(parent), basename(path));

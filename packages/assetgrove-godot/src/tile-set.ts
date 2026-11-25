@@ -28,6 +28,7 @@ import {
   savedFile,
 } from "./run.ts";
 import { GODOT_RELEASE } from "./setup.ts";
+import { godotUsage } from "./usage.ts";
 import {
   INPUT_PATH,
   importOptionsSchema,
@@ -242,5 +243,7 @@ export function tileSetPreset(context: ExtensionContext): EnginePreset<TileSetOp
     check,
     warnings: (ctx, options, read) =>
       textureFilterWarning(ctx.profile, relativePath(options.project, "options.project"), read),
+    usage: (ctx, options, read) =>
+      godotUsage(ctx, relativePath(options.project, "options.project"), read),
   };
 }

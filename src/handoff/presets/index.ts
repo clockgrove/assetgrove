@@ -100,6 +100,76 @@ interface PresetShape<Options, Context> {
    * `handoff[i].warnings`. Optional: a preset without it warns of nothing.
    */
   warnings?(ctx: Context, options: Options, read: TargetRead): Promise<string[]>;
+  /**
+   * Read-only: where the target's own files refer to the asset a pick is about to replace, so the
+   * replacement preview can show what the replacement affects. Core calls it before a pick into
+   * an asset that has a version, with `read` reading the target as it is; it never writes the
+   * target. Optional: a preset without it reports no usage.
+   */
+  usage?(ctx: UsageContext, options: Options, read: TargetRead): Promise<UsageReport>;
+}
+
+/** One file of the target, as `UsageContext.list` gives it: its path and its stat, never its bytes. */
+export interface TargetEntry {
+  /** Relative to the target, with `/`. */
+  path: string;
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}
+
+/** A JSON store a preset's `usage` may keep between calls, outside the target. */
+export interface UsageCache {
+  /** The value last written under `key`, or undefined. */
+  get(key: string): Promise<unknown>;
+  /** Stores a JSON value under `key`; a failure to store is ignored. */
+  set(key: string, value: unknown): Promise<void>;
+}
+
+/** What a preset's `usage` reads. */
+export interface UsageContext {
+  profile: TargetProfile;
+  /** The library id of the asset being replaced. */
+  assetId: string;
+  /** Its current media, relative to the target, with `/`. */
+  media: string;
+  /**
+   * Every regular file under `dir` (relative to the target, `""` for all of it), not following
+   * links and skipping `.git`; a folder that is missing or outside the target lists nothing.
+   */
+  list(dir: string): Promise<TargetEntry[]>;
+  /** The commit the target's work tree is on; empty outside Git or before the first commit. */
+  revision: string;
+  /** This preset's cache, in core's state directory (`<stateDir>/cache/usage/`). */
+  cache: UsageCache;
+}
+
+/** One place that refers to the asset, or might. */
+export interface UsageReference {
+  /** The file that refers, relative to the target, with `/`. */
+  file: string;
+  /** The 1-based line of the reference; absent when the file could not be read. */
+  line?: number;
+  /** The path as the file writes it (`res://...`), when it writes one. */
+  path?: string;
+  /** The id as the file writes it (`uid://...`), when it writes one. */
+  uid?: string;
+  /**
+   * `resolved`: it refers to the asset. `unresolved`: it resolves to nothing, so it may be the
+   * asset. `unreadable`: the file could not be read, so whether it refers to the asset is unknown.
+   */
+  status: "resolved" | "unresolved" | "unreadable";
+  /** Where the file uses the reference, such as a node and property; empty when nowhere. */
+  locations: string[];
+  /** Why it is unresolved or unreadable. */
+  reason?: string;
+}
+
+/** What a preset's `usage` found. */
+export interface UsageReport {
+  /** The asset as the engine knows it: its path in the engine's terms and its id, when it has one. */
+  asset: { path: string; uid?: string };
+  references: UsageReference[];
 }
 
 /** A preset that writes for one hand-off: one asset, or one family of it. */

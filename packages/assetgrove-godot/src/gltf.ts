@@ -21,6 +21,7 @@ import type {
 import { importUid } from "./godot-text.ts";
 import { GodotInputError, inProject, relativePath, runGodot, savedFile } from "./run.ts";
 import { GODOT_RELEASE } from "./setup.ts";
+import { godotUsage } from "./usage.ts";
 import {
   INPUT_PATH,
   importOptionsSchema,
@@ -143,5 +144,7 @@ export function gltfPreset(context: ExtensionContext): EnginePreset<GltfOptions>
     }),
     write,
     check,
+    usage: (ctx, options, read) =>
+      godotUsage(ctx, relativePath(options.project, "options.project"), read),
   };
 }

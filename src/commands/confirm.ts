@@ -12,6 +12,7 @@ import type { ConfirmRequest } from "../confirm/prompt.ts";
 import { policyRequest, spendShown } from "../runs/execute.ts";
 import type { WorkPlan } from "../runs/plan.ts";
 import { pickRequest } from "./pick.ts";
+import type { UsageInput } from "./pick.ts";
 import { rebuildApproveRequest } from "./review.ts";
 import { applySettingsChange, rebuiltSettingsRequest } from "../settings-write.ts";
 import { refusal } from "./result.ts";
@@ -24,9 +25,14 @@ import { rebuildAdoptRequest } from "../library/adopt.ts";
  * A pending spend, pick or write request as a person is shown it, rebuilt from what its id hashes
  * and never from the saved summary, details or choices: a spend's from its verified body; a
  * pick's and a write's by making the request again from its body (the run's candidates, the
- * import and the grouping; an approve's or adopt's card) and requiring the same id. Undefined when the request does not hold.
+ * import and the grouping; an approve's or adopt's card) and requiring the same id. A pick that
+ * replaces an asset lists its known usage again (`usage`), as the pick itself showed it. Undefined
+ * when the request does not hold.
  */
-async function shownRequest(request: ConfirmRequest): Promise<KindRequest | undefined> {
+async function shownRequest(
+  request: ConfirmRequest,
+  usage: UsageInput,
+): Promise<KindRequest | undefined> {
   if (!verifiedRequest(request)) return undefined;
   const { body } = request;
   const text = (value: unknown) => (typeof value === "string" ? value : undefined);
@@ -97,13 +103,16 @@ async function shownRequest(request: ConfirmRequest): Promise<KindRequest | unde
         return undefined;
       const existingVersion = text(body["existingVersion"]);
       if (run === undefined || target === undefined) return undefined;
-      rebuilt = await pickRequest({
-        run,
-        target,
-        ...(candidate !== undefined && { candidate }),
-        ...(duplicate !== undefined && { duplicate }),
-        ...(existingVersion !== undefined && { existingVersion }),
-      });
+      rebuilt = await pickRequest(
+        {
+          run,
+          target,
+          ...(candidate !== undefined && { candidate }),
+          ...(duplicate !== undefined && { duplicate }),
+          ...(existingVersion !== undefined && { existingVersion }),
+        },
+        usage,
+      );
     } else {
       const importDir = text(body["import"]);
       const targetDir = text(body["target"]);
@@ -208,7 +217,11 @@ import or grouping) no longer makes that id. Declining exits 8 confirmation_decl
       };
     }
     if (pending.kind !== "command") {
-      const request = await shownRequest(pending);
+      const request = await shownRequest(pending, {
+        ...(ctx.extensions && { registry: ctx.extensions }),
+        stateDir,
+        configDir,
+      });
       if (request === undefined) {
         return refusal(
           "invalid_input",

@@ -368,7 +368,12 @@ export type {
   HandedOffFamily,
   PresetContext,
   PresetFile,
+  TargetEntry,
   TargetRead,
+  UsageCache,
+  UsageContext,
+  UsageReference,
+  UsageReport,
 } from "../handoff/presets/index.ts";
 export type { AdapterContext, Capability, ProviderAdapter } from "../providers/adapter.ts";
 export type {

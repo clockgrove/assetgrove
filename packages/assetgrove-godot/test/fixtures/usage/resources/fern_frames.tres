@@ -1,0 +1,13 @@
+[gd_resource type="SpriteFrames" load_steps=3 format=3 uid="uid://b1frames"]
+
+[ext_resource type="Texture2D" path="res://characters/fern.png" id="1_fern"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_a"]
+atlas = ExtResource("1_fern")
+region = Rect2(0, 0, 16, 16)
+
+[resource]
+animations = [{
+"frames": [SubResource("AtlasTexture_a")],
+"name": &"idle"
+}]
