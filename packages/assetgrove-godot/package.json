@@ -1,11 +1,12 @@
 {
   "name": "@clockgrove/assetgrove-godot",
   "version": "0.2.0",
-  "description": "Godot hand-off for Assetgrove: SpriteFrames built, saved and reloaded by a pinned headless Godot.",
+  "description": "Godot hand-off for Assetgrove: SpriteFrames and TileSets built, saved and reloaded by a pinned headless Godot.",
   "keywords": [
     "assetgrove",
     "godot",
     "spriteframes",
+    "tileset",
     "gamedev"
   ],
   "license": "MIT",

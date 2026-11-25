@@ -1,6 +1,6 @@
 # @clockgrove/assetgrove-godot
 
-The Godot pack for Assetgrove: Godot builds the hand-off's resources itself. Copying files into a Godot project is not enough, because Godot's exit codes do not report import errors and a hand-written `.tres` with a wrong UID breaks silently in the editor. So this pack never writes a Godot resource by hand: a pinned, headless Godot 4.7.2 builds each one through its own API, saves it with `ResourceSaver` and loads it back with `ResourceLoader`.
+The Godot pack for Assetgrove: Godot builds the hand-off's resources itself, a SpriteFrames of a character's animations or a TileSet of a terrain tile set. Copying files into a Godot project is not enough, because Godot's exit codes do not report import errors and a hand-written `.tres` with a wrong UID breaks silently in the editor. So this pack never writes a Godot resource by hand: a pinned, headless Godot 4.7.2 builds each one through its own API, saves it with `ResourceSaver` and loads it back with `ResourceLoader`.
 
 ## Extension API
 
@@ -9,6 +9,7 @@ The package declares `"assetgrove": { "api": 2 }` and a peer range on `@clockgro
 It declares, as extension `godot`:
 
 - the preset `godot:sprite-frames` (scope `families`);
+- the preset `godot:tile-set`, for a `tiles:terrain` asset of the tiles pack;
 - the tool `godot:engine`, the Godot executable at the pack setting `godot`;
 - a setup, `assetgrove extensions setup godot`.
 
@@ -63,6 +64,43 @@ Scratch is removed after the run, but Godot's editor, like any editor launch, al
 
 The preset's check reads the written resource back: a SpriteFrames with a UID, referencing each family's media by the UID its `.import` gives it.
 
+## The `godot:tile-set` preset
+
+One Godot `TileSet` per `tiles:terrain` asset (the [tiles pack](../assetgrove-tiles/README.md)'s corner-16 terrain set: one atlas of 4 × 4 tiles, `output.fields.layout` `corner-16`). Any other asset is invalid input (exit 2).
+
+```json
+{
+  "handoff": [
+    { "preset": "manifest" },
+    {
+      "preset": "godot:tile-set",
+      "options": { "project": "game", "resource": "game/tiles/{assetId}.tres" }
+    }
+  ]
+}
+```
+
+| Option     | Default          | What                                                                                                        |
+| ---------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| `project`  | `""`             | The Godot project's folder (where `project.godot` is), relative to the target. The atlas must be inside it. |
+| `resource` | `{assetId}.tres` | The TileSet, relative to the target, `{assetId}` replaced; inside the project, ending in `.tres`.           |
+
+The preset reads the corner-16 layout as data: tile `i` sits at column `i % 4`, row `floor(i / 4)`, its corner bits NW 1, NE 2, SW 4, SE 8 set where the corner is the upper terrain. The tile size is `output.fields.tileSize` (else the profile's `kinds["tiles:terrain"].tileSize`), and the terrains are the spec's `fields.terrains`.
+
+- **A new `.tres`** has a `tile_size` of the tile size, one terrain set in Match Corners mode with terrain 0 the lower terrain and terrain 1 the upper (named after them), and one atlas source (id 0) of the atlas. Each of the 16 tiles has terrain set 0, a peering bit on each corner (0 lower, 1 upper), and a centre terrain that is the upper only when all four corners are: every mixed tile is lower-centred, so Godot's terrain painting makes a painted cell the all-upper tile.
+- **An existing `.tres`** is loaded, and only the atlas source the preset owns changes: the `TileSetAtlasSource` whose texture is the asset's atlas (a new one at the next source id when there is none). Its texture, region size and tiles change: a missing tile is created, and each tile's base tile gets terrain set 0, its centre terrain and its peering bits; its other data stays. Every other source, terrain set, physics, navigation and custom-data layer, and every alternative tile a developer added, is kept, as is the `tile_size`. The preset uses terrain set 0 as terrain 0 lower, 1 upper; a TileSet whose terrain set 0 is not in Match Corners mode with two terrains fails the hand-off (exit 6) rather than have its terrain set rewritten. A TileSet with no terrain set gets the new file's.
+
+### What a hand-off runs
+
+As for `godot:sprite-frames`, with the same tool run, approval and failures (exit 6 `handoff_check_failed` on a load error, any `ERROR` line, or no result):
+
+1. Scratch holds the pack's project and build script, the atlas this hand-off writes (core passes its bytes, as the preset cannot read them from the target yet), the atlas's existing `.import`, and, for an existing `.tres`, the `.tres` and every file it references at its path in the project (followed through referenced `.tres` and `.tscn` files), each with its `.import`, so Godot loads it as the game does. A referenced file the target lacks fails the run with Godot's load error. `input.json` names the resource, the UID it already has, the atlas, the tile size, the terrains and the 16 tiles' terrain data.
+2. Godot's editor imports the atlas and the references. The script builds the TileSet through Godot's API, saves it with `ResourceSaver`, keeping the earlier UID with `ResourceSaver.set_uid`.
+3. **The hand-off check**: the script reloads the saved TileSet with `ResourceLoader` and reads back every tile of the owned source against the corner-16 layout, which it computes from each tile's index rather than from the input: terrain set 0, the centre terrain and the four peering bits. One wrong bit fails the run, naming the tile and the corner.
+4. The preset returns the TileSet, and the atlas's `.import` only when the target had none. An existing `.import` is never returned, so it is never touched; a replaced atlas keeps the TileSet's UID and the atlas's.
+
+The preset's check reads the written resource back: a TileSet with a UID, referencing the atlas by the UID its `.import` gives it.
+
 ## Tests
 
-`pnpm test` runs the conformance suite (with a scripted tool run), setup and the output readers anywhere. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI and needs Godot: it runs the first Godot 4.7.2 on `PATH` (as `godot`, or by the release's own executable name; on Windows only an `.exe`), which CI's `chickensoft-games/setup-godot` step puts there, and skips with the reason without one. The tests read no environment variable of their own: core allows a fixed list (`test/env-names.test.ts`).
+`pnpm test` runs the conformance suite (with a scripted tool run), setup, the output readers and what `godot:tile-set` hands Godot (`test/tile-set-input.test.ts`) anywhere. `test/godot.test.ts` hands strips off to a fixture Godot project through core's CLI, and `test/tile-set.test.ts` hands corner-16 atlases off with the tiles pack, built from `packages/assetgrove-tiles` and installed beside this one: a new TileSet from a fixture atlas, a re-hand-off that keeps a developer-added physics layer, custom-data layer, second source and alternative tile, a replaced atlas keeping its UID, a deliberately wrong peering bit failing the read-back, and the paint test. The paint test has Godot paint, with `TileMapLayer.set_cells_terrain_connect`, a map holding every neighbour pair Godot's terrain painting can make (every pair whose shared corners agree and each of whose upper corners belongs to a cell that can be all upper; the test enumerates them) and compares `get_cell_atlas_coords` of every cell with the expected map, where a corner is upper exactly where a painted cell touches it. These tests need Godot: they run the first Godot 4.7.2 on `PATH` (as `godot`, or by the release's own executable name; on Windows only an `.exe`), which CI's `chickensoft-games/setup-godot` step puts there, and skip with the reason without one. The tests read no environment variable of their own: core allows a fixed list (`test/env-names.test.ts`).

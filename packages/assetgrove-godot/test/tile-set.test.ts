@@ -335,8 +335,6 @@ func _initialize():
   );
   const edited = describe();
   assert.equal(edited["SOURCES"], "2");
-  git("add", "-A");
-  git("commit", "--quiet", "-m", "a developer's edits");
 
   const uid = headerUid(TRES);
   assert.ok(uid);
