@@ -139,10 +139,12 @@ even the output directory. The MCP tool `deliver` takes `selection`, `out`, `pro
 Without `--preview`, a delivery with any problem writes nothing; otherwise it writes every output
 and then `delivery.json`.
 
-`delivery.json` has the format `assetgrove-delivery-manifest/1`, the selection's hash and, per
-item, the asset, version, mezzanine sha256, recipe name and sha256, rendition digest, build and
-outputs with path, sha256, media type and size. It holds no time and no absolute path, so
-repeating a selection gives the same files. An existing file with identical bytes is accepted; one
+`delivery.json` has the format `assetgrove-delivery-manifest/1` and, per item, the asset id,
+version, mezzanine sha256, recipe name and sha256, rendition digest, build and outputs with path,
+sha256, media type and size. It records only what the selection resolves to, never how the
+selection file is written, and holds no time and no path outside the delivery, so the same versions
+and recipes give the same files whether a version is named by stack number or sha256 and whether a
+card path is relative or absolute. An existing file with identical bytes is accepted; one
 with different bytes, or a path used twice, is an `output_collision`.
 
 Delivery only reads the library. It never adds a version or changes the current pick.

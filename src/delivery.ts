@@ -16,7 +16,7 @@ import { basename, dirname, join, posix, resolve } from "node:path";
 import { InputError } from "./errors.ts";
 import { readFormat } from "./formats.ts";
 import { locateAsset, loadAsset, selectVersion } from "./library/actions.ts";
-import { canonicalJson, sha256Hex } from "./library/canonical.ts";
+import { sha256Hex } from "./library/canonical.ts";
 import { findGitDir, lfsObjectPath, readMedia } from "./library/lfs.ts";
 import { parseDigitalSourceType } from "./metadata.ts";
 import type { DigitalSourceType } from "./metadata.ts";
@@ -59,7 +59,6 @@ export interface DeliveryOutput {
 
 export interface DeliveryItem {
   asset: string;
-  card: string;
   version: number;
   mezzanine: { sha256: string; mediaType: string };
   recipe: { name: string; sha256: string };
@@ -70,7 +69,6 @@ export interface DeliveryItem {
 
 export interface DeliveryManifest {
   format: "assetgrove-delivery-manifest/1";
-  selection: { sha256: string };
   items: DeliveryItem[];
 }
 
@@ -296,7 +294,6 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
       resultItems[index] = {
         item: index,
         asset: loaded.assetId,
-        card: item.asset,
         version: stack,
         mezzanine: { sha256: version.sha256, mediaType: built.record.sources[0]!.mediaType },
         recipe: { name: item.recipe, sha256: rendition.recipe.sha256 },
@@ -312,7 +309,6 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
   const complete = resultItems.filter((r): r is DeliveryItem & { item: number } => "outputs" in r);
   const manifest: DeliveryManifest = {
     format: "assetgrove-delivery-manifest/1",
-    selection: { sha256: sha256Hex(canonicalJson(value)) },
     items: complete.map(({ item: _item, ...rest }) => rest),
   };
   const manifestBytes = new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);

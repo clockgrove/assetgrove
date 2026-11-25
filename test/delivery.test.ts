@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { REFUSED_VARIABLES } from "../src/env.ts";
@@ -210,6 +210,24 @@ test("repeating the same selection gives an identical delivery set linked to mez
     manifest.items.map((i: { recipe: { name: string } }) => i.recipe.name),
     ["icon", "mirror"],
   );
+});
+
+test("the same versions and recipes give the same delivery set however the selection names them", async () => {
+  const f = await setup();
+  const bytes = image(1);
+  await asset(f, "lantern", [bytes]);
+  const out = join(f.dir, "out");
+  const byNumber = await planDelivery({ selection: await select(f, [lantern()]), out });
+  assert.deepEqual(byNumber.problems, []);
+  const first = await files(out);
+  const card = join(f.base, "..", "target", "assets", "lantern.md");
+  const renamed = await select(f, [lantern({ version: sha256Hex(bytes), asset: resolve(card) })]);
+  const again = await planDelivery({ selection: renamed, out });
+  assert.deepEqual(again.problems, []);
+  assert.deepEqual(again.manifest, byNumber.manifest);
+  assert.deepEqual(await files(out), first);
+  const manifest = await readFile(join(out, "delivery.json"), "utf8");
+  assert.ok(!manifest.includes(f.dir), "the manifest holds no absolute path");
 });
 
 test("a previously picked version is delivered without changing the library", async () => {
