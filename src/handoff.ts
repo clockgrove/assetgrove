@@ -822,6 +822,7 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     context,
     manifestRel,
     ...(frames !== undefined && { frames }),
+    mediaBytes: output.bytes,
   };
   // A preset reads the target as it is before this hand-off writes, and runs only its own pack's
   // tools, in scratch, under the approval rules, with the game project as the approval's project.
