@@ -185,8 +185,9 @@ func _reload(path: String, expected: Dictionary, textures: Dictionary) -> Dictio
 
 ## Builds the TileSet: the existing one loaded, or a new one with one Match Corners terrain set
 ## (terrain 0 the lower, 1 the upper). Only the atlas source whose texture is the input's atlas
-## changes: its texture, region size, tiles and their terrain data. Every other source, terrain
-## set, layer and alternative tile stays as it was.
+## changes: its texture, region size, tiles and their terrain data, on the terrain set
+## `_preset_terrain_set` picks. Every other source, terrain set, layer and alternative tile stays
+## as it was.
 func _build_tile_set(input: Dictionary) -> Dictionary:
 	var path := String(input["resource"])
 	var texture_path := String(input["texture"])
@@ -214,28 +215,8 @@ func _build_tile_set(input: Dictionary) -> Dictionary:
 	else:
 		tile_set = TileSet.new()
 		tile_set.tile_size = Vector2i(tile_size, tile_size)
-	if tile_set.get_terrain_sets_count() == 0:
-		var terrains: Dictionary = input["terrains"]
-		tile_set.add_terrain_set()
-		tile_set.set_terrain_set_mode(0, TileSet.TERRAIN_MODE_MATCH_CORNERS)
-		tile_set.add_terrain(0)
-		tile_set.set_terrain_name(0, 0, String(terrains["lower"]))
-		tile_set.set_terrain_color(0, 0, Color(0.55, 0.4, 0.25))
-		tile_set.add_terrain(0)
-		tile_set.set_terrain_name(0, 1, String(terrains["upper"]))
-		tile_set.set_terrain_color(0, 1, Color(0.35, 0.6, 0.3))
-	elif (
-		tile_set.get_terrain_set_mode(0) != TileSet.TERRAIN_MODE_MATCH_CORNERS
-		or tile_set.get_terrains_count(0) < 2
-	):
-		_fail(
-			(
-				"%s's terrain set 0 is not in Match Corners mode with two terrains (0 the lower, 1 the upper)"
-				% path
-			)
-		)
-		return {}
 	var source_id := _owned_source(tile_set, texture_path)
+	var terrain_set := _preset_terrain_set(tile_set, source_id, input["terrains"])
 	var source: TileSetAtlasSource
 	if source_id == -1:
 		source = TileSetAtlasSource.new()
@@ -251,7 +232,7 @@ func _build_tile_set(input: Dictionary) -> Dictionary:
 		if not source.has_tile(coords):
 			source.create_tile(coords)
 		var data: TileData = source.get_tile_data(coords, 0)
-		data.terrain_set = 0
+		data.terrain_set = terrain_set
 		data.terrain = int(tile["terrain"])
 		for corner in CORNERS:
 			data.set_terrain_peering_bit(CORNERS[corner], int(tile["peering"][corner]))
@@ -264,7 +245,50 @@ func _build_tile_set(input: Dictionary) -> Dictionary:
 		return {}
 	if not _keep_uid(path, input.get("uid")):
 		return {}
-	return _reload_tile_set(path, texture_path, tile_size)
+	return _reload_tile_set(path, texture_path, tile_size, terrain_set)
+
+
+## The terrain set the preset's tiles use, terrain 0 the lower and 1 the upper: the Match Corners
+## set the owned source's tile 0 already uses (an earlier hand-off's), else a Match Corners set
+## whose terrains 0 and 1 are named after the lower and upper terrains, else a new set of the
+## preset's own added after every other. A developer's terrain sets are never changed or reused
+## for unrelated terrains, and a new TileSet's set is set 0.
+func _preset_terrain_set(tile_set: TileSet, source_id: int, terrains: Dictionary) -> int:
+	var lower := String(terrains["lower"])
+	var upper := String(terrains["upper"])
+	if source_id != -1:
+		var source := tile_set.get_source(source_id) as TileSetAtlasSource
+		if source.has_tile(Vector2i(0, 0)):
+			var used := source.get_tile_data(Vector2i(0, 0), 0).terrain_set
+			if _corner_set(tile_set, used):
+				return used
+	for index in tile_set.get_terrain_sets_count():
+		if (
+			_corner_set(tile_set, index)
+			and tile_set.get_terrain_name(index, 0) == lower
+			and tile_set.get_terrain_name(index, 1) == upper
+		):
+			return index
+	var added := tile_set.get_terrain_sets_count()
+	tile_set.add_terrain_set()
+	tile_set.set_terrain_set_mode(added, TileSet.TERRAIN_MODE_MATCH_CORNERS)
+	tile_set.add_terrain(added)
+	tile_set.set_terrain_name(added, 0, lower)
+	tile_set.set_terrain_color(added, 0, Color(0.55, 0.4, 0.25))
+	tile_set.add_terrain(added)
+	tile_set.set_terrain_name(added, 1, upper)
+	tile_set.set_terrain_color(added, 1, Color(0.35, 0.6, 0.3))
+	return added
+
+
+## Whether terrain set `index` exists, is in Match Corners mode and has at least two terrains.
+func _corner_set(tile_set: TileSet, index: int) -> bool:
+	return (
+		index >= 0
+		and index < tile_set.get_terrain_sets_count()
+		and tile_set.get_terrain_set_mode(index) == TileSet.TERRAIN_MODE_MATCH_CORNERS
+		and tile_set.get_terrains_count(index) >= 2
+	)
 
 
 ## The id of the atlas source whose texture is `texture_path`, or -1.
@@ -298,7 +322,9 @@ func _keep_uid(path: String, uid) -> bool:
 
 ## The hand-off check: reloads the saved TileSet from disk and reads every tile's terrain data
 ## back against the corner-16 layout, which it computes from the tile's index, not the input.
-func _reload_tile_set(path: String, texture_path: String, tile_size: int) -> Dictionary:
+func _reload_tile_set(
+	path: String, texture_path: String, tile_size: int, terrain_set: int
+) -> Dictionary:
 	var loaded = ResourceLoader.load(path, "TileSet", ResourceLoader.CACHE_MODE_IGNORE)
 	if not (loaded is TileSet):
 		_fail("ResourceLoader could not load %s back as a TileSet" % path)
@@ -315,8 +341,13 @@ func _reload_tile_set(path: String, texture_path: String, tile_size: int) -> Dic
 				% [path, source.texture_region_size, tile_size]
 			)
 		)
-	if loaded.get_terrain_set_mode(0) != TileSet.TERRAIN_MODE_MATCH_CORNERS:
-		_fail("%s's terrain set 0 loaded back not in Match Corners mode" % path)
+	if not _corner_set(loaded, terrain_set):
+		_fail(
+			(
+				"%s's terrain set %d loaded back not in Match Corners mode with two terrains"
+				% [path, terrain_set]
+			)
+		)
 	var tiles := 0
 	for index in 16:
 		var coords := Vector2i(index % 4, index / 4)
@@ -325,11 +356,11 @@ func _reload_tile_set(path: String, texture_path: String, tile_size: int) -> Dic
 			continue
 		var data: TileData = source.get_tile_data(coords, 0)
 		var centre := 1 if index == 15 else 0
-		if data.terrain_set != 0 or data.terrain != centre:
+		if data.terrain_set != terrain_set or data.terrain != centre:
 			_fail(
 				(
-					"tile %d of %s loaded back with terrain set %d, terrain %d; the layout gives 0, %d"
-					% [index, path, data.terrain_set, data.terrain, centre]
+					"tile %d of %s loaded back with terrain set %d, terrain %d; the layout gives %d, %d"
+					% [index, path, data.terrain_set, data.terrain, terrain_set, centre]
 				)
 			)
 		for corner in CORNERS:
@@ -347,5 +378,6 @@ func _reload_tile_set(path: String, texture_path: String, tile_size: int) -> Dic
 		"resource": path,
 		"uid": ResourceUID.id_to_text(ResourceLoader.get_resource_uid(path)),
 		"source": source_id,
+		"terrainSet": terrain_set,
 		"tiles": tiles,
 	}

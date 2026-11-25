@@ -379,29 +379,32 @@ test("a replaced atlas keeps the TileSet's UID, and its existing .import is neve
   assert.equal(seen["BITS"], LAYOUT_BITS);
 });
 
-test("a deliberately wrong peering bit fails the read-back", (t) => {
-  if (!usable) return t.skip(SKIP!);
-  const scratch = join(stage, "wrong-bit");
-  const tiles = corner16Tiles();
-  // Tile 5 is NW and SW upper: its NE bit is the lower terrain.
-  tiles[5]!.peering.ne = 1;
-  const input: TileSetInput = {
+/** Lays out a scratch project with `files` and the build input, and runs the build script there. */
+function buildInScratch(
+  name: string,
+  input: Partial<TileSetInput>,
+  files: Record<string, string | Uint8Array> = {},
+) {
+  const scratch = join(stage, name);
+  const full: TileSetInput = {
     build: "tile-set",
     godot: GODOT_RELEASE.release,
-    resource: "res://wrong.tres",
+    resource: "res://built.tres",
     existing: false,
     texture: "res://atlas.png",
     imports: ["res://atlas.png"],
     tileSize: TILE,
     terrains: { lower: "dirt", upper: "grass" },
-    tiles,
+    tiles: corner16Tiles(),
+    ...input,
   };
-  const files = {
+  const all = {
     ...projectFiles(),
     "atlas.png": cornerAtlas(TILE, LOWER, UPPER),
-    [INPUT_PATH]: JSON.stringify(input),
+    ...files,
+    [INPUT_PATH]: JSON.stringify(full),
   };
-  for (const [path, content] of Object.entries(files)) {
+  for (const [path, content] of Object.entries(all)) {
     mkdirSync(dirname(join(scratch, path)), { recursive: true });
     writeFileSync(join(scratch, path), content);
   }
@@ -409,10 +412,66 @@ test("a deliberately wrong peering bit fails the read-back", (t) => {
   const result = JSON.parse(readFileSync(join(scratch, RESULT_PATH), "utf8")) as {
     ok: boolean;
     errors: string[];
+    terrainSet?: number;
   };
+  return { scratch, run, result };
+}
+
+test("a deliberately wrong peering bit fails the read-back", (t) => {
+  if (!usable) return t.skip(SKIP!);
+  const tiles = corner16Tiles();
+  // Tile 5 is NW and SW upper: its NE bit is the lower terrain.
+  tiles[5]!.peering.ne = 1;
+  const { run, result } = buildInScratch("wrong-bit", { resource: "res://wrong.tres", tiles });
   assert.equal(result.ok, false);
   assert.deepEqual(result.errors, [
     "tile 5 of res://wrong.tres loaded back with its ne peering bit 1; the layout gives 0",
   ]);
   assert.match(run.stdout + run.stderr, /ERROR: assetgrove-godot: tile 5 of res:\/\/wrong\.tres/);
+});
+
+test("an existing TileSet's own terrain sets are kept, and the preset's tiles get a Match Corners set of its own", (t) => {
+  if (!usable) return t.skip(SKIP!);
+  // A developer's TileSet: set 0 is Match Sides, set 1 Match Corners with unrelated terrains.
+  const existing = `[gd_resource type="TileSet" format=3]
+
+[resource]
+terrain_set_0/mode = 2
+terrain_set_0/terrain_0/name = "water"
+terrain_set_0/terrain_0/color = Color(0, 0, 1, 1)
+terrain_set_0/terrain_1/name = "sand"
+terrain_set_0/terrain_1/color = Color(1, 1, 0, 1)
+terrain_set_1/mode = 1
+terrain_set_1/terrain_0/name = "stone"
+terrain_set_1/terrain_0/color = Color(0.5, 0.5, 0.5, 1)
+terrain_set_1/terrain_1/name = "lava"
+terrain_set_1/terrain_1/color = Color(1, 0, 0, 1)
+`;
+  const { scratch, run, result } = buildInScratch(
+    "developer-terrains",
+    { resource: "res://developer.tres", existing: true },
+    { "developer.tres": existing },
+  );
+  assert.equal(result.ok, true, run.stdout + run.stderr);
+  assert.equal(result.terrainSet, 2);
+  const script = join(stage, "developer-terrains.gd");
+  writeFileSync(
+    script,
+    `extends SceneTree
+func _initialize():
+\tvar ts = load("res://developer.tres") as TileSet
+\tfor index in ts.get_terrain_sets_count():
+\t\tprint("SET ", index, " ", ts.get_terrain_set_mode(index), " ", ts.get_terrain_name(index, 0), ",", ts.get_terrain_name(index, 1))
+\tquit()
+`,
+  );
+  const read = spawnSync(GODOT!, ["--headless", "--path", scratch, "--script", script], {
+    encoding: "utf8",
+  });
+  const out = read.stdout + read.stderr;
+  assert.doesNotMatch(out, /ERROR/, out);
+  assert.deepEqual(
+    [...out.matchAll(/^SET (.*)$/gm)].map((m) => m[1]),
+    ["0 2 water,sand", "1 1 stone,lava", "2 1 dirt,grass"],
+  );
 });

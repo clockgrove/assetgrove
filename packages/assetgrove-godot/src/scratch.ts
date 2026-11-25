@@ -110,7 +110,11 @@ export interface BuildResult {
   uid?: string;
   animations?: Record<string, number>;
   textures?: Record<string, string>;
-  /** For a TileSet: the id of the atlas source the preset owns, and how many tiles were read back. */
+  /**
+   * For a TileSet: the id of the atlas source the preset owns, the terrain set its tiles use and
+   * how many tiles were read back.
+   */
   source?: number;
+  terrainSet?: number;
   tiles?: number;
 }
