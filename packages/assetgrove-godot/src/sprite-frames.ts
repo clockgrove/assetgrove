@@ -57,6 +57,15 @@ export interface SpriteFramesOptions {
   import: Record<string, ImportOption>;
 }
 
+/** A PNG's width in pixels, from its `IHDR` chunk, or undefined when the bytes are no PNG. */
+function pngWidth(bytes: Uint8Array | string): number | undefined {
+  if (typeof bytes === "string" || bytes.length < 24) return undefined;
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (signature.some((byte, i) => bytes[i] !== byte)) return undefined;
+  if (new TextDecoder().decode(bytes.subarray(12, 16)) !== "IHDR") return undefined;
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(16);
+}
+
 /** The animation speed in frames per second for a frame duration in milliseconds. */
 const speedOf = (durationMs: number | undefined) =>
   durationMs !== undefined && durationMs > 0 ? 1000 / durationMs : 10;
@@ -81,11 +90,18 @@ async function write(
     const imported = await read(`${media}.import`);
     if (imported === undefined) fresh.push(media);
     else files[`${at}.import`] = imported;
+    // The strip the target holds now is the one the preset last wrote: its frame count is what a
+    // resource from before the record is compared with, so removed frames are a conflict.
+    const previous = family.content === undefined ? undefined : await read(media);
+    const width = previous === undefined ? undefined : pngWidth(previous);
+    const previousFrames =
+      width === undefined ? undefined : Math.floor(width / ctx.profile.frames.width);
     animations.push({
       name: family.name,
       texture: `res://${at}`,
       speed: speedOf(ctx.profile.frames.durationMs),
       loop: options.loop,
+      ...(previousFrames !== undefined && previousFrames > 0 && { previousFrames }),
     });
   }
   const resourceAt = inProject(project, resource, "the resource");

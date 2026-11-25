@@ -83,7 +83,17 @@ export interface BuildInput {
   imports?: string[];
   frameWidth: number;
   frameHeight: number;
-  animations: Array<{ name: string; texture: string; speed: number; loop: boolean }>;
+  animations: Array<{
+    name: string;
+    texture: string;
+    speed: number;
+    loop: boolean;
+    /**
+     * The frame count of the strip the target held before this hand-off (its width over the frame
+     * width), when it is a PNG: what a resource from before the record is compared with.
+     */
+    previousFrames?: number;
+  }>;
 }
 
 /** One tile of a corner-16 set as the build script writes it: its atlas cell and terrain data. */

@@ -107,6 +107,31 @@ test("an existing SpriteFrames reaches scratch with the developer's textures and
   assert.deepEqual(input.imports, ["res://characters/fern-idle.png", "res://art/hurt.png"]);
 });
 
+test("the build compares a resource from before the record with the frame count of the strip the target held", async () => {
+  const width = sampleProfile().frames.width;
+  /** A PNG's first 24 bytes: its signature and an IHDR of `columns` frames. */
+  const png = (columns: number) => {
+    const bytes = new Uint8Array(24);
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13], 0);
+    bytes.set(encode("IHDR"), 12);
+    new DataView(bytes.buffer).setUint32(16, columns * width);
+    return bytes;
+  };
+  const target: Record<string, Uint8Array> = {
+    "game/characters/fern.tres": encode(`[gd_resource type="SpriteFrames" format=3]\n`),
+    "game/characters/fern-idle.png": png(6),
+    "game/characters/fern-idle.png.import": encode(`[remap]\n\nuid="uid://idle"\n`),
+  };
+  const seen: ToolRunOptions[] = [];
+  await write(
+    context(scripted(seen, { ok: true, errors: [] })),
+    options,
+    async (path) => target[path],
+  );
+  const input = JSON.parse(String(seen[0]!.files![INPUT_PATH])) as BuildInput;
+  assert.equal(input.animations[0]!.previousFrames, 6);
+});
+
 test("a target without the resource builds a new one: no existing, no .tres in scratch", async () => {
   const seen: ToolRunOptions[] = [];
   await write(

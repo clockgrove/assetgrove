@@ -223,8 +223,8 @@ func _record(frames: SpriteFrames) -> Dictionary:
 
 ## What differs between the input's family animations that `frames` already has and what the
 ## preset last wrote: its record's entry, or for a resource from before the record, the preset's
-## own shape (the input's texture, the animation's current frame count, the input's frame size,
-## speed and loop). One sentence each, its numbers written by `_number`.
+## own shape (the input's texture, the frame count of the strip the target held before, else the
+## animation's current one, the input's frame size, speed and loop). One sentence each, its numbers written by `_number`.
 func _conflicts(
 	path: String,
 	frames: SpriteFrames,
@@ -245,7 +245,8 @@ func _conflicts(
 		if not (wrote is Dictionary):
 			wrote = {}
 		var texture_path := String(wrote.get("texture", animation["texture"]))
-		var count := int(wrote.get("frames", frames.get_frame_count(name)))
+		var before = animation.get("previousFrames", frames.get_frame_count(name))
+		var count := int(wrote.get("frames", before))
 		var width := int(wrote.get("width", frame_width))
 		var height := int(wrote.get("height", frame_height))
 		var speed := float(wrote.get("speed", animation["speed"]))
