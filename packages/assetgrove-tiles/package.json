@@ -1,0 +1,63 @@
+{
+  "name": "@clockgrove/assetgrove-tiles",
+  "version": "0.2.0",
+  "description": "Terrain tile sets for Assetgrove: corner-16 sets between two terrains as one atlas, with exact grid and seam-class checks.",
+  "keywords": [
+    "assetgrove",
+    "tiles",
+    "tilesets",
+    "terrain",
+    "atlas",
+    "gamedev"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clockgrove/assetgrove.git",
+    "directory": "packages/assetgrove-tiles"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "assetgrove": {
+    "api": 2,
+    "entry": "./dist/extension.js"
+  },
+  "files": [
+    "dist",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p ../../tsconfig.build.json --emitDeclarationOnly && tsc -p tsconfig.build.json",
+    "check": "prettier --check . && eslint . && tsc --noEmit",
+    "format": "prettier --write .",
+    "prepack": "pnpm build",
+    "test": "node --conditions=assetgrove-source --test \"test/**/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@clockgrove/assetgrove": "^0.2.0"
+  },
+  "devDependencies": {
+    "@clockgrove/assetgrove": "link:../..",
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2"
+  }
+}

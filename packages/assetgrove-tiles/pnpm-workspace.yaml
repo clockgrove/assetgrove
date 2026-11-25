@@ -1,0 +1,6 @@
+# Makes this folder its own pnpm root: the root install never reaches it.
+autoInstallPeers: false
+packages: []
+# The linter resolves a minimatch below its fixed release; the root workspace sets the same floor.
+overrides:
+  minimatch@>=7.0.0 <11.0.1: ^11.0.1
