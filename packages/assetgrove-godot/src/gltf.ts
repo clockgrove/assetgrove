@@ -21,7 +21,13 @@ import type {
 import { importUid } from "./godot-text.ts";
 import { GodotInputError, inProject, relativePath, runGodot, savedFile } from "./run.ts";
 import { GODOT_RELEASE } from "./setup.ts";
-import { INPUT_PATH, projectFiles, type GltfInput, type ImportOption } from "./scratch.ts";
+import {
+  INPUT_PATH,
+  importOptionsSchema,
+  projectFiles,
+  type GltfInput,
+  type ImportOption,
+} from "./scratch.ts";
 
 export const GLTF_PRESET = "godot:gltf";
 /** The media type of a binary glTF, as a `character-3d` asset's `output.mediaType` gives it. */
@@ -133,9 +139,7 @@ export function gltfPreset(context: ExtensionContext): EnginePreset<GltfOptions>
     name: GLTF_PRESET,
     optionsSchema: z.strictObject({
       project: z.string().default(""),
-      import: z
-        .record(z.string().min(1), z.union([z.string(), z.number(), z.boolean()]))
-        .default({}),
+      import: importOptionsSchema(z),
     }),
     write,
     check,

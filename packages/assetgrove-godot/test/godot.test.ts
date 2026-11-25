@@ -30,6 +30,19 @@ const NAME = "@clockgrove/assetgrove-godot";
 const { godot: GODOT, skip: SKIP } = findGodot();
 const usable = GODOT !== undefined;
 
+/** Texture import options a pixel-art game sets; `process/fix_alpha_border` is not Godot's default. */
+const PIXEL_IMPORT = {
+  "compress/mode": 0,
+  "mipmaps/generate": false,
+  "process/fix_alpha_border": false,
+};
+/** Asserts an `.import` carries every option of `PIXEL_IMPORT`, as Godot wrote it. */
+function carriesOptions(file: string): void {
+  assert.match(file, /^compress\/mode=0$/m);
+  assert.match(file, /^mipmaps\/generate=false$/m);
+  assert.match(file, /^process\/fix_alpha_border=false$/m);
+}
+
 const stage = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-godot-")));
 const project = tempProject();
 const approved: Array<Record<string, unknown>> = [];
@@ -105,7 +118,10 @@ before(async () => {
     },
     handoff: [
       { preset: "manifest" },
-      { preset: "godot:sprite-frames", options: { resource: "characters/{assetId}.tres" } },
+      {
+        preset: "godot:sprite-frames",
+        options: { resource: "characters/{assetId}.tres", import: PIXEL_IMPORT },
+      },
     ],
   });
   writeFileSync(join(stage, "sheet.png"), contactSheet());
@@ -171,6 +187,7 @@ test("a strip handed off writes the SpriteFrames and each strip's .import, and G
   ] as const) {
     const uid = /^uid="(uid:\/\/[^"]+)"/m.exec(file)?.[1];
     assert.ok(uid, `${family}.import has a UID`);
+    carriesOptions(file);
     assert.match(
       tres,
       new RegExp(
@@ -188,6 +205,8 @@ test("a later family keeps the earlier ones in one SpriteFrames", async (t) => {
   const done = await importFamilies([{ name: "attack", frames: [6, 7, 8] }]);
   assert.equal(done.code, 0, done.stderr + done.stdout);
   assert.deepEqual(animations(loaded()), ["attack:3:true", "idle:4:true", "walk:3:true"]);
+  // The new strip's .import gets the options too.
+  carriesOptions(text("assets/fern-attack.png.import"));
 });
 
 test("a replaced resource keeps its UID and an existing .import is never touched", async (t) => {

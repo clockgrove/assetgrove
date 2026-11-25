@@ -8,6 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import type { ExtensionContext } from "@clockgrove/assetgrove/extension";
 
 /** The build script the pack ships, beside this module in `src/` and, once built, in `dist/`. */
 export const BUILD_SCRIPT = fileURLToPath(new URL("./build.gd", import.meta.url));
@@ -57,12 +58,23 @@ export const GODOT_ARGS: readonly string[] = [
   `${PLUGIN_DIR}/build.gd`,
 ];
 
+/** A scene import option's value, as the `.import` file's `[params]` section holds it. */
+export type ImportOption = string | number | boolean;
+
+/** The `import` option of the presets: Godot import options by their `.import` key. */
+export const importOptionsSchema = (z: ExtensionContext["z"]) =>
+  z.record(z.string().min(1), z.union([z.string(), z.number(), z.boolean()])).default({});
+
 /** What the build script reads to build a SpriteFrames (`godot:sprite-frames`). */
 export interface BuildInput {
   /** The Godot release the run must be, `4.7.2-stable`: the script fails on any other. */
   godot: string;
   /** The SpriteFrames to save, `res://...`. */
   resource: string;
+  /** The media, `res://...`, the target has no `.import` for: only these get `options`. */
+  fresh: string[];
+  /** Godot texture import options by their `.import` key, applied to the `fresh` sources. */
+  options: Record<string, ImportOption>;
   /** The UID the target's resource already has, kept on the new save. */
   uid?: string;
   frameWidth: number;
@@ -93,6 +105,10 @@ export interface TileSetInput {
   uid?: string;
   /** The atlas, `res://...`: the texture of the atlas source the preset owns. */
   texture: string;
+  /** The atlas as `[texture]` when the target has no `.import` for it, else none. */
+  fresh: string[];
+  /** Godot texture import options by their `.import` key, applied to the `fresh` atlas. */
+  options: Record<string, ImportOption>;
   /** Every file, `res://...`, the editor must have imported before the build loads anything. */
   imports: string[];
   /** The tile size in pixels; the atlas is 4 × 4 tiles of it. */
@@ -101,9 +117,6 @@ export interface TileSetInput {
   terrains: { lower: string; upper: string };
   tiles: TileInput[];
 }
-
-/** A scene import option's value, as the `.import` file's `[params]` section holds it. */
-export type ImportOption = string | number | boolean;
 
 /** What the build script reads to import a glTF scene and check it (`godot:gltf`). */
 export interface GltfInput {

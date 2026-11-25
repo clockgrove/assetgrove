@@ -4,7 +4,9 @@
 # then builds the resource the input asks for through Godot's API from the input the pack wrote as
 # data: a SpriteFrames (godot:sprite-frames), or a TileSet (godot:tile-set, `"build": "tile-set"`);
 # or, for a glTF scene (godot:gltf, `"build": "gltf"`), it applies a fresh source's import options,
-# reimports it and checks the imported scene against what the asset declares.
+# reimports it and checks the imported scene against what the asset declares. For a SpriteFrames
+# or a TileSet it first applies the input's import options to the `.import` of each fresh source
+# (one the target had no `.import` for), reimports them and checks the options held.
 # It saves it with ResourceSaver (keeping the target's UID when it had one), reloads it with
 # ResourceLoader and checks what came back. It writes `.assetgrove-godot/result.json` and quits:
 # 0 when everything held, 1 otherwise. Every failure is also printed as an ERROR line, which the
@@ -45,8 +47,10 @@ func _run() -> void:
 		_check_version(input)
 	if input != null and _errors.is_empty():
 		await _wait_for_import(input)
+		var build := String(input.get("build", ""))
+		if _errors.is_empty() and build != "gltf":
+			await _apply_import_options(input.get("fresh", []), input.get("options", {}))
 		if _errors.is_empty():
-			var build := String(input.get("build", ""))
 			if build == "tile-set":
 				result = _build_tile_set(input)
 			elif build == "gltf":
@@ -396,31 +400,10 @@ func _reload_tile_set(
 func _import_gltf(input: Dictionary) -> Dictionary:
 	var path := String(input["scene"])
 	var options: Dictionary = input.get("options", {})
-	if bool(input.get("fresh", false)) and not options.is_empty():
-		var config := ConfigFile.new()
-		var loaded := config.load(path + ".import")
-		if loaded != OK:
-			_fail("cannot read %s.import: %s" % [path, error_string(loaded)])
+	if bool(input.get("fresh", false)):
+		await _apply_import_options([path], options)
+		if not _errors.is_empty():
 			return {}
-		for key in options:
-			config.set_value("params", String(key), _option_value(options[key]))
-		var saved := config.save(path + ".import")
-		if saved != OK:
-			_fail("cannot write %s.import: %s" % [path, error_string(saved)])
-			return {}
-		EditorInterface.get_resource_filesystem().reimport_files(PackedStringArray([path]))
-		await get_tree().process_frame
-		var params := ConfigFile.new()
-		params.load(path + ".import")
-		for key in options:
-			var got = params.get_value("params", String(key), null)
-			if got != _option_value(options[key]):
-				_fail(
-					(
-						"%s.import holds %s = %s after the reimport, not %s"
-						% [path, key, var_to_str(got), var_to_str(_option_value(options[key]))]
-					)
-				)
 	var declared := _declared(path, input.get("declared", {}))
 	if not _errors.is_empty():
 		return {}
@@ -471,6 +454,40 @@ func _import_gltf(input: Dictionary) -> Dictionary:
 		"declared": declared,
 		"imported": {"animations": animations, "skeletons": skeletons, "meshes": meshes},
 	}
+
+
+## Applies import options to the `.import` of each path (a fresh source): they are written into
+## its `[params]`, all the paths are reimported at once, and each value is read back. Nothing
+## happens without options or paths. An existing `.import` is never a path here.
+func _apply_import_options(paths: Array, options: Dictionary) -> void:
+	if paths.is_empty() or options.is_empty():
+		return
+	for path in paths:
+		var config := ConfigFile.new()
+		var loaded := config.load(String(path) + ".import")
+		if loaded != OK:
+			_fail("cannot read %s.import: %s" % [path, error_string(loaded)])
+			return
+		for key in options:
+			config.set_value("params", String(key), _option_value(options[key]))
+		var saved := config.save(String(path) + ".import")
+		if saved != OK:
+			_fail("cannot write %s.import: %s" % [path, error_string(saved)])
+			return
+	EditorInterface.get_resource_filesystem().reimport_files(PackedStringArray(paths))
+	await get_tree().process_frame
+	for path in paths:
+		var params := ConfigFile.new()
+		params.load(String(path) + ".import")
+		for key in options:
+			var got = params.get_value("params", String(key), null)
+			if got != _option_value(options[key]):
+				_fail(
+					(
+						"%s.import holds %s = %s after the reimport, not %s"
+						% [path, key, var_to_str(got), var_to_str(_option_value(options[key]))]
+					)
+				)
 
 
 ## An import option's value from the input's JSON: a whole number is an int, as Godot's own.

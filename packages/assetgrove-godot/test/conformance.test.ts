@@ -111,8 +111,14 @@ test("the entry passes the conformance suite, its presets building through the t
   const seen: ToolRunOptions[] = [];
   const report = await assertConformance(entry, {
     presets: {
-      "godot:sprite-frames": { context: { run: scripted(seen) } },
-      "godot:tile-set": { context: tileSetContext(scripted(seen)) },
+      "godot:sprite-frames": {
+        options: { import: { "mipmaps/generate": false } },
+        context: { run: scripted(seen) },
+      },
+      "godot:tile-set": {
+        options: { import: { "compress/mode": 0 } },
+        context: tileSetContext(scripted(seen)),
+      },
       "godot:gltf": {
         options: { import: { "nodes/root_type": "CharacterBody3D" } },
         context: gltfContext(scripted(seen)),
@@ -148,16 +154,22 @@ test("the entry passes the conformance suite, its presets building through the t
         resource: "res://grass-dirt.tres",
         existing: false,
         texture: "res://tiles/grass-dirt.png",
+        fresh: ["res://tiles/grass-dirt.png"],
+        options: { "compress/mode": 0 },
         imports: ["res://tiles/grass-dirt.png"],
         tileSize: 8,
         terrains: { lower: "dirt", upper: "grass" },
         tiles: corner16Tiles(),
       });
-    else
+    else {
       assert.deepEqual(
         input.animations.map((a) => a.name),
         ["idle"],
       );
+      // The family's strip has no .import in the empty sample target: it gets the options.
+      assert.deepEqual(input.fresh, ["res://assets/source/conformance-1-idle.png"]);
+      assert.deepEqual(input.options, { "mipmaps/generate": false });
+    }
     for (const path of Object.keys(options.files ?? {}))
       if (!GODOT_ARGS.includes(path)) assert.ok(!options.args.includes(path), path);
   }

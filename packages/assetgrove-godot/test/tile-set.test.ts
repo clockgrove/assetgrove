@@ -41,6 +41,14 @@ const ATLAS = "tiles/grass-dirt.png";
 const LOWER = [0x6b, 0x4a, 0x2b, 255];
 const UPPER = [0x4d, 0x8a, 0x3c, 255];
 
+/** Texture import options a pixel-art game sets; `process/fix_alpha_border` is not Godot's default. */
+const PIXEL_IMPORT = {
+  "compress/mode": 0,
+  "mipmaps/generate": false,
+  "process/fix_alpha_border": false,
+};
+let baseProfile: object = {};
+
 const stage = realpathSync(mkdtempSync(join(tmpdir(), "assetgrove-godot-tiles-")));
 const project = tempProject();
 const approved: Array<Record<string, unknown>> = [];
@@ -150,9 +158,13 @@ before(async () => {
     },
     handoff: [
       { preset: "manifest" },
-      { preset: "godot:tile-set", options: { resource: "tiles/{assetId}.tres" } },
+      {
+        preset: "godot:tile-set",
+        options: { resource: "tiles/{assetId}.tres", import: PIXEL_IMPORT },
+      },
     ],
   });
+  baseProfile = profile;
   writeFileSync(join(stage, "profile.json"), JSON.stringify(profile));
   writeFileSync(join(stage, "BIBLE.md"), bibleMarkdown());
   writeFileSync(
@@ -244,8 +256,14 @@ test("a new TileSet from a fixture atlas: one Match Corners terrain set and ever
     )?.files,
     [TRES, `${ATLAS}.import`],
   );
+  // A profile that is not pixel art gets no filter warning, whatever the project's filter.
+  assert.equal(tileSetEntry(done)?.warnings, undefined);
   assert.ok(headerUid(TRES));
   atlasImport = text(`${ATLAS}.import`);
+  // The new atlas's .import carries the preset's import options, as Godot wrote them.
+  assert.match(atlasImport, /^compress\/mode=0$/m);
+  assert.match(atlasImport, /^mipmaps\/generate=false$/m);
+  assert.match(atlasImport, /^process\/fix_alpha_border=false$/m);
   const uid = importUid(`${ATLAS}.import`);
   assert.ok(uid);
   assert.match(
@@ -379,6 +397,47 @@ test("a replaced atlas keeps the TileSet's UID, and its existing .import is neve
   assert.equal(seen["BITS"], LAYOUT_BITS);
 });
 
+/** The `godot:tile-set` entry of a hand-off's result. */
+const tileSetEntry = (done: CliResult) =>
+  (done.json?.["handoff"] as Array<{ preset: string; files: string[]; warnings?: string[] }>).find(
+    (h) => h.preset === "godot:tile-set",
+  );
+
+test("a pixel-art profile warns when the project's default texture filter is not Nearest, and never edits project.godot", async (t) => {
+  if (!usable) return t.skip(SKIP!);
+  const pixelArt = {
+    ...baseProfile,
+    style: {
+      edges: "crisp",
+      color: { rule: "palette", palette: ["#6b4a2b", "#4d8a3c"] },
+    },
+  };
+  const godotFile = join(project.dir, "project.godot");
+  try {
+    writeFileSync(join(stage, "profile.json"), JSON.stringify(pixelArt));
+    // The fixture project leaves the filter at Godot's default, Linear.
+    const linear = readFileSync(godotFile);
+    const warned = await handOff(cornerAtlas(TILE, LOWER, UPPER));
+    assert.equal(warned.code, 0, warned.stderr + warned.stdout);
+    const warnings = tileSetEntry(warned)?.warnings ?? [];
+    assert.equal(warnings.length, 1, JSON.stringify(warnings));
+    assert.match(warnings[0]!, /rendering\/textures\/canvas_textures\/default_texture_filter/);
+    assert.match(warnings[0]!, /Linear \(1\)/);
+    assert.match(warnings[0]!, /Nearest \(0\)/);
+    assert.deepEqual(readFileSync(godotFile), linear);
+
+    const nearest = `${linear.toString()}\n[rendering]\n\ntextures/canvas_textures/default_texture_filter=0\n`;
+    writeFileSync(godotFile, nearest);
+    git("commit", "--quiet", "-am", "nearest filtering");
+    const quiet = await handOff(cornerAtlas(TILE, LOWER, UPPER));
+    assert.equal(quiet.code, 0, quiet.stderr + quiet.stdout);
+    assert.equal(tileSetEntry(quiet)?.warnings, undefined);
+    assert.equal(text("project.godot"), nearest);
+  } finally {
+    writeFileSync(join(stage, "profile.json"), JSON.stringify(baseProfile));
+  }
+});
+
 /** Lays out a scratch project with `files` and the build input, and runs the build script there. */
 function buildInScratch(
   name: string,
@@ -392,6 +451,8 @@ function buildInScratch(
     resource: "res://built.tres",
     existing: false,
     texture: "res://atlas.png",
+    fresh: [],
+    options: {},
     imports: ["res://atlas.png"],
     tileSize: TILE,
     terrains: { lower: "dirt", upper: "grass" },

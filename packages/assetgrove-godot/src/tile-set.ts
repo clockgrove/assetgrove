@@ -28,7 +28,15 @@ import {
   savedFile,
 } from "./run.ts";
 import { GODOT_RELEASE } from "./setup.ts";
-import { INPUT_PATH, projectFiles, type TileInput, type TileSetInput } from "./scratch.ts";
+import {
+  INPUT_PATH,
+  importOptionsSchema,
+  projectFiles,
+  type ImportOption,
+  type TileInput,
+  type TileSetInput,
+} from "./scratch.ts";
+import { textureFilterWarning } from "./texture-filter.ts";
 
 export const TILE_SET_PRESET = "godot:tile-set";
 /** The kind the preset hands off, and the layout its output declares. */
@@ -40,6 +48,12 @@ export interface TileSetOptions {
   project: string;
   /** The TileSet, relative to the target, `{assetId}` replaced; inside the project. */
   resource: string;
+  /**
+   * Godot texture import options by their `.import` key (`compress/mode`, `mipmaps/generate`),
+   * applied to the atlas's `.import` when the target has none for it. An existing `.import` is
+   * never changed.
+   */
+  import: Record<string, ImportOption>;
 }
 
 /** Each corner's bit in a corner-16 tile index, set where the corner is the upper terrain. */
@@ -176,6 +190,8 @@ async function write(
     existing: before !== undefined,
     ...(uid !== undefined && { uid }),
     texture: `res://${at}`,
+    fresh: existingImport === undefined ? [`res://${at}`] : [],
+    options: options.import,
     imports,
     tileSize: atlas.tileSize,
     terrains: atlas.terrains,
@@ -220,8 +236,11 @@ export function tileSetPreset(context: ExtensionContext): EnginePreset<TileSetOp
     optionsSchema: z.strictObject({
       project: z.string().default(""),
       resource: z.string().min(1).default("{assetId}.tres"),
+      import: importOptionsSchema(z),
     }),
     write,
     check,
+    warnings: (ctx, options, read) =>
+      textureFilterWarning(ctx.profile, relativePath(options.project, "options.project"), read),
   };
 }
