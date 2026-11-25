@@ -176,6 +176,11 @@ export function withoutVariables(names: Iterable<string>, env: Env = process.env
   );
 }
 
+/** The environment with Git told to take no optional lock, so a read such as `ls-files` writes nothing in `.git`. */
+export function gitReadOnlyEnv(env: Env = process.env): Env {
+  return { ...env, GIT_OPTIONAL_LOCKS: "0" };
+}
+
 /** `$ASSETGROVE_CONFIG` when set (empty counts as unset). */
 export function configOverride(env: Env = process.env): string | undefined {
   return env["ASSETGROVE_CONFIG"] || undefined;

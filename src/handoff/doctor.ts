@@ -5,6 +5,7 @@
 import { execFile, spawn } from "node:child_process";
 import { isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { gitReadOnlyEnv } from "../env.ts";
 import { realOf } from "../handoff.ts";
 import { inGitDir } from "../paths.ts";
 import { isInside } from "../settings.ts";
@@ -16,7 +17,7 @@ import type { DoctorContext, DoctorFinding, PresetRegistry } from "./presets/ind
 const execGit = promisify(execFile);
 
 /** Git told not to write anything, such as a refreshed index. */
-const GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+const GIT_ENV = gitReadOnlyEnv();
 
 export interface DoctorInput {
   profile: TargetProfile;
