@@ -64,6 +64,7 @@ import {
   emptyReview,
   nextStamp,
   parseReview,
+  updateVersionLineage,
   versionNumber,
   versionStatus,
   writeReview,
@@ -310,7 +311,10 @@ export interface LibraryPlan {
   provenanceSource?: string;
   /** The cards in the library before this write. */
   cards: FoundCard[];
-  /** The `lineage` the appended version records, from the editable source; absent without one. */
+  /**
+   * The `lineage` the version records, from the editable source; absent without one. A pick whose
+   * media is already the current version records it there in place of that file's earlier entry.
+   */
   lineage?: Array<{ relation: "derived-from"; file: string; sha256: string }>;
   /** What the write was checked against, checked again under the lock (`recheckLibraryWrite`). */
   expects: VersionExpectations;
@@ -460,6 +464,11 @@ export async function prepareLibraryWrite(input: {
     ...(lineage?.length && { lineage }),
     expects,
   };
+}
+
+/** An editable source's `/`-separated path relative to the profile's library root; exit 2 outside it. */
+export function libraryFile(profile: TargetProfile, targetDir: string, path: string): string {
+  return libraryRelative(libraryConfig(profile, targetDir).root, path);
 }
 
 /** The `/`-separated path of an editable source relative to the library root, compared by real path. */
@@ -830,6 +839,11 @@ async function prepareLibraryVersion(plan: LibraryPlan, input: LibraryVersionInp
       target: { source: resource, "ag:version": sha256 },
       "ag:action": answers.length > 0 ? "answer" : (input.action ?? (first ? "pick" : "replace")),
     });
+  } else if (plan.lineage !== undefined) {
+    // A source edit that renders the same media (another tag, a timing change) appends nothing,
+    // but the version now derives from the edited bytes: record them, so the source is not listed
+    // as changed against a version it still matches.
+    record = updateVersionLineage(record, sha256, plan.lineage);
   }
   // 4. The card: machine fields from the records; person fields set once, then kept.
   const fields = machineFields({

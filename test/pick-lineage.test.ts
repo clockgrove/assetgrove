@@ -92,7 +92,12 @@ async function staged(source: (targetDir: string) => string) {
   await writeFile(runPath, JSON.stringify(run));
   const pick = () =>
     cli(["pick", "--run", runDir, "--candidate", "c1", "--target", targetDir, "--json"]);
-  return { targetDir, profile, path, editableSource, pick };
+  const restage = async (sha256: string) => {
+    const again = JSON.parse(await readFile(runPath, "utf8"));
+    again.candidates[0].provenance.editableSource = { ...editableSource, sha256 };
+    await writeFile(runPath, JSON.stringify(again));
+  };
+  return { targetDir, profile, path, editableSource, pick, restage };
 }
 
 const status = (dir: string) =>
@@ -164,6 +169,59 @@ test("a pick records a derived-from edge to the editable source, and a source ed
     ),
   );
   assert.equal(scanLibrary(libraryRoot).unreadable.length, 0);
+});
+
+test("a source edit that renders the same media records the new source hash on the current version", async () => {
+  const s = await staged((dir) => {
+    mkdirSync(join(dir, "props/lights/src"), { recursive: true });
+    return join(dir, "props/lights/src/lantern.aseprite");
+  });
+  await writeFile(s.path, "source one");
+  assert.equal((await s.pick()).code, 0);
+  // An edit to another tag, or to frame timing: the source bytes change, the strip does not.
+  await writeFile(s.path, "source two");
+  await s.restage(sha("source two"));
+  const again = await s.pick();
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  assert.equal(doc(again)["library"]?.["appended"] ?? false, false);
+  const reviewPath = join(s.targetDir, "props/lights/lantern.review.json");
+  const record = parseReview(await readFile(reviewPath, "utf8"), reviewPath);
+  assert.equal(record.versions.length, 1);
+  assert.deepEqual(record.versions[0]!["lineage"], [
+    { relation: "derived-from", file: "src/lantern.aseprite", sha256: sha("source two") },
+  ]);
+  const relations = await cli([
+    "library",
+    "relations",
+    "--target",
+    s.targetDir,
+    "--profile",
+    s.profile,
+    "--json",
+  ]);
+  assert.equal(relations.code, 0, relations.stdout + relations.stderr);
+  assert.deepEqual(doc(relations)["changedSources"], []);
+});
+
+test("the target's provenance names the editable source by its library-relative path", async () => {
+  const s = await staged((dir) => {
+    mkdirSync(join(dir, "props/lights/src"), { recursive: true });
+    return join(dir, "props/lights/src/lantern.aseprite");
+  });
+  await writeFile(s.path, "source one");
+  assert.equal((await s.pick()).code, 0);
+  const written = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+    cwd: s.targetDir,
+    encoding: "utf8",
+  })
+    .split("\n")
+    .filter((file) => file.endsWith(".provenance.json"));
+  assert.ok(written.length > 0, "the pick wrote a provenance file");
+  for (const file of written) {
+    const text = await readFile(join(s.targetDir, file), "utf8");
+    assert.equal(JSON.parse(text).editableSource.path, "src/lantern.aseprite");
+    assert.ok(!text.includes(s.targetDir), `${file} holds no absolute path`);
+  }
 });
 
 test("a source outside the library root refuses the pick with exit 2 and writes nothing", async () => {
