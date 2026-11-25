@@ -87,7 +87,7 @@ The beetle is a contact sheet from an outside pack. [`beetle.origin.json`](examp
 ```sh
 assetgrove import --sheet art/beetle-sheet.png --profile .assetgrove/profile.json --asset beetle \
   --tool "third-party pack" --origin beetle.origin.json --digital-source-type digitalCreation \
-  --frames 4 --no-propose
+  --frames 16 --no-propose
 assetgrove write-families --import .assetgrove/imports/<import> --target .
 ```
 
