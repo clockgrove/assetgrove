@@ -101,6 +101,52 @@ frame defaults as `recipe`. This workflow accepts deterministic raster operation
 model-assisted and external-tool operations remain available through their existing commands.
 It writes build files only and does not select, approve or add a library version.
 
+## Delivery sets from exact library versions
+
+A selection file names the asset versions to deliver and the project recipe for each:
+
+```json
+{
+  "format": "assetgrove-delivery/1",
+  "recipes": "recipes",
+  "items": [
+    {
+      "asset": "../target/assets/lantern.md",
+      "version": 1,
+      "recipe": "icon",
+      "to": "icons",
+      "name": "lantern"
+    }
+  ]
+}
+```
+
+`recipes` and each `asset` (a card) are paths relative to the selection file. `version` is a stack
+number or a sha256, `recipe` a recipe file stem, and `to` a relative folder under the delivery
+root (`.` for the root itself). `name` and `digitalSourceType` are optional.
+
+A version's bytes are the library media file when it is that version, or its object in the local
+`.git/lfs/objects` store. They are never fetched and Git is not run.
+
+```sh
+pnpm assetgrove deliver --selection delivery.json --out build/delivery --preview --json
+```
+
+The dry run resolves every item's mezzanine hash and destination path and writes nothing, not
+even the output directory. The MCP tool `deliver` takes `selection`, `out`, `profile` and
+`preview`. Problems are reported for all items at once, with exit 2: `asset_missing`,
+`version_missing`, `object_missing`, `recipe_missing`, `item_invalid` and `output_collision`.
+Without `--preview`, a delivery with any problem writes nothing; otherwise it writes every output
+and then `delivery.json`.
+
+`delivery.json` has the format `assetgrove-delivery-manifest/1`, the selection's hash and, per
+item, the asset, version, mezzanine sha256, recipe name and sha256, rendition digest, build and
+outputs with path, sha256, media type and size. It holds no time and no absolute path, so
+repeating a selection gives the same files. An existing file with identical bytes is accepted; one
+with different bytes, or a path used twice, is an `output_collision`.
+
+Delivery only reads the library. It never adds a version or changes the current pick.
+
 ## Provenance
 
 The record (`generator: "transform"`) lists:

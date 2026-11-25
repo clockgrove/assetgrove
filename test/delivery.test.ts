@@ -1,9 +1,13 @@
 import "./fixtures/env.ts";
+import { execFile } from "node:child_process";
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import { REFUSED_VARIABLES } from "../src/env.ts";
 import { after, test } from "node:test";
 import { planDelivery } from "../src/delivery.ts";
 import { encodePng } from "../src/image/raster.ts";
@@ -264,4 +268,60 @@ test("a destination folder that is a file, or another item's output, is a collis
     ["1:output_collision"],
   );
   assert.deepEqual(await files(fresh), {});
+});
+
+const exec = promisify(execFile);
+const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+
+async function deliverCli(selection: string, out: string) {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  for (const name of REFUSED_VARIABLES) {
+    delete env[name];
+    delete env[name.toLowerCase()];
+  }
+  delete env.AI_GATEWAY_API_KEY;
+  return exec(
+    process.execPath,
+    [CLI, "deliver", "--selection", selection, "--out", out, "--preview", "--json"],
+    { env },
+  ).then(
+    (r) => ({ code: 0, stdout: r.stdout }),
+    (e: { code: number; stdout: string }) => ({ code: e.code, stdout: e.stdout }),
+  );
+}
+
+test("the deliver command dry run names destination paths and refuses a missing object before any write", async () => {
+  const f = await setup();
+  await asset(f, "lantern", [image(1)]);
+  await asset(f, "gourd", [image(1), image(2)]);
+  const out = join(f.dir, "out");
+
+  const clean = await deliverCli(await select(f, [lantern()]), out);
+  assert.equal(clean.code, 0);
+  const planned = JSON.parse(clean.stdout);
+  assert.equal(planned.preview, true);
+  assert.deepEqual(planned.problems, []);
+  assert.equal(planned.manifest.items[0].outputs[0].path, "icons/lantern.png");
+  assert.equal(existsSync(out), false);
+
+  const selection = await select(f, [
+    lantern(),
+    lantern({ asset: "../target/assets/gourd.md", version: 1, name: "gourd" }),
+  ]);
+  const refused = await deliverCli(selection, out);
+  assert.equal(refused.code, 2);
+  const doc = JSON.parse(refused.stdout);
+  assert.equal(doc.error.code, "invalid_input");
+  assert.deepEqual(
+    doc.problems.map((p: { code: string; item: number }) => `${p.item}:${p.code}`),
+    ["1:object_missing"],
+  );
+  const good = doc.manifest.items[0].outputs[0];
+  assert.equal(good.path, "icons/lantern.png");
+  assert.match(good.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(existsSync(out), false);
 });
