@@ -219,6 +219,7 @@ placeholder version, which is always refused ([transform.md](transform.md#the-re
 {
   "release": {
     "requireApproval": true,
+    "timeZone": "America/Los_Angeles",
     "licenseWindows": [
       { "license": "LicenseRef-Vendor-EULA", "from": "2026-01-01", "until": "2026-12-31" }
     ]
@@ -227,9 +228,13 @@ placeholder version, which is always refused ([transform.md](transform.md#the-re
 ```
 
 `requireApproval` refuses a selected version whose status is not `approved`. Each
-`licenseWindows` entry names a licence and an optional `from` and `until` date (`YYYY-MM-DD`, UTC,
-both inclusive, `from` on or before `until`); an asset whose card licence it names is refused on a
-delivery date outside it. Unknown fields and malformed dates are refused when the profile is read.
+`licenseWindows` entry names a licence id and an optional `from` and `until` date (`YYYY-MM-DD`,
+both inclusive, `from` on or before `until`). `timeZone`, an IANA zone name, is required when
+`licenseWindows` is set: the delivery date is the calendar date in that zone at delivery time, so
+choose the licence's zone, not the machine's. The asset card's `license` is read as an SPDX
+expression and checked as [transform.md](transform.md#the-release-gate) describes: a card with no
+licence, or one that does not parse, is refused. Unknown fields, malformed dates, an unknown zone
+and windows without `timeZone` are refused when the profile is read, naming the field.
 
 ### Project rules
 

@@ -390,7 +390,8 @@ identical file is accepted; a differing one is a collision. A release delivery (
 `--draft`) is also the release gate: a version a person marked as a placeholder (with `review`) is refused
 (`placeholder_selected`), and when the `--profile`'s `release` policy enables them, a version that
 is not approved (`version_unapproved`, `requireApproval`) or whose card licence is outside a
-`licenseWindows` entry on the delivery date (`license_window`); each problem names the asset,
+`licenseWindows` entry on the delivery date in the policy's `timeZone`, read as an SPDX expression
+that fails closed on a missing or unparsable licence (`license_window`); each problem names the asset,
 version, sha256 and evidence, and `policy` lists every check with its evidence. `--preview` and
 `--draft` (which writes the delivery with `"draft": true` in `delivery.json`) report the same
 `policy` findings without refusing on them; `release` is true only for a written release delivery.

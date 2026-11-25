@@ -75,7 +75,11 @@ type Mark = "placeholder" | "approve" | "reject";
  * (the current one as the media file, the older one in the local LFS store), with `marks[i]` the
  * annotations a person wrote on version i + 1.
  */
-async function lantern(f: Fixture, marks: Mark[][] = [[], []], license = "LicenseRef-Vendor-EULA") {
+async function lantern(
+  f: Fixture,
+  marks: Mark[][] = [[], []],
+  license: string | null = "LicenseRef-Vendor-EULA",
+) {
   const versions = [image(1), image(2)];
   let record: ReviewRecord = emptyReview("asset://test-grove/lantern/review");
   for (const [i, bytes] of versions.entries()) {
@@ -118,7 +122,7 @@ async function lantern(f: Fixture, marks: Mark[][] = [[], []], license = "Licens
   await writeFile(join(f.assets, "lantern.png"), versions[1]!);
   await writeFile(
     join(f.assets, "lantern.md"),
-    `---\ntype: Game Asset\nformat: assetgrove-card/1\ntitle: lantern\nresource: lantern.png\nversion: 2\nlicense: ${license}\nlock: { sha256: ${sha256Hex(versions[1]!)} }\n---\n`,
+    `---\ntype: Game Asset\nformat: assetgrove-card/1\ntitle: lantern\nresource: lantern.png\nversion: 2\n${license === null ? "" : `license: ${license}\n`}lock: { sha256: ${sha256Hex(versions[1]!)} }\n---\n`,
   );
   const path = lfsObjectPath(join(f.target, ".git"), sha256Hex(versions[0]!));
   await mkdir(join(path, ".."), { recursive: true });
@@ -233,6 +237,7 @@ test("when the project policy enables them, a release refuses an unapproved vers
   const selection = await select(f, 1);
   const policy: ReleasePolicy = {
     requireApproval: true,
+    timeZone: "America/Los_Angeles",
     licenseWindows: [
       { license: "LicenseRef-Vendor-EULA", from: "2024-01-01", until: "2026-06-30" },
     ],
@@ -273,13 +278,16 @@ test("when the project policy enables them, a release refuses an unapproved vers
   assert.deepEqual(window!.evidence, {
     check: "license-window",
     license: "LicenseRef-Vendor-EULA",
+    timeZone: "America/Los_Angeles",
     date: "2026-11-25",
     windows: policy.licenseWindows,
     outside: policy.licenseWindows,
+    unnamed: [],
+    alternatives: [],
   });
   assert.match(
     refused.problems[1]!.message,
-    /licensed LicenseRef-Vendor-EULA, outside LicenseRef-Vendor-EULA 2024-01-01 to 2026-06-30 \(expired\) on 2026-11-25/,
+    /licensed LicenseRef-Vendor-EULA, outside LicenseRef-Vendor-EULA 2024-01-01 to 2026-06-30 \(expired\) on 2026-11-25 \(America\/Los_Angeles\)/,
   );
 
   // The same check through the CLI, the policy read from the target profile.
@@ -304,6 +312,7 @@ test("when the project policy enables them, a release refuses an unapproved vers
   await lantern(f, [["reject", "approve"], []]);
   const inside: ReleasePolicy = {
     requireApproval: true,
+    timeZone: "America/Los_Angeles",
     licenseWindows: [{ license: "LicenseRef-Vendor-EULA", until: "2026-11-25" }],
   };
   const passed = await planDelivery({ selection, out, policy: inside, now: NOW });
@@ -318,6 +327,11 @@ test("when the project policy enables them, a release refuses an unapproved vers
   const other = await planDelivery({ selection, out, policy, now: NOW });
   assert.deepEqual(other.problems, []);
   assert.match(other.policy[2]!.message, /licensed MIT, which no licence window names/);
+  assert.deepEqual(
+    (other.policy[2]!.evidence as { unnamed: string[] }).unnamed,
+    ["MIT"],
+    "the evidence says no window names the licence",
+  );
 });
 
 test("preview and draft report the same release findings without refusing or releasing", async () => {
@@ -374,18 +388,117 @@ test("the profile's release policy is checked when the profile is read", () => {
   const ok = validateProfile(
     {
       ...syntheticProfile(),
-      release: { requireApproval: true, licenseWindows: [{ license: "X", until: "2027-01-31" }] },
+      release: {
+        requireApproval: true,
+        timeZone: "Europe/Berlin",
+        licenseWindows: [{ license: "X", until: "2027-01-31" }],
+      },
     },
     "p.json",
   );
   assert.equal(ok.release?.requireApproval, true);
   for (const release of [
-    { licenseWindows: [{ license: "X", from: "2027-02-01", until: "2027-01-31" }] },
-    { licenseWindows: [{ license: "X", until: "2027-02-30" }] },
-    { licenseWindows: [{ license: "X", until: "31/01/2027" }] },
+    {
+      timeZone: "UTC",
+      licenseWindows: [{ license: "X", from: "2027-02-01", until: "2027-01-31" }],
+    },
+    { timeZone: "UTC", licenseWindows: [{ license: "X", until: "2027-02-30" }] },
+    { timeZone: "UTC", licenseWindows: [{ license: "X", until: "31/01/2027" }] },
+    { timeZone: "Mars/Olympus_Mons", licenseWindows: [{ license: "X" }] },
     { requireApproval: "yes" },
     { gate: true },
   ]) {
     assert.throws(() => validateProfile({ ...syntheticProfile(), release }, "p.json"));
   }
+  // A licence window needs the zone its date is read in; the refusal names the field.
+  assert.throws(
+    () =>
+      validateProfile(
+        { ...syntheticProfile(), release: { licenseWindows: [{ license: "X" }] } },
+        "p.json",
+      ),
+    /release\.timeZone: is required when licenseWindows is set/,
+  );
+});
+
+test("licence windows follow the owner's semantics: the zone's date, inclusive ends, SPDX matching that fails closed", async () => {
+  const f = await setup();
+  const out = join(f.dir, "out");
+  const selection = await select(f, 1);
+  const window = { license: "LicenseRef-Vendor-EULA", until: "2026-12-31" };
+  const la: ReleasePolicy = { timeZone: "America/Los_Angeles", licenseWindows: [window] };
+  const check = async (policy: ReleasePolicy, now: Date, options: { preview?: boolean } = {}) => {
+    const result = await planDelivery({ selection, out, policy, now, ...options });
+    const finding = result.policy.find((p) => p.check === "license-window")!;
+    return { result, finding, evidence: finding.evidence as Record<string, unknown> };
+  };
+
+  // (b) The delivery date is the calendar date in the policy's zone: 23:30 on 31 December in
+  // Los Angeles is already 1 January in UTC, and still inside a window ending 2026-12-31.
+  await lantern(f, [[], []]);
+  const lateEve = new Date("2027-01-01T07:30:00Z");
+  const eve = await check(la, lateEve);
+  assert.equal(eve.finding.status, "passed");
+  assert.equal(eve.evidence.date, "2026-12-31");
+  assert.equal(eve.evidence.timeZone, "America/Los_Angeles");
+  assert.match(eve.finding.message, /on 2026-12-31 \(America\/Los_Angeles\)/);
+  const utc = await check({ ...la, timeZone: "UTC" }, lateEve);
+  assert.equal(utc.finding.status, "failed");
+  assert.equal(utc.evidence.date, "2027-01-01");
+  // (a) Both ends are inclusive.
+  const first = await check(
+    { ...la, licenseWindows: [{ ...window, from: "2026-12-31" }] },
+    lateEve,
+  );
+  assert.equal(first.finding.status, "passed");
+
+  // (c) An expression that does not parse is refused with the parse error as its evidence.
+  await lantern(f, [[], []], "MIT OR");
+  const broken = await check(la, NOW);
+  assert.equal(broken.finding.status, "failed");
+  assert.deepEqual(
+    broken.result.problems.map((p) => p.code),
+    ["license_window"],
+  );
+  assert.equal(broken.evidence.error, "the expression ends early");
+  await lantern(f, [[], []], "Vendor EULA");
+  assert.match(String((await check(la, NOW)).evidence.error), /^Unexpected/);
+
+  // An OR passes when one alternative passes, and the evidence names it.
+  const expired = new Date("2027-03-01T12:00:00Z");
+  await lantern(f, [[], []], "LicenseRef-Vendor-EULA OR CC-BY-4.0");
+  const either = await check(la, expired);
+  assert.equal(either.finding.status, "passed");
+  assert.deepEqual(either.evidence.alternatives, ["CC-BY-4.0"]);
+  assert.deepEqual(either.evidence.unnamed, ["CC-BY-4.0"]);
+  assert.deepEqual(either.evidence.outside, [window]);
+  assert.match(either.finding.message, /passed through CC-BY-4\.0/);
+  const both = await check(
+    { ...la, licenseWindows: [window, { license: "CC-BY-4.0", until: "2027-01-31" }] },
+    expired,
+  );
+  assert.equal(both.finding.status, "failed");
+
+  // An AND needs every component to pass.
+  await lantern(f, [[], []], "CC-BY-4.0 AND LicenseRef-Vendor-EULA");
+  const all = await check(la, expired);
+  assert.equal(all.finding.status, "failed");
+  assert.deepEqual(all.evidence.unnamed, ["CC-BY-4.0"]);
+  assert.deepEqual(all.evidence.outside, [window]);
+  assert.equal((await check(la, NOW)).finding.status, "passed");
+
+  // A card with no licence fails closed in a release; a preview reports it without refusing.
+  await lantern(f, [[], []], null);
+  const none = await check(la, NOW);
+  assert.equal(none.finding.status, "failed");
+  assert.deepEqual(
+    none.result.problems.map((p) => p.code),
+    ["license_window"],
+  );
+  assert.equal(none.evidence.license, null);
+  assert.equal(none.evidence.error, "no licence on the card");
+  const previewed = await check(la, NOW, { preview: true });
+  assert.deepEqual(previewed.result.problems, []);
+  assert.equal(previewed.finding.status, "failed");
+  assert.equal(previewed.result.release, false);
 });
