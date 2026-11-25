@@ -1,7 +1,8 @@
 import "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -18,7 +19,7 @@ interface Graph {
   edges: Relationship[];
   forward: Relationship[];
   reverse: Relationship[];
-  changedSources: (Relationship & { currentSha256: string })[];
+  changedSources: (Relationship & { currentSha256: string | null })[];
   affected: (VersionReference & { recordedSources: Relationship[] })[];
   problems: { file: string; code: string; reference: string; message: string }[];
 }
@@ -231,6 +232,97 @@ test("reordered raw versions retain exact lineage references", async () => {
     );
     const after = await cli(lib, "relations");
     assert.equal(after.value.problems[0]!.reference, `ag:versions[${rebuiltIndex}].lineage[1]`);
+  } finally {
+    await rm(lib.dir, { recursive: true, force: true });
+  }
+});
+
+const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+
+test("a file source is a valid edge, listed as changed only when the file's bytes differ or are missing", async () => {
+  const lib = fixtureLibrary();
+  try {
+    writeFileSync(join(lib.root, "art.ase"), "one");
+    const edge = { relation: "derived-from", file: "art.ase", sha256: sha("one") };
+    lineage(lib, "lantern", 0, [edge]);
+    const reference = "lantern.review.json:ag:versions[0].lineage[0]";
+    const valid = await cli(lib, "relations");
+    assert.equal(valid.code, 0);
+    assert.deepEqual(valid.value.problems, []);
+    assert.deepEqual(valid.value.edges, [
+      {
+        relation: "derived-from",
+        downstream: ref(lib, "lantern"),
+        source: { file: "art.ase", sha256: sha("one") },
+        reference,
+      },
+    ]);
+    assert.deepEqual(valid.value.changedSources, []);
+    assert.deepEqual(valid.value.affected, []);
+    for (const command of ["check", "rebuild"]) {
+      const checked = await cli(lib, command);
+      assert.deepEqual(
+        checked.value.problems.filter((p) => p.code.startsWith("lineage_")),
+        [],
+      );
+    }
+    assert.equal(
+      JSON.parse(readFileSync(join(lib.root, "lantern.review.json"), "utf8"))["ag:versions"][0]
+        .lineage[0].file,
+      "art.ase",
+    );
+
+    writeFileSync(join(lib.root, "art.ase"), "two");
+    const changed = await cli(lib, "relations");
+    assert.deepEqual(changed.value.changedSources, [
+      { ...valid.value.edges[0], currentSha256: sha("two") },
+    ]);
+    assert.deepEqual(changed.value.affected, [
+      { ...ref(lib, "lantern"), recordedSources: [valid.value.edges[0]] },
+    ]);
+
+    unlinkSync(join(lib.root, "art.ase"));
+    assert.equal((await cli(lib, "relations")).value.changedSources[0]!.currentSha256, null);
+
+    const oid = sha("large bytes");
+    writeFileSync(
+      join(lib.root, "art.ase"),
+      `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize 11\n`,
+    );
+    lineage(lib, "lantern", 0, [{ ...edge, sha256: oid }]);
+    assert.deepEqual((await cli(lib, "relations")).value.changedSources, []);
+  } finally {
+    await rm(lib.dir, { recursive: true, force: true });
+  }
+});
+
+test("a file source path must be canonical and inside the library root", async () => {
+  const lib = fixtureLibrary();
+  try {
+    const bad = ["../art.ase", "/art.ase", "a/./art.ase", "a//art.ase", "art/", ""];
+    lineage(
+      lib,
+      "lantern",
+      0,
+      bad.map((file) => ({ relation: "derived-from", file, sha256: sha("x") })),
+    );
+    lineage(lib, "walk", 0, [
+      { relation: "derived-from", file: "a", asset: "lantern", sha256: sha("x") },
+    ]);
+    const result = await cli(lib, "relations");
+    assert.equal(result.code, 6);
+    assert.deepEqual(
+      result.value.problems.map((p) => [p.file, p.reference, p.code]),
+      [
+        ...bad.map((_, i) => [
+          "lantern.review.json",
+          `ag:versions[0].lineage[${i}]`,
+          "lineage_invalid",
+        ]),
+        ["walk.review.json", "ag:versions[0].lineage[0]", "lineage_invalid"],
+      ],
+    );
+    assert.deepEqual(result.value.edges, []);
   } finally {
     await rm(lib.dir, { recursive: true, force: true });
   }

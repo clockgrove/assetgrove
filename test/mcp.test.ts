@@ -22,6 +22,7 @@ import type { CommandSpec } from "../src/commands/types.ts";
 import { BIBLE_PRESETS, serializeBible } from "../src/bible.ts";
 import { createRaster, decodeImage, encodePng, setPixel } from "../src/image/raster.ts";
 import type { TargetProfile } from "../src/types.ts";
+import { fernAseprite } from "../src/testing/index.ts";
 import { GAME, fixtureLibrary } from "./fixtures/library.ts";
 import { bareGitTarget, gitTarget } from "./fixtures/git.ts";
 import { lodModel } from "./fixtures/lod.ts";
@@ -728,6 +729,29 @@ const rows: Row[] = [
       const input = join(work, "in.png");
       await writeFile(input, encodePng(drawSubject(48)));
       return { operation: "matte", inputs: [input], out: join(work, "out.png") };
+    },
+  },
+  {
+    tool: "stage_source",
+    prepare: async () => {
+      const dir = join(work, "aseprite");
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "fern.aseprite"), fernAseprite());
+      await writeFile(
+        join(dir, "spec.json"),
+        JSON.stringify({ kind: "sprite-strip", assetId: "fern", animationFamily: "idle" }),
+      );
+      await writeFile(
+        join(dir, "profile.json"),
+        JSON.stringify(syntheticProfile({ frames: { width: 32, height: 40, maxEdge: 256 } })),
+      );
+      return {
+        source: join(dir, "fern.aseprite"),
+        spec: join(dir, "spec.json"),
+        profile: join(dir, "profile.json"),
+        runs: join(dir, "runs"),
+        digitalSourceType: "digitalCreation",
+      };
     },
   },
   {

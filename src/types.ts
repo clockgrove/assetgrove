@@ -330,6 +330,24 @@ export interface SheetSource {
   tool: string;
 }
 
+/** An editable artwork file a strip was rendered from, and the part of it that was read. */
+export interface EditableSource {
+  /**
+   * The file's absolute path when it was staged; in the provenance `pick` writes into the target,
+   * its path relative to the library root.
+   */
+  path: string;
+  /** The sha256 of the file's bytes when it was staged. */
+  sha256: string;
+  format: "aseprite";
+  /** The tag whose frames were read; absent when the file has no tags and every frame was. */
+  tag?: string;
+  /** The source frames read, 0-based, in strip order. */
+  frames: number[];
+  /** Each source frame's own duration in milliseconds, in strip order. */
+  durationsMs: number[];
+}
+
 export interface Provenance {
   origin?: import("./origin.ts").OriginRecord;
   digitalSourceType?: DigitalSourceType;
@@ -381,6 +399,8 @@ export interface Provenance {
    * whose mark names its sheet tool (src/provenance-binding.ts).
    */
   madeOutsideAssetgrove?: true;
+  /** For a strip rendered from an editable artwork file (`stage-source`): that file and what was read. */
+  editableSource?: EditableSource;
   /**
    * Set beside `madeOutsideAssetgrove` when the media's mark (another tool's) says a model made it:
    * that digital source type, and that Assetgrove checked no licence grant for it. It stays when a

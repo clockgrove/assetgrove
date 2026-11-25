@@ -1,23 +1,31 @@
+import { readFileSync } from "node:fs";
 import { relative, sep } from "node:path";
 import { z } from "zod";
 import { InputError } from "../errors.ts";
+import { sha256Hex } from "./canonical.ts";
+import { parseLfsPointer } from "./lfs.ts";
 import { libraryPath } from "./paths.ts";
 import { versionSourceIndex, type ReviewRecord } from "./review.ts";
 
 export const RELATIONS = ["derived-from", "variant-of", "part-of"] as const;
-const lineageSchema = z.object({
-  relation: z.enum(RELATIONS),
-  asset: z.string().min(1),
-  sha256: z.string().regex(/^[0-9a-f]{64}$/),
-});
+const hex = z.string().regex(/^[0-9a-f]{64}$/);
+const lineageSchema = z.union([
+  z.object({ relation: z.enum(RELATIONS), asset: z.string().min(1), sha256: hex }),
+  z.object({ relation: z.enum(RELATIONS), file: z.string().min(1), sha256: hex }),
+]);
 export interface VersionReference {
   asset: string;
+  sha256: string;
+}
+/** A source that is a file under the library root, such as an editable artwork file. */
+export interface FileReference {
+  file: string;
   sha256: string;
 }
 export interface Relationship {
   relation: (typeof RELATIONS)[number];
   downstream: VersionReference;
-  source: VersionReference;
+  source: VersionReference | FileReference;
   reference: string;
 }
 export interface LineageProblem {
@@ -30,7 +38,8 @@ interface RecordAsset {
   reviewPath: string;
   review?: { record: ReviewRecord };
 }
-const key = (node: VersionReference) => `${node.asset}@${node.sha256}`;
+const key = (node: VersionReference | FileReference) =>
+  "file" in node ? `file:${node.file}@${node.sha256}` : `${node.asset}@${node.sha256}`;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 export function relationshipGraph(root: string, assets: readonly RecordAsset[]) {
@@ -78,19 +87,29 @@ export function relationshipGraph(root: string, assets: readonly RecordAsset[]) 
           refuse(`${JSON.stringify(value)}: ${parsed.error.message}`);
           return;
         }
-        const { relation, asset: sourceAsset, sha256 } = parsed.data;
+        const data = parsed.data;
+        const { relation, sha256 } = data;
+        const sourceName = "file" in data ? data.file : data.asset;
         try {
-          libraryPath(root, root, `${sourceAsset}.review.json`, `${file}: ${reference}`);
-          if (sourceAsset.split("/").some((part) => part === "." || part === ".." || part === ""))
-            throw new InputError("asset must be a canonical library-relative asset id");
+          libraryPath(
+            root,
+            root,
+            "file" in data ? data.file : `${data.asset}.review.json`,
+            `${file}: ${reference}`,
+          );
+          if (sourceName.split("/").some((part) => part === "." || part === ".." || part === ""))
+            throw new InputError(
+              `${"file" in data ? "file" : "asset"} must be a canonical library-relative ${"file" in data ? "path" : "asset id"}`,
+            );
         } catch (error) {
           refuse(
             `${JSON.stringify(value)}: ${error instanceof Error ? error.message : String(error)}`,
           );
           return;
         }
-        const source = { asset: sourceAsset, sha256 };
-        if (!known.has(key(source))) {
+        const source: VersionReference | FileReference =
+          "file" in data ? { file: data.file, sha256 } : { asset: data.asset, sha256 };
+        if (!("file" in source) && !known.has(key(source))) {
           refuse(`unknown source ${key(source)}`);
           return;
         }
@@ -133,9 +152,12 @@ export function relationshipGraph(root: string, assets: readonly RecordAsset[]) 
     }
   }
   problems.sort((a, b) => compare(`${a.file}:${a.reference}`, `${b.file}:${b.reference}`));
-  const changedSources = edges
-    .filter((edge) => current.get(edge.source.asset) !== edge.source.sha256)
-    .map((edge) => ({ ...edge, currentSha256: current.get(edge.source.asset)! }));
+  const changedSources: Array<Relationship & { currentSha256: string | null }> = [];
+  for (const edge of edges) {
+    const currentSha256 =
+      "file" in edge.source ? fileSha256(root, edge.source.file) : current.get(edge.source.asset)!;
+    if (currentSha256 !== edge.source.sha256) changedSources.push({ ...edge, currentSha256 });
+  }
   const affectedKeys = new Set(changedSources.map((edge) => key(edge.downstream)));
   const pending = [...affectedKeys];
   const dependents = new Map<string, string[]>();
@@ -157,6 +179,16 @@ export function relationshipGraph(root: string, assets: readonly RecordAsset[]) 
       recordedSources: edges.filter((edge) => key(edge.downstream) === key(node)),
     }));
   return { nodes, edges, problems, changedSources, affected };
+}
+
+/** The hash of a file under the library root, an unfetched LFS pointer by its oid; null when unreadable. */
+function fileSha256(root: string, file: string): string | null {
+  try {
+    const bytes = new Uint8Array(readFileSync(libraryPath(root, root, file, file)));
+    return parseLfsPointer(bytes)?.oid ?? sha256Hex(bytes);
+  } catch {
+    return null;
+  }
 }
 
 export function browseRelationships(

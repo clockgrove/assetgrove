@@ -546,3 +546,10 @@ Replacing an asset's media changes every scene and resource that refers to it, a
 - **Never the project tree.** The scan reads through core's target read and a stat-only listing. Its cache lives in core's state directory (`<stateDir>/cache/usage/`), never in the target. A file's cached parse is reused only while its size, mtime and ctime hold, and only at the Git revision it was made at. Outside Git, nothing is reused.
 - **Core addition.** `EnginePreset` gains an optional `usage(ctx, options, read)`. Core calls it only for `pick`'s replacement preview, and lists the result under the request's `details.usage` and in its summary, outside the digest, so a confirmation does not depend on the scan. A `usage` that throws is shown as unknown usage and never stops the pick. It is additive: presets without it, and readers of the request, work as before.
 - **Libraries.** None new. The scene and resource lines are read like the `.import` and `.tres` lines above, under the same exception: no maintained JavaScript library reads Godot's text scene and resource formats, and the scan reads only headers, `ext_resource` lines and quoted paths.
+
+## Aseprite files are parsed by `ase-parser`, composited by us (#470)
+
+`stage-source` reads an editable Aseprite file and renders its frames as a strip.
+
+- **The parser.** `ase-parser` (MIT, no dependencies) reads the file's header, layers, cels, tags and palette. Nothing here is hand-written format code.
+- **The compositing is ours.** No maintained library composites Aseprite frames: the parsers return cels and layers, and the Aseprite desktop and command-line tools are a native binary this repository does not ship. So layer compositing in `src/source/aseprite.ts` is written here, for the normal blend only. A layer with another blend mode, or a visible group with its own blend mode or an opacity below full, is refused rather than drawn wrongly, and a hidden layer is not drawn. The reason to write it is the AGENTS.md "Dependencies" exception: no library fits.

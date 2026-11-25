@@ -67,6 +67,7 @@
     "@contentauth/c2pa-wasm": "0.15.0",
     "@modelcontextprotocol/server": "2.4.0",
     "ai": "7.0.173",
+    "ase-parser": "0.0.19",
     "asn1js": "4.0.0",
     "gltf-validator": "2.0.0-dev.3.10",
     "jpeg-js": "0.4.4",

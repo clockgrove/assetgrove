@@ -498,6 +498,33 @@ export function appendVersion(record: ReviewRecord, version: VersionInput): Revi
   return build(record, [...record.versions, parsed], record.annotations, record.id);
 }
 
+/**
+ * A new record whose version `sha256` derives from `lineage`: each new file entry replaces that
+ * file's earlier entry on the version, other entries are kept. Used when a source edit renders the
+ * same media again, so the version records the source bytes it now derives from.
+ */
+export function updateVersionLineage(
+  record: ReviewRecord,
+  sha256: string,
+  lineage: Array<{ relation: "derived-from"; file: string; sha256: string }>,
+): ReviewRecord {
+  const versions = record.versions.map((version) => {
+    if (version.sha256 !== sha256) return version;
+    const files = new Set(lineage.map((entry) => entry.file));
+    const earlier = Array.isArray(version["lineage"]) ? (version["lineage"] as unknown[]) : [];
+    const kept = earlier.filter(
+      (entry) =>
+        !(
+          typeof entry === "object" &&
+          entry !== null &&
+          files.has((entry as { file?: unknown }).file as string)
+        ),
+    );
+    return { ...version, lineage: [...kept, ...lineage] };
+  });
+  return build(record, versions, record.annotations, record.id);
+}
+
 /** A new record with the annotation added, its id computed; the same content is added once. */
 export function appendAnnotation(record: ReviewRecord, annotation: AnnotationInput): ReviewRecord {
   const parsed = parseWith(annotationSchema, annotation, `${record.id}: annotation`);

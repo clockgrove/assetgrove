@@ -33,3 +33,5 @@ export {
 } from "./samples.ts";
 export type { ConfirmRequest } from "../confirm/prompt.ts";
 export type { Outcome } from "../commands/types.ts";
+export { asepriteFile, fernAseprite } from "./aseprite.ts";
+export type { AsepriteCelInput, AsepriteInput, AsepriteLayerInput } from "./aseprite.ts";
