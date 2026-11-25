@@ -18,6 +18,8 @@ const INPUT := "res://.assetgrove-godot/input.json"
 const RESULT := "res://.assetgrove-godot/result.json"
 ## How long the editor may take to import the media before the run gives up.
 const IMPORT_TIMEOUT_MS := 240000
+## The metadata key of the SpriteFrames record of what the preset wrote.
+const META := &"assetgrove_godot"
 ## The corner peering bits of a square tile, by the corner's name in the input.
 const CORNERS := {
 	"nw": TileSet.CELL_NEIGHBOR_TOP_LEFT_CORNER,
@@ -123,13 +125,34 @@ func _imported(path: String) -> bool:
 	return true
 
 
+## Builds the SpriteFrames. A new one has one animation per input family. An existing one is
+## loaded and merged into: only the animations named after the input's families are replaced, and
+## only when the developer has not changed them since the preset wrote them (`_conflicts`); every
+## other animation, property and metadata key stays as it was. The preset records what it wrote in
+## the resource's `assetgrove_godot` metadata.
 func _build_frames(input: Dictionary) -> Dictionary:
 	var path := String(input["resource"])
 	var frame_width := int(input["frameWidth"])
 	var frame_height := int(input["frameHeight"])
-	var frames := SpriteFrames.new()
-	frames.remove_animation(&"default")
-	var expected := {}
+	var frames: SpriteFrames
+	if bool(input.get("existing", false)):
+		var existing = ResourceLoader.load(path, "SpriteFrames", ResourceLoader.CACHE_MODE_IGNORE)
+		if not (existing is SpriteFrames):
+			_fail("ResourceLoader could not load the existing %s as SpriteFrames" % path)
+			return {}
+		frames = existing
+	else:
+		frames = SpriteFrames.new()
+		frames.remove_animation(&"default")
+	var record := _record(frames)
+	var conflicts := _conflicts(
+		path, frames, record, input["animations"], frame_width, frame_height
+	)
+	if not conflicts.is_empty():
+		_errors.append_array(conflicts)
+		return {"conflicts": Array(conflicts)}
+	var written := {}
+	var families := []
 	var textures := {}
 	for animation in input["animations"]:
 		var name := StringName(animation["name"])
@@ -148,6 +171,8 @@ func _build_frames(input: Dictionary) -> Dictionary:
 			)
 			continue
 		var count := int(size.x) / frame_width
+		if frames.has_animation(name):
+			frames.remove_animation(name)
 		frames.add_animation(name)
 		frames.set_animation_speed(name, float(animation["speed"]))
 		frames.set_animation_loop(name, bool(animation["loop"]))
@@ -156,10 +181,21 @@ func _build_frames(input: Dictionary) -> Dictionary:
 			region.atlas = texture
 			region.region = Rect2(i * frame_width, 0, frame_width, frame_height)
 			frames.add_frame(name, region, 1.0)
-		expected[String(name)] = count
+		families.append(String(name))
+		written[String(name)] = {
+			"texture": texture_path,
+			"frames": count,
+			"speed": float(animation["speed"]),
+			"loop": bool(animation["loop"]),
+		}
 		textures[texture_path] = ResourceUID.id_to_text(ResourceLoader.get_resource_uid(texture_path))
 	if not _errors.is_empty():
 		return {}
+	record["animations"] = written
+	frames.set_meta(META, record)
+	var expected := {}
+	for name in frames.get_animation_names():
+		expected[String(name)] = frames.get_frame_count(name)
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var saved := ResourceSaver.save(frames, path)
 	if saved != OK:
@@ -167,11 +203,96 @@ func _build_frames(input: Dictionary) -> Dictionary:
 		return {}
 	if not _keep_uid(path, input.get("uid")):
 		return {}
-	return _reload(path, expected, textures)
+	return _reload(path, expected, families, textures)
 
 
-## Reloads the saved resource from disk and checks it holds what was built.
-func _reload(path: String, expected: Dictionary, textures: Dictionary) -> Dictionary:
+## The preset's record in the resource's metadata, a copy; keys other than `animations` are the
+## developer's and stay.
+func _record(frames: SpriteFrames) -> Dictionary:
+	var meta = frames.get_meta(META, {})
+	if meta is Dictionary:
+		return (meta as Dictionary).duplicate()
+	return {}
+
+
+## What differs between the input's family animations that `frames` already has and what the
+## preset last wrote: its record's entry, or for a resource from before the record, the preset's
+## own shape (the input's texture, the animation's current frame count, the input's speed and
+## loop). One sentence each.
+func _conflicts(
+	path: String,
+	frames: SpriteFrames,
+	record: Dictionary,
+	animations: Array,
+	frame_width: int,
+	frame_height: int
+) -> PackedStringArray:
+	var conflicts := PackedStringArray()
+	var written = record.get("animations", {})
+	if not (written is Dictionary):
+		written = {}
+	for animation in animations:
+		var name := StringName(animation["name"])
+		if not frames.has_animation(name):
+			continue
+		var wrote = written.get(String(name), {})
+		if not (wrote is Dictionary):
+			wrote = {}
+		var texture_path := String(wrote.get("texture", animation["texture"]))
+		var count := int(wrote.get("frames", frames.get_frame_count(name)))
+		var speed := float(wrote.get("speed", animation["speed"]))
+		var loops := bool(wrote.get("loop", animation["loop"]))
+		var where := path.trim_prefix("res://")
+		var now_speed := frames.get_animation_speed(name)
+		if not is_equal_approx(now_speed, speed):
+			conflicts.append(
+				'animation "%s": speed is %s in %s, the preset wrote %s' % [name, now_speed, where, speed]
+			)
+		if frames.get_animation_loop(name) != loops:
+			conflicts.append(
+				'animation "%s": loop is %s in %s, the preset wrote %s'
+				% [name, frames.get_animation_loop(name), where, loops]
+			)
+		if frames.get_frame_count(name) != count:
+			conflicts.append(
+				'animation "%s": it has %d frames in %s, the preset wrote %d'
+				% [name, frames.get_frame_count(name), where, count]
+			)
+			continue
+		for i in count:
+			var problem := _frame_problem(frames, name, i, texture_path, frame_width, frame_height)
+			if problem != "":
+				conflicts.append('animation "%s": frame %d %s in %s' % [name, i, problem, where])
+				break
+	return conflicts
+
+
+## What is not as the preset wrote it in frame `index` of `name`, or "" when it is as written.
+func _frame_problem(
+	frames: SpriteFrames,
+	name: StringName,
+	index: int,
+	texture_path: String,
+	frame_width: int,
+	frame_height: int
+) -> String:
+	var frame = frames.get_frame_texture(name, index)
+	if not (frame is AtlasTexture):
+		return "is not an atlas region"
+	if frame.atlas == null or frame.atlas.resource_path != texture_path:
+		return "is not a region of %s" % texture_path
+	var region := Rect2(index * frame_width, 0, frame_width, frame_height)
+	if frame.region != region:
+		return "is the region %s, the preset wrote %s" % [frame.region, region]
+	if not is_equal_approx(frames.get_frame_duration(name, index), 1.0):
+		return "has duration %s, the preset wrote 1" % frames.get_frame_duration(name, index)
+	return ""
+
+
+## Reloads the saved resource from disk and checks it holds what was built: every animation with
+## its frame count, and each family animation's frames as atlas regions. A developer's animation
+## may hold any texture.
+func _reload(path: String, expected: Dictionary, families: Array, textures: Dictionary) -> Dictionary:
 	var loaded = ResourceLoader.load(path, "SpriteFrames", ResourceLoader.CACHE_MODE_IGNORE)
 	if not (loaded is SpriteFrames):
 		_fail("ResourceLoader could not load %s back as SpriteFrames" % path)
@@ -180,6 +301,8 @@ func _reload(path: String, expected: Dictionary, textures: Dictionary) -> Dictio
 	for name in loaded.get_animation_names():
 		var count: int = loaded.get_frame_count(name)
 		animations[String(name)] = count
+		if not families.has(String(name)):
+			continue
 		for i in count:
 			var frame = loaded.get_frame_texture(name, i)
 			if not (frame is AtlasTexture) or frame.atlas == null:

@@ -5,7 +5,10 @@
  * media and the UIDs read from the target as data, runs the pinned Godot headless there through
  * core's tool runner, and returns what Godot saved: the resource, and the `.import` of each
  * source file the target does not have one for yet. An existing `.import` is never returned, so
- * core never touches it, and a replaced resource keeps its UID.
+ * core never touches it, and a replaced resource keeps its UID. An existing resource is loaded
+ * with every file it references and merged into: only the animations named after handed-off
+ * families change, and a family animation the developer edited is a conflict, reported before
+ * anything is written.
  */
 import type {
   EnginePreset,
@@ -15,6 +18,7 @@ import type {
   TargetRead,
 } from "@clockgrove/assetgrove/extension";
 import { resourceHeader } from "./godot-text.ts";
+import { dependencies } from "./references.ts";
 import {
   GodotInputError,
   inProject,
@@ -74,9 +78,9 @@ async function write(
       throw new GodotInputError(`the media of ${family.name} (${media}) cannot be read`);
     files[at] = content;
     // An existing .import keeps its UID and options; it reaches scratch as data only.
-    const existing = await read(`${media}.import`);
-    if (existing === undefined) fresh.push(media);
-    else files[`${at}.import`] = existing;
+    const imported = await read(`${media}.import`);
+    if (imported === undefined) fresh.push(media);
+    else files[`${at}.import`] = imported;
     animations.push({
       name: family.name,
       texture: `res://${at}`,
@@ -84,11 +88,25 @@ async function write(
       loop: options.loop,
     });
   }
+  const resourceAt = inProject(project, resource, "the resource");
   const before = await read(resource);
   const uid = before === undefined ? undefined : resourceHeader(before)?.uid;
+  const imports = animations.map((animation) => animation.texture);
+  if (before !== undefined) {
+    // The families' strips stay this hand-off's bytes: the target's older ones are never loaded.
+    files[resourceAt] = before;
+    const seen = new Set([resourceAt]);
+    for (const animation of animations) {
+      const at = animation.texture.slice("res://".length);
+      seen.add(at);
+      seen.add(`${at}.import`);
+    }
+    imports.push(...(await dependencies(project, before, read, files, seen)));
+  }
   const input: BuildInput = {
     godot: GODOT_RELEASE.release,
-    resource: `res://${inProject(project, resource, "the resource")}`,
+    resource: `res://${resourceAt}`,
+    ...(before !== undefined && { existing: true, imports }),
     fresh: fresh.map((media) => `res://${inProject(project, media, "the media")}`),
     options: options.import,
     ...(uid !== undefined && { uid }),
@@ -101,7 +119,8 @@ async function write(
   const { ran } = await runGodot(PRESET, ctx.run, files);
   const output = (target: string) => savedFile(PRESET, ran, project, target);
   return [
-    { path: resource, content: output(resource) },
+    // Godot saves it in scratch; an unchanged one comes back as passed in.
+    { path: resource, content: savedFile(PRESET, ran, project, resource, before) },
     ...fresh.map((media) => ({ path: `${media}.import`, content: output(`${media}.import`) })),
   ];
 }

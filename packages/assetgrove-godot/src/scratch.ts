@@ -77,6 +77,10 @@ export interface BuildInput {
   options: Record<string, ImportOption>;
   /** The UID the target's resource already has, kept on the new save. */
   uid?: string;
+  /** Whether the resource exists at its path in scratch, to be loaded and merged into. */
+  existing?: boolean;
+  /** Every file, `res://...`, the editor must have imported before the build loads anything. */
+  imports?: string[];
   frameWidth: number;
   frameHeight: number;
   animations: Array<{ name: string; texture: string; speed: number; loop: boolean }>;
@@ -141,6 +145,8 @@ export interface GltfInput {
 export interface BuildResult {
   ok: boolean;
   errors: string[];
+  /** What the hand-off would overwrite of the developer's changes; nothing was saved. */
+  conflicts?: string[];
   resource?: string;
   uid?: string;
   animations?: Record<string, number>;
