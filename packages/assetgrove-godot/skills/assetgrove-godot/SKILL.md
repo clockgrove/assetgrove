@@ -1,11 +1,11 @@
 ---
 name: assetgrove-godot
-description: Load when an Assetgrove target is a Godot project and its hand-off should give it Godot resources (a SpriteFrames of every animation family). Needs the optional @clockgrove/assetgrove-godot package listed in the developer settings; covers the godot:sprite-frames preset, its options, the Godot run's approval, setup and its exit codes.
+description: Load when an Assetgrove target is a Godot project and its hand-off should give it Godot resources (a SpriteFrames of every animation family, a TileSet of a tiles:terrain set). Needs the optional @clockgrove/assetgrove-godot package listed in the developer settings; covers the godot:sprite-frames and godot:tile-set presets, their options, the Godot run's approval, setup and its exit codes.
 ---
 
 # Assetgrove for Godot
 
-`@clockgrove/assetgrove-godot` is a pack: it loads only once a person lists it under `extensions` in the developer settings. It gives the target profile the hand-off preset `godot:sprite-frames`, and runs a pinned Godot 4.7.2 headless to build what it writes. Nothing Godot reads is written by hand.
+`@clockgrove/assetgrove-godot` is a pack: it loads only once a person lists it under `extensions` in the developer settings. It gives the target profile the hand-off presets `godot:sprite-frames` and `godot:tile-set`, and runs a pinned Godot 4.7.2 headless to build what it writes. Nothing Godot reads is written by hand.
 
 ## Set it up
 
@@ -32,8 +32,20 @@ In the target profile, list it after `manifest`:
 
 It writes one SpriteFrames per asset with every animation family handed off so far, so `write-families` of `attack` after `idle` and `walk` gives all three. A hand-off whose spec names no `animationFamily` exits 2. Frames are the profile's frame size; each frame is an AtlasTexture region of its strip.
 
+## Hand off a tile set
+
+`godot:tile-set` hands off a `tiles:terrain` asset (the tiles pack's corner-16 atlas) as a Godot `TileSet`; any other asset exits 2. Its options are `project` and `resource` (default `{assetId}.tres`), as above.
+
+```json
+{ "preset": "godot:tile-set", "options": { "resource": "tiles/{assetId}.tres" } }
+```
+
+- A new `.tres` gets one terrain set in Match Corners mode, terrain 0 the lower and 1 the upper terrain, and one atlas source of the 16 tiles, each with its four corner peering bits; a tile's centre terrain is the upper only when all four corners are.
+- An existing `.tres` is loaded, and only the atlas source whose texture is the asset's atlas changes: its texture, region size, tiles and their terrain data. Every other source, terrain set, physics, navigation and custom-data layer, and every alternative tile a developer added, is kept. The owned tiles use the Match Corners terrain set the owned source's tiles already use (an earlier hand-off's), else a Match Corners set whose terrains 0 and 1 are named after the lower and upper terrains, else a new Match Corners set of the preset's own (terrain 0 lower, 1 upper), added after the developer's sets. A developer's terrain sets are never changed, and never reused for terrains they do not name.
+- Godot reloads what it saved and reads every tile's peering bits back against the layout; a wrong bit fails the hand-off with exit 6, naming the tile and the corner.
+
 ## What comes back
 
-- The resource, and the `.import` of each strip the project had none for, written by core with the media. An existing `.import` is never touched; a replaced resource keeps its UID.
+- The resource, and the `.import` of each strip or atlas the project had none for, written by core with the media. An existing `.import` is never touched; a replaced resource keeps its UID.
 - Any `ERROR` line from Godot (`ERROR:`, `SCRIPT ERROR:`, `SHADER ERROR:` or any other type), a Godot that is not 4.7.2-stable, a resource that does not load back, or a missing result fails the hand-off with exit 6 `handoff_check_failed`, whatever Godot's exit code, and nothing is written. Read the problems: they quote Godot's lines.
-- An option that puts the resource or a strip outside the Godot project exits 2 `invalid_input`.
+- An option that puts the resource, a strip or the atlas outside the Godot project exits 2 `invalid_input`.

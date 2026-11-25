@@ -26,6 +26,12 @@ export interface PresetContext {
   /** The `frames` trait the hand-off's kind declares; absent when it declares none. */
   frames?: FramesTrait;
   /**
+   * The bytes of this hand-off's media as core writes them (at `output.path`), which the preset
+   * cannot `read` yet: core writes the media with the presets' files. Core always sets it;
+   * optional so a hand-made context compiles.
+   */
+  mediaBytes?: Uint8Array;
+  /**
    * Runs one of the preset's own pack's declared tools in scratch, under core's approval rules
    * (src/extension/tools.ts). Core always sets it; optional so a hand-made context compiles.
    */
