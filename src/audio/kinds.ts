@@ -43,11 +43,7 @@ const requestedMusic = {
   key: z.string().optional(),
 };
 
-/** The ids of a variant set of `count` members, in the plan's order: `subject-01` to `subject-NN`. */
-export function variantIds(subject: string, count: number): string[] {
-  return Array.from({ length: count }, (_, i) => variantId(subject, i + 1));
-}
-
+/** A variant set member's id, fixed by its spec: `subject-01` to `subject-99`. */
 const variantId = (subject: string, variant: number): string =>
   `${subject}-${String(variant).padStart(2, "0")}`;
 
