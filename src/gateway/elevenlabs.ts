@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type ElevenLabs, ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
+import type { ElevenLabs, ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import { BudgetExceededError } from "../budget.ts";
 import { ProviderError } from "../errors.ts";
 import { failureFacts, isQuotaRefusal, ProviderQuotaError } from "./failure.ts";
@@ -124,7 +124,7 @@ export class ElevenLabsProvider implements GenerationProvider {
   }
 
   async generateAudio(request: AudioRequest): Promise<AudioResult> {
-    const client = this.#clientOrThrow();
+    const client = await this.#clientOrThrow();
     const route = {
       operation: "audio",
       model: request.model,
@@ -160,10 +160,16 @@ export class ElevenLabsProvider implements GenerationProvider {
     }
   }
 
-  #clientOrThrow(): ElevenLabsClient {
+  /**
+   * The SDK is imported on first use: it takes about a second to load, and every Assetgrove
+   * process loads this adapter whether or not it calls ElevenLabs.
+   */
+  async #clientOrThrow(): Promise<ElevenLabsClient> {
     if (this.#apiKey === undefined) {
       throw new ProviderError(`elevenlabs: no API key; set ${this.#keyEnv}`);
     }
+    if (this.#client !== undefined) return this.#client;
+    const { ElevenLabsClient } = await import("@elevenlabs/elevenlabs-js");
     this.#client ??= new ElevenLabsClient({
       apiKey: this.#apiKey,
       baseUrl: this.#baseUrl,
@@ -174,7 +180,7 @@ export class ElevenLabsProvider implements GenerationProvider {
   }
 
   async #readTier(): Promise<string> {
-    const client = this.#clientOrThrow();
+    const client = await this.#clientOrThrow();
     if (this.#tier !== undefined) return this.#tier;
     try {
       const subscription = await client.user.subscription.get();
