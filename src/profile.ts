@@ -32,6 +32,8 @@ const profileSchema = z.strictObject({
   spend: section.optional(),
   model3d: section.optional(),
   animation: section.optional(),
+  // Checked by its own schema where an audio kind reads it (src/audio/profile.ts).
+  audio: section.optional(),
   kinds: z.record(z.string(), section).optional(),
   // Each preset's options are checked against its own schema at hand-off (src/handoff/presets).
   library: z

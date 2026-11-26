@@ -28,7 +28,8 @@ identical file is left alone, and a differing one exits 2 invalid_input, writing
 Returns steps [{id, status, detail}]: guard (refused exits 2 key_tracked before anything is
 written), files, the key recipe's steps for --harness (needs-person), settings (needs-person: the
 agent calls settings_change), spend-check (to-run) and two notices; bibleQuestions to draft the
-bible with the developer; adapters, each adapter of a listed extension pack with its hosts and key
+bible with the developer; audioQuestions, the audio.loudness block to ask for (no default; offered
+values and their source); adapters, each adapter of a listed extension pack with its hosts and key
 variable; packSettings, each listed pack's settings (its extensionSettings block with the pack's
 defaults filled, never written by init); providers, each route's data flow; and files [{path, role, status}].
 
@@ -102,6 +103,11 @@ Harnesses: ${HARNESSES.join(", ")} (default claude-code).`,
         "",
         "Bible questions:",
         ...result.bibleQuestions.map((q) => `- ${q.question}`),
+        "",
+        "Audio questions:",
+        ...result.audioQuestions.map(
+          (q) => `- ${q.field}: ${q.question} Offered: ${JSON.stringify(q.offered)} (${q.source})`,
+        ),
         "",
         "Data flows:",
         ...result.providers.map(

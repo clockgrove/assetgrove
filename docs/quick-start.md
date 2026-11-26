@@ -38,7 +38,7 @@ In Claude Code, in the game repository, ask the agent to set up Assetgrove. It r
 node /abs/path/to/assetgrove/src/cli.ts init --directory . --profile-preset sprite-32 --style-preset cozy-storybook --world "My World" --json
 ```
 
-`init` writes the target profile (`.assetgrove/profile.json`), the style bible (`.assetgrove/art-direction/BIBLE.md`), the prompt template, the `art-direction` skill in `.claude/skills/` and `.agents/skills/`, and `.gitignore` rules for the output folders. It refuses a repository that tracks a key, and never writes a key, the settings file or a harness config. Running it again changes nothing. It returns the steps still to take, the questions to draft the bible with, and where each route sends data (`providers`). Providers may retain what they receive.
+`init` writes the target profile (`.assetgrove/profile.json`), the style bible (`.assetgrove/art-direction/BIBLE.md`), the prompt template, the `art-direction` skill in `.claude/skills/` and `.agents/skills/`, and `.gitignore` rules for the output folders. It refuses a repository that tracks a key, and never writes a key, the settings file or a harness config. Running it again changes nothing. It returns the steps still to take, the questions to draft the bible with, the audio loudness question (`audio.loudness` has no default; init offers the EBU R128 reference of −23 LUFS and −1 dBTP and writes nothing), and where each route sends data (`providers`). Providers may retain what they receive.
 
 ## 4. Settings: caps and the provider's limit
 
