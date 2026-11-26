@@ -89,7 +89,7 @@ export function decodeAudio(bytes: Uint8Array, name = "audio"): AudioItem {
  * depth. Integer depths round to the nearest step and clamp to the range.
  */
 export function pcmBytes(item: AudioItem): Uint8Array {
-  return toWave(item).data.samples as Uint8Array;
+  return (toWave(item).data as { samples: Uint8Array }).samples;
 }
 
 function toWave(item: AudioItem): InstanceType<typeof WaveFile> {
