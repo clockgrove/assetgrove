@@ -80,11 +80,15 @@ export async function projectDoctor(input: DoctorInput): Promise<DoctorReport> {
       });
     }
   }
+  return { findings: sortFindings([...merged.values()]), errors };
+}
+
+/** Sorts findings in place by path, line and code, the order the doctor report lists them in. */
+export function sortFindings<T extends DoctorFinding>(findings: T[]): T[] {
   const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  const findings = [...merged.values()].sort(
+  return findings.sort(
     (a, b) => order(a.path, b.path) || (a.line ?? 0) - (b.line ?? 0) || order(a.code, b.code),
   );
-  return { findings, errors };
 }
 
 /** The library's managed block no longer routes every LFS type to LFS (a type added since init). */

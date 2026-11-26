@@ -32,6 +32,9 @@ import { resolveRoute, RouteUnavailableError } from "../src/routes.ts";
 import type { RouteProvider } from "../src/routes.ts";
 import { toneWav } from "./fixtures/wav.ts";
 import { syntheticProfile } from "./fixtures/synthetic.ts";
+import { PRESETS } from "../src/handoff/presets/index.ts";
+import type { HandoffPreset } from "../src/handoff/presets/index.ts";
+import { z } from "zod";
 
 const WAV = toneWav({ length: 64 });
 const LIMIT = { kind: "prepaid", usd: 100 };
@@ -573,7 +576,21 @@ test("a plan for a kind whose operation has role audio, routed to ElevenLabs on 
 test("doctor reads each ElevenLabs account and reports a free tier as a provider-account finding", async () => {
   const dir = realpathSync(await mkdtemp(join(tmpdir(), "audio-doctor-")));
   const profile = join(dir, "profile.json");
-  await writeFile(profile, JSON.stringify(syntheticProfile()));
+  await writeFile(
+    profile,
+    JSON.stringify(
+      syntheticProfile({ handoff: [{ preset: "manifest" }, { preset: "fake:late" }] }),
+    ),
+  );
+  // A preset finding whose path sorts after the settings file, so the merged report must re-sort.
+  const late: HandoffPreset = {
+    name: "fake:late",
+    optionsSchema: z.object({}).passthrough(),
+    write: async () => [],
+    check: async () => [],
+    doctor: async () => [{ code: "late", path: "z/late.txt", problem: "p", correction: "c" }],
+  };
+  const extensions = { presets: new Map([...PRESETS, [late.name, late] as const]) };
   const ctx = (tier: string) => {
     vendor(tier);
     return {
@@ -586,10 +603,22 @@ test("doctor reads each ElevenLabs account and reports a free tier as a provider
         routes: {},
       },
       env,
+      extensions,
     } as unknown as RunContext;
   };
   const free = await doctorCommand.run({ profile, target: dir }, ctx("free"));
   assert.equal(free.exitCode, 0);
+  assert.deepEqual(
+    (free.fields as { findings: { code: string; path: string }[] }).findings.map((f) => [
+      f.path,
+      f.code,
+    ]),
+    [
+      ["settings.json", "provider-account"],
+      ["z/late.txt", "late"],
+    ],
+    "core's account finding is sorted with the presets' findings by path",
+  );
   const findings = (free.fields as { findings: { code: string; problem: string }[] }).findings;
   const account = findings.filter((f) => f.code === "provider-account");
   assert.equal(account.length, 1);

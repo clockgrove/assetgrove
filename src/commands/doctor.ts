@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { PRESETS } from "../handoff/presets/index.ts";
-import { projectDoctor } from "../handoff/doctor.ts";
+import { projectDoctor, sortFindings } from "../handoff/doctor.ts";
 import { loadProfile } from "../inputs.ts";
 import type { DoctorFinding } from "../handoff/presets/index.ts";
 import { createProviders } from "../providers/adapter.ts";
@@ -26,7 +26,9 @@ Each configured provider whose adapter reads its account's plan (ElevenLabs' tie
 plan it refuses, or a reading that fails, is a provider-account finding.
 Read-only: it never writes the target, the settings or Git, and reads nothing in .git or the
 settings and state directories. A report is not a failure: exit 0 with or without findings. A preset
-whose doctor fails is listed as unknown and does not stop the others. No model call, no spend.`,
+whose doctor fails is listed as unknown and does not stop the others. A provider-account finding's
+path is the settings file as given, not a target path. No model call, no spend: the account read is
+the vendor's free subscription endpoint.`,
   input: {
     type: "object",
     properties: {
@@ -55,6 +57,7 @@ whose doctor fails is listed as unknown and does not stop the others. No model c
       configDir: ctx.settings.configDir,
     });
     report.findings.push(...(await accountFindings(ctx)));
+    sortFindings(report.findings);
     const blocks = report.findings.map(
       (f) =>
         `${f.path}${f.line !== undefined ? `:${f.line}` : ""}  ${f.code}\n  problem: ${f.problem}\n  correction: ${f.correction}`,

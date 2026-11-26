@@ -138,7 +138,10 @@ export interface DoctorContext {
 export interface DoctorFinding {
   /** A short kebab-case id, such as `orphan-uid`. */
   code: string;
-  /** The file at fault, relative to the target, with `/`. */
+  /**
+   * The file at fault, relative to the target, with `/`. A preset's findings always are; core's own
+   * `provider-account` finding names the settings file as given instead, which is outside the target.
+   */
   path: string;
   /** The 1-based line, when the problem is at one. */
   line?: number;
