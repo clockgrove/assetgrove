@@ -526,8 +526,17 @@ function createServer(
           document["ok"] === true && typeof document["runDir"] === "string"
             ? await tree.candidateLinks(document["runDir"])
             : [];
+        const previews =
+          document["ok"] === true && typeof document["runDir"] === "string"
+            ? await tree.candidatePreviews(document["runDir"])
+            : [];
         return {
-          content: [{ type: "text", text: JSON.stringify(document) }, ...sheet, ...links],
+          content: [
+            { type: "text", text: JSON.stringify(document) },
+            ...sheet,
+            ...links,
+            ...previews,
+          ],
           structuredContent: document,
           isError: document["ok"] !== true,
         };

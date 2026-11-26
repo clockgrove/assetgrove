@@ -323,6 +323,14 @@ than a thumbnail. It verifies the bytes against that hash on every read and
 refuses changed or missing media. The link is an inspection aid, never approval:
 the existing sealed confirmation still binds the pick to the candidate bytes.
 
+An audio candidate's preview is its staged master, the file whose sha256 the pick digest
+covers; no second file is written. Under the 64 KB encoded read cap the staging result carries
+the master as MCP `audio` content. A longer one is a `resource_link` to the `file://` URL of
+`<runDir>/<file>`, with its sha256 and size in the description. A candidate whose bytes are
+missing or no longer match its record gets no preview. The pick form cannot carry audio, so it
+lists `details.previews`, each `{candidate, file, sha256}`, outside the digest. Changing the
+bytes of a candidate invalidates its pick confirmation.
+
 Candidate links issued by tool calls last for that server process; listed links
 are rebuilt from the mounted project's runs. A read-only mount can inspect those
 existing candidates but cannot stage or pick. The 64 KB encoded read limit still

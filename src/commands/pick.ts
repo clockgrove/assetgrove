@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { digestOf, requireConfirmation } from "../confirm/index.ts";
 import type { KindRequest } from "../confirm/index.ts";
 import { readMedia } from "../library/lfs.ts";
@@ -77,6 +78,14 @@ export async function pickRequest(args: PickArgs, usageInput?: UsageInput): Prom
     if (media.kind !== "lfs-pointer" && media.sha256 === candidate.sha256)
       verified.add(candidate.id);
   }
+  // An elicitation form cannot carry audio: it names the staged file whose bytes the digest covers.
+  const previews = candidates
+    .filter((c) => c.mediaType.startsWith("audio/") && verified.has(c.id))
+    .map((c) => ({
+      candidate: c.id,
+      file: pathToFileURL(join(runDir, readRecordPath(c.file, "staged file"))).href,
+      sha256: c.sha256,
+    }));
   const hashes = candidates.filter((c) => verified.has(c.id)).map((c) => c.sha256);
   const matches = (await exactMatches(run.profile, resolve(args.target), hashes)).filter(
     (m) => m.assetId !== current.assetId || m.sha256 !== current.sha256,
@@ -173,6 +182,7 @@ export async function pickRequest(args: PickArgs, usageInput?: UsageInput): Prom
       run: runDir,
       contactSheet: run.contactSheet ? join(runDir, run.contactSheet) : null,
       candidates: ids,
+      ...(previews.length > 0 && { previews }),
       ...(args.candidate !== undefined && { candidate: args.candidate }),
       target: body.target,
       ...(current.sha256 !== undefined && {

@@ -12,6 +12,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { libraryPath } from "../library/paths.ts";
 import { PlanChangedError } from "../planning.ts";
 import { readRun } from "../loop.ts";
@@ -150,6 +151,51 @@ export class TreeServer {
           description: `Staged candidate ${c.id}, sha256 ${c.sha256}`,
         };
       });
+  }
+
+  /**
+   * Previews of the run's audio candidates. The preview is the staged master itself, so its bytes
+   * are the ones the pick digest covers: inline `audio` under the read cap, else a `file://` link.
+   * A candidate whose bytes are missing or no longer match its record gets none.
+   */
+  async candidatePreviews(runDir: string) {
+    let run;
+    try {
+      run = await readRun(runDir);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(run.candidates)) return [];
+    const previews = [];
+    for (const c of run.candidates) {
+      if (typeof c.id !== "string" || typeof c.file !== "string") continue;
+      if (typeof c.mediaType !== "string" || !c.mediaType.startsWith("audio/")) continue;
+      let file: string;
+      let bytes: Buffer;
+      try {
+        file = libraryPath(runDir, runDir, c.file, c.id);
+        bytes = await readFile(file);
+      } catch {
+        continue;
+      }
+      if (sha256Hex(bytes) !== c.sha256) continue;
+      if (base64Length(bytes.length) <= READ_LIMIT) {
+        previews.push({
+          type: "audio" as const,
+          data: bytes.toString("base64"),
+          mimeType: c.mediaType,
+        });
+      } else {
+        previews.push({
+          type: "resource_link" as const,
+          uri: pathToFileURL(file).href,
+          name: `${c.id} preview`,
+          mimeType: c.mediaType,
+          description: `Preview of staged candidate ${c.id}, sha256 ${c.sha256}, ${bytes.length} bytes: over the 64 KB read cap; play the file`,
+        });
+      }
+    }
+    return previews;
   }
 
   private async candidateRead(uri: string) {
