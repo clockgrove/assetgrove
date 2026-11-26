@@ -1,6 +1,7 @@
 import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { basename, dirname } from "node:path";
 import { paletteReads } from "../call-parameters.ts";
+import { withSettingsLoudness } from "../audio/profile.ts";
 import { InputError } from "../errors.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
@@ -47,7 +48,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const capUsd = runCap(args.cap, ctx.settings);
   const spec = await readJson<AssetSpec>(args.spec);
   const bible = await loadStyleBible(args.bible);
-  const profile = await loadProfile(args.profile);
+  const loaded = await loadProfile(args.profile);
+  const profile = {
+    ...loaded,
+    value: withSettingsLoudness(loaded.value, ctx.settings.audio?.loudness),
+  };
   // Every asset kind of the registry: core's (still, sprite-strip, character-3d) and the loaded
   // extensions'.
   const registry = ctx.extensions ?? CORE_REGISTRY;

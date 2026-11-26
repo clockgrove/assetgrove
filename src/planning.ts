@@ -1,3 +1,4 @@
+import { AUDIO_KINDS, audioSettings } from "./audio/profile.ts";
 import { evaluateProjectRules, enforceProjectRules } from "./project-rules.ts";
 import type { RuleFinding } from "./project-rules.ts";
 import {
@@ -507,6 +508,7 @@ async function prepare(options: CreatePlanOptions, choices?: PlanChoices): Promi
   const frameCount = strip ? (spec.frames?.count ?? 1) : 1;
   // Plan and apply make images: a model or audio kind is not planned, whatever its frames.
   const media = mediaOf(spec.kind, kinds);
+  if ((AUDIO_KINDS as readonly string[]).includes(spec.kind)) audioSettings(profile);
   if (media !== undefined && media !== "image")
     throw new InputError(
       `plan makes images; asset kind ${spec.kind} is ${media === "audio" ? "an" : "a"} ${media} kind, so stage it instead`,

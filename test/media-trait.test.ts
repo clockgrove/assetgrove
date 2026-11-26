@@ -91,6 +91,8 @@ test("core's kinds declare their media; a pack kind without one is an image kind
   assert.equal(mediaOf("still", CORE_REGISTRY), "image");
   assert.equal(mediaOf("sprite-strip", CORE_REGISTRY), "image");
   assert.equal(mediaOf("character-3d", CORE_REGISTRY), "model");
+  for (const kind of ["sfx", "ambience", "music"])
+    assert.equal(mediaOf(kind, CORE_REGISTRY), "audio");
   assert.equal(mediaOf("fx:sound", registry), "audio");
   assert.equal(mediaOf("fx:plain", registry), "image");
   assert.equal(mediaOf("fx:nothing", registry), undefined);
