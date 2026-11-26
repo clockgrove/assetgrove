@@ -128,7 +128,8 @@ compares measured dimensions numerically; `=`, `!=`, `<`, `<=`, `>` and `>=` are
 way, and `form` (a music card's `track` or `cue`) is a string field: `find "victory" --where
 kind=music --where 'durationS<20'` finds a 15-second victory cue. A music card's `form` and
 `tempo` are machine fields, copied from its spec at pick (`tempo` is the loop's bpm, else the
-spec's `bpm`); the form is also card text, with the title, labels, kind and subject.
+spec's `bpm`); the form is also card text, with the title, labels, kind and subject. On a card
+of any other kind, `form` and `tempo` stay person fields, which `card edit --field` may set.
 `mediaType=image/png` filters the measured type. Results include `mediaSha256`, `mediaStatus`
 and, when unavailable, `mediaReason`; `mediaStatus=unavailable` lists missing or unmeasurable
 evidence. An absent dimension never satisfies a dimension filter, including `!=`. An unsupported

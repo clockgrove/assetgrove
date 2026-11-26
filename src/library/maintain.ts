@@ -15,7 +15,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Provenance, TargetProfile } from "../types.ts";
 import { sha256Hex } from "./canonical.ts";
 import {
-  MACHINE_FIELDS,
+  machineFieldsOf,
   isCardText,
   machineFields,
   parseCard,
@@ -281,8 +281,8 @@ async function expectedFields(
       animationFamily: data["animationFamily"],
     }),
     // A music card's form and requested tempo come from its spec, which only the card keeps.
-    ...(typeof data["form"] === "string" && { form: data["form"] }),
-    ...(typeof data["tempo"] === "number" && { tempo: data["tempo"] }),
+    ...(data["kind"] === "music" && typeof data["form"] === "string" && { form: data["form"] }),
+    ...(data["kind"] === "music" && typeof data["tempo"] === "number" && { tempo: data["tempo"] }),
     assetgrove: byMatch?.[1] ?? assetgroveVersion(),
   });
   // A manifest outside the library root is not readable here; its card is the only projection.
@@ -400,7 +400,7 @@ export async function readLibrary(
       if (fields) {
         const next = rewriteMachineFields(asset.card.parsed, fields, asset.cardPath);
         expected.push({ path: asset.cardPath, kind: "card", text: writeCard(next) });
-        const differs = MACHINE_FIELDS.some((key) => {
+        const differs = machineFieldsOf(asset.card.parsed.data["kind"]).some((key) => {
           // Older cards can omit the additive origin projection and request a rebuild.
           if (key === "origin" && !Object.hasOwn(asset.card!.parsed.data, key)) return false;
           return !isDeepStrictEqual(asset.card!.parsed.data[key], next.data[key]);

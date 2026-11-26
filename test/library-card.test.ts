@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { InputError } from "../src/errors.ts";
 import { FormatError } from "../src/formats.ts";
 import {
+  CardFieldOwnedError,
   MACHINE_FIELDS,
   checkCardPaths,
   isCardText,
@@ -10,6 +11,7 @@ import {
   newCard,
   parseCard,
   rewriteMachineFields,
+  setPersonFields,
   writeCard,
   type MachineInput,
 } from "../src/library/card.ts";
@@ -112,6 +114,25 @@ test("rewriting machine fields keeps person fields, unknown fields and the body"
   assert.equal(after.data["version"], 2);
   const text = writeCard(after);
   assert.equal(writeCard(rewriteMachineFields(parseCard(text, "c.md"), fields, "c.md")), text);
+});
+
+test("form and tempo are machine fields on a music card only; elsewhere a person's", () => {
+  const still = parseCard(CARD.replace("kind: still", "kind: still\nform: round\ntempo: 3"), "c.md");
+  const fields = machineFields(input());
+  const kept = rewriteMachineFields(still, fields, "c.md");
+  assert.equal(kept.data["form"], "round");
+  assert.equal(kept.data["tempo"], 3);
+  const edited = setPersonFields(still, { form: "square", tempo: "slow" }, undefined, "c.md");
+  assert.equal(edited.data["form"], "square");
+  assert.equal(edited.data["tempo"], "slow");
+
+  const music = parseCard(CARD.replace("kind: still", "kind: music\nform: cue\ntempo: 120"), "c.md");
+  for (const key of ["form", "tempo"]) {
+    assert.throws(() => setPersonFields(music, { [key]: "x" }, undefined, "c.md"), CardFieldOwnedError);
+  }
+  const rebuilt = rewriteMachineFields(music, { ...fields, kind: "music", form: "track" }, "c.md");
+  assert.equal(rebuilt.data["form"], "track");
+  assert.equal(rebuilt.data["tempo"], undefined);
 });
 
 test("a card already matching its records keeps its bytes", () => {

@@ -120,8 +120,10 @@ export async function createLibraryReader(options: {
       const data = asset.card.data as Record<string, unknown>;
       const str = (k: string) =>
         typeof data[k] === "string" && data[k] !== "" ? (data[k] as string) : undefined;
-      const form = str("form");
-      const tempo = typeof data["tempo"] === "number" ? data["tempo"] : undefined;
+      // Form and tempo are machine fields on a music card only; elsewhere they are a person's.
+      const music = data["kind"] === "music";
+      const form = music ? str("form") : undefined;
+      const tempo = music && typeof data["tempo"] === "number" ? data["tempo"] : undefined;
       const declared = data["origin"];
       const record =
         declared && typeof declared === "object" ? (declared as Record<string, unknown>) : {};
