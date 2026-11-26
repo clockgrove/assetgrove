@@ -123,6 +123,19 @@ test("a generation goes through the injected fetch and returns WAV with the tier
   assert.equal(Buffer.from(result.audio.bytes.subarray(0, 4)).toString(), "RIFF");
 });
 
+test("a sound-generation answer keeps the media type ElevenLabs sent, so intake names it", async () => {
+  const { fetch } = script({
+    tier: "pro",
+    sound: () =>
+      new Response(new Uint8Array([0xff, 0xfb, 0x90, 0x00]), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg; charset=binary" },
+      }),
+  });
+  const result = await provider(fetch).generateAudio({ model: MODEL, prompt: "a bell" });
+  assert.equal(result.audio.mediaType, "audio/mpeg");
+});
+
 test("the default sample rate is 44100 on a Pro account, and a missing request id is local", async () => {
   const { seen, fetch } = script({
     tier: "pro",

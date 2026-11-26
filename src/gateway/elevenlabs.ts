@@ -149,8 +149,10 @@ export class ElevenLabsProvider implements GenerationProvider {
       const bytes = new Uint8Array(await new Response(data).arrayBuffer());
       const reported =
         rawResponse.headers.get("request-id") ?? rawResponse.headers.get("x-request-id");
+      // The vendor's own label, so intake's WAV check names what it actually sent.
+      const mediaType = (rawResponse.headers.get("content-type") ?? "").split(";")[0]!.trim();
       return {
-        audio: { mediaType: "audio/wav", bytes },
+        audio: { mediaType: mediaType || "audio/wav", bytes },
         plan: tier,
         requestId: reported ?? randomUUID(),
         ...(reported === null && { requestIdSource: "local" as const }),
