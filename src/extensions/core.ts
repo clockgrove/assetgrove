@@ -4,6 +4,7 @@
  */
 import type { EnginePreset, Extension } from "../extension/api.ts";
 import { EXTENSION_API } from "../extension/api.ts";
+import { audioGenerators } from "../audio/kinds.ts";
 import { imageGenerators } from "../generators/image.ts";
 import { asepriteJsonPreset } from "../handoff/presets/aseprite-json.ts";
 import { atlasJsonPreset } from "../handoff/presets/atlas-json.ts";
@@ -16,7 +17,7 @@ export const CORE_EXTENSION_NAME = "core";
 export const coreExtension: Extension = {
   api: EXTENSION_API,
   name: CORE_EXTENSION_NAME,
-  kinds: [...imageGenerators, character3dGenerator],
+  kinds: [...imageGenerators, character3dGenerator, ...audioGenerators],
   presets: [manifestPreset, atlasJsonPreset, asepriteJsonPreset] as EnginePreset[],
   adapters: [...CORE_ADAPTERS],
 };

@@ -44,6 +44,12 @@ interface InitJson {
   files: Array<{ path: string; role: string; status: string }>;
   steps: Array<{ id: string; status: string; tool?: string; detail: string }>;
   providers: unknown;
+  audioQuestions: Array<{
+    field: string;
+    question: string;
+    offered: Record<string, number>;
+    source: string;
+  }>;
   conflicts: string[];
   error: { code: string };
 }
@@ -128,6 +134,23 @@ async function checkSkill(path: string): Promise<void> {
   assert.ok((data.description as string).length <= 1024, `${path}: description length`);
   assert.ok(text.split("\n").length < 500, `${path}: under 500 lines`);
 }
+
+test("init asks for audio.loudness, offering the EBU R128 reference and writing nothing", async () => {
+  const dir = tempDir();
+  const result = await cli(initArgs(dir));
+  assert.equal(result.code, 0, result.stderr);
+  const [question, ...rest] = result.json.audioQuestions;
+  assert.equal(rest.length, 0);
+  assert.equal(question!.field, "audio.loudness");
+  assert.deepEqual(question!.offered, { target: -23, truePeakCeiling: -1 });
+  assert.match(question!.question, /no default/);
+  assert.match(question!.question, /settings' audio\.loudness/);
+  assert.match(question!.source, /EBU R 128/);
+  const profile = JSON.parse(await readFile(join(dir, ".assetgrove", "profile.json"), "utf8"));
+  assert.equal(profile.audio, undefined);
+  const human = await cli(initArgs(tempDir()).filter((a) => a !== "--json"));
+  assert.match(human.stdout, /Audio questions:\n- audio\.loudness: .*-23/);
+});
 
 test("a second run changes nothing and reports done", async () => {
   const dir = tempDir();

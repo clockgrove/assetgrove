@@ -205,6 +205,8 @@ export interface TargetProfile {
   spend?: { dailyLimitUsd?: number; workItemLimitUsd?: number };
   /** 3D characters: format, budgets, forward axis, units and turntable (docs/characters-3d.md). */
   model3d?: import("./model3d/profile.ts").Model3dProfile;
+  /** Audio kinds: sample rate, channels, tolerances and the `loudness` block (docs/target-profile.md). */
+  audio?: import("./audio/profile.ts").AudioProfile;
   /** Motion templates the target adds or overrides, and the animation QA thresholds. */
   animation?: import("./animation/types.ts").AnimationProfile;
   /**

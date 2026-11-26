@@ -155,6 +155,37 @@ An icon spec can then be `{ "kind": "still", "assetId": "acorn" }`. If the globa
 
 Each override path must stay under the library root. Loading a profile refuses an escaping override as invalid input, naming the kind and the `media` or `manifest` field. The load check fills `{{profile.*}}` from the profile's `values` and `name`, so a profile value that leads outside is refused there too; values known only at hand-off are checked again before spend and when the hand-off writes. The root is the explicit `library.root`, or the prefix derived from the top-level `layout.media`; overrides do not change it. A profile with an override and neither is refused when it loads, naming `kinds.<kind>.layout.media`. `init` writes only the top-level layout and no kind override.
 
+## Audio
+
+An optional top-level `audio` block sets what the audio kinds' masters are made to and checked against (see `docs/PRD-audio.md`). Every field but `loudness` has a default.
+
+| Field                | Meaning                                                                              | Default                                   |
+| -------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------- |
+| `sampleRate`         | Hz, an integer of at least 1000.                                                     | 44100 (Godot's mix rate)                  |
+| `bitDepth`           | `"8"`, `"16"`, `"24"`, `"32"`, `"32f"` or `"64"`.                                    | `"16"`                                    |
+| `channels`           | `{ sfx, ambience, music }`, each `mono` or `stereo`.                                 | `sfx` mono; `ambience` and `music` stereo |
+| `loudness`           | `target` (LUFS), `tolerance` (LU), `truePeakCeiling` (dBTP), `encoderHeadroom` (dB). | none                                      |
+| `durationToleranceS` | Seconds a track or cue may sit from its brief's duration.                            | 0.5                                       |
+| `silenceLimitMs`     | The most leading or trailing silence an `sfx` may keep, in milliseconds.             | 50                                        |
+| `setSpreadLu`        | LU a variant set's member may sit from the set's median loudness.                    | 2                                         |
+
+`loudness` has no default, because a loudness target is a decision about the game, not a property of audio. A request of an audio kind on a profile without `audio.loudness` is refused at plan (exit 2, `invalid_input`) with a message naming the block, before any spend. A headless setup may set it in the [developer settings](settings.md) as `audio.loudness` instead; the profile's own block wins when both exist. `init` asks for the block and offers the EBU R128 reference, -23 LUFS integrated and a -1 dBTP true-peak ceiling ([EBU R 128](https://tech.ebu.ch/publications/r128)); it never writes it. An unknown field, or a value out of range, is refused naming `audio.<field>`.
+
+```json
+{
+  "audio": {
+    "loudness": { "target": -23, "tolerance": 1, "truePeakCeiling": -1, "encoderHeadroom": 1 }
+  }
+}
+```
+
+### Audio specs
+
+- `sfx`: `brief` and `maxDurationS` (above 0, at most 30). The master is trimmed, faded and gained to `loudness.target` by its maximum momentary loudness.
+- `ambience`: `brief` and `loopS`, the loop length in seconds. The master has exactly `floor(loopS x sampleRate)` frames.
+- `music`: `brief` and `form`, `track` or `cue`; `durationS`, required unless the track sets `loop`; `loop` as `{ bpm, bars, beatsPerBar }`, a track only (a cue is refused with it). `instrumentation`, `sections`, `theme`, `bpm`, `meter` and `key` are optional, sent in the prompt and recorded as requested, never measured.
+- A spec's `maxDurationS`, `loopS` and `loop` are checked against the master's measured length; the candidate's `fields.audio` records the steps run, the master's format and loudness, and, if a step refused (a gain that would pass the true-peak ceiling), `refused`, which fails `audio:loudness`. An `sfx` shorter than the 400 ms momentary window skips `gain`, and true peak alone judges it.
+
 ## Library
 
 An optional `library` block says where the asset library sits and what it is called; every field is optional.

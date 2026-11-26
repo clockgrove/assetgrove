@@ -6,6 +6,7 @@
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { stringify } from "yaml";
+import { EBU_R128_REFERENCE } from "./audio/profile.ts";
 import { ART_DIRECTION_SKILL, BIBLE_PRESETS, serializeBible } from "./bible.ts";
 import { routeDataFlows, type RouteDataFlow } from "./dataflows.ts";
 import type { Env } from "./env.ts";
@@ -121,6 +122,16 @@ export interface BibleQuestion {
   question: string;
 }
 
+/** A question for the audio block the developer answers; the agent puts it to them. */
+export interface AudioQuestion {
+  field: string;
+  question: string;
+  /** The values init offers, never writes. */
+  offered: Record<string, number>;
+  /** Where the offered numbers come from. */
+  source: string;
+}
+
 /** One adapter a loaded extension pack brings, with where its data goes and the key it needs. */
 export interface PackAdapter {
   adapter: string;
@@ -150,6 +161,7 @@ export interface InitResult {
   adapters: PackAdapter[];
   packSettings: PackSettings[];
   bibleQuestions: BibleQuestion[];
+  audioQuestions: AudioQuestion[];
   providers: RouteDataFlow[];
   files: InitFile[];
 }
@@ -177,6 +189,22 @@ export const BIBLE_QUESTIONS: readonly BibleQuestion[] = [
     field: "referenceLicense",
     question:
       "Under what licence are your reference images (an SPDX id, LicenseRef-* or NOASSERTION)?",
+  },
+];
+
+/**
+ * The questions for the audio block (docs/PRD-audio.md, "Loudness"). The loudness block has no
+ * default: init offers the EBU R128 reference and writes nothing.
+ */
+export const AUDIO_QUESTIONS: readonly AudioQuestion[] = [
+  {
+    field: "audio.loudness",
+    question: `What loudness should audio masters have: the target (LUFS), the tolerance (LU), the true-peak ceiling (dBTP) and the encoder headroom (dB)? EBU R128's reference is ${EBU_R128_REFERENCE.target} LUFS and ${EBU_R128_REFERENCE.truePeakCeiling} dBTP. The block has no default: put the answer in the target profile's audio.loudness, or in the developer settings' audio.loudness for a headless setup. Audio kinds are refused at plan without it.`,
+    offered: {
+      target: EBU_R128_REFERENCE.target,
+      truePeakCeiling: EBU_R128_REFERENCE.truePeakCeiling,
+    },
+    source: EBU_R128_REFERENCE.source,
   },
 ];
 
@@ -529,6 +557,7 @@ export async function initProject(
     adapters: packAdapters,
     packSettings,
     bibleQuestions: [...BIBLE_QUESTIONS],
+    audioQuestions: AUDIO_QUESTIONS.map((q) => ({ ...q, offered: { ...q.offered } })),
     providers: routeDataFlows(context.settings, {
       ...(context.env && { env: context.env }),
       adapters,

@@ -1,7 +1,9 @@
 import { nearMatchesFor, subjectReferencePaths } from "../search/near-match.ts";
 import { basename, dirname } from "node:path";
 import { paletteReads } from "../call-parameters.ts";
+import { withSettingsLoudness } from "../audio/profile.ts";
 import { InputError } from "../errors.ts";
+import { canonicalJson, sha256Hex } from "../library/canonical.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
 import { DEFAULT_CANDIDATES, planStage, stage } from "../loop.ts";
@@ -47,7 +49,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
   const capUsd = runCap(args.cap, ctx.settings);
   const spec = await readJson<AssetSpec>(args.spec);
   const bible = await loadStyleBible(args.bible);
-  const profile = await loadProfile(args.profile);
+  const loaded = await loadProfile(args.profile);
+  const profile = {
+    ...loaded,
+    value: withSettingsLoudness(loaded.value, ctx.settings.audio?.loudness),
+  };
   // Every asset kind of the registry: core's (still, sprite-strip, character-3d) and the loaded
   // extensions'.
   const registry = ctx.extensions ?? CORE_REGISTRY;
@@ -80,6 +86,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
     near,
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile"],
+    // The effective loudness block (the profile's, else the developer settings') sets the master's
+    // gain and which candidates pass, so a request made to another loudness is another request.
+    ...(profile.value.audio?.loudness !== undefined && {
+      hashes: { "profile/audio.loudness": sha256Hex(canonicalJson(profile.value.audio.loudness)) },
+    }),
     // The candidate prompts name the subject (the asset id when the spec has no subject), so the
     // plan step checks it, free, before the spend is confirmed.
     promptText: [subjectOf(spec.value), ...(args.note !== undefined ? [args.note] : [])],

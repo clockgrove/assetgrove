@@ -9,6 +9,8 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "n
 import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { z } from "zod";
+import { audioLoudnessSchema } from "./audio/profile.ts";
+import type { AudioLoudness } from "./audio/profile.ts";
 import { configHome, configOverride, SettingsError, stateHome, type Env } from "./env.ts";
 import { FormatError, formatLine, readFormat } from "./formats.ts";
 import { grantProblems } from "./license.ts";
@@ -193,6 +195,8 @@ const settingsSchema = z.strictObject({
     .record(name, z.strictObject({ method: name, at: name, client: z.string().optional() }))
     .optional(),
   search: searchSchema.optional(),
+  /** A headless setup's `audio.loudness`, used where the target profile has none. */
+  audio: z.strictObject({ loudness: audioLoudnessSchema.optional() }).optional(),
 });
 
 /** The fields core reads in a `providers.<id>` entry; a pack adapter's entry may carry more. */
@@ -256,6 +260,11 @@ export interface Settings {
   confirmedBy: NonNullable<SettingsFile["confirmedBy"]>;
   /** The search block (design section 7.2), its defaults filled; absent when the file has none. */
   search?: SearchSettings;
+  /**
+   * The `audio.loudness` block a headless setup sets (docs/PRD-audio.md, "Loudness"): audio kinds
+   * use it where the target profile has no `audio.loudness`; a profile's own block wins.
+   */
+  audio?: { loudness?: AudioLoudness };
 }
 
 /** The credential variable names a remote store takes, per scheme. */
@@ -518,6 +527,7 @@ function complete(
     ...(file.contentCredentials && { contentCredentials: file.contentCredentials }),
     confirmedBy: file.confirmedBy ?? {},
     ...(file.search && { search: completeSearch(file.search) }),
+    ...(file.audio && { audio: file.audio }),
   };
 }
 

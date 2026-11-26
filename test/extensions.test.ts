@@ -95,7 +95,14 @@ async function inputs(dir: string): Promise<string[]> {
 test("core registers its kinds, presets and adapters through the extension contract", () => {
   const [core] = CORE_REGISTRY.loaded;
   assert.equal(core?.name, "core");
-  assert.deepEqual(core?.kinds, ["still", "sprite-strip", "character-3d"]);
+  assert.deepEqual(core?.kinds, [
+    "still",
+    "sprite-strip",
+    "character-3d",
+    "sfx",
+    "ambience",
+    "music",
+  ]);
   assert.deepEqual(core?.presets, ["manifest", "atlas-json", "aseprite-json"]);
   assert.deepEqual(
     [...(core?.adapters ?? [])].sort(),
