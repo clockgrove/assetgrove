@@ -11,7 +11,8 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { decodeAudio, encodeWav } from "../src/audio/engine.ts";
-import { sfxGenerator, variantIds } from "../src/audio/kinds.ts";
+import { setLoudness } from "../src/audio/checks.ts";
+import { sfxGenerator } from "../src/audio/kinds.ts";
 import { audioSetSpread } from "../src/audio/profile.ts";
 import {
   AUDIO_SCRIPT,
@@ -35,9 +36,32 @@ const spec = (n: number, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-test("variantIds plans a set's member ids in order", () => {
-  assert.deepEqual(variantIds("footstep", 3), ["footstep-01", "footstep-02", "footstep-03"]);
-  assert.equal(variantIds("hit", 12)[11], "hit-12");
+test("a set member under the 400 ms momentary window passes, judged by true peak alone", () => {
+  const reasons = setLoudness(
+    [
+      { id: "tick-01", loudness: null, shortMs: 250 },
+      { id: "tick-02", loudness: null, shortMs: 250 },
+    ],
+    2,
+  );
+  assert.deepEqual(
+    reasons.map((r) => r.passed),
+    [true, true],
+  );
+  assert.match(reasons[0]!.reason, /^tick-01 is 250\.00 ms, under the 400 ms .*true peak alone/);
+  // A short member stays out of the median the longer members are compared with.
+  const mixed = setLoudness(
+    [
+      { id: "hit-01", loudness: -20, shortMs: 100 },
+      { id: "hit-02", loudness: -14 },
+      { id: "hit-03", loudness: -14.5 },
+    ],
+    2,
+  );
+  assert.deepEqual(
+    mixed.map((r) => r.passed),
+    [true, true, true],
+  );
 });
 
 test("a variant's assetId must be <subject>-NN, and the refusal names it", () => {
@@ -105,6 +129,15 @@ test("audit's loudness check passes a variant set and fails the member 6 dB quie
     const { staged } = await pickedAudio(p, spec(n));
     assert.equal(staged["candidates"][0].fields.audio.requested.variant, n);
   }
+  // A music cue sharing the subject is not a member of the sfx variant set.
+  await pickedAudio(p, {
+    kind: "music",
+    assetId: "footstep-theme",
+    subject: "footstep",
+    brief: "a walking theme",
+    form: "cue",
+    durationS: 1,
+  });
 
   await mkdir(join(p.target, ".assetgrove"), { recursive: true });
   await copyFile(p.profilePath, join(p.target, ".assetgrove", "profile.json"));
@@ -117,7 +150,7 @@ test("audit's loudness check passes a variant set and fails the member 6 dB quie
   assert.equal(set.subject, "footstep");
   assert.deepEqual(
     set.members.map((m: { id: string }) => m.id),
-    variantIds("footstep", 3),
+    ["footstep-01", "footstep-02", "footstep-03"],
   );
   assert.deepEqual(
     set.reasons.map((r: { check: string; passed: boolean }) => [r.check, r.passed]),
@@ -144,4 +177,41 @@ test("audit's loudness check passes a variant set and fails the member 6 dB quie
   const byDefault = await audit(p);
   assert.equal(byDefault.code, 0, byDefault.stdout + byDefault.stderr);
   assert.equal(doc(byDefault).loudness[0].reasons.length, 3);
+
+  // The profile's spread is part of the request: changing it is a new audit, not the old result.
+  const profileFile = join(p.target, ".assetgrove", "profile.json");
+  const profile = JSON.parse(await readFile(profileFile, "utf8"));
+  await writeFile(
+    profileFile,
+    JSON.stringify({ ...profile, audio: { ...profile.audio, setSpreadLu: 0 } }),
+  );
+  const tighter = await audit(p, "--checks", "loudness");
+  assert.equal(tighter.code, 0, tighter.stdout + tighter.stderr);
+  assert.notEqual(doc(tighter).reused, true);
+  assert.equal(doc(tighter).loudness[0].spreadLu, 0);
+});
+
+test("audit passes a variant set of one-shots under 400 ms, judged by true peak alone", async () => {
+  useAttended();
+  const p = await audioProject();
+  for (const n of [1, 2]) await pickedAudio(p, spec(n));
+  await mkdir(join(p.target, ".assetgrove"), { recursive: true });
+  await copyFile(p.profilePath, join(p.target, ".assetgrove", "profile.json"));
+  // Cut each member to 0.25 s: integrated and momentary loudness are undefined for such a clip.
+  for (const id of ["footstep-01", "footstep-02"]) {
+    const file = wavOf(p.target, id);
+    const item = decodeAudio(new Uint8Array(await readFile(file)));
+    const frames = Math.round(item.sampleRate * 0.25);
+    item.channels = item.channels.map((c) => c.slice(0, frames));
+    await writeFile(file, encodeWav(item));
+  }
+  const run = await audit(p, "--checks", "loudness");
+  assert.equal(run.code, 0, run.stdout + run.stderr);
+  const reasons = doc(run).loudness[0].reasons as { passed: boolean; reason: string }[];
+  assert.deepEqual(
+    reasons.map((r) => r.passed),
+    [true, true],
+  );
+  for (const r of reasons)
+    assert.match(r.reason, /under the 400 ms momentary window.*true peak alone/);
 });

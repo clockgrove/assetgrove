@@ -16,9 +16,11 @@ import {
   SET_LOUDNESS_CHECK,
   medianLoudness,
   memberLoudness,
+  shortClipMs,
   setLoudness,
 } from "../audio/checks.ts";
 import { audioSetSpread } from "../audio/profile.ts";
+import { canonicalJson, sha256Hex } from "../library/canonical.ts";
 import { folderChildren, resolveMembers } from "../audit/members.ts";
 import type { Member } from "../audit/members.ts";
 import { loadBible } from "../bible.ts";
@@ -69,6 +71,9 @@ export type AuditCheck = (typeof AUDIT_CHECKS)[number];
 
 /** The free check of a folder's audio members: each variant set's loudness spread. */
 export const LOUDNESS_CHECK = "loudness";
+
+/** The one kind whose assets form variant sets. */
+const SFX_KIND = "sfx";
 export type AuditRequest = AuditCheck | typeof LOUDNESS_CHECK;
 
 /** The operation each score's call runs on. */
@@ -115,10 +120,12 @@ async function prepare(args: AuditArgs, ctx: RunContext) {
   const addresses = await folderChildren(project, args.set, "audit");
   const members = await resolveMembers(project, addresses);
   const images = members.filter((m) => m.image !== undefined);
-  const audio = members.filter((m) => m.audio !== undefined);
+  // A variant set is `sfx` assets sharing a subject (docs/PRD-audio.md "Kinds"); other audio is
+  // not judged by set loudness.
+  const audio = members.filter((m) => m.audio !== undefined && m.kind === SFX_KIND);
   if (images.length === 0 && audio.length === 0)
     throw new InputError(
-      `audit ${args.set}: the folder holds no asset with a local image or audio`,
+      `audit ${args.set}: the folder holds no asset with a local image or sfx audio`,
     );
   const explicit = (args.checks ?? []).length > 0;
   // By default the images get style and identity and the audio its set loudness.
@@ -132,7 +139,7 @@ async function prepare(args: AuditArgs, ctx: RunContext) {
   if (scoresImages && images.length === 0)
     throw new InputError(`audit ${args.set}: the folder holds no asset with a local image`);
   if (checks.includes(LOUDNESS_CHECK) && audio.length === 0)
-    throw new InputError(`audit ${args.set}: the folder holds no audio asset to check loudness`);
+    throw new InputError(`audit ${args.set}: the folder holds no sfx asset to check loudness`);
   const loudness = checks.includes(LOUDNESS_CHECK) ? audio : [];
   const biblePath = args.bible ?? join(project.dir, BIBLE_PATH);
   const bible: BibleDocument | undefined =
@@ -178,6 +185,12 @@ async function prepare(args: AuditArgs, ctx: RunContext) {
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: [],
     reads,
+    // The spread every set is judged within is the profile's, so a changed spread is a new request.
+    ...(loudness.length > 0 && {
+      hashes: {
+        "profile/audio.setSpreadLu": sha256Hex(canonicalJson(audioSetSpread(project.profile))),
+      },
+    }),
     jobs,
     capUsd,
     paid: paidBy(providers, jobs),
@@ -257,7 +270,8 @@ export interface LoudnessSet {
   subject: string;
   spreadLu: number;
   median: number | null;
-  members: { address: string; id: string; loudness: number | null }[];
+  /** `shortMs`: an sfx under the 400 ms momentary window, judged by true peak alone. */
+  members: { address: string; id: string; loudness: number | null; shortMs?: number }[];
   reasons: Reason[];
 }
 
@@ -379,7 +393,7 @@ export function auditFiltering(
   ];
 }
 
-/** Each variant set of the audio members: grouped by subject, ordered by asset id, judged against its median. */
+/** Each variant set of the `sfx` members: grouped by subject, ordered by asset id, judged against its median. */
 function loudnessSets(audio: Member[], spreadLu: number): LoudnessSet[] {
   const groups = new Map<string, Member[]>();
   for (const m of audio) {
@@ -393,8 +407,11 @@ function loudnessSets(audio: Member[], spreadLu: number): LoudnessSet[] {
       const members = group
         .map((m) => {
           let loudness: number | null = null;
+          let shortMs: number | undefined;
           try {
-            loudness = memberLoudness(m.kind ?? "sfx", decodeWav(m.audio!.bytes));
+            const audio = decodeWav(m.audio!.bytes);
+            shortMs = shortClipMs(SFX_KIND, audio);
+            if (shortMs === undefined) loudness = memberLoudness(SFX_KIND, audio);
           } catch {
             // A WAV that does not decode has no loudness; the check fails it by name.
           }
@@ -402,6 +419,7 @@ function loudnessSets(audio: Member[], spreadLu: number): LoudnessSet[] {
             address: m.address,
             id: parseAddress(m.address).segments.join("/"),
             loudness: loudness !== null && Number.isFinite(loudness) ? loudness : null,
+            ...(shortMs !== undefined && { shortMs }),
           };
         })
         .sort((a, b) => a.id.localeCompare(b.id));
@@ -411,7 +429,11 @@ function loudnessSets(audio: Member[], spreadLu: number): LoudnessSet[] {
         median: medianLoudness(members.map((m) => m.loudness)),
         members,
         reasons: setLoudness(
-          members.map((m) => ({ id: m.id, loudness: m.loudness })),
+          members.map(({ id, loudness, shortMs }) => ({
+            id,
+            loudness,
+            ...(shortMs !== undefined && { shortMs }),
+          })),
           spreadLu,
         ),
       };
@@ -433,10 +455,11 @@ against the set-consistency bar docs/decisions.md records, the members beyond it
 size, or with no bar, it judges nothing. Each score is advisory until its check has a qualifying
 entry in the stability file. With the search package loaded it adds the set's free embedding ranking, uncut (outliers:
 {members, ranking}); it judges no style: find --outliers does.
-Audio members (WAV) are grouped by subject, each group one variant set, and judged by the free
-loudness check (audio:set-loudness): every member within the profile's audio.setSpreadLu (default
-2 LU) of the set's median, with no model call. With no --checks, images get style and identity and
-audio gets loudness.
+Sound effects (sfx members with a WAV) are grouped by subject, each group one variant set, and
+judged by the free loudness check (audio:set-loudness): every member within the profile's
+audio.setSpreadLu (default 2 LU) of the set's median momentary maximum, with no model call; a clip
+under the 400 ms momentary window passes, judged by true peak alone. Other audio kinds are not
+judged. With no --checks, images get style and identity and sfx get loudness.
 Writes audit.json and audit-sheet.png (members numbered weakest first, numbers only) to the run
 directory and nothing into the project. Asks for spend once; the same request again returns the
 finished run (reused true) with no provider call. --dry-run prints the planned calls and the
