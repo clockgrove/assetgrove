@@ -279,7 +279,12 @@ function loop(item: AudioItem, params: Record<string, unknown>): AudioOperationR
   if (hasTempo && tempo.some((v) => v === undefined))
     throw new InputError("loop: bars, beatsPerBar and bpm are given together");
   const rate = item.sampleRate;
-  const exact = hasTempo ? ((bars! * beatsPerBar! * 60) / bpm!) * rate : seconds! * rate;
+  // floor(bars × beatsPerBar × 60 / bpm × sampleRate) is real-number arithmetic: multiply before
+  // dividing, then snap a product within rounding error of a whole frame to it, so a whole-sample
+  // length (7 bars of 4 at 150 bpm and 44100 Hz is 493920) is not floored one frame short.
+  const raw = hasTempo ? (bars! * beatsPerBar! * 60 * rate) / bpm! : seconds! * rate;
+  const nearest = Math.round(raw);
+  const exact = Math.abs(raw - nearest) <= 1e-6 ? nearest : raw;
   const length = Math.floor(exact);
   const residual = exact - length;
   const crossfade = Math.round(((params["crossfadeMs"] as number) / 1000) * rate);

@@ -201,6 +201,24 @@ test("loop with whole-sample length: 120 bpm, 4/4, 2 bars at 44100 is 176400 fra
   assert.equal(items[0]!.meta["loop"] !== undefined, true);
 });
 
+test("loop lengths that are whole samples are not floored one frame short", async () => {
+  const cases = [
+    { params: { bars: 7, beatsPerBar: 4, bpm: 150 }, frames: 493920 },
+    { params: { bars: 3, beatsPerBar: 4, bpm: 175 }, frames: 181440 },
+    { params: { seconds: 0.7 }, frames: 30870 },
+  ];
+  for (const { params, frames } of cases) {
+    const { items } = await runAudioOperation([ramp(frames + 1000)], {
+      op: "loop",
+      params: { ...params, crossfadeMs: 10, curve: "equal-gain" },
+    });
+    assert.equal(frameCount(items[0]!), frames, JSON.stringify(params));
+    const meta = items[0]!.meta["loop"] as Record<string, number>;
+    assert.equal(meta["lengthFrames"], frames);
+    assert.equal(meta["residual"], 0);
+  }
+});
+
 test("loop refuses a short overhang and an ambiguous or incomplete length", async () => {
   const base = { crossfadeMs: 100, curve: "equal-gain" };
   await assert.rejects(
