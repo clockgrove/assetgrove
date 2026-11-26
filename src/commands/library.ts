@@ -17,6 +17,7 @@ import {
   adoptHandEdit,
   adoptRequest,
   adoptSource,
+  audioFreeChecks,
   requireMediaType,
   currentProvenance,
   freeChecks,
@@ -603,7 +604,8 @@ failed write, read-back (exit 6 handoff_check_failed) or library write, or a rej
 (exit 6 validator_rejected), records no version and puts back every file it wrote, through
 symbolic links, and remakes a link that pointed at nothing where it wrote a file; a file it could not put back is named in the error. Otherwise the version is appended
 with its confirmation, source type and an adopt annotation, and the card, its lock, the indexes and
-log.md are rewritten. A Git LFS pointer, edited bytes of another media type, a run id that is not
+log.md are rewritten. An edited WAV is judged on its own bytes by the audio kind's master checks (audio:format, audio:duration,
+audio:true-peak, audio:loudness, audio:silence, audio:fake-stereo) under the run's spec and profile (its audio.loudness, else the developer settings'), a failing one exits 5 qa_found_nothing, and the human-edit step records the sample hashes of the original and the edit; audio:fade and audio:loop judge a recipe's steps, which a hand edit lacks, so they are not run and the result's notRun names them with the reason. A Git LFS pointer, edited bytes of another media type, a run id that is not
 one path segment, a missing run or a run without the version's candidate exits 2; an unchanged file
 (the current version's bytes) or bytes of an older version exit 2 version_exists.`,
   input: {
@@ -658,18 +660,29 @@ one path segment, a missing run or a run without the version's candidate exits 2
       return headlessRefusal(request, { asset: before.assetId, sha256: edited.sha256 }, "adopt");
     }
     requireMediaType(before, edited, source);
-    const qa = await freeChecks(
-      edited.bytes,
-      await currentProvenance(before, source, targetDir),
-      args.bible,
-      { style: source.profile.style, original: original.bytes },
-    );
+    const audio =
+      source.mediaType === "audio/wav"
+        ? await audioFreeChecks(edited.bytes, source, ctx.settings.audio?.loudness)
+        : undefined;
+    const qa =
+      audio?.qa ??
+      (await freeChecks(
+        edited.bytes,
+        await currentProvenance(before, source, targetDir),
+        args.bible,
+        { style: source.profile.style, original: original.bytes },
+      ));
     const failed = qa.filter((r) => !r.passed);
     if (failed.length > 0) {
       return refusal(
         "qa_found_nothing",
         `the edited ${before.resource} fails the free QA checks: ${failed.map((r) => `${r.check}: ${r.reason}`).join("; ")}`,
-        { asset: before.assetId, sha256: edited.sha256, qa },
+        {
+          asset: before.assetId,
+          sha256: edited.sha256,
+          qa,
+          ...(audio && { notRun: audio.notRun }),
+        },
         failed.map((r) => `QA ${r.check}: ${r.reason}`).join("\n"),
       );
     }
@@ -708,6 +721,7 @@ one path segment, a missing run or a run without the version's candidate exits 2
     const fields = {
       ...result,
       qa,
+      ...(audio && { notRun: audio.notRun }),
       ...(record && { annotation: annotationFields(record) }),
       confirmation,
     };

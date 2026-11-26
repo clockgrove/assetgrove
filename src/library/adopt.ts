@@ -31,6 +31,10 @@ import type {
 } from "../handoff.ts";
 import type { PresetRegistry } from "../handoff/presets/index.ts";
 import { markableMediaType } from "../handoff/mark-check.ts";
+import { AUDIO_CHECKS } from "../audio/checks.ts";
+import { decodeAudio, sampleHash } from "../audio/engine.ts";
+import { withSettingsLoudness } from "../audio/profile.ts";
+import type { AudioLoudness } from "../audio/profile.ts";
 import { decodeImage } from "../image/raster.ts";
 import type { Raster } from "../image/raster.ts";
 import { loadStyleBible } from "../inputs.ts";
@@ -52,6 +56,7 @@ import type {
   ConfirmationRecord,
   Provenance,
   Reason,
+  StyleBible,
   StyleProfile,
   TargetProfile,
 } from "../types.ts";
@@ -612,6 +617,48 @@ export async function freeChecks(
   return palette === undefined ? reasons.filter((r) => r.check !== "palette") : reasons;
 }
 
+/** The audio checks that judge a master; `audio:fade` and `audio:loop` judge a recipe's steps instead. */
+const AUDIO_MASTER_CHECKS = [
+  "audio:format",
+  "audio:duration",
+  "audio:true-peak",
+  "audio:loudness",
+  "audio:silence",
+  "audio:fake-stereo",
+];
+
+const AUDIO_NOT_RUN = ["audio:fade", "audio:loop"].map((check) => ({
+  check,
+  reason: "judges the recipe's provenance steps, which a hand edit does not have",
+}));
+
+/**
+ * The exact checks of an edited WAV that judge a master, run with the source run's spec and
+ * profile (its `audio.loudness`, else the developer settings'), on the edited bytes alone: the
+ * original's `audio.refused` is dropped. `notRun` names the recipe checks left out and why.
+ */
+export async function audioFreeChecks(
+  bytes: Uint8Array,
+  source: AdoptSource,
+  settingsLoudness: AudioLoudness | undefined,
+): Promise<{ qa: Reason[]; notRun: { check: string; reason: string }[] }> {
+  const fields = { ...source.fields };
+  delete fields["audio"];
+  const input = {
+    spec: source.spec,
+    profile: withSettingsLoudness(source.profile, settingsLoudness),
+    // The audio checks read no style bible.
+    bible: {} as StyleBible,
+    output: { bytes, mediaType: source.mediaType, extension: source.extension, fields },
+  };
+  const qa: Reason[] = [];
+  for (const check of AUDIO_CHECKS) {
+    if (!AUDIO_MASTER_CHECKS.includes(check.name)) continue;
+    qa.push(...(await check.run!(input, undefined as never)));
+  }
+  return { qa, notRun: AUDIO_NOT_RUN };
+}
+
 export interface AdoptOptions {
   asset: LoadedAsset;
   targetDir: string;
@@ -668,6 +715,7 @@ export async function adoptHandEdit(options: AdoptOptions): Promise<AdoptResult>
   const at = now().toISOString();
   const composite = DIGITAL_SOURCE_TYPES.composite;
   const pixels = (bytes: Uint8Array) => {
+    if (source.mediaType === "audio/wav") return [sampleHash(decodeAudio(bytes))];
     const raster = rasterOf(bytes);
     return raster === undefined ? [] : [pixelHash(raster)];
   };
