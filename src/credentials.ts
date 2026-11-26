@@ -406,10 +406,12 @@ export async function signManifest(
   definition: Record<string, unknown>,
   signer: ContentSigner,
   ingredients: ManifestIngredient[] = [],
+  options: { sidecar?: boolean } = {},
 ): Promise<Uint8Array> {
   sdk();
   const builder = WasmBuilder.fromJson(JSON.stringify(definition));
   try {
+    if (options.sidecar === true) builder.setNoEmbed(true);
     for (const ingredient of ingredients) {
       await builder.addIngredientFromBlob(
         JSON.stringify(ingredient.definition),
@@ -418,17 +420,23 @@ export async function signManifest(
       );
     }
     const size = signer.chain.reduce((n, der) => n + der.length, 0) + 4096;
-    const signed = await builder.sign(
-      {
-        alg: signer.record.alg,
-        reserveSize: size,
-        sign: async (data: Uint8Array) =>
-          (await coseSign(signer, data, size)) as Uint8Array<ArrayBuffer>,
-      },
-      [],
-      mediaType,
-      new BytesBlob(bytes),
-    );
+    const definitionOfSigner = {
+      alg: signer.record.alg,
+      reserveSize: size,
+      sign: async (data: Uint8Array) =>
+        (await coseSign(signer, data, size)) as Uint8Array<ArrayBuffer>,
+    };
+    if (options.sidecar === true) {
+      // The asset is left as it is; the manifest store is returned, for a `.c2pa` sidecar.
+      const result = (await builder.signAndGetManifestBytes(
+        definitionOfSigner,
+        [],
+        mediaType,
+        new BytesBlob(bytes),
+      )) as { manifest: Uint8Array };
+      return new Uint8Array(result.manifest);
+    }
+    const signed = await builder.sign(definitionOfSigner, [], mediaType, new BytesBlob(bytes));
     return new Uint8Array(signed);
   } finally {
     builder.free();
@@ -446,15 +454,15 @@ async function vendorManifest(bytes: Uint8Array, mediaType: string): Promise<boo
   return read !== undefined && read.inputSha256 === undefined;
 }
 
-/** Signs `bytes` (already IPTC-marked) with a manifest for `claim`; returns the signed bytes. */
-export async function signCredentials(
+/** Assetgrove's own manifest definition for `claim` over `bytes`. */
+function ownDefinition(
   bytes: Uint8Array,
   mediaType: string,
   claim: CredentialClaim,
   signer: ContentSigner,
   version: string,
-): Promise<Uint8Array> {
-  const definition = {
+): Record<string, unknown> {
+  return {
     claim_generator_info: [{ name: "Assetgrove", version }],
     title: claim.title,
     format: mediaType,
@@ -470,6 +478,17 @@ export async function signCredentials(
       },
     ],
   };
+}
+
+/** Signs `bytes` (already IPTC-marked) with a manifest for `claim`; returns the signed bytes. */
+export async function signCredentials(
+  bytes: Uint8Array,
+  mediaType: string,
+  claim: CredentialClaim,
+  signer: ContentSigner,
+  version: string,
+): Promise<Uint8Array> {
+  const definition = ownDefinition(bytes, mediaType, claim, signer, version);
   const ingredients: ManifestIngredient[] = [];
   if (claim.original) {
     ingredients.push({
@@ -625,7 +644,14 @@ export async function credentialProblem(
   mediaType: string,
   expected: ExpectedCredentials,
 ): Promise<{ code: CredentialProblemCode; problem: string } | undefined> {
-  const read = await readCredentials(bytes, mediaType);
+  return problemOf(path, await readCredentials(bytes, mediaType), expected);
+}
+
+function problemOf(
+  path: string,
+  read: ReadCredentials | undefined,
+  expected: ExpectedCredentials,
+): { code: CredentialProblemCode; problem: string } | undefined {
   if (read === undefined)
     return { code: "credentials_missing", problem: `${path} lacks its C2PA content credentials` };
   const binding = read.failures.find((f) =>
@@ -696,4 +722,98 @@ export async function credentialed(
       return existing;
   }
   return signCredentials(bytes, mediaType, claim, signer, version);
+}
+
+/**
+ * The media types whose C2PA manifest is a sidecar: c2pa-rs has no asset handler that embeds one
+ * in an Ogg, so an Ogg rendition carries `<stem>.c2pa` beside it (docs/PRD-audio.md, "Marks").
+ */
+const SIDECAR = new Set(["audio/ogg"]);
+
+/** Whether a media type's credentials are a sidecar manifest rather than embedded. */
+export function takesSidecar(mediaType: string): boolean {
+  return SIDECAR.has(mediaType);
+}
+
+/** The C2PA sidecar's file name for an asset's: its stem and `.c2pa`. */
+export function sidecarName(assetName: string): string {
+  return `${assetName.replace(/\.[^./\\]+$/, "")}.c2pa`;
+}
+
+/** Signs a sidecar manifest store for `bytes` (already marked), which stay as they are. */
+export async function signSidecarCredentials(
+  bytes: Uint8Array,
+  mediaType: string,
+  claim: CredentialClaim,
+  signer: ContentSigner,
+  version: string,
+): Promise<Uint8Array> {
+  const definition = ownDefinition(bytes, mediaType, claim, signer, version);
+  return signManifest(bytes, mediaType, definition, signer, [], { sidecar: true });
+}
+
+/** The data-hash failure the SDK reports when it reads a sidecar without its asset. */
+const SIDECAR_DATA_HASH = /^assertion\.dataHash\./;
+
+/**
+ * Reads and validates a sidecar manifest store for the asset `bytes`; undefined when `manifest`
+ * holds none. c2pa-wasm reads a manifest store only on its own, so it checks the data hash over
+ * the store itself, not the asset; that result is set aside. The store binds the asset through
+ * Assetgrove's signed input assertion instead, whose sha256 must be the asset's
+ * (docs/decisions.md).
+ */
+export async function readSidecarCredentials(
+  manifest: Uint8Array,
+  bytes: Uint8Array,
+  trustAnchors?: string,
+): Promise<ReadCredentials | undefined> {
+  const read = await readCredentials(manifest, "application/c2pa", trustAnchors);
+  if (read === undefined) return undefined;
+  if (read.failures.some((f) => f.code === "manifest.unreadable")) return read;
+  const failures = read.failures.filter((f) => !SIDECAR_DATA_HASH.test(f.code));
+  const asset = sha256(bytes);
+  if (read.inputSha256 !== asset)
+    failures.push({
+      code: "assertion.dataHash.mismatch",
+      explanation: `the sidecar was signed over sha256 ${read.inputSha256 ?? "(none named)"}, the asset is ${asset}`,
+    });
+  const state = failures.length === 0 && read.state === "Invalid" ? "Valid" : read.state;
+  return { ...read, state: failures.length > 0 ? "Invalid" : state, failures };
+}
+
+/** One problem with an asset's sidecar credentials; undefined when they hold. */
+export async function sidecarCredentialProblem(
+  path: string,
+  manifest: Uint8Array | undefined,
+  bytes: Uint8Array,
+  expected: ExpectedCredentials,
+): Promise<{ code: CredentialProblemCode; problem: string } | undefined> {
+  const read = manifest === undefined ? undefined : await readSidecarCredentials(manifest, bytes);
+  return problemOf(path, read, expected);
+}
+
+/**
+ * The sidecar to write for an asset: `existing` when it validates, was signed over these same
+ * `bytes` by the same certificate and records the same claim, so an unchanged rendition keeps
+ * its sidecar; else a newly signed one.
+ */
+export async function sidecarCredentialed(
+  bytes: Uint8Array,
+  mediaType: string,
+  claim: CredentialClaim,
+  signer: ContentSigner,
+  version: string,
+  existing?: Uint8Array,
+): Promise<Uint8Array> {
+  if (existing !== undefined) {
+    const read = await readSidecarCredentials(existing, bytes).catch(() => undefined);
+    if (
+      read !== undefined &&
+      read.certificateSha256 === signer.record.certificateSha256 &&
+      problemOf("", read, { digitalSourceType: claim.digitalSourceType, models: claim.models }) ===
+        undefined
+    )
+      return existing;
+  }
+  return signSidecarCredentials(bytes, mediaType, claim, signer, version);
 }
