@@ -8,6 +8,7 @@ import { BIBLE_PRESETS, serializeBible } from "../bible.ts";
 import type { ArtBible } from "../bible.ts";
 import type { Script } from "../gateway/scripted.ts";
 import { createRaster, encodePng, setPixel } from "../image/raster.ts";
+import { DIGITAL_SOURCE_TYPES, embedDigitalSourceType } from "../metadata.ts";
 import type { StyleBible, TargetProfile } from "../types.ts";
 
 /** The synthetic palette every sample uses. */
@@ -132,7 +133,8 @@ export interface SampleWavOptions {
 /**
  * A synthetic 16-bit WAV master, a sine tone at half scale written by core's audio engine. A loop
  * carries the `smpl` chunk an `ambience` or music loop master carries: one forward loop from
- * frame 0 to its length.
+ * frame 0 to its length. Like every master core writes, it declares its source as generated, so a
+ * rendition of it (an Ogg) is not refused as undeclared.
  */
 export function sampleWav(options: SampleWavOptions = {}): Uint8Array {
   const frames = options.frames ?? 44100;
@@ -145,8 +147,12 @@ export function sampleWav(options: SampleWavOptions = {}): Uint8Array {
       (_, i) => 0.5 * Math.sin((2 * Math.PI * tone * i) / sampleRate),
     );
   });
-  return encodeWav(
-    { name: "sample", channels, sampleRate, bitDepth: "16", meta: {} },
-    options.loop === true ? { loop: { start: 0, end: frames } } : {},
+  return embedDigitalSourceType(
+    encodeWav(
+      { name: "sample", channels, sampleRate, bitDepth: "16", meta: {} },
+      options.loop === true ? { loop: { start: 0, end: frames } } : {},
+    ),
+    "audio/wav",
+    DIGITAL_SOURCE_TYPES.generated,
   );
 }
