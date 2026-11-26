@@ -240,6 +240,27 @@ test("changing a staged candidate's bytes after its pick is confirmed refuses th
   assert.equal(existsSync(join(p.target, "assets", "wind.wav")), false);
 });
 
+test("changing a candidate's recorded sha256 after its pick is confirmed makes a new pick digest: the person is asked again", async () => {
+  useAttended();
+  const p = await project();
+  const runDir = (await stage(p, p.specs[1]!))["runDir"] as string;
+  const pick = ["pick", "--run", runDir, "--candidate", "c1", "--target", p.target, "--json"];
+  const asked = await cli(pick, p.target);
+  assert.equal(asked.code, 8, asked.stdout + asked.stderr);
+  const confirmed = doc(asked)["error"].confirmation.id as string;
+  await confirm(confirmed);
+
+  const runFile = join(runDir, "run.json");
+  const run = JSON.parse(await readFile(runFile, "utf8")) as Doc;
+  run["candidates"][0].sha256 = "0".repeat(64);
+  await writeFile(runFile, JSON.stringify(run));
+  const again = await cli(pick, p.target);
+  assert.equal(again.code, 8, again.stdout + again.stderr);
+  assert.equal(doc(again)["error"].confirmation.kind, "pick");
+  assert.notEqual(doc(again)["error"].confirmation.id, confirmed);
+  assert.equal(existsSync(join(p.target, "assets", "wind.wav")), false);
+});
+
 function childEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;

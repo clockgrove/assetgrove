@@ -271,6 +271,26 @@ test("bytes changed while the pick form is open: the pick is refused and no libr
   assert.equal(existsLibraryFile(w.targetDir), false);
 });
 
+test("a candidate's recorded sha256 changed while the pick form is open: the pick exits 2 plan_changed and writes nothing", async () => {
+  const { w, runDir } = await stageRun(sfx);
+  useAttended();
+  const runFile = join(runDir, "run.json");
+  const { client } = await connect(async () => {
+    const run = JSON.parse(await readFile(runFile, "utf8")) as Doc;
+    run["candidates"][0].sha256 = "0".repeat(64);
+    await writeFile(runFile, JSON.stringify(run));
+    return { action: "accept", content: { candidate: "c1" } };
+  });
+  const picked = await client.callTool({
+    name: "pick",
+    arguments: { run: runDir, target: w.targetDir },
+  });
+  const doc = picked.structuredContent as Doc;
+  assert.equal(doc["exitCode"], 2, JSON.stringify(doc["error"]));
+  assert.equal(doc["error"].code, "plan_changed");
+  assert.equal(existsLibraryFile(w.targetDir), false);
+});
+
 function existsLibraryFile(targetDir: string): boolean {
   return (
     existsSync(join(targetDir, "assets", "tick.wav")) ||
