@@ -10,12 +10,12 @@ import { GodotInputError, relativePath } from "./run.ts";
 export const TEXT_RESOURCE = /\.(tres|tscn)$/;
 
 /**
- * The only files a resource's reference may bring into scratch: images (each with its `.import`)
+ * The only files a resource's reference may bring into scratch: images and audio streams (each with its `.import`)
  * and text resources, which are read here first. Anything else, a script, compiled GDScript, a
  * native library or a binary resource, is refused: an allow-list, so a code format the pack does
  * not know of is refused too.
  */
-const DATA_FILE = /\.(png|webp|jpe?g|svg|bmp|tga|tres|tscn)$/i;
+const DATA_FILE = /\.(png|webp|jpe?g|svg|bmp|tga|wav|ogg|tres|tscn)$/i;
 
 /** A resource type that is code: `Script` and every kind of it, or a native extension. */
 const SCRIPT_TYPE = /^(\w*Script\w*|GDExtension)$/;

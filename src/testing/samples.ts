@@ -140,8 +140,9 @@ export function sampleWav(options: SampleWavOptions = {}): Uint8Array {
   const hz = options.hz ?? 220;
   const channels = Array.from({ length: options.channels ?? 2 }, (_, c) => {
     const tone = hz * (c === 0 ? 1 : 1.5);
-    return Float64Array.from({ length: frames }, (_, i) =>
-      0.5 * Math.sin((2 * Math.PI * tone * i) / sampleRate),
+    return Float64Array.from(
+      { length: frames },
+      (_, i) => 0.5 * Math.sin((2 * Math.PI * tone * i) / sampleRate),
     );
   });
   return encodeWav(

@@ -1,13 +1,14 @@
 {
   "name": "@clockgrove/assetgrove-godot",
   "version": "0.2.0",
-  "description": "Godot hand-off for Assetgrove: SpriteFrames and TileSets built, saved and reloaded, and glTF characters imported and checked, by a pinned headless Godot.",
+  "description": "Godot hand-off for Assetgrove: SpriteFrames, TileSets and audio randomizers built, saved and reloaded, and glTF characters and audio imported and checked, by a pinned headless Godot.",
   "keywords": [
     "assetgrove",
     "godot",
     "spriteframes",
     "tileset",
     "gltf",
+    "audio",
     "gamedev"
   ],
   "license": "MIT",

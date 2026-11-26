@@ -1,6 +1,6 @@
 /**
  * What the pack reads from Godot's text files as data: the UID in an `.import` file's `[remap]`
- * section, the UID in a text resource's `[gd_resource ...]` header, and a text resource's
+ * section, the `[params]` of an `.import`, the UID in a text resource's `[gd_resource ...]` header, and a text resource's
  * `ext_resource` references. It reads them only to hand them to Godot and to check what Godot
  * wrote; Godot writes every file the target receives.
  */
@@ -32,6 +32,24 @@ export function importUid(content: Uint8Array | string): string | undefined {
     if (match && UID.test(match[1] ?? "")) return match[1];
   }
   return undefined;
+}
+
+/** The `[params]` section of an `.import` file: each key's value as written, quotes removed. */
+export function importParams(content: Uint8Array | string): Record<string, string> {
+  const params: Record<string, string> = {};
+  let section = "";
+  for (const raw of text(content).split(/\r?\n/)) {
+    const line = raw.trim();
+    const header = /^\[([^\]]+)\]$/.exec(line);
+    if (header) {
+      section = header[1] ?? "";
+      continue;
+    }
+    if (section !== "params") continue;
+    const match = /^([^=\s;][^=]*?)\s*=\s*(.*)$/.exec(line);
+    if (match) params[match[1] ?? ""] = (match[2] ?? "").replace(/^"(.*)"$/, "$1");
+  }
+  return params;
 }
 
 /** A text resource's header: its type and UID. */
