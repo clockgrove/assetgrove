@@ -1,3 +1,4 @@
+export * from "./audio.ts";
 export * from "./doctor.ts";
 export * from "./godot-text.ts";
 export * from "./gltf.ts";

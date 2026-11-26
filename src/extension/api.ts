@@ -305,6 +305,26 @@ export type RasterHelpers = typeof raster;
 export type QaHelpers = typeof qa;
 /** The bible-to-prompt compiler. */
 export type PromptHelpers = typeof prompt;
+/** Core's audio helpers (src/extension/helpers.ts). */
+export interface AudioHelpers {
+  /** The first forward loop of a WAV's RIFF `smpl` chunk in sample frames, `end` exclusive as Godot reads it; undefined without one. */
+  wavLoop(bytes: Uint8Array): { start: number; end: number } | undefined;
+  /**
+   * The Ogg Vorbis rendition of a WAV master, as `rendition` builds it with the recipe
+   * `[{ op: "encode", params: { quality } }]` (quality default 5): the master's AI mark carried as
+   * Vorbis comments. Unsigned: a hand-off signs its C2PA sidecar. Reads no settings, writes nothing
+   * the caller sees.
+   */
+  oggRendition(
+    master: Uint8Array,
+    options?: { quality?: number },
+  ): Promise<{
+    bytes: Uint8Array;
+    /** The rendition's build: source sha256, resolved recipe, encoders (as `rendition`'s `build`). */
+    build: Record<string, unknown>;
+    digest: string;
+  }>;
+}
 
 /** The run a call is made in, when a paid command's executor opened one. */
 export interface RunInfo {
@@ -333,6 +353,7 @@ export interface ExtensionContext<Settings = Record<string, unknown>> {
   raster: RasterHelpers;
   qa: QaHelpers;
   prompt: PromptHelpers;
+  audio: AudioHelpers;
   /**
    * The guarded `fetch` for one provider instance: it refuses any host outside the adapter's
    * `fixedHosts` and the settings `baseURL` (when `endpointFromSettings`), re-checking every

@@ -4,7 +4,9 @@
 # then builds the resource the input asks for through Godot's API from the input the pack wrote as
 # data: a SpriteFrames (godot:sprite-frames), or a TileSet (godot:tile-set, `"build": "tile-set"`);
 # or, for a glTF scene (godot:gltf, `"build": "gltf"`), it applies a fresh source's import options,
-# reimports it and checks the imported scene against what the asset declares. For a SpriteFrames
+# reimports it and checks the imported scene against what the asset declares; or, for audio
+# (godot:audio, `"build": "audio"`), it reads the imported stream's loop points and tempo back
+# against the version's and builds a variant set's AudioStreamRandomizer. For a SpriteFrames
 # or a TileSet it first applies the input's import options to the `.import` of each fresh source
 # (one the target had no `.import` for), reimports them and checks the options held.
 # It saves it with ResourceSaver (keeping the target's UID when it had one), reloads it with
@@ -57,6 +59,8 @@ func _run() -> void:
 				result = _build_tile_set(input)
 			elif build == "gltf":
 				result = await _import_gltf(input)
+			elif build == "audio":
+				result = _build_audio(input)
 			else:
 				result = _build_frames(input)
 	result["errors"] = _errors
@@ -202,7 +206,7 @@ func _build_frames(input: Dictionary) -> Dictionary:
 	var expected := {}
 	for name in frames.get_animation_names():
 		expected[String(name)] = frames.get_frame_count(name)
-	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(path.get_base_dir()))
 	var saved := ResourceSaver.save(frames, path)
 	if saved != OK:
 		_fail("ResourceSaver could not save %s: %s" % [path, error_string(saved)])
@@ -398,7 +402,7 @@ func _build_tile_set(input: Dictionary) -> Dictionary:
 			data.set_terrain_peering_bit(CORNERS[corner], int(tile["peering"][corner]))
 	if not _errors.is_empty():
 		return {}
-	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(path.get_base_dir()))
 	var saved := ResourceSaver.save(tile_set, path)
 	if saved != OK:
 		_fail("ResourceSaver could not save %s: %s" % [path, error_string(saved)])
@@ -681,3 +685,136 @@ func _declared(path: String, given: Dictionary) -> Dictionary:
 			pending.append_array(Array(node.children))
 		declared["meshes"] = meshes
 	return declared
+
+
+## Builds what `godot:audio` asks for: the imported stream's loop points and tempo are read back
+## and must equal the version's (an Ogg whose `.import` came from the target is only reported: the
+## preset's check judges it), then the variant set's AudioStreamRandomizer, if the input has one.
+func _build_audio(input: Dictionary) -> Dictionary:
+	var path := String(input["stream"])
+	var stream = ResourceLoader.load(path, "AudioStream")
+	if not (stream is AudioStream):
+		_fail("%s did not load as an audio stream" % path)
+		return {}
+	var report_only: bool = String(input["format"]) == "ogg" and input.get("fresh", []).is_empty()
+	var read := _read_stream(path, stream, String(input["format"]), input.get("expected", {}), report_only)
+	if not _errors.is_empty():
+		return {}
+	var result := {"resource": path, "stream": read}
+	if input.has("randomizer"):
+		var built := _build_randomizer(path, stream, input["randomizer"])
+		if not _errors.is_empty():
+			return {}
+		result["resource"] = built["resource"]
+		result["uid"] = built["uid"]
+		result["streams"] = built["streams"]
+	return result
+
+
+## The loop points and tempo the imported stream holds, failing for each that differs from
+## `expected` unless `report_only`. A WAV's are `loop_mode`, `loop_begin` and `loop_end`; an
+## Ogg's `loop`, `loop_offset` and, when the version has a tempo, `bpm`, `beat_count` and
+## `bar_beats`.
+func _read_stream(
+	path: String, stream: AudioStream, format: String, expected: Dictionary, report_only: bool
+) -> Dictionary:
+	var loop = expected.get("loop")
+	var tempo = expected.get("tempo")
+	var read := {}
+	if format == "wav":
+		if not (stream is AudioStreamWAV):
+			_fail("%s imported as %s, not an AudioStreamWAV" % [path, stream.get_class()])
+			return read
+		read["loopMode"] = stream.loop_mode
+		read["loopBegin"] = stream.loop_begin
+		read["loopEnd"] = stream.loop_end
+		if loop == null:
+			if stream.loop_mode != AudioStreamWAV.LOOP_DISABLED:
+				_fail("%s imported with loop_mode %d, the version does not loop" % [path, stream.loop_mode])
+		else:
+			if stream.loop_mode != AudioStreamWAV.LOOP_FORWARD:
+				_fail("%s imported with loop_mode %d, the version loops forward" % [path, stream.loop_mode])
+			if stream.loop_begin != int(loop["begin"]):
+				_fail("%s imported with loop_begin %d, the version has %d" % [path, stream.loop_begin, int(loop["begin"])])
+			if stream.loop_end != int(loop["end"]):
+				_fail("%s imported with loop_end %d, the version has %d" % [path, stream.loop_end, int(loop["end"])])
+		return read
+	if not (stream is AudioStreamOggVorbis):
+		_fail("%s imported as %s, not an AudioStreamOggVorbis" % [path, stream.get_class()])
+		return read
+	read["loop"] = stream.loop
+	read["loopOffset"] = stream.loop_offset
+	read["bpm"] = stream.bpm
+	read["beatCount"] = stream.beat_count
+	read["barBeats"] = stream.bar_beats
+	if report_only:
+		return read
+	if stream.loop != (loop != null):
+		_fail("%s imported with loop %s, the version has %s" % [path, stream.loop, loop != null])
+	if loop != null and not is_zero_approx(stream.loop_offset):
+		_fail("%s imported with loop_offset %s, the version has 0" % [path, _number(stream.loop_offset)])
+	if tempo != null:
+		if not is_equal_approx(stream.bpm, float(tempo["bpm"])):
+			_fail("%s imported with bpm %s, the version has %s" % [path, _number(stream.bpm), _number(float(tempo["bpm"]))])
+		if stream.beat_count != int(tempo["beatCount"]):
+			_fail("%s imported with beat_count %d, the version has %d" % [path, stream.beat_count, int(tempo["beatCount"])])
+		if not is_equal_approx(float(stream.bar_beats), float(tempo["barBeats"])):
+			_fail("%s imported with bar_beats %d, the version has %d" % [path, stream.bar_beats, int(tempo["barBeats"])])
+	return read
+
+
+## Builds the variant set's AudioStreamRandomizer: the existing one loaded, or a new one. This
+## hand-off's stream replaces the entry with its path, or is added with weight 1; every entry keeps
+## its weight and the entries are ordered by path. It is saved keeping the target's UID, reloaded,
+## and must hold this stream.
+func _build_randomizer(stream_path: String, stream: AudioStream, spec: Dictionary) -> Dictionary:
+	var path := String(spec["resource"])
+	var randomizer: AudioStreamRandomizer
+	if bool(spec.get("existing", false)):
+		var existing = ResourceLoader.load(path, "AudioStreamRandomizer", ResourceLoader.CACHE_MODE_IGNORE)
+		if not (existing is AudioStreamRandomizer):
+			_fail("ResourceLoader could not load the existing %s as an AudioStreamRandomizer" % path)
+			return {}
+		randomizer = existing
+	else:
+		randomizer = AudioStreamRandomizer.new()
+	var entries := []
+	var found := false
+	for i in randomizer.streams_count:
+		var member = randomizer.get_stream(i)
+		var weight := randomizer.get_stream_probability_weight(i)
+		if member != null and member.resource_path == stream_path:
+			member = stream
+			found = true
+		entries.append({"path": "" if member == null else String(member.resource_path), "stream": member, "weight": weight})
+	if not found:
+		entries.append({"path": stream_path, "stream": stream, "weight": 1.0})
+	entries.sort_custom(func(a, b): return String(a["path"]) < String(b["path"]))
+	while randomizer.streams_count > 0:
+		randomizer.remove_stream(randomizer.streams_count - 1)
+	for i in entries.size():
+		randomizer.add_stream(i, entries[i]["stream"], float(entries[i]["weight"]))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(path.get_base_dir()))
+	var saved := ResourceSaver.save(randomizer, path)
+	if saved != OK:
+		_fail("ResourceSaver could not save %s: %s" % [path, error_string(saved)])
+		return {}
+	if not _keep_uid(path, spec.get("uid")):
+		return {}
+	var loaded = ResourceLoader.load(path, "AudioStreamRandomizer", ResourceLoader.CACHE_MODE_IGNORE)
+	if not (loaded is AudioStreamRandomizer):
+		_fail("ResourceLoader could not load %s back as an AudioStreamRandomizer" % path)
+		return {}
+	var streams := []
+	for i in loaded.streams_count:
+		var member = loaded.get_stream(i)
+		streams.append("" if member == null else String(member.resource_path))
+	if not streams.has(stream_path):
+		_fail("%s loaded back without %s (it has %s)" % [path, stream_path, streams])
+	if streams.size() != entries.size():
+		_fail("%s loaded back with %d streams, built with %d" % [path, streams.size(), entries.size()])
+	return {
+		"resource": path,
+		"uid": ResourceUID.id_to_text(ResourceLoader.get_resource_uid(path)),
+		"streams": streams,
+	}

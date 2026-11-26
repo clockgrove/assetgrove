@@ -590,3 +590,11 @@ The audio engine and its operations ([transform.md](transform.md#audio)) use lib
 
 - **ElevenLabs** uses its official SDK, `@elevenlabs/elevenlabs-js` (MIT, pure JavaScript, one dependency, `ws`), with the guarded `fetch` core injects and its retries off, so a paid call is never repeated by the SDK.
 - **Stability: the exception.** Stability publishes no official JavaScript SDK for its REST API. Its only SDK, the Python `stability-sdk`, targets the retired gRPC API, and no maintained JavaScript library covers Stable Audio. So `src/gateway/stability.ts` speaks the documented REST API over the guarded `fetch`: one multipart POST for Stable Audio 2.5, and for 3.0 a POST that returns a job id and a GET of `/v2beta/results/{id}`.
+
+## A loop master's `smpl` end is the loop length, as Godot reads it (#521)
+
+The ambience and music-loop kinds write one forward loop into the master's RIFF `smpl` chunk with `dwStart` 0 and `dwEnd` the loop length in frames (`encodeWav`'s `loop` option in `src/audio/engine.ts`); `readWavLoop`, core's `wavLoop` helper and `godot:audio`'s check read it back as written.
+
+- **Why the length, not the last frame.** Godot's WAV importer, with its default loop mode (Detect From WAV), takes `dwStart` and `dwEnd` as `loop_begin` and `loop_end`, and its playback treats `loop_end` as exclusive: it wraps when it reaches that frame. With `dwEnd` the loop length, Godot loops every frame of the master, which is the PRD's loop length (docs/PRD-audio.md, "Godot"). The pack's CI imports each loop on the pinned Godot, asserts `loop_end` is the frame count and plays it across the boundary.
+- **The trade-off.** The RIFF convention reads `dwEnd` as the last frame played, inclusive. Written as `frames - 1`, it would make Godot drop the last frame of every cycle, a click and a drift against the tempo for a music loop. A reader that follows the convention instead sees an end one frame past the data; the loop points are for Godot first, and that reader must stop at the data's end.
+- **Changing it** means rewriting `dwEnd` in every loop master and `godot:audio`'s check together, and asserting what the pinned Godot then reads back.

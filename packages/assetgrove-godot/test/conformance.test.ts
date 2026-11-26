@@ -107,6 +107,20 @@ const gltfContext = (run: ReturnType<typeof scripted>) => ({
   run,
 });
 
+/** A one-shot's hand-off, as core gives `godot:audio` one: a WAV, so no tool runs. */
+const audioContext = () => ({
+  context: {
+    spec: { kind: "sfx", assetId: "click" },
+    output: {
+      path: "audio/click.wav",
+      mediaType: "audio/wav",
+      audio: { kind: "sfx", sampleRate: 44100, channels: 1, frames: 4410 },
+    },
+    provenance: {},
+  },
+  mediaBytes: new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+});
+
 test("the entry passes the conformance suite, its presets building through the tool", async () => {
   const seen: ToolRunOptions[] = [];
   const report = await assertConformance(entry, {
@@ -123,6 +137,7 @@ test("the entry passes the conformance suite, its presets building through the t
         options: { import: { "nodes/root_type": "CharacterBody3D" } },
         context: gltfContext(scripted(seen)),
       },
+      "godot:audio": { context: audioContext() },
     },
   });
   assert.equal(report.passed, true);

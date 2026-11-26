@@ -7,7 +7,7 @@ import { z } from "zod";
 import { currentRunScope } from "../runs/journal.ts";
 import { EXTENSION_API } from "./api.ts";
 import type { ExtensionContext } from "./api.ts";
-import { prompt, qa, raster } from "./helpers.ts";
+import { audio, prompt, qa, raster } from "./helpers.ts";
 import { allowedHosts, guardedFetch } from "./http.ts";
 
 /** Each context's settings slot, filled once core has validated the pack's block. */
@@ -40,6 +40,7 @@ export function createExtensionContext(
     raster,
     qa,
     prompt,
+    audio,
     http: (adapter, c) =>
       guardedFetch({ adapter: adapter.id, hosts: allowedHosts(adapter, c?.baseURL) }),
     run: Object.freeze({

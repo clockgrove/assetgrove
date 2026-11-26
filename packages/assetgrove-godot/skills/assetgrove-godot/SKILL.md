@@ -1,11 +1,11 @@
 ---
 name: assetgrove-godot
-description: Load when an Assetgrove target is a Godot project and its hand-off should give it Godot resources (a SpriteFrames of every animation family, a TileSet of a tiles:terrain set, the import of a character-3d .glb). Needs the optional @clockgrove/assetgrove-godot package listed in the developer settings; covers the godot:sprite-frames, godot:tile-set and godot:gltf presets, their options, the Godot run's approval, setup and its exit codes.
+description: Load when an Assetgrove target is a Godot project and its hand-off should give it Godot resources (a SpriteFrames of every animation family, a TileSet of a tiles:terrain set, the import of a character-3d .glb, sound effects, ambience loops and music as WAV or Ogg with their loop points and tempo). Needs the optional @clockgrove/assetgrove-godot package listed in the developer settings; covers the godot:sprite-frames, godot:tile-set, godot:gltf and godot:audio presets, their options, the Godot run's approval, setup and its exit codes.
 ---
 
 # Assetgrove for Godot
 
-`@clockgrove/assetgrove-godot` is a pack: it loads only once a person lists it under `extensions` in the developer settings. It gives the target profile the hand-off presets `godot:sprite-frames`, `godot:tile-set` and `godot:gltf`, and runs a pinned Godot 4.7.2 headless to build what it writes. Nothing Godot reads is written by hand.
+`@clockgrove/assetgrove-godot` is a pack: it loads only once a person lists it under `extensions` in the developer settings. It gives the target profile the hand-off presets `godot:sprite-frames`, `godot:tile-set`, `godot:gltf` and `godot:audio`, and runs a pinned Godot 4.7.2 headless to build what it writes. Nothing Godot reads is written by hand.
 
 For the whole workflow on a synthetic game (generated, hand-drawn and third-party art, review, provenance, licence records, data routes and disclosure limits), point the person to the launch guide: https://github.com/clockgrove/assetgrove/blob/main/docs/launch-guide.md
 
@@ -64,6 +64,20 @@ It writes one SpriteFrames per asset with every animation family handed off so f
 - The options go into a new source's `.import` as data; Godot writes them through `ConfigFile` and reimports. An existing `.import` is never touched: it reaches scratch as data, Godot imports with its options and UID, and a replaced `.glb` keeps its UID. Core writes the `.glb`; the preset returns only the new `.import`.
 - Godot imports the `.glb` in a scratch project. The hand-off fails with exit 6 `handoff_check_failed` and nothing written on a load error, on any `ERROR` line, when the scene lacks an animation of the same name as any declared one or a `Skeleton3D` with the declared joint count (none for an unskinned `.glb`, which declares 0), or when it has more `MeshInstance3D` meshes than declared.
 - Declared animations are `output.clips[].name` and joints are `output.bones`, when the hand-off gives them (a `character-3d` asset does). Otherwise, and when `model3d.handoff.clipFields` shapes the clips without a `name`, they are read from the file through `GLTFDocument`: its animation names and the unique joints over every skin. Declared meshes are the glTF nodes with a mesh in the scene.
+
+## Hand off audio
+
+`godot:audio` hands off an `sfx`, `ambience` or `music` version (a WAV master); any other media exits 2.
+
+```json
+{ "preset": "godot:audio", "options": { "project": "game" } }
+```
+
+- **WAV is the default.** The delivered WAV is the picked master. An `ambience` loop and a music loop carry their loop points in the WAV's RIFF `smpl` chunk (start 0, end the loop length in samples), which Godot's importer reads with its default loop mode, Detect From WAV, and other engines can read too. The preset writes no WAV `.import`: Godot makes its own when the project imports the file.
+- **Godot compresses WAV lossily by default.** Godot's WAV importer applies QOA compression (`compress/mode`) unless the developer changes it, and QOA is lossy. The preset leaves that setting to the developer: tell the person, and to pick PCM in the import dock (or in the `.import`) when they want the master's exact samples in the game.
+- **Ogg on request.** `"format": "ogg"` delivers the Ogg Vorbis rendition of the master (`quality`, −1 to 10, default 5), at `ogg` (`{assetId}` replaced; default beside the media with `.ogg` in place of `.wav`), with its AI mark in Vorbis comments and its C2PA sidecar `<stem>.c2pa` beside it. Core still writes the WAV where the profile's layout says; only the Ogg must be inside the project, so lay the media out outside it if the game should hold only the Ogg (a WAV hand-off outside the project exits 2). When the project has no `.import` for the Ogg, Godot writes one in scratch with `loop` and `loop_offset` (0) for a loop, and `bpm`, `beat_count` (bars × beats per bar) and `bar_beats` for a music loop (`loop=false` otherwise), plus any `import` options, and the preset copies it. An existing `.import` is never copied over.
+- **Check.** The hand-off check reads the WAV's `smpl` loop back, and fails with exit 6, naming the file and the setting, when the project's existing `.import` disagrees with the version: an Ogg's `loop`, `loop_offset`, `bpm`, `beat_count` or `bar_beats`, or a WAV's `edit/loop_mode`, `edit/loop_begin` or `edit/loop_end`. Tell the person to correct that setting in Godot's import dock or delete the `.import` and hand off again.
+- **Variant sets.** Each member of a variant set (an `sfx` with `subject` and `variant`) joins one `AudioStreamRandomizer` per subject at `randomizer` (`{subject}` replaced; by default `{subject}.tres` beside the stream). Godot builds it in scratch, replacing the member's own stream and keeping the others and their weights, saves it keeping an existing UID and loads it back.
 
 ## Pixel art and the texture filter
 

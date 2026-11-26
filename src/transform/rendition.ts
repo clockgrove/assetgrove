@@ -68,6 +68,8 @@ export interface RenditionOptions extends Pick<RunOptions, "style" | "frame" | "
    * sidecar already there that still holds, else the sidecar's path alone.
    */
   sign?: boolean;
+  /** Make no sidecar at all, reading no settings and creating no signer (default true). */
+  sidecars?: boolean;
 }
 
 /** An Ogg rendition's C2PA sidecar manifest, as its output records it. */
@@ -285,7 +287,7 @@ export async function buildRendition(options: RenditionOptions) {
   const sidecars: (RenditionSidecar & { bytes?: Uint8Array; output: number })[] = [];
   const sign = options.sign ?? !options.preview;
   for (const [index, output] of outputs.entries()) {
-    if (!takesSidecar(output.mediaType)) continue;
+    if (options.sidecars === false || !takesSidecar(output.mediaType)) continue;
     const signer =
       options.signer ??
       (sign ? await resolveSigner(loadSettings()) : await existingSigner(loadSettings()));

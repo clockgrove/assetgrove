@@ -151,6 +151,33 @@ export interface GltfInput {
   declared: { animations?: string[]; joints?: number; meshes?: number };
 }
 
+/** What the build script reads to import an audio stream, check it and build a randomizer (`godot:audio`). */
+export interface AudioInput {
+  build: "audio";
+  /** The Godot release the run must be, as `BuildInput.godot`. */
+  godot: string;
+  /** The stream the version is delivered as, `res://...`: the WAV, or the Ogg rendition. */
+  stream: string;
+  format: "wav" | "ogg";
+  /** The Ogg as `[stream]` when the target has no `.import` for it, else none: only then are `options` applied. */
+  fresh: string[];
+  /** Godot Ogg import options by their `.import` key (`loop`, `loop_offset`, `bpm`...), for a fresh Ogg. */
+  options: Record<string, ImportOption>;
+  /**
+   * What the delivered version loops as and, for a music loop, its tempo; the imported stream's
+   * properties must equal them, except for an Ogg whose `.import` came from the target, which is
+   * only reported.
+   */
+  expected: {
+    loop?: { begin: number; end: number };
+    tempo?: { bpm: number; beatCount: number; barBeats: number };
+  };
+  /** Every file, `res://...`, the editor must have imported before the build loads anything. */
+  imports: string[];
+  /** The variant set's AudioStreamRandomizer: loaded when it `existing`, keeping its `uid`. */
+  randomizer?: { resource: string; existing: boolean; uid?: string };
+}
+
 /** What the build script writes back. */
 export interface BuildResult {
   ok: boolean;
@@ -174,4 +201,11 @@ export interface BuildResult {
    */
   declared?: { animations: string[]; joints: number; meshes: number };
   imported?: { animations: string[]; skeletons: number[]; meshes: number };
+  /**
+   * For an audio stream: what the imported stream holds. A WAV has `loopMode`, `loopBegin` and
+   * `loopEnd`; an Ogg `loop`, `loopOffset`, `bpm`, `beatCount` and `barBeats`.
+   */
+  stream?: Record<string, number | boolean | string>;
+  /** For a randomizer: the paths of its streams, in order. */
+  streams?: string[];
 }
