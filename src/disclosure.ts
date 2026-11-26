@@ -7,6 +7,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { audioGenerators } from "./audio/kinds.ts";
+import { mediaOf } from "./media.ts";
 import { upstreamOf } from "./dataflows.ts";
 import { canCarryCredentials, readCredentials } from "./credentials.ts";
 import { markableMediaType } from "./handoff/mark-check.ts";
@@ -51,6 +53,17 @@ export interface StoreEvidence {
   what: string;
   how: string;
 }
+export interface DisclosureSound {
+  asset: string;
+  kind: string;
+  models: string[];
+  providers: string[];
+  plans: string[];
+  /** Present only when a call's output grant is not exclusive. */
+  exclusive?: false;
+  trainingOptOut?: { optedOut: boolean; since: string; source: string };
+  line: string;
+}
 export interface Disclosure {
   /** Cards read. */
   assets: number;
@@ -65,6 +78,8 @@ export interface Disclosure {
   contentCredentials: DisclosureCredentials;
   /** Cards whose provenance could not be read; they count as `unknown`. */
   withoutProvenance: string[];
+  /** One entry per audio asset, from its route record, sorted by asset name. */
+  sounds: DisclosureSound[];
   godot: StoreEvidence;
   playdate: StoreEvidence;
   steam: string;
@@ -106,6 +121,66 @@ function legacyTermsAsOf(text: string): string | undefined {
   return /\(as of (\d{4}-\d{2}-\d{2})\)/.exec(text)?.[1];
 }
 
+/** The sound entry of an audio asset: what its provenance's route record says, and no more. */
+function soundOf(
+  asset: string,
+  kind: string,
+  provenance: Record<string, unknown> | undefined,
+): DisclosureSound {
+  const calls = (Array.isArray(provenance?.["calls"]) ? provenance["calls"] : []) as Array<{
+    route?: unknown;
+    model?: unknown;
+    outputGrant?: { plan?: unknown; exclusive?: unknown } | null;
+    trainingOptOut?: { optedOut?: unknown; since?: unknown; source?: unknown } | null;
+  } | null>;
+  const models = new Set(strings(provenance?.["models"]));
+  const providers = new Set<string>();
+  const plans = new Set<string>();
+  let exclusive = true;
+  let optOut: DisclosureSound["trainingOptOut"];
+  for (const call of calls) {
+    if (typeof call?.model === "string" && models.size === 0) models.add(call.model);
+    const provider = typeof call?.route === "string" ? call.route.split(":")[0] : undefined;
+    if (provider) providers.add(provider);
+    if (typeof call?.outputGrant?.plan === "string") plans.add(call.outputGrant.plan);
+    if (call?.outputGrant?.exclusive === false) exclusive = false;
+    const out = call?.trainingOptOut;
+    if (
+      optOut === undefined &&
+      typeof out?.optedOut === "boolean" &&
+      typeof out.since === "string" &&
+      typeof out.source === "string"
+    )
+      optOut = { optedOut: out.optedOut, since: out.since, source: out.source };
+  }
+  const head = `Sound: ${asset} (${kind}): `;
+  if (calls.length === 0 || providers.size === 0)
+    return {
+      asset,
+      kind,
+      models: [],
+      providers: [],
+      plans: [],
+      line: `${head}route record unavailable`,
+    };
+  const line =
+    `${head}${[...models].join(", ")} via ${[...providers].join(", ")}, ${[...plans].join(", ")} plan` +
+    (exclusive ? "" : ", non-exclusive") +
+    (optOut === undefined
+      ? ""
+      : `, training opt-out declared by the developer: ${optOut.optedOut ? "yes" : "no"} since ${optOut.since}`);
+  return {
+    asset,
+    kind,
+    models: [...models],
+    providers: [...providers],
+    plans: [...plans],
+    ...(!exclusive && { exclusive: false as const }),
+    ...(optOut !== undefined && { trainingOptOut: optOut }),
+    line,
+  };
+}
+
 /** Summarises the library under `root` from its cards and provenance. */
 export async function disclose(
   root: string,
@@ -119,6 +194,7 @@ export async function disclose(
   const terms = new Map<string, number>();
   const termDates = new Map<string, string>();
   const withoutProvenance: string[] = [];
+  const sounds: DisclosureSound[] = [];
   const signers = new Map<string, DisclosureSigner>();
   let approvedAi = 0;
   const { cards: allCards, unreadable } = scanLibrary(root);
@@ -225,6 +301,8 @@ export async function disclose(
       !mediaMatches
     )
       unresolvedAssets.push(name);
+    if (mediaOf(kind, { kinds: audioGenerators }) === "audio")
+      sounds.push(soundOf(name, kind, provenance));
     const row = (byKind[kind] ??= {});
     row[source] = (row[source] ?? 0) + 1;
     bump(sources, source);
@@ -298,6 +376,8 @@ export async function disclose(
       return { terms: text, ...(asOf !== undefined && { asOf }), assets };
     })
     .sort((a, b) => compare(a.terms, b.terms));
+  sounds.sort((a, b) => compare(a.asset, b.asset));
+  const soundLines = sounds.map((sound) => `\n${sound.line}`).join("");
   const generated = cards.length;
   const aiAssets = [...sources].filter(([s]) => AI_TYPES.has(s)).reduce((n, [, c]) => n + c, 0);
   const modelNames = list(models).map((m) => m.name);
@@ -312,11 +392,13 @@ export async function disclose(
       ? `Pre-generated AI content: none recorded in ${generated} library assets.`
       : `Pre-generated AI content: ${aiAssets} of ${generated} assets (${kinds.join(", ")}) were made${made}, ` +
         `${approvedText}. Live-generated AI content: [developer to fill in].`;
+  const steamText = steam + soundLines;
   const itchTags = aiAssets === 0 ? [] : ["ai-generated-assets"];
   const itchText =
     aiAssets === 0
       ? "No AI-generated assets recorded."
       : `AI-generated assets: ${aiAssets} of ${generated} (${kinds.join(", ")})${made}.`;
+  const itchFull = itchText + soundLines;
   return {
     assets: generated,
     byKind,
@@ -327,6 +409,7 @@ export async function disclose(
     terms: termList,
     contentCredentials,
     withoutProvenance,
+    sounds,
     godot: {
       policy: "https://docs.godotengine.org/en/stable/community/asset_store/faq.html",
       checkedOn: "2026-11-19",
@@ -349,8 +432,8 @@ export async function disclose(
         : "No selected AI media trigger recorded.",
       how: "New-title policy only; code assistance and grandfathered titles require developer review. This is media evidence, not title eligibility.",
     },
-    steam,
-    itch: { tags: itchTags, text: itchText },
+    steam: steamText,
+    itch: { tags: itchTags, text: itchFull },
   };
 }
 

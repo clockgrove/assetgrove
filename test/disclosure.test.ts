@@ -369,3 +369,82 @@ test("whole-library unreadable cards remain unresolved without changing legacy s
     assert.deepEqual(store.unresolvedAssets, [name]);
   }
 });
+
+test("audio assets get a sound line from their route record in the Steam and itch.io text", async () => {
+  const sound = (over: Partial<Provenance>): Partial<Provenance> => ({
+    models: ["stable-audio-2.5"],
+    ...over,
+  });
+  const target = await library([
+    [
+      "boom",
+      sound({
+        calls: [callOf("stability:audio:stable-audio-2.5", "stable-audio-2.5")],
+      }),
+    ],
+    [
+      "theme",
+      sound({
+        models: ["eleven_music"],
+        calls: [
+          callOf("elevenlabs:audio:eleven_music", "eleven_music", {
+            outputGrant: {
+              license: "ElevenLabs",
+              plan: "creator",
+              commercial: true,
+              relabel: true,
+              exclusive: false,
+            },
+            trainingOptOut: {
+              optedOut: true,
+              since: "2026-11-01",
+              source: "declared by the developer",
+            },
+          }),
+        ],
+      }),
+    ],
+    ["bare", sound({ calls: [] })],
+    ["walk", {}],
+  ]);
+  const { scanCards } = await import("../src/library/write.ts");
+  for (const card of scanCards(target)) {
+    const path = join(card.dir, `${card.id}.md`);
+    const text = await readFile(path, "utf8");
+    const family = ["boom", "theme", "bare"].find((f) => card.resource?.includes(f));
+    if (family === undefined) continue;
+    await writeFile(
+      path,
+      text.replace(/^kind: .*$/m, family === "theme" ? "kind: music" : "kind: sfx"),
+    );
+  }
+  const d = await disclose(target);
+  assert.deepEqual(
+    d.sounds.map((s) => [s.kind, s.models, s.providers, s.plans, s.exclusive]),
+    [
+      ["sfx", [], [], [], undefined],
+      ["sfx", ["stable-audio-2.5"], ["stability"], ["api"], undefined],
+      ["music", ["eleven_music"], ["elevenlabs"], ["creator"], false],
+    ],
+  );
+  assert.deepEqual(d.sounds[2]!.trainingOptOut, {
+    optedOut: true,
+    since: "2026-11-01",
+    source: "declared by the developer",
+  });
+  const lines = d.sounds.map((s) => s.line);
+  assert.match(lines[0]!, /^Sound: .+ \(sfx\): route record unavailable$/);
+  assert.match(lines[1]!, /\(sfx\): stable-audio-2.5 via stability, api plan$/);
+  assert.match(
+    lines[2]!,
+    /\(music\): eleven_music via elevenlabs, creator plan, non-exclusive, training opt-out declared by the developer: yes since 2026-11-01$/,
+  );
+  for (const text of [d.steam, d.itch.text]) {
+    assert.equal(text.split("\n").filter((l) => l.startsWith("Sound:")).length, 3);
+    assert.ok(lines.every((l) => text.includes(`\n${l}`)));
+    assert.ok(!text.includes(prompt));
+  }
+  const plain = await disclose(await library());
+  assert.deepEqual(plain.sounds, []);
+  assert.ok(!plain.steam.includes("\n") && !plain.itch.text.includes("\n"));
+});
