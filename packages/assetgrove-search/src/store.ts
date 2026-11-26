@@ -28,6 +28,12 @@ export interface Row {
   description?: string;
   width?: number;
   height?: number;
+  /** An audio file's length, in seconds. */
+  durationS?: number;
+  /** A music card's form: `track` or `cue`. */
+  form?: string;
+  /** A music card's requested tempo, in beats per minute. */
+  tempo?: number;
   mediaType?: string;
   mediaSha256?: string;
   mediaStatus?: "available" | "unavailable";

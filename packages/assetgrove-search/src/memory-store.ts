@@ -1,4 +1,5 @@
 import { cosine } from "./embedder.ts";
+import { NUMERIC_FILTER_FIELDS } from "./where.ts";
 import type {
   BuiltFrom,
   CachedVector,
@@ -16,7 +17,7 @@ function matches(row: Row, t: FilterTerm): boolean {
   if (t.op === "has") return (row.tags ?? []).includes(String(t.value));
   const v = (row as unknown as Record<string, unknown>)[t.field];
   if (t.op === "in") return v !== undefined && t.value.includes(v as Scalar);
-  if ((t.field === "width" || t.field === "height") && v === undefined) return false;
+  if (NUMERIC_FILTER_FIELDS.some((n) => n === t.field) && v === undefined) return false;
   switch (t.op) {
     case "=":
       return v === t.value;

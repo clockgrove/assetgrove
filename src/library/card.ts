@@ -34,6 +34,8 @@ export const MACHINE_FIELDS = [
   "kind",
   "subject",
   "animationFamily",
+  "form",
+  "tempo",
   "state",
   "version",
   "bible",
@@ -216,6 +218,10 @@ export interface MachineInput {
   subject: string;
   /** The spec's animation family, for a strip of one; the card id is `<assetId>-<family>`. */
   animationFamily?: string;
+  /** A `music` spec's form: `track` or `cue`. */
+  form?: string;
+  /** A `music` spec's requested tempo, in beats per minute. */
+  tempo?: number;
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
   media?: MediaEvidence;
@@ -290,6 +296,8 @@ export function machineFields(input: MachineInput): Record<string, unknown> {
     kind: input.kind,
     subject: input.subject,
     ...(input.animationFamily !== undefined && { animationFamily: input.animationFamily }),
+    ...(input.form !== undefined && { form: input.form }),
+    ...(input.tempo !== undefined && { tempo: input.tempo }),
     state: versionStatus(review, current.sha256),
     version: versionNumber(review, current.sha256),
     bible: provenance.bibleVersion,

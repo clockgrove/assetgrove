@@ -619,7 +619,10 @@ export const findCommand: CommandSpec = defineCommand<FindArgs>({
 developer settings. Words rank by fusing the image vector, the card-text vector and full text;
 --like ranks by look against an asset:// address's image or an image file; --where keeps rows whose
 fields match (field=value, !=, <, >, tag=value; fields kind, subject, state, bible, license,
-source, game, id, address, path, view, title). Returns hits [{address, rank, score, source, path,
+source, game, id, address, path, view, title, form; numeric width, height, durationS and tempo, which
+also take <= and >=, and which a card without the value never matches). An audio card is found by
+its text (title, labels, kind, subject and a music card's form) and its fields: durationS is the
+WAV's measured duration in seconds, tempo the requested bpm. Returns hits [{address, rank, score, source, path,
 view, fields, sharedText}] (card text only under sharedText), fresh, builtFrom, and sheet: a PNG of
 the hits numbered by rank, which the tool also returns as image content. The index is brought up
 to date first unless another process is writing it (fresh false then). --outliers <folder> instead

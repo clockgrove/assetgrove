@@ -860,6 +860,7 @@ async function prepareLibraryVersion(plan: LibraryPlan, input: LibraryVersionInp
     ...(input.spec.animationFamily !== undefined && {
       animationFamily: input.spec.animationFamily,
     }),
+    ...musicFields(input.spec),
     assetgrove: input.assetgrove,
   });
   const existing = await readOwnCard(plan.cardPath, config.root, dir);
@@ -889,6 +890,17 @@ async function prepareLibraryVersion(plan: LibraryPlan, input: LibraryVersionInp
         )
       : base;
   return { record, copies, at, appended, card };
+}
+
+/** A `music` spec's form and requested tempo (its loop's bpm, else its bpm), for the card. */
+function musicFields(spec: object): { form?: string; tempo?: number } {
+  const music = spec as { kind?: unknown; form?: unknown; bpm?: unknown; loop?: { bpm?: unknown } };
+  if (music.kind !== "music") return {};
+  const tempo = [music.loop?.bpm, music.bpm].find((v) => typeof v === "number");
+  return {
+    ...(typeof music.form === "string" && { form: music.form }),
+    ...(typeof tempo === "number" && { tempo }),
+  };
 }
 
 export async function checkLibraryRules(

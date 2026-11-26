@@ -280,6 +280,9 @@ async function expectedFields(
     ...(typeof data["animationFamily"] === "string" && {
       animationFamily: data["animationFamily"],
     }),
+    // A music card's form and requested tempo come from its spec, which only the card keeps.
+    ...(typeof data["form"] === "string" && { form: data["form"] }),
+    ...(typeof data["tempo"] === "number" && { tempo: data["tempo"] }),
     assetgrove: byMatch?.[1] ?? assetgroveVersion(),
   });
   // A manifest outside the library root is not readable here; its card is the only projection.

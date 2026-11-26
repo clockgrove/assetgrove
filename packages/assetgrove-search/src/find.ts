@@ -48,6 +48,9 @@ export interface FindHit {
     | "digitalSourceType"
     | "width"
     | "height"
+    | "durationS"
+    | "form"
+    | "tempo"
     | "mediaType"
     | "mediaSha256"
     | "mediaStatus"
@@ -304,6 +307,9 @@ export class SearchIndex {
           digitalSourceType: row.digitalSourceType,
           width: row.width,
           height: row.height,
+          durationS: row.durationS,
+          form: row.form,
+          tempo: row.tempo,
           mediaType: row.mediaType,
           mediaSha256: row.mediaSha256,
           mediaStatus: row.mediaStatus,

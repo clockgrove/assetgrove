@@ -56,6 +56,7 @@ const ROW_STRINGS = [
   "source",
   "kind",
   "subject",
+  "form",
   "state",
   "bible",
   "license",
@@ -105,7 +106,7 @@ const tableSuffix = (embedder: { id: string; revision: string }): string => {
 
 /** `rows_<id>_<revision>` made safe for a table name. */
 export function rowsTableName(embedder: { id: string; revision: string }): string {
-  return `rows_v2_${tableSuffix(embedder)}`;
+  return `rows_v3_${tableSuffix(embedder)}`;
 }
 
 /**
@@ -113,11 +114,11 @@ export function rowsTableName(embedder: { id: string; revision: string }): strin
  * rows table, so one embedder's index is never judged by what another indexed.
  */
 export function sourcesTableName(embedder: { id: string; revision: string }): string {
-  return `sources_v2_${tableSuffix(embedder)}`;
+  return `sources_v3_${tableSuffix(embedder)}`;
 }
 
 export function builtTableName(embedder: { id: string; revision: string }): string {
-  return `built_v2_${tableSuffix(embedder)}`;
+  return `built_v3_${tableSuffix(embedder)}`;
 }
 
 /** The one-row table recording which embedder made the store's vectors. */
@@ -169,6 +170,8 @@ export class LanceStore implements Store {
         ...ROW_STRINGS.map((n) => str(n, !REQUIRED.has(n))),
         new Field("width", new Float64(), true),
         new Field("height", new Float64(), true),
+        new Field("durationS", new Float64(), true),
+        new Field("tempo", new Float64(), true),
         new Field("tags", new List(new Field("item", new Utf8(), true)), true),
         vec("imageVec"),
         vec("textVec"),
@@ -295,6 +298,8 @@ export class LanceStore implements Store {
       o.origin = r.origin ?? "unknown";
       o.width = r.width ?? null;
       o.height = r.height ?? null;
+      o.durationS = r.durationS ?? null;
+      o.tempo = r.tempo ?? null;
       o.tags = r.tags ?? null;
       o.imageVec = r.imageVec ? Array.from(r.imageVec) : null;
       o.textVec = r.textVec ? Array.from(r.textVec) : null;
@@ -318,7 +323,8 @@ export class LanceStore implements Store {
   private toRow(o: Record<string, unknown>): Row {
     const r: Record<string, unknown> = {};
     for (const n of ROW_STRINGS) if (o[n] !== null && o[n] !== undefined) r[n] = o[n];
-    for (const n of ["width", "height"]) if (typeof o[n] === "number") r[n] = o[n];
+    for (const n of ["width", "height", "durationS", "tempo"])
+      if (typeof o[n] === "number") r[n] = o[n];
     const list = (v: unknown) => (v as { toArray(): ArrayLike<unknown> }).toArray();
     if (o.tags !== null && o.tags !== undefined) r.tags = Array.from(list(o.tags)) as string[];
     for (const n of ["imageVec", "textVec"]) {
