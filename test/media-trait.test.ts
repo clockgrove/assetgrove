@@ -132,7 +132,7 @@ test("decodeWav gives the PCM per channel from -1 to 1, the sample rate and the 
   assert.ok(Math.max(...stereo.channels[0]!.map(Math.abs)) <= 1);
 });
 
-test("stage: an audio kind's checks read the decoded WAV, its candidate carries the AI mark in _PMX and gets no contact cell", async () => {
+test("stage: an audio kind's checks read the decoded WAV, its candidate carries the AI mark in _PMX and gets a waveform contact cell", async () => {
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const spec: AssetSpec = {
@@ -176,11 +176,11 @@ test("stage: an audio kind's checks read the decoded WAV, its candidate carries 
   assert.equal(readDigitalSourceType(bytes, "audio/wav"), DIGITAL_SOURCE_TYPES.generated);
   assert.deepEqual(decodeWav(bytes).channels, decodeWav(SOUND).channels, "the samples are kept");
 
-  // No image to show: no contact sheet, under the registry or by the trait passed in.
-  assert.equal(run.contactSheet, undefined);
+  // Its waveform is its contact cell, under the registry or by the trait passed in.
+  assert.equal(run.contactSheet, "contact.png");
   assert.equal(
     await writeContact(runDir, spec, run.candidates, [], undefined, registry),
-    undefined,
+    "contact.png",
   );
 });
 
