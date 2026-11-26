@@ -32,6 +32,9 @@ export function grantProblems(value: unknown): string[] {
   if (grant["attribution"] !== undefined && typeof grant["attribution"] !== "string") {
     problems.push("attribution is not a string");
   }
+  if (grant["exclusive"] !== undefined && typeof grant["exclusive"] !== "boolean") {
+    problems.push("exclusive is not true or false");
+  }
   if (grant["relabel"] === true && grant["commercial"] === false) {
     problems.push("relabel cannot be true for a non-commercial grant");
   }
@@ -59,12 +62,18 @@ const distinct = (values: string[]) => [...new Set(values)];
  * The combination of several grants; the most restrictive wins. `commercial` and `relabel` hold
  * only when every grant allows them; `license` is the licence of the most restrictive grants
  * (joined with ` AND ` when they differ); `plan` lists every plan, `attribution` every credit line.
- * Undefined when there is no grant.
+ * `exclusive` is false when any grant is non-exclusive, true when every grant says exclusive, and
+ * absent otherwise. Undefined when there is no grant.
  */
 export function combineGrants(grants: OutputGrant[]): OutputGrant | undefined {
   if (grants.length === 0) return undefined;
   const worst = Math.max(...grants.map(rank));
   const attribution = distinct(grants.flatMap((g) => (g.attribution ? [g.attribution] : [])));
+  const exclusive = grants.some((g) => g.exclusive === false)
+    ? false
+    : grants.every((g) => g.exclusive === true)
+      ? true
+      : undefined;
   return {
     license: distinct(grants.filter((g) => rank(g) === worst).map((g) => g.license))
       .sort()
@@ -73,6 +82,7 @@ export function combineGrants(grants: OutputGrant[]): OutputGrant | undefined {
     commercial: grants.every((g) => g.commercial),
     relabel: grants.every((g) => g.relabel),
     ...(attribution.length > 0 && { attribution: attribution.join("; ") }),
+    ...(exclusive !== undefined && { exclusive }),
   };
 }
 

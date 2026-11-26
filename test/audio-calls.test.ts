@@ -25,6 +25,7 @@ import { buildWorkPlan, checkAccounts, jobsOf } from "../src/runs/plan.ts";
 import { CORE_ENTRY, ExtensionRegistry } from "../src/extensions/registry.ts";
 import type { Extension } from "../src/extension/api.ts";
 import { EXIT } from "../src/errors.ts";
+import { grantOf } from "../src/license.ts";
 import { Journal, withRunScope } from "../src/runs/journal.ts";
 import type { Clearance } from "../src/runs/journal.ts";
 import { resolveRoute, RouteUnavailableError } from "../src/routes.ts";
@@ -358,6 +359,11 @@ test("ElevenLabs, made from settings, calls through the guarded fetch, reserves 
   assert.equal(record!.requestId, "el-req-1");
   assert.equal(record!.outputGrant?.plan, "pro");
   assert.equal(record!.outputGrant?.exclusive, false);
+  assert.equal(
+    grantOf(caller.records)?.exclusive,
+    false,
+    "the asset's own grant says non-exclusive",
+  );
   assert.match(record!.providerTerms!, /non-exclusive/);
   assert.match(record!.providerTerms!, /"Data use" opt-out/);
   assert.equal(record!.seed, undefined);
