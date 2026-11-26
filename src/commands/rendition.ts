@@ -17,15 +17,15 @@ interface RenditionArgs {
 export const renditionCommand = defineCommand<RenditionArgs>({
   name: "rendition",
   tool: "rendition",
-  summary: "build a named project recipe from an exact source image version",
+  summary: "build a named project recipe from an exact source image or audio master version",
   details:
-    "Selects <recipes>/<recipe>.json and verifies the full source SHA-256. Writes deterministic raster outputs and provenance under <out>/<digest>/. --preview plans exact paths and byte hashes without writes; available through MCP too.",
+    "Selects <recipes>/<recipe>.json and verifies the full source SHA-256. Writes deterministic raster outputs, or from a WAV master the audio recipe's outputs, and provenance under <out>/<digest>/; the digest covers the source SHA-256 and the resolved recipe with engine and encoder versions, so a change to either gives a new rendition. An audio recipe ending in encode writes an Ogg Vorbis rendition marked with Vorbis comments and a <stem>.c2pa content credentials sidecar, signed with the developer settings' contentCredentials or the development certificate. --preview plans exact paths and byte hashes without writes; available through MCP too.",
   input: {
     type: "object",
     properties: {
       recipes: { type: "string", description: "project-owned recipe directory" },
       recipe: { type: "string", description: "recipe name (safe file stem, without .json)" },
-      source: { type: "string", description: "selected mezzanine image path" },
+      source: { type: "string", description: "selected mezzanine image or WAV master path" },
       sourceSha256: { type: "string", description: "full SHA-256 of the selected source bytes" },
       sourceProvenance: {
         type: "string",

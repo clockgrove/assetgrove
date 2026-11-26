@@ -164,7 +164,8 @@ function soundOf(
       line: `${head}route record unavailable`,
     };
   const line =
-    `${head}${[...models].join(", ")} via ${[...providers].join(", ")}, ${[...plans].join(", ")} plan` +
+    `${head}${[...models].join(", ") || "unnamed model"} via ${[...providers].join(", ")}` +
+    (plans.size === 0 ? "" : `, ${[...plans].join(", ")} plan`) +
     (exclusive ? "" : ", non-exclusive") +
     (optOut === undefined
       ? ""

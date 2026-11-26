@@ -120,7 +120,9 @@ function headers(bytes: Uint8Array): Headers {
             throw new InputError("unsupported Ogg: audio shares a page with the Vorbis headers");
           const [id, comment, setup] = packets as [Uint8Array, Uint8Array, Uint8Array];
           if (!isVorbisHeader(id, 1) || !isVorbisHeader(comment, 3) || !isVorbisHeader(setup, 5))
-            throw new InputError("not an Ogg Vorbis file: its first packets are not Vorbis headers");
+            throw new InputError(
+              "not an Ogg Vorbis file: its first packets are not Vorbis headers",
+            );
           return { packets: [id, comment, setup], audioPage: index + 1, pages: all };
         }
       }

@@ -67,7 +67,7 @@ async function decode(bytes: Uint8Array) {
 function pageHeaders(bytes: Uint8Array): { serial: number; sequence: number }[] {
   const b = Buffer.from(bytes);
   const out = [];
-  for (let at = 0; at < b.length; ) {
+  for (let at = 0; at < b.length;) {
     assert.equal(b.toString("latin1", at, at + 4), "OggS");
     const count = b[at + 26]!;
     let size = 0;
