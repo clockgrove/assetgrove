@@ -21,9 +21,10 @@ test("every configured operation appears once with its host, and gateway routes 
   assert.equal(new Set(operations).size, operations.length, "each operation once");
   assert.deepEqual(
     [...operations].sort(),
-    // `fix` has no default route, nor `embed`, which only the embeddings role routes.
+    // `fix` has no default route, nor `embed`, which only the embeddings role routes; `audio`
+    // is served only by an audio adapter, none of which these settings configure.
     Object.keys(OPERATION_ROLES)
-      .filter((op) => op !== "fix" && op !== "embed")
+      .filter((op) => op !== "fix" && op !== "embed" && op !== "audio")
       .sort(),
   );
 

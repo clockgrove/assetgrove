@@ -99,7 +99,16 @@ test("core registers its kinds, presets and adapters through the extension contr
   assert.deepEqual(core?.presets, ["manifest", "atlas-json", "aseprite-json"]);
   assert.deepEqual(
     [...(core?.adapters ?? [])].sort(),
-    ["anthropic", "openai", "openai-compatible", "scripted", "tripo", "vercel-ai-gateway"].sort(),
+    [
+      "anthropic",
+      "elevenlabs",
+      "openai",
+      "openai-compatible",
+      "scripted",
+      "stability",
+      "tripo",
+      "vercel-ai-gateway",
+    ].sort(),
   );
 });
 

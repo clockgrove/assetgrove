@@ -5,6 +5,7 @@ import { loadProfile } from "../inputs.ts";
 import type { DoctorFinding } from "../handoff/presets/index.ts";
 import { createProviders } from "../providers/adapter.ts";
 import { redact } from "../redact.ts";
+import type { Settings } from "../settings.ts";
 import type { RunContext } from "./types.ts";
 import { defineCommand } from "./types.ts";
 
@@ -71,6 +72,9 @@ type CoreFinding = DoctorFinding & { presets: string[] };
  * refuses its plan or cannot read it; spends nothing. The path is the settings file.
  */
 async function accountFindings(ctx: RunContext): Promise<CoreFinding[]> {
+  // A context built without providers (a preset's own doctor run) has no account to read.
+  const providers = ctx.settings.providers as Settings["providers"] | undefined;
+  if (providers === undefined) return [];
   const configured = createProviders(ctx.settings, {
     ...(ctx.env && { env: ctx.env }),
     ...(ctx.extensions && { adapters: ctx.extensions.adapters }),

@@ -189,7 +189,7 @@ test(
         ],
         { cwd: install, env },
       );
-      assert.equal(api.stdout.trim(), "2 function function function");
+      assert.equal(api.stdout.trim(), "3 function function function");
 
       const world = await syntheticWorld();
       temps.push(world.dir);
