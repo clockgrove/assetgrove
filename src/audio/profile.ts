@@ -130,6 +130,12 @@ export function audioSettings(profile: TargetProfile): ResolvedAudioProfile {
   };
 }
 
+/** The profile's variant-set loudness spread, LU, which needs no `audio.loudness` block. */
+export function audioSetSpread(profile: TargetProfile): number {
+  const parsed = audioProfileSchema.safeParse(profile.audio ?? {});
+  return (parsed.success ? parsed.data.setSpreadLu : undefined) ?? AUDIO_DEFAULTS.setSpreadLu;
+}
+
 /**
  * The profile with the developer settings' `audio.loudness` filled in where the profile has none:
  * how a headless setup sets the block. A profile's own block wins; the profile given is unchanged.

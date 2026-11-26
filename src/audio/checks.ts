@@ -67,22 +67,20 @@ export function memberLoudness(kind: string, audio: AudioContext): number | null
   return kind === "sfx" ? measure.momentaryMax : measure.integrated;
 }
 
+/** The median of a set's defined loudnesses; null when none is defined. */
+export function medianLoudness(values: readonly (number | null)[]): number | null {
+  const known = values.filter((l): l is number => l !== null).sort((a, b) => a - b);
+  if (known.length === 0) return null;
+  const mid = Math.floor(known.length / 2);
+  return known.length % 2 ? known[mid]! : (known[mid - 1]! + known[mid]!) / 2;
+}
+
 /** Each member of a variant set within `spreadLu` of the set's median loudness passes. */
 export function setLoudness(
   members: { id: string; loudness: number | null }[],
   spreadLu: number,
 ): Reason[] {
-  const known = members
-    .map((m) => m.loudness)
-    .filter((l): l is number => l !== null)
-    .sort((a, b) => a - b);
-  const mid = Math.floor(known.length / 2);
-  const median =
-    known.length === 0
-      ? null
-      : known.length % 2
-        ? known[mid]!
-        : (known[mid - 1]! + known[mid]!) / 2;
+  const median = medianLoudness(members.map((m) => m.loudness));
   return members.map((m) => {
     if (m.loudness === null || median === null)
       return reason(

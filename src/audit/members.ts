@@ -56,6 +56,10 @@ export interface Member {
   path?: string;
   /** The image, when the member's media is a local image. */
   image?: { path: string; mediaType: string; bytes: Uint8Array; sha256: string };
+  /** The audio, when the member's media is a local WAV. */
+  audio?: { path: string; mediaType: string; bytes: Uint8Array; sha256: string };
+  /** Its kind, from its card or its run's spec. */
+  kind?: string;
   /** Why the member is not scored. */
   skipped?: string;
 }
@@ -85,12 +89,14 @@ export async function resolveMembers(
   for (const { address, kind } of addresses) {
     const [first, run, candidate] = parseAddress(address).segments;
     let subject: string | undefined;
+    let kindName: string | undefined;
     let file: string | undefined;
     let bytes: Uint8Array | undefined;
     let skipped: string | undefined;
     if (kind === "asset") {
       const asset = assets.get(first!);
       subject = asset?.subject;
+      kindName = asset?.kind;
       if (asset === undefined) skipped = "no card";
       else {
         file = mediaPath(project, asset);
@@ -101,6 +107,8 @@ export async function resolveMembers(
       }
     } else {
       const spec = runSpec(project, run!);
+      const specKind = spec["kind"];
+      if (typeof specKind === "string" && specKind !== "") kindName = specKind;
       const named = spec["subject"] ?? spec["assetId"];
       if (typeof named === "string" && named !== "") subject = named;
       file = runCandidateFiles(project, run!).find((c) => c.id === candidate)?.file;
@@ -115,12 +123,15 @@ export async function resolveMembers(
     const member: Member = {
       address,
       ...(subject !== undefined && { subject }),
+      ...(kindName !== undefined && { kind: kindName }),
       ...(file !== undefined && { path: rel(project, file) }),
     };
     if (bytes !== undefined) {
       const mediaType = sniffMediaType(bytes);
       if (mediaType.startsWith("image/"))
         member.image = { path: file!, mediaType, bytes, sha256: sha256(bytes) };
+      else if (mediaType === "audio/wav")
+        member.audio = { path: file!, mediaType, bytes, sha256: sha256(bytes) };
       else skipped = `${mediaType} is not an image`;
     }
     if (skipped !== undefined) member.skipped = skipped;
