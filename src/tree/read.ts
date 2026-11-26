@@ -386,7 +386,8 @@ function stillAsset(view: View, id: string): Asset {
 function machine(asset: Asset): JsonObject {
   const data = asset.card.data;
   const out: JsonObject = { id: asset.id };
-  for (const key of machineFieldsOf(data["kind"])) if (data[key] !== undefined) out[key] = data[key];
+  for (const key of machineFieldsOf(data["kind"]))
+    if (data[key] !== undefined) out[key] = data[key];
   out["tags"] = asset.tags;
   return out;
 }

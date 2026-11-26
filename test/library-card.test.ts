@@ -117,7 +117,10 @@ test("rewriting machine fields keeps person fields, unknown fields and the body"
 });
 
 test("form and tempo are machine fields on a music card only; elsewhere a person's", () => {
-  const still = parseCard(CARD.replace("kind: still", "kind: still\nform: round\ntempo: 3"), "c.md");
+  const still = parseCard(
+    CARD.replace("kind: still", "kind: still\nform: round\ntempo: 3"),
+    "c.md",
+  );
   const fields = machineFields(input());
   const kept = rewriteMachineFields(still, fields, "c.md");
   assert.equal(kept.data["form"], "round");
@@ -126,9 +129,15 @@ test("form and tempo are machine fields on a music card only; elsewhere a person
   assert.equal(edited.data["form"], "square");
   assert.equal(edited.data["tempo"], "slow");
 
-  const music = parseCard(CARD.replace("kind: still", "kind: music\nform: cue\ntempo: 120"), "c.md");
+  const music = parseCard(
+    CARD.replace("kind: still", "kind: music\nform: cue\ntempo: 120"),
+    "c.md",
+  );
   for (const key of ["form", "tempo"]) {
-    assert.throws(() => setPersonFields(music, { [key]: "x" }, undefined, "c.md"), CardFieldOwnedError);
+    assert.throws(
+      () => setPersonFields(music, { [key]: "x" }, undefined, "c.md"),
+      CardFieldOwnedError,
+    );
   }
   const rebuilt = rewriteMachineFields(music, { ...fields, kind: "music", form: "track" }, "c.md");
   assert.equal(rebuilt.data["form"], "track");
