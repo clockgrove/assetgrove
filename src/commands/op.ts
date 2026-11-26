@@ -1,5 +1,8 @@
+import { readFile } from "node:fs/promises";
+import { transformAudioFiles } from "../audio/run.ts";
 import { InputError } from "../errors.ts";
 import { declarationOption, profileContext } from "../inputs.ts";
+import { sniffMediaType } from "../request.ts";
 import { parseRecipe, transformFiles } from "../transform/run.ts";
 import type { TransformFilesOptions } from "../transform/run.ts";
 import { defineCommand } from "./types.ts";
@@ -10,6 +13,25 @@ export async function runTransform(
   options: Pick<TransformFilesOptions, "recipe" | "inputs" | "out" | "digitalSourceType">,
   profilePath: string | undefined,
 ): Promise<Outcome> {
+  const kinds = await Promise.all(
+    options.inputs.map(async (path) => {
+      try {
+        return sniffMediaType(new Uint8Array(await readFile(path))) === "audio/wav"
+          ? "audio"
+          : "image";
+      } catch (error) {
+        throw new InputError(`cannot read ${path}: ${(error as Error).message}`, { cause: error });
+      }
+    }),
+  );
+  if (kinds.includes("audio") && kinds.includes("image"))
+    throw new InputError("the inputs mix WAV audio and images; run them separately");
+  if (kinds[0] === "audio") {
+    const { record, provenancePath } = await transformAudioFiles(options);
+    const lines = record.outputs.map((o) => `wrote ${o.path}`);
+    lines.push(`provenance ${provenancePath}`);
+    return { exitCode: 0, fields: { provenancePath, ...record }, human: lines.join("\n") };
+  }
   const { record, provenancePath } = await transformFiles({
     ...options,
     ...(await profileContext(profilePath)),
@@ -41,8 +63,8 @@ interface OpArgs {
 export const opCommand = defineCommand<OpArgs>({
   name: "op",
   tool: "op",
-  summary: "run one media operation over images (matte, trim, scale, convert, ...)",
-  details: `Runs one operation (see \`assetgrove ops\`) over the input images and writes the outputs and a
+  summary: "run one media operation over images or WAV audio (matte, scale, gain, loop, ...)",
+  details: `Runs one operation (see \`assetgrove ops\`) over the input images or WAV files and writes the outputs and a
 provenance record. --out is a file for a single output, otherwise a directory.
 --profile supplies the style and frame size. Example: assetgrove op matte in.png --out out.png`,
   input: {
@@ -56,7 +78,7 @@ provenance record. --out is a file for a single output, otherwise a directory.
       inputs: {
         type: "array",
         items: { type: "string" },
-        description: "the input images",
+        description: "the input images or WAV files",
         placeholder: "<input>",
       },
       out: {
@@ -89,7 +111,7 @@ provenance record. --out is a file for a single output, otherwise a directory.
     const operation = args.operation;
     const inputs = args.inputs ?? [];
     if (operation === undefined) throw new InputError("missing the operation name");
-    if (inputs.length === 0) throw new InputError("missing input image(s)");
+    if (inputs.length === 0) throw new InputError("missing input file(s)");
     let params: unknown = {};
     if (args.params !== undefined) {
       try {

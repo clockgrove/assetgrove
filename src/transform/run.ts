@@ -16,6 +16,8 @@ import {
   sourceDeclaration,
 } from "../metadata.ts";
 import type { DigitalSourceType } from "../metadata.ts";
+import { AUDIO_ENGINE } from "../audio/engine.ts";
+import { AUDIO_IMPLEMENTATIONS } from "../audio/operations.ts";
 import { InputError } from "../errors.ts";
 import { formatLine, readFormat } from "../formats.ts";
 import type { Raster } from "../image/raster.ts";
@@ -23,7 +25,7 @@ import { sha256, sniffMediaType } from "../request.ts";
 import { resolveStyle } from "../style.ts";
 import type { ResolvedStyle } from "../style.ts";
 import type { Size } from "../types.ts";
-import { OPERATIONS, operationSpec } from "./operations.ts";
+import { ALL_OPERATIONS, operationSpec } from "./operations.ts";
 import { materialEngine } from "../material/engine.ts";
 import { rasterEngine } from "./raster-engine.ts";
 import { validate } from "./schema.ts";
@@ -80,12 +82,18 @@ function pickEngine(op: string, engines: ImageEngine[], name?: string): ImageEng
   return engine;
 }
 
+/** An audio operation cannot run on images. */
+function refuseAudioOnImages(op: string): void {
+  if (operationSpec(op)?.media === "audio")
+    throw new InputError(`${op} is an audio operation and cannot run on images`);
+}
+
 /** Validates a step's parameters against its operation's schema (defaults filled). */
 export function checkStep(step: RecipeStep, path = "step"): Record<string, unknown> {
   const spec = operationSpec(step.op);
   if (!spec) {
     throw new InputError(
-      `${path}: unknown operation "${step.op}" (known: ${OPERATIONS.map((o) => o.name).join(", ")})`,
+      `${path}: unknown operation "${step.op}" (known: ${ALL_OPERATIONS.map((o) => o.name).join(", ")})`,
     );
   }
   return validate(spec.params, step.params ?? {}, `${path}.params`) as Record<string, unknown>;
@@ -102,6 +110,7 @@ export function runOperation(
 ): { items: ImageItem[]; step: TransformStep } {
   const spec = operationSpec(step.op);
   const checked = checkStep(step);
+  refuseAudioOnImages(step.op);
   const engines = options.engines ?? DEFAULT_ENGINES;
   const engine = pickEngine(step.op, engines, step.engine);
   const impl = engine.operations[step.op];
@@ -198,7 +207,10 @@ export function parseRecipe(value: unknown, engines: ImageEngine[] = DEFAULT_ENG
       ...(step["engine"] !== undefined && { engine: step["engine"] as string }),
     };
     checkStep(parsed, path);
-    pickEngine(parsed.op, engines, parsed.engine);
+    if (operationSpec(parsed.op)?.media === "audio") {
+      if (parsed.engine !== undefined && parsed.engine !== AUDIO_ENGINE.name)
+        throw new InputError(`${path}.engine: ${parsed.op} runs on "${AUDIO_ENGINE.name}"`);
+    } else pickEngine(parsed.op, engines, parsed.engine);
     return parsed;
   });
   return {
@@ -432,23 +444,34 @@ function jsonMeta(meta: Record<string, unknown>): Record<string, unknown> | unde
 export function describeOperations(engines: ImageEngine[] = DEFAULT_ENGINES) {
   return {
     recipeFormat: RECIPE_FORMAT,
-    engines: engines.map((e) => ({
-      name: e.name,
-      version: e.version,
-      operations: [...Object.keys(e.operations), ...Object.keys(e.asyncOperations ?? {})],
-      encodes: Object.entries(e.encoders).map(([mediaType, enc]) => ({
-        mediaType,
-        extension: enc?.extension,
+    engines: [
+      ...engines.map((e) => ({
+        name: e.name,
+        version: e.version,
+        operations: [...Object.keys(e.operations), ...Object.keys(e.asyncOperations ?? {})],
+        encodes: Object.entries(e.encoders).map(([mediaType, enc]) => ({
+          mediaType,
+          extension: enc?.extension as string | undefined,
+        })),
       })),
-    })),
-    operations: OPERATIONS.map((o) => ({
+      {
+        name: AUDIO_ENGINE.name,
+        version: AUDIO_ENGINE.version,
+        operations: Object.keys(AUDIO_IMPLEMENTATIONS),
+        encodes: [{ mediaType: "audio/wav", extension: "wav" as string | undefined }],
+      },
+    ],
+    operations: ALL_OPERATIONS.map((o) => ({
       name: o.name,
       summary: o.summary,
       scope: o.scope,
       params: o.params,
-      engines: engines
-        .filter((e) => e.operations[o.name] || e.asyncOperations?.[o.name])
-        .map((e) => e.name),
+      engines:
+        o.media === "audio"
+          ? [AUDIO_ENGINE.name]
+          : engines
+              .filter((e) => e.operations[o.name] || e.asyncOperations?.[o.name])
+              .map((e) => e.name),
     })),
   };
 }
@@ -463,6 +486,7 @@ export async function runRecipeAsync(
   const steps: TransformStep[] = [];
   for (const step of recipe.steps) {
     const checked = checkStep(step);
+    refuseAudioOnImages(step.op);
     const spec = operationSpec(step.op)!;
     const engine = pickEngine(step.op, options.engines ?? DEFAULT_ENGINES, step.engine);
     const impl = engine.asyncOperations?.[step.op];

@@ -14,8 +14,8 @@ interface RecipeArgs {
 export const recipeCommand = defineCommand<RecipeArgs>({
   name: "recipe",
   tool: "recipe",
-  summary: "run a recipe file (a sequence of operations) over images",
-  details: `Runs the steps of a recipe file in order over the input images and writes the outputs and a
+  summary: "run a recipe file (a sequence of operations) over images or WAV audio",
+  details: `Runs the steps of a recipe file in order over the input images or WAV files and writes the outputs and a
 provenance record. --out is a file for a single output, otherwise a directory.`,
   input: {
     type: "object",
@@ -24,7 +24,7 @@ provenance record. --out is a file for a single output, otherwise a directory.`,
       inputs: {
         type: "array",
         items: { type: "string" },
-        description: "the input images",
+        description: "the input images or WAV files",
         placeholder: "<input>",
       },
       out: {
@@ -51,7 +51,7 @@ provenance record. --out is a file for a single output, otherwise a directory.`,
   async run(args) {
     const inputs = args.inputs ?? [];
     if (args.recipe === undefined) throw new InputError("missing the recipe file");
-    if (inputs.length === 0) throw new InputError("missing input image(s)");
+    if (inputs.length === 0) throw new InputError("missing input file(s)");
     const recipe = await loadRecipe(args.recipe);
     const digitalSourceType = declarationOption(args.digitalSourceType);
     return runTransform(

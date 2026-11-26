@@ -2,6 +2,7 @@
  * The image operations: name, scope and parameter schema, independent of any engine. Engines
  * implement them (see `raster-engine.ts`); recipes name them.
  */
+import { AUDIO_OPERATIONS } from "../audio/operations.ts";
 import { MATERIAL_OPERATIONS } from "../material/operations.ts";
 import { BLOB_KINDS } from "../sheet/types.ts";
 import type { ParamSchema } from "./schema.ts";
@@ -329,6 +330,9 @@ export const OPERATIONS: OperationSpec[] = [
   },
 ];
 
+/** Every operation a recipe may name: the image operations, then the audio engine's. */
+export const ALL_OPERATIONS: OperationSpec[] = [...OPERATIONS, ...AUDIO_OPERATIONS];
+
 export function operationSpec(name: string): OperationSpec | undefined {
-  return OPERATIONS.find((o) => o.name === name);
+  return ALL_OPERATIONS.find((o) => o.name === name);
 }

@@ -57,6 +57,8 @@ export interface OperationSpec {
    * Either way it may return any number of items.
    */
   scope: "each" | "all";
+  /** The media the operation works on; absent means image. */
+  media?: "image" | "audio";
   params: ParamSchema;
   /** Fills defaults that depend on the style profile; plain defaults live in the schema. */
   defaults?: (
