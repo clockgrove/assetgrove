@@ -36,7 +36,19 @@ const COVERAGE: Record<string, string[]> = {
   // What the server offers: settings route each role to it.
   "openai-compatible": [],
   tripo: ["clips3d", "model3d", "rig3d"],
-  scripted: ["clips3d", "decisions", "edit", "image", "model3d", "planning", "rig3d", "vision"],
+  stability: ["audio"],
+  elevenlabs: ["audio"],
+  scripted: [
+    "audio",
+    "clips3d",
+    "decisions",
+    "edit",
+    "image",
+    "model3d",
+    "planning",
+    "rig3d",
+    "vision",
+  ],
 };
 
 test("the role coverage table per adapter: each core adapter's default routes serve its roles, each with a grant, terms and the capability", () => {

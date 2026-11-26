@@ -55,7 +55,7 @@ function tree(): string {
         name: `@clockgrove/${short}`,
         version: "0.3.0",
         files: ["dist", "skills"],
-        assetgrove: { api: 2, entry: "./dist/extension.js" },
+        assetgrove: { api: 3, entry: "./dist/extension.js" },
       }),
     );
     put(root, `packages/${short}/src/extension.ts`, "export default {};\n");

@@ -205,7 +205,7 @@ test("extensions setup runs a pack's setup with pinned downloads", async () => {
   const project = tempProject();
   try {
     const pack = (sha256: string) => ({
-      api: 2 as const,
+      api: 3 as const,
       name: "fixture",
       setup: async (ctx: { download(f: ReturnType<typeof pin>): Promise<string> }) => ({
         path: await ctx.download(pin({ sha256 })),
@@ -239,7 +239,7 @@ test("extensions setup runs a pack's setup with pinned downloads", async () => {
     const bare = await project.run(
       "extensions setup",
       { name: "bare" },
-      { extensions: [{ api: 2, name: "bare" }] },
+      { extensions: [{ api: 3, name: "bare" }] },
     );
     assert.equal(bare.exitCode, 2);
     assert.match(bare.error?.message ?? "", /declares no setup/);

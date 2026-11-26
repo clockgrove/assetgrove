@@ -1,6 +1,6 @@
 /**
  * The extension ("pack") contract (design section 11), published as
- * `@clockgrove/assetgrove/extension`. A package declares `"assetgrove": {"api": 2, "entry": "..."}`
+ * `@clockgrove/assetgrove/extension`. A package declares `"assetgrove": {"api": 3, "entry": "..."}`
  * in its package.json and a peer range on `@clockgrove/assetgrove`; core loads it only when the
  * developer settings list it, it speaks an api core speaks and the range admits core's version
  * (src/extensions/registry.ts, src/extensions/version.ts). Its entry's default export is an
@@ -17,8 +17,11 @@ import type { SearchSettings } from "../settings.ts";
 import type { prompt, qa, raster } from "./helpers.ts";
 import type { SetupContext } from "./setup.ts";
 
-/** The extension API version this build of Assetgrove speaks. */
-export const EXTENSION_API = 2;
+/**
+ * The extension API version this build of Assetgrove speaks. Api 3 added the `audio` call kind
+ * (`CallKind`, `Caller.audio`, `GenerationProvider.generateAudio`).
+ */
+export const EXTENSION_API = 3;
 
 /** Every extension API version this build loads; a pack declaring another is refused. */
 export const EXTENSION_APIS: readonly number[] = [EXTENSION_API];
@@ -380,7 +383,11 @@ export type {
 } from "../handoff/presets/index.ts";
 export type { AdapterContext, Capability, ProviderAdapter } from "../providers/adapter.ts";
 export type {
+  AccountReading,
+  AccountRoute,
   AnimateRequest,
+  AudioRequest,
+  AudioResult,
   Billing,
   CallKind,
   CallTypes,
@@ -410,6 +417,7 @@ export type {
   VisionResult,
 } from "../gateway/provider.ts";
 export type { Route, Routes } from "../routes.ts";
+export type { AudioParameterName, AudioParameters } from "../audio-parameters.ts";
 export type { ProviderSettings } from "../settings.ts";
 export type { SearchSettings, SearchStoreSettings } from "../settings.ts";
 export type {

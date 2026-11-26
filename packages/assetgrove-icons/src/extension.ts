@@ -1,4 +1,4 @@
-/** The icons pack's entry for core's extension API (api 2): the `icons:family` kind. */
+/** The icons pack's entry for core's extension API (api 3): the `icons:family` kind. */
 import type { Extension, ExtensionContext } from "@clockgrove/assetgrove/extension";
 import { iconsFamilyKind } from "./kind.ts";
 

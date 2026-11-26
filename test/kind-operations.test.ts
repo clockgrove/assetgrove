@@ -31,7 +31,7 @@ const LIMIT = { kind: "prepaid", usd: 100 } as const;
 
 function pixel(operations: Record<string, string> | undefined = { "pixel:still": "image" }) {
   return {
-    api: 2,
+    api: 3,
     name: "pixel",
     kinds: [
       {
@@ -164,7 +164,7 @@ test("core's registry holds the operations its kinds declare, and refuses a disa
   assert.deepEqual(kinds.get("still")?.operations?.["still"], "image");
   assert.ok(kinds.get("character-3d")?.operations?.["rig3d"]);
   const wrong = {
-    api: 2,
+    api: 3,
     name: "core",
     kinds: [{ ...kinds.get("still")!, operations: { still: "vision" } }],
   } as unknown as Extension;
@@ -237,7 +237,7 @@ function pixelProject(): string {
       name: "pixel-pack",
       version: "1.0.0",
       type: "module",
-      assetgrove: { api: 2, entry: "./index.js" },
+      assetgrove: { api: 3, entry: "./index.js" },
       peerDependencies: { "@clockgrove/assetgrove": `^${coreVersion()}` },
     }),
   );

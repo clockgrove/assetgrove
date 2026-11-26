@@ -4,7 +4,7 @@ The icons pack for Assetgrove: one icon per asset, at one size, checked against 
 
 ## Extension API
 
-The package declares `"assetgrove": { "api": 2 }` and a peer range on `@clockgrove/assetgrove`. It declares, as extension `icons`, the kind `icons:family` with its operations `icons:still` and `icons:identify` and its two checks.
+The package declares `"assetgrove": { "api": 3 }` and a peer range on `@clockgrove/assetgrove`. It declares, as extension `icons`, the kind `icons:family` with its operations `icons:still` and `icons:identify` and its two checks.
 
 ## Install
 

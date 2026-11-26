@@ -1,5 +1,5 @@
 /**
- * The Godot pack's entry for core's extension API (api 2): the `godot:sprite-frames`,
+ * The Godot pack's entry for core's extension API (api 3): the `godot:sprite-frames`,
  * `godot:tile-set` and `godot:gltf` presets, the
  * `godot:engine` tool (the executable at its settings' `godot`), and a setup that downloads the
  * pinned Godot or uses the one the settings name.

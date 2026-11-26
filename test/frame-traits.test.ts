@@ -74,7 +74,7 @@ function fixtureKind(kind: string, frames: "strip" | "single"): Generator {
 }
 
 const extension = {
-  api: 2,
+  api: 3,
   name: "fx",
   kinds: [fixtureKind("fx:strip", "strip"), fixtureKind("fx:single", "single")],
 } as unknown as Extension;

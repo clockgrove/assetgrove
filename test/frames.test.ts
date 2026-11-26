@@ -86,7 +86,7 @@ test("a strip's provenance parameters gain frame and frameCount only when the ki
 
 test("a kind declaring frames other than single or strip is refused at load", () => {
   const ext = (frames: unknown) => ({
-    api: 2,
+    api: 3,
     name: "fx",
     kinds: [{ kind: "fx:tile", frames, planCandidate: () => [], generate: () => undefined }],
   });

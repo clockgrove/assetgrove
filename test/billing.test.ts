@@ -245,6 +245,8 @@ test("every core adapter declares settle and reconcile", () => {
     anthropic: ["declared", "unavailable"],
     openai: ["declared", "unavailable"],
     tripo: ["reported", "lookup"],
+    stability: ["reported", "unavailable"],
+    elevenlabs: ["declared", "unavailable"],
     "openai-compatible": ["declared", "unavailable"],
     scripted: ["reported", "unavailable"],
   };

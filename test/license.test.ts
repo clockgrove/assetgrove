@@ -12,7 +12,7 @@ import { encodePng } from "../src/image/raster.ts";
 import { ProviderSet } from "../src/providers/set.ts";
 import { imageGenerators } from "../src/generators/image.ts";
 import { pick } from "../src/handoff.ts";
-import { combineGrants, LicenseError, licenseDecision } from "../src/license.ts";
+import { combineGrants, grantProblems, LicenseError, licenseDecision } from "../src/license.ts";
 import { stage } from "../src/loop.ts";
 import { defaultRoutes } from "../src/routes.ts";
 import type { Routes } from "../src/routes.ts";
@@ -202,6 +202,18 @@ test("the most restrictive grant wins when calls combine", () => {
   assert.equal(all.commercial, false);
   assert.equal(all.relabel, false);
   assert.equal(all.attribution, CC_BY.attribution);
+});
+
+test("a non-exclusive grant makes the combined grant non-exclusive; terms that say nothing leave it absent", () => {
+  const elevenlabs: OutputGrant = { ...OWNED, plan: "pro", exclusive: false };
+  assert.equal(combineGrants([OWNED, elevenlabs])!.exclusive, false);
+  assert.equal(combineGrants([elevenlabs, { ...OWNED, exclusive: true }])!.exclusive, false);
+  assert.equal(combineGrants([{ ...OWNED, exclusive: true }])!.exclusive, true);
+  assert.equal("exclusive" in combineGrants([OWNED, { ...OWNED, exclusive: true }])!, false);
+  assert.equal("exclusive" in combineGrants([OWNED, CC_BY])!, false);
+  assert.deepEqual(grantProblems({ ...OWNED, exclusive: "no" }), [
+    "exclusive is not true or false",
+  ]);
 });
 
 test("licences of several attribution-only grants are a set, whatever the call order", () => {

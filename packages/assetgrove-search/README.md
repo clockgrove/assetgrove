@@ -4,7 +4,7 @@ Optional search package for Assetgrove (design section 7). Core never imports it
 
 ## Extension API
 
-The package declares `"assetgrove": { "api": 2 }` and a peer range on `@clockgrove/assetgrove` that the installed core must satisfy, or core refuses it. It imports only from core's public exports: the search types from `@clockgrove/assetgrove/extension` (type-only, so the built package needs nothing from core at runtime) and, in its tests, the pack test kit `@clockgrove/assetgrove/testing` (a temporary project, core's CLI and MCP server, and the conformance suite in `test/conformance.test.ts`). It keeps no copy of core's contract. The tests run with `node --conditions=assetgrove-source`, which resolves the linked core to its TypeScript source; the same condition is in `tsconfig.json` for `tsc`.
+The package declares `"assetgrove": { "api": 3 }` and a peer range on `@clockgrove/assetgrove` that the installed core must satisfy, or core refuses it. It imports only from core's public exports: the search types from `@clockgrove/assetgrove/extension` (type-only, so the built package needs nothing from core at runtime) and, in its tests, the pack test kit `@clockgrove/assetgrove/testing` (a temporary project, core's CLI and MCP server, and the conformance suite in `test/conformance.test.ts`). It keeps no copy of core's contract. The tests run with `node --conditions=assetgrove-source`, which resolves the linked core to its TypeScript source; the same condition is in `tsconfig.json` for `tsc`.
 
 ## Near matches before paid generation
 

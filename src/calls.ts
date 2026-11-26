@@ -3,6 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { requireInsideProject } from "./bible.ts";
+import { checkAudioParameters } from "./audio-parameters.ts";
+import type { AudioParameters } from "./audio-parameters.ts";
 import { checkCallParameters } from "./call-parameters.ts";
 import type { CallParameters, KeyedCallParameters } from "./call-parameters.ts";
 import { Budget } from "./budget.ts";
@@ -12,6 +14,7 @@ import { InputError, JobStoppedError, ProviderError } from "./errors.ts";
 import { BudgetExceededError, EstimateAboveCeilingError } from "./budget.ts";
 import { assertLimitDeclared, billingOf } from "./limits.ts";
 import type {
+  AudioResult,
   CallKind,
   CallTypes,
   DecisionQuestion,
@@ -121,7 +124,7 @@ export class Caller {
     seed: number | undefined,
     request: (route: Route) => CallTypes[K][0],
     direct: (provider: GenerationProvider, request: CallTypes[K][0]) => Promise<CallTypes[K][1]>,
-    keyedParameters?: KeyedCallParameters,
+    keyedParameters?: KeyedCallParameters | AudioParameters,
   ): Promise<CallTypes[K][1]> {
     type Result = CallTypes[K][1];
     if (this.plannedCalls !== undefined) {
@@ -134,7 +137,10 @@ export class Caller {
       this.plannedCalls.set(operation, remaining - 1);
     }
     const route = this.route(operation);
-    if ((kind === "image" || kind === "model") && this.provider instanceof ProviderSet)
+    if (
+      (kind === "image" || kind === "model" || kind === "audio") &&
+      this.provider instanceof ProviderSet
+    )
       this.provider.checkPrompt(prompt, operation);
     const served = this.serve(route, operation);
     const name = `${served.id}:${operation}:${route.model}`;
@@ -212,7 +218,10 @@ export class Caller {
         },
       );
     };
-    const jobs = served.provider.jobs?.[kind] as JobProvider<CallTypes[K][0], Result> | undefined;
+    const offered = served.provider.jobs?.[kind] as
+      JobProvider<CallTypes[K][0], Result> | undefined;
+    // A provider whose models differ (Stable Audio 2.5 direct, 3.0 queued) declines a request.
+    const jobs = offered?.serves?.(sent) === false ? undefined : offered;
     const startedAt = this.now().toISOString();
     let result: Result;
     let reservation: Reservation;
@@ -271,7 +280,16 @@ export class Caller {
       ...(route.providerTermsAsOf !== undefined && {
         providerTermsAsOf: route.providerTermsAsOf,
       }),
-      ...(route.outputGrant !== undefined && { outputGrant: structuredClone(route.outputGrant) }),
+      ...(route.outputGrant !== undefined && {
+        // The plan the account was on when it made the output (an ElevenLabs tier) is the grant's.
+        outputGrant: {
+          ...structuredClone(route.outputGrant),
+          ...(result.plan !== undefined && { plan: result.plan }),
+        },
+      }),
+      ...(route.trainingOptOut !== undefined && {
+        trainingOptOut: { ...route.trainingOptOut, source: "declared by the developer" as const },
+      }),
     };
     this.records.push(record);
     if (journal !== undefined && callKey !== undefined) {
@@ -558,6 +576,79 @@ export class Caller {
   }
 
   /**
+   * One audio generation (docs/PRD-audio.md): the closed parameter set (`durationS`, `seed`,
+   * `promptInfluence`), any other key refused by name; `seed` sent only on a route that has one,
+   * and each other parameter only to an adapter that maps it, refused before any spend otherwise.
+   * The prompt policy covers the prompt. The result must be a WAV: anything else is refused at
+   * intake, after the call settles (the vendor has charged it).
+   */
+  async audio(
+    operation: string,
+    prompt: string,
+    options: { parameters?: AudioParameters } = {},
+  ): Promise<ImageInput> {
+    const given = checkAudioParameters(options.parameters, operation);
+    const route = this.route(operation);
+    const served = this.serve(route, operation);
+    let supported: readonly string[] | undefined;
+    let adapter: string;
+    if (this.provider instanceof ProviderSet) {
+      const configured = this.provider.get(served.id);
+      supported = configured?.adapter.audioParameters;
+      adapter = configured?.adapter.id ?? "";
+    } else {
+      supported = served.provider.audioParameters;
+      adapter = served.provider.billing.adapter;
+    }
+    for (const name of ["durationS", "promptInfluence"] as const)
+      if (given[name] !== undefined && !(supported ?? []).includes(name))
+        throw new RouteUnavailableError(
+          operation,
+          `route unavailable: the ${operation} call passes ${name}, which provider "${served.id}" (${adapter} adapter) does not map; route ${operation} to a provider whose adapter declares it`,
+        );
+    const sendSeed = route.supportsSeed ? given.seed : undefined;
+    const sent: AudioParameters = {
+      ...(given.durationS !== undefined && { durationS: given.durationS }),
+      ...(sendSeed !== undefined && { seed: sendSeed }),
+      ...(given.promptInfluence !== undefined && { promptInfluence: given.promptInfluence }),
+    };
+    const keyed = Object.keys(sent).length > 0 ? sent : undefined;
+    const parameters: Record<string, unknown> = {
+      ...sent,
+      ...(route.providerOptions !== undefined && { providerOptions: route.providerOptions }),
+    };
+    const result: AudioResult = await this.record(
+      "audio",
+      operation,
+      prompt,
+      [],
+      parameters,
+      sendSeed,
+      (r) => ({
+        model: r.model,
+        prompt,
+        ...(sent.durationS !== undefined && { durationS: sent.durationS }),
+        ...(sendSeed !== undefined && { seed: sendSeed }),
+        ...(sent.promptInfluence !== undefined && { promptInfluence: sent.promptInfluence }),
+        ...(r.providerOptions !== undefined && { providerOptions: r.providerOptions }),
+      }),
+      (provider, request) => {
+        const generate = provider.generateAudio?.bind(provider);
+        if (!generate) throw new ProviderError(`the provider cannot make audio (${operation})`);
+        return generate(request);
+      },
+      keyed,
+    );
+    const audio = result.audio as ImageInput | undefined;
+    if (audio === undefined) throw new ProviderError(`the ${operation} call returned no audio`);
+    if (!isWav(audio))
+      throw new ProviderError(
+        `refused at intake: the ${operation} call's route ${served.id}:${operation}:${route.model} returned ${audio.mediaType || "an unnamed media type"}, not a WAV; every audio route is asked for WAV and nothing is decoded from another format`,
+      );
+    return audio;
+  }
+
+  /**
    * Image-to-3D from reference views. Each reference's `view` is sent as the view it shows; the result's
    * handle lets a later rig call name the model.
    */
@@ -803,6 +894,14 @@ export class Caller {
     );
     return { result, record };
   }
+}
+
+/** Whether an audio file is a WAV: by its media type and its RIFF/WAVE header. */
+function isWav(audio: ImageInput): boolean {
+  const type = audio.mediaType.toLowerCase().split(";")[0]!.trim();
+  if (!["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"].includes(type)) return false;
+  const head = new TextDecoder("latin1").decode(audio.bytes.subarray(0, 12));
+  return head.startsWith("RIFF") && head.slice(8, 12) === "WAVE";
 }
 
 /** How a queued job is polled: the first wait, the longest, and the deadline per call. */

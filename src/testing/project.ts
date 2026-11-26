@@ -128,6 +128,10 @@ export function tempProject(options: { settings?: Record<string, unknown> } = {}
   git("config", "user.email", "pack@example.test");
   git("config", "user.name", "Pack Test");
   git("config", "commit.gpgsign", "false");
+  // No background maintenance: git's auto gc and maintenance, detached after a commit, write lock
+  // files under .git while a test may be reading or hashing it.
+  git("config", "gc.auto", "0");
+  git("config", "maintenance.auto", "false");
   writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
   git("add", ".gitignore");
   git("commit", "--quiet", "-m", "a temporary project");

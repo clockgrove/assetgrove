@@ -249,8 +249,17 @@ export interface CallRecord {
   providerTerms?: string;
   /** The date (YYYY-MM-DD) those terms were read, from its route. */
   providerTermsAsOf?: string;
-  /** What the provider grants for this call's output, from its route. */
+  /**
+   * What the provider grants for this call's output, from its route; `plan` is the account's own
+   * plan where the provider reports one (an ElevenLabs tier).
+   */
   outputGrant?: OutputGrant;
+  /**
+   * The training opt-out the developer declared for its route in settings, with the date it was
+   * set. No vendor's opt-out can be read through its API, so it is recorded as declared, never
+   * assumed; absent when none is declared.
+   */
+  trainingOptOut?: { optedOut: boolean; since: string; source: "declared by the developer" };
   /** For a typed decision call: what it answered, how sure and how long it took. */
   decision?: DecisionLog;
 }
@@ -270,6 +279,11 @@ export interface OutputGrant {
   relabel: boolean;
   /** The credit line the grant requires, when it requires one. */
   attribution?: string;
+  /**
+   * False when the provider may give other users the same or a similar output (ElevenLabs' terms:
+   * output may not be unique across users); absent when the terms say nothing.
+   */
+  exclusive?: boolean;
 }
 
 /** One typed decision call's answer, as logged in its call record. */

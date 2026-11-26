@@ -4,7 +4,7 @@ The tiles pack for Assetgrove: a corner-16 terrain tile set between two terrains
 
 ## Extension API
 
-The package declares `"assetgrove": { "api": 2 }` and a peer range on `@clockgrove/assetgrove`. It declares, as extension `tiles`, the kind `tiles:terrain` with its operations `tiles:atlas` and `tiles:seams` and its three checks.
+The package declares `"assetgrove": { "api": 3 }` and a peer range on `@clockgrove/assetgrove`. It declares, as extension `tiles`, the kind `tiles:terrain` with its operations `tiles:atlas` and `tiles:seams` and its three checks.
 
 ## Install
 

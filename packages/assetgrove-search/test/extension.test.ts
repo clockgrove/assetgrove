@@ -19,7 +19,7 @@ describe("the search extension", () => {
 
   it("declares the search slot", () => {
     const ext = extension(context);
-    assert.equal(ext.api, 2);
+    assert.equal(ext.api, 3);
     assert.equal(ext.name, "search");
   });
 

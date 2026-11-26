@@ -6,7 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import semver from "semver";
-import { EXTENSION_APIS } from "../extension/api.ts";
+import { EXTENSION_API, EXTENSION_APIS } from "../extension/api.ts";
 
 /** Core's package name, the peer a pack declares. */
 export const CORE_PACKAGE = "@clockgrove/assetgrove";
@@ -41,8 +41,10 @@ export function compatibilityProblem(
     const declared = JSON.stringify(api);
     const why =
       api === 1
-        ? "api 1 is the pre-0.3 contract, which this Assetgrove no longer loads; rebuild the pack against api 2"
-        : `this Assetgrove does not speak api ${declared ?? "(none)"}`;
+        ? `api 1 is the pre-0.3 contract, which this Assetgrove no longer loads; rebuild the pack against api ${EXTENSION_API}`
+        : api === 2
+          ? `api 2 is the contract before the audio call kind, which this Assetgrove no longer loads; rebuild the pack against api ${EXTENSION_API}`
+          : `this Assetgrove does not speak api ${declared ?? "(none)"}`;
     return `declares extension api ${declared ?? "(none)"}: ${why}; it speaks ${spoken()}`;
   }
   const peers =

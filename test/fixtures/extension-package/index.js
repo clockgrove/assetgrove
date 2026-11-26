@@ -23,7 +23,7 @@ const PNG = new Uint8Array(
 /** @param {{ api: number, z: typeof import("zod").z }} context */
 export default function extension({ z }) {
   return {
-    api: 2,
+    api: 3,
     name: "fixture",
     kinds: [
       {
