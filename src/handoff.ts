@@ -6,6 +6,9 @@ import {
   credentialProblem,
   DEVELOPMENT_SIGNER_WARNING,
   resolveSigner,
+  sidecarCredentialed,
+  sidecarName,
+  takesSidecar,
 } from "./credentials.ts";
 import type { ContentSigner, SignerRecord } from "./credentials.ts";
 import { requireLfsMedia } from "./gitlfs.ts";
@@ -412,8 +415,11 @@ export interface PreparedTargetWrite {
   runnerOf: (i: number) => ToolRunner;
   /** Each preset's approved tool runs, by the preset's index. */
   toolSteps: ToolStep[][];
-  /** Signs an image a preset writes, when the hand-off signs; records it in `credentials`. */
-  signImage?: (rel: string, bytes: Uint8Array, mediaType: string) => Promise<Uint8Array>;
+  /**
+   * Signs the images a preset writes and gives each Ogg a C2PA sidecar beside it (added to the
+   * files); records both in `credentials`.
+   */
+  signPresetFiles: (files: PresetFile[]) => Promise<PresetFile[]>;
   mediaRel: string;
   manifestRel: string;
   mediaPath: string;
@@ -615,16 +621,11 @@ async function runFamilyPresets(prepared: readonly PreparedTargetWrite[]): Promi
         run: last.runnerOf(i),
       };
       const ran = last.toolSteps[i]?.length ?? 0;
-      const files = await preset.write(ctx, options, targetRead(last.guard));
+      let files = await preset.write(ctx, options, targetRead(last.guard));
       const steps = last.toolSteps[i]?.slice(ran) ?? [];
       if (steps.length > 0) await recordFamilyToolSteps(last, steps);
       // An image a preset writes is signed like the media.
-      for (const [j, file] of files.entries()) {
-        if (last.signImage === undefined || typeof file.content === "string") continue;
-        const type = markableMediaType(file.path);
-        if (type === undefined || !canCarryCredentials(type)) continue;
-        files[j] = { ...file, content: await last.signImage(file.path, file.content, type) };
-      }
+      files = await last.signPresetFiles(files);
       const at = 1 + last.presetFiles.slice(0, i).flat().length;
       last.presetFiles[i] = files;
       last.familyContexts[i] = ctx;
@@ -673,18 +674,14 @@ async function recordFamilyToolSteps(p: PreparedTargetWrite, steps: ToolStep[]):
   const read = targetRead(p.guard);
   for (const [i, { preset, options }] of p.presets.entries()) {
     if (preset.scope === "families" || (p.toolSteps[i]?.length ?? 0) > 0) continue;
-    const files = await preset.write({ ...p.presetContext, run: p.runnerOf(i) }, options, read);
+    const files = await p.signPresetFiles(
+      await preset.write({ ...p.presetContext, run: p.runnerOf(i) }, options, read),
+    );
     const before = (p.presetFiles[i] ?? []).map((file) => file.path);
     if (JSON.stringify(files.map((file) => file.path)) !== JSON.stringify(before)) {
       throw new InputError(
         `the preset "${preset.name}" wrote other files when rendered again with the record's tool runs`,
       );
-    }
-    for (const [j, file] of files.entries()) {
-      const type = markableMediaType(file.path);
-      if (p.signImage === undefined || typeof file.content === "string") continue;
-      if (type === undefined || !canCarryCredentials(type)) continue;
-      files[j] = { ...file, content: await p.signImage(file.path, file.content, type) };
     }
     p.presetFiles[i] = files;
     for (const file of files) replace(targetPath(p.guard, file.path), file.content);
@@ -867,22 +864,47 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
       presetFiles[i] = await preset.write({ ...presetContext, run: runnerOf(i) }, options, read);
     }
   }
-  // An image a preset writes is signed like the media.
-  const signImage =
-    sign &&
-    (async (rel: string, bytes: Uint8Array, type: string) => {
-      const signedBytes = await sign(rel, bytes, type);
-      if (!signed.includes(rel)) signed.push(rel);
-      return signedBytes;
-    });
-  for (const files of presetFiles) {
-    for (const [i, file] of files.entries()) {
+  // An image a preset writes is signed like the media; an Ogg takes a C2PA sidecar beside it, signed
+  // by the hand-off's signer (resolved now when the media alone needed none).
+  let credentials = signer && { signer: signer.record, rels: signed };
+  const later: { target?: PreparedTargetWrite } = {};
+  const signPresetFiles = async (files: PresetFile[]): Promise<PresetFile[]> => {
+    const out: PresetFile[] = [];
+    for (const file of files) {
       const type = markableMediaType(file.path);
-      if (!signImage || type === undefined || !canCarryCredentials(type)) continue;
-      if (typeof file.content === "string") continue;
-      files[i] = { ...file, content: await signImage(file.path, file.content, type) };
+      if (type === undefined || typeof file.content === "string") {
+        out.push(file);
+        continue;
+      }
+      const rel = file.path.replaceAll("\\", "/");
+      if (takesSidecar(type)) {
+        const own = signer ?? (await resolveSigner(gate.settings));
+        credentials ??= { signer: own.record, rels: signed };
+        if (later.target !== undefined) later.target.credentials ??= credentials;
+        const sidecarRel = posix.join(posix.dirname(rel), sidecarName(posix.basename(rel)));
+        const existing = await readFile(targetPath(guard, sidecarRel)).then(
+          (data) => new Uint8Array(data),
+          () => undefined,
+        );
+        const content = await sidecarCredentialed(
+          file.content,
+          type,
+          { digitalSourceType, models: provenance.models, title: posix.basename(rel) },
+          own,
+          assetgroveVersion(),
+          existing,
+        );
+        if (!signed.includes(sidecarRel)) signed.push(sidecarRel);
+        out.push(file, { path: sidecarRel, content });
+      } else if (sign && canCarryCredentials(type)) {
+        const content = await sign(rel, file.content, type);
+        if (!signed.includes(rel)) signed.push(rel);
+        out.push({ ...file, content });
+      } else out.push(file);
     }
-  }
+    return out;
+  };
+  for (const [i, files] of presetFiles.entries()) presetFiles[i] = await signPresetFiles(files);
 
   // Before anything is written: no two writes name one file or differ only by case, and Windows
   // can hold every segment.
@@ -946,7 +968,7 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
       }),
   });
   sameFile([...writes.map(([path]) => path), ...libraryFiles(library)]);
-  return {
+  const prepared: PreparedTargetWrite = {
     rels,
     write,
     targetDir,
@@ -958,7 +980,7 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     familyContexts: presets.map(() => undefined),
     runnerOf,
     toolSteps,
-    ...(signImage && { signImage }),
+    signPresetFiles,
     mediaRel,
     manifestRel,
     mediaPath,
@@ -972,9 +994,11 @@ async function prepareOne(write: TargetWrite): Promise<PreparedTargetWrite> {
     ...(provenanceBytes !== undefined && { provenanceBytes }),
     sidecarRels,
     // A families preset run later may sign more images into the same list.
-    ...(signer && { credentials: { signer: signer.record, rels: signed } }),
+    ...(credentials && { credentials }),
     ...(contentSha256 !== undefined && { contentSha256 }),
   };
+  later.target = prepared;
+  return prepared;
 }
 
 /**

@@ -127,9 +127,55 @@ function toWave(item: AudioItem): InstanceType<typeof WaveFile> {
   return wav;
 }
 
-/** Writes the item as a WAV holding only its `fmt ` and `data` chunks. */
-export function encodeWav(item: AudioItem): Uint8Array {
-  return toWave(item).toBuffer();
+/**
+ * Writes the item as a WAV holding its `fmt ` and `data` chunks and, with a loop, a RIFF `smpl`
+ * chunk: one forward loop from frame `start` to `end` (the loop length in frames, exclusive, as
+ * Godot reads it).
+ */
+export function encodeWav(
+  item: AudioItem,
+  options: { loop?: { start: number; end: number } } = {},
+): Uint8Array {
+  const wav = toWave(item);
+  const { loop } = options;
+  if (loop !== undefined) {
+    Object.assign(wav.smpl, {
+      chunkId: "smpl",
+      dwManufacturer: 0,
+      dwProduct: 0,
+      dwSamplePeriod: Math.round(1e9 / item.sampleRate),
+      dwMIDIUnityNote: 60,
+      dwMIDIPitchFraction: 0,
+      dwSMPTEFormat: 0,
+      dwSMPTEOffset: 0,
+      dwNumSampleLoops: 1,
+      dwSamplerData: 0,
+      loops: [
+        {
+          dwName: 0,
+          dwType: 0,
+          dwStart: loop.start,
+          dwEnd: loop.end,
+          dwFraction: 0,
+          dwPlayCount: 0,
+        },
+      ],
+    });
+  }
+  return wav.toBuffer();
+}
+
+/** The first forward loop of a WAV's `smpl` chunk; undefined without one or when the bytes are no WAV. */
+export function readWavLoop(bytes: Uint8Array): { start: number; end: number } | undefined {
+  try {
+    const { loops } = new WaveFile(bytes).smpl as {
+      loops: { dwType: number; dwStart: number; dwEnd: number }[];
+    };
+    const found = loops.find((l) => l.dwType === 0);
+    return found === undefined ? undefined : { start: found.dwStart, end: found.dwEnd };
+  } catch {
+    return undefined;
+  }
 }
 
 /**

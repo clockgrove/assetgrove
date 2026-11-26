@@ -2,6 +2,10 @@
  * Core's helpers a pack reaches through its `ExtensionContext` (design section 11), so it never
  * copies core's raster, QA or prompt code nor imports core by path. Each is core's own function.
  */
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readWavLoop } from "../audio/engine.ts";
 import { biblePalette } from "../bible.ts";
 import { applyStyle } from "../image/apply-style.ts";
 import {
@@ -28,7 +32,9 @@ import {
   withNote,
 } from "../request.ts";
 import { resolveStyle } from "../style.ts";
+import { sha256Hex } from "../library/canonical.ts";
 import { boundsAt, cropRaster } from "../transform/raster-engine.ts";
+import { buildRendition } from "../transform/rendition.ts";
 
 /** Decode, encode, crop, scale, palette and grid functions over core's RGBA `Raster`. */
 export const raster = Object.freeze({
@@ -78,4 +84,41 @@ export const prompt = Object.freeze({
   styleNotes,
   subjectOf,
   withNote,
+});
+
+/** Core's audio helpers: a WAV's loop points and the Ogg rendition a hand-off would deliver. */
+export const audio = Object.freeze({
+  wavLoop: readWavLoop,
+  async oggRendition(master: Uint8Array, options: { quality?: number } = {}) {
+    const dir = await mkdtemp(join(tmpdir(), "assetgrove-ogg-"));
+    try {
+      const recipes = join(dir, "recipes");
+      const source = join(dir, "master.wav");
+      await mkdir(recipes);
+      await writeFile(source, master);
+      await writeFile(
+        join(recipes, "ogg.json"),
+        JSON.stringify({
+          format: "assetgrove-recipe/1",
+          steps: [{ op: "encode", params: { quality: options.quality ?? 5 } }],
+        }),
+      );
+      const built = await buildRendition({
+        recipes,
+        recipe: "ogg",
+        source,
+        sourceSha256: sha256Hex(master),
+        out: join(dir, "out"),
+        preview: true,
+        sidecars: false,
+      });
+      return {
+        bytes: built.files[0]!.bytes,
+        build: (built.record.rendition as { build: Record<string, unknown> }).build,
+        digest: built.digest,
+      };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
 });

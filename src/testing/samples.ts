@@ -1,8 +1,9 @@
 /**
  * Synthetic inputs for pack tests (`@clockgrove/assetgrove/testing`): a style bible (its style
- * view, and that view written as a BIBLE.md), a target profile and a script for the scripted
- * provider. Nothing here names a real game or its art.
+ * view, and that view written as a BIBLE.md), a target profile, a script for the scripted
+ * provider and a WAV master. Nothing here names a real game or its art.
  */
+import { encodeWav } from "../audio/engine.ts";
 import { BIBLE_PRESETS, serializeBible } from "../bible.ts";
 import type { ArtBible } from "../bible.ts";
 import type { Script } from "../gateway/scripted.ts";
@@ -112,4 +113,39 @@ export function sampleScript(): Script {
     image: () => ({ images: [{ mediaType: "image/png", bytes: samplePng() }] }),
     vision: () => ({ text: "{}" }),
   };
+}
+
+/** What `sampleWav` makes: its length, rate, channels and tone. */
+export interface SampleWavOptions {
+  /** Sample frames (default 44100, one second at the default rate). */
+  frames?: number;
+  /** Sample rate in Hz (default 44100). */
+  sampleRate?: number;
+  /** Channels (default 2); a stereo file's right channel is a fifth above the left. */
+  channels?: number;
+  /** The tone in Hz (default 220). */
+  hz?: number;
+  /** Whether it is a loop: its RIFF `smpl` chunk loops all of it, as a loop master's does. */
+  loop?: boolean;
+}
+
+/**
+ * A synthetic 16-bit WAV master, a sine tone at half scale written by core's audio engine. A loop
+ * carries the `smpl` chunk an `ambience` or music loop master carries: one forward loop from
+ * frame 0 to its length.
+ */
+export function sampleWav(options: SampleWavOptions = {}): Uint8Array {
+  const frames = options.frames ?? 44100;
+  const sampleRate = options.sampleRate ?? 44100;
+  const hz = options.hz ?? 220;
+  const channels = Array.from({ length: options.channels ?? 2 }, (_, c) => {
+    const tone = hz * (c === 0 ? 1 : 1.5);
+    return Float64Array.from({ length: frames }, (_, i) =>
+      0.5 * Math.sin((2 * Math.PI * tone * i) / sampleRate),
+    );
+  });
+  return encodeWav(
+    { name: "sample", channels, sampleRate, bitDepth: "16", meta: {} },
+    options.loop === true ? { loop: { start: 0, end: frames } } : {},
+  );
 }

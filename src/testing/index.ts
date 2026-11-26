@@ -30,7 +30,9 @@ export {
   sampleProfile,
   samplePng,
   sampleScript,
+  sampleWav,
 } from "./samples.ts";
+export type { SampleWavOptions } from "./samples.ts";
 export type { ConfirmRequest } from "../confirm/prompt.ts";
 export type { Outcome } from "../commands/types.ts";
 export { asepriteFile, fernAseprite } from "./aseprite.ts";

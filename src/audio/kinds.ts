@@ -17,7 +17,7 @@ import type { Routes } from "../routes.ts";
 import type { RecipeStep, TransformStep } from "../transform/types.ts";
 import type { AssetSpec, TargetProfile } from "../types.ts";
 import { AUDIO_CHECKS, loopFrames } from "./checks.ts";
-import { decodeAudio, encodeWav } from "./engine.ts";
+import { decodeAudio, encodeWav, frameCount } from "./engine.ts";
 import type { AudioItem } from "./engine.ts";
 import { measureLoudness } from "./loudness.ts";
 import { audioSettings } from "./profile.ts";
@@ -287,10 +287,14 @@ function audioGenerator(kind: AudioKind, specSchema: z.ZodType): Generator {
         }
       }
       const master = items[0]!;
-      const bytes = encodeWav(master);
+      const loop = loopFrames(spec, master.sampleRate);
+      const looped = loop !== undefined && steps.some((s) => s.op === "loop");
+      const bytes = encodeWav(
+        master,
+        looped ? { loop: { start: 0, end: frameCount(master) } } : {},
+      );
       const decoded = decodeAudio(bytes);
       const measure = measureLoudness(decoded.channels, decoded.sampleRate);
-      const loop = loopFrames(spec, decoded.sampleRate);
       const frames = decoded.channels[0]?.length ?? 0;
       const form = field<string>(spec, "form");
       const loudness = {
