@@ -4,7 +4,7 @@
  */
 export default function extension() {
   return {
-    api: 2,
+    api: 3,
     name: "keyed",
     adapters: [
       {

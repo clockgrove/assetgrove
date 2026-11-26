@@ -196,6 +196,9 @@ importers:
       '@contentauth/c2pa-wasm':
         specifier: 0.15.0
         version: 0.15.0
+      '@elevenlabs/elevenlabs-js':
+        specifier: 2.80.0
+        version: 2.80.0
       '@modelcontextprotocol/server':
         specifier: 2.4.0
         version: 2.4.0
@@ -391,6 +394,10 @@ packages:
   '@cto.af/wtf8@1.0.1':
     resolution: {integrity: sha512-kl6pH/D6SOCqArCVBcx7E45urbzBAPNr4xkMMaRAjrFSeI3y/s2+x78x5H0/UNr6F4GCgdxooTutPCNRymVzMg==}
     engines: {node: '>=22'}
+
+  '@elevenlabs/elevenlabs-js@2.80.0':
+    resolution: {integrity: sha512-0ZeOpmQ2yanafeJxO/sZ7P/okylNyO5U1zTuAh1olfwUuA4IDuJ9yNYbL/efd3yg1UjcQXNAmlEGl4UESjQ/Xw==}
+    engines: {node: '>=18.0.0'}
 
   '@eslint-community/eslint-utils@4.10.1':
     resolution: {integrity: sha512-cuadcxVFE8sDK6iWJbs8Sn0av2Nrh2QSGQhVlBW9AaAHqHwjWsZHT8LJ4hFGPh7ASBV2deFdM7H/DPjulmh8rg==}
@@ -1080,6 +1087,18 @@ packages:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
 
+  ws@8.23.0:
+    resolution: {integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yaml@2.9.1:
     resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
     engines: {node: '>= 14.6'}
@@ -1189,6 +1208,13 @@ snapshots:
   '@contentauth/c2pa-wasm@0.15.0': {}
 
   '@cto.af/wtf8@1.0.1': {}
+
+  '@elevenlabs/elevenlabs-js@2.80.0':
+    dependencies:
+      ws: 8.23.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@eslint-community/eslint-utils@4.10.1(eslint@10.14.0)':
     dependencies:
@@ -1897,6 +1923,8 @@ snapshots:
   win-guid@0.2.1: {}
 
   word-wrap@1.2.5: {}
+
+  ws@8.23.0: {}
 
   yaml@2.9.1: {}
 

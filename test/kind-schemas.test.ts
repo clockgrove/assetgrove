@@ -168,7 +168,7 @@ test("planStage runs a kind's specSchema and profileSchema before planning, nami
 
 test("at load, a pack kind whose schema declares a model field is refused; core's kinds pass the same check", () => {
   const extension = {
-    api: 2,
+    api: 3,
     name: "pixel",
     kinds: [kind({ specSchema: z.looseObject({ fields: z.object({ model: z.string() }) }) })],
   };

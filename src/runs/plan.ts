@@ -23,6 +23,7 @@ import { PROMPT_POLICY_BAR_RATES, promptPolicyCut } from "../policy/cuts.ts";
 import type { PromptPolicyCut } from "../policy/cuts.ts";
 import { PROMPT_POLICY_OPERATION, RouteUnavailableError } from "../routes.ts";
 import type { Route } from "../routes.ts";
+import type { GenerationProvider } from "../gateway/provider.ts";
 import type { NearMatch, NearMatchOutcome } from "../search/near-match.ts";
 import { runDirOf } from "./dir.ts";
 
@@ -314,7 +315,14 @@ export interface WorkPlanParts {
 
 /** What the plan step reads from a command's provider set: its routes and its providers' billing. */
 export type PolicyProviders = {
-  get(id: string): { provider: { billing: { paid: boolean; adapter?: string } } } | undefined;
+  get(id: string):
+    | {
+        provider: {
+          billing: { paid: boolean; adapter?: string };
+          checkAccount?: GenerationProvider["checkAccount"];
+        };
+      }
+    | undefined;
   routes: Readonly<Record<string, Route>>;
   /** The cut measured for a decisions route's adapter and model (settings first, then the package). */
   promptPolicyCut?(adapter: string, model: string): PromptPolicyCut | undefined;
@@ -482,6 +490,7 @@ export async function buildWorkPlan(
   }
   const round = typeof args["round"] === "number" ? args["round"] : DEFAULT_ROUND;
   const jobs = mergeJobs([...policyJobs, ...parts.jobs]);
+  await checkAccounts(parts.providers, jobs);
   const forecastUsd = forecastOf(jobs);
   const digest = requestDigest({
     command: spec.name,
@@ -512,6 +521,46 @@ export async function buildWorkPlan(
   if (parts.near?.nearMatchSheet !== undefined) plan.nearMatchSheet = parts.near.nearMatchSheet;
   if (parts.near?.searchError !== undefined) plan.searchError = parts.near.searchError;
   return plan;
+}
+
+/**
+ * Reads the account of each provider the jobs call that offers an account check (an ElevenLabs
+ * tier), once per provider, model and options; spends nothing. A plan whose account does not allow
+ * a route is refused here, exit 2 `route_unavailable`, before anything is confirmed or reserved.
+ */
+export async function checkAccounts(
+  providers: PolicyProviders,
+  jobs: readonly PlanJob[],
+): Promise<void> {
+  const seen = new Set<string>();
+  for (const job of jobs) {
+    if (job.count <= 0) continue;
+    const check = providers.get(job.provider)?.provider.checkAccount;
+    if (check === undefined) continue;
+    let route: Route | undefined;
+    try {
+      route = Object.hasOwn(providers.routes, job.operation)
+        ? providers.routes[job.operation]
+        : undefined;
+    } catch {
+      route = undefined;
+    }
+    const providerOptions = route?.providerOptions;
+    const key = canonicalJson([job.provider, job.model, providerOptions ?? null]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const provider = providers.get(job.provider)!.provider;
+    const reading = await provider.checkAccount!({
+      operation: job.operation,
+      model: job.model,
+      ...(providerOptions !== undefined && { providerOptions }),
+    });
+    if (reading.refused !== undefined)
+      throw new RouteUnavailableError(
+        job.operation,
+        `route unavailable: the ${job.operation} operation's provider "${job.provider}" is on the ${reading.plan} plan (${reading.source}), which it refuses: ${reading.refused}`,
+      );
+  }
 }
 
 /** Whether a provider of the jobs bills: `paid(id)` reads a provider's billing by settings id. */

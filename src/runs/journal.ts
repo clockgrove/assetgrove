@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { AudioParameters } from "../audio-parameters.ts";
 import type { KeyedCallParameters } from "../call-parameters.ts";
 import type { PromptPolicyRecord } from "../policy/text.ts";
 import type { CallRecord } from "../types.ts";
@@ -39,7 +40,7 @@ export interface CallKeyInput {
   /** The route's `keyedProviderOptions`; absent on default options, so the key is the one it always was. */
   providerOptions?: Record<string, Record<string, unknown>>;
   /** The typed per-call parameters the kind passed, the palette by path and hash; absent when none, so the key is the one it always was. */
-  parameters?: KeyedCallParameters;
+  parameters?: KeyedCallParameters | AudioParameters;
 }
 
 /** One journaled call: its key, the record the `Caller` kept and the provider's result. */

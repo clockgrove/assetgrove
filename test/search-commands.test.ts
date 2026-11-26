@@ -43,14 +43,14 @@ writeFileSync(
     version: "1.0.0",
     type: "module",
     peerDependencies: { "@clockgrove/assetgrove": ">=0.2.0" },
-    assetgrove: { api: 2, entry: "./index.js" },
+    assetgrove: { api: 3, entry: "./index.js" },
   }),
 );
 writeFileSync(
   join(pkg, "index.js"),
   `export default function extension() {
   return {
-    api: 2,
+    api: 3,
     name: "search-stub",
     search: {
       async find(query, ctx) {

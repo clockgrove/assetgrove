@@ -96,6 +96,7 @@ const outputGrantSchema = z.strictObject({
   commercial: z.boolean().optional(),
   relabel: z.boolean().optional(),
   attribution: z.string().optional(),
+  exclusive: z.boolean().optional(),
 });
 
 /** A role or route entry: the provider and model, and what the pair grants and costs. */
@@ -112,6 +113,16 @@ const routeSchema = z.strictObject({
   estimatedCostUsd: usd.optional(),
   /** Per-provider call options, each a plain object; the adapter reads its own entry. */
   providerOptions: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  /**
+   * The developer's own declaration of the vendor's training opt-out for this route, and the date
+   * it was set; recorded on every call of the route as declared by the developer.
+   */
+  trainingOptOut: z
+    .strictObject({
+      optedOut: z.boolean(),
+      since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "must be a date, YYYY-MM-DD"),
+    })
+    .optional(),
 });
 
 const rate = z.number().finite().min(0).max(1);

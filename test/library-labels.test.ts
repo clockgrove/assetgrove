@@ -136,7 +136,7 @@ test("browse, model summaries and filter aliases share canonical labels; collisi
     const extensions = new ExtensionRegistry([
       {
         extension: {
-          api: 2,
+          api: 3,
           name: "label-search",
           search: {
             async find(query, context) {

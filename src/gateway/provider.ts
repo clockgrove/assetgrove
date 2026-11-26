@@ -46,6 +46,11 @@ export interface ProviderResult {
   costUsd?: number;
   /** The seed the provider used, when it reports one. */
   seed?: number;
+  /**
+   * The provider plan the account was on when it made this output, when the adapter reads it (an
+   * ElevenLabs tier). It replaces the route grant's `plan` in the call's record.
+   */
+  plan?: string;
 }
 
 export interface ImageResult extends ProviderResult {
@@ -65,7 +70,49 @@ export interface VisionResult extends ProviderResult {
 }
 
 /** The kind of provider call; a provider made of several adapters bills each kind to one of them. */
-export type CallKind = "image" | "vision" | "decide" | "model" | "rig" | "animate" | "embed";
+export type CallKind =
+  "image" | "vision" | "decide" | "model" | "rig" | "animate" | "embed" | "audio";
+
+/**
+ * One audio generation (design: docs/PRD-audio.md). The typed parameters are the closed set a kind
+ * may pass (src/audio-parameters.ts); `seed` is sent only on a route that has one. Every route is
+ * asked for WAV, and core refuses any other result at intake.
+ */
+export interface AudioRequest {
+  model: string;
+  prompt: string;
+  /** The requested duration in seconds; the provider chooses one when absent. */
+  durationS?: number;
+  seed?: number;
+  /** How closely the output follows the prompt, 0 to 1, where the provider has such a control. */
+  promptInfluence?: number;
+  providerOptions?: Record<string, Record<string, unknown>>;
+}
+
+export interface AudioResult extends ProviderResult {
+  /** The audio file, which core accepts only as WAV. */
+  audio: ImageInput;
+}
+
+/** The route a provider's account is checked for: the operation, its model and options. */
+export interface AccountRoute {
+  operation: string;
+  model: string;
+  providerOptions?: Record<string, Record<string, unknown>>;
+}
+
+/** What a provider's account check read; spends nothing. */
+export interface AccountReading {
+  /** The account's plan or tier, as the provider names it. */
+  plan: string;
+  /** Where the reading came from, for example `elevenlabs subscription`. */
+  source: string;
+  /**
+   * Why the plan does not allow the route (a free tier, a sample rate above the tier); absent when
+   * it does. Core refuses the route with it, exit 2 `route_unavailable`, before any reservation.
+   */
+  refused?: string;
+}
 
 /** What the provider reports about the money its key can still spend. */
 export interface LimitReading {
@@ -139,6 +186,11 @@ export interface JobProvider<Request, Result> {
    * one: a resumed run whose journal lost the handle submits again with the same key.
    */
   readonly dedupesByKey?: boolean;
+  /**
+   * Whether this request is served as a job; every request of the kind when absent. A request it
+   * declines is one direct call (a provider whose models differ, such as Stable Audio 2.5 and 3.0).
+   */
+  serves?(request: Request): boolean;
   /** Submits the job and returns its handle. `key` names the attempt (run, call and attempt). */
   submit(request: Request, options: { key: string }): Promise<string>;
   /** The job's state; spends nothing. */
@@ -160,6 +212,7 @@ export interface CallTypes {
   model: [ModelRequest, ModelResult];
   rig: [RigRequest, ModelResult];
   animate: [AnimateRequest, ModelResult];
+  audio: [AudioRequest, AudioResult];
 }
 
 /** The call kinds a provider serves as jobs. */
@@ -173,6 +226,11 @@ export interface GenerationProvider {
    * directly rather than through a provider set (which reads its adapter's). None when absent.
    */
   readonly parameters?: readonly ("size" | "tiling" | "palette")[];
+  /**
+   * The audio call parameters it maps (src/audio-parameters.ts), read when it is called directly
+   * rather than through a provider set (which reads its adapter's). None when absent.
+   */
+  readonly audioParameters?: readonly ("durationS" | "seed" | "promptInfluence")[];
   /** The kinds of call served as queued jobs; a kind not listed is one direct call. */
   readonly jobs?: ProviderJobs;
   /** The billing of one kind of call, for a provider made of several adapters. */
@@ -201,6 +259,14 @@ export interface GenerationProvider {
    * clips' animations; Assetgrove sends one clip per call and reads no animation names.
    */
   animateModel?(request: AnimateRequest): Promise<ModelResult>;
+  /** One audio generation. Providers without the `audio` capability leave it out. */
+  generateAudio?(request: AudioRequest): Promise<AudioResult>;
+  /**
+   * Reads the account's plan and checks that it allows the route (with no route: that it allows
+   * any of the adapter's calls); spends nothing. A refusal is a reading with `refused` set.
+   * Core calls it at plan and `doctor`; providers whose plan cannot limit a route leave it out.
+   */
+  checkAccount?(route?: AccountRoute): Promise<AccountReading>;
 }
 
 export interface EmbedRequest {

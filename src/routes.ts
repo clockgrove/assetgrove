@@ -82,6 +82,11 @@ export const MAP_FLICKER_OPERATION = "map-flicker";
  * only on the provider-rig path.
  */
 export const CLIP_MAP_OPERATION = "clip-map";
+/**
+ * Audio generation (docs/PRD-audio.md): the operation that holds each audio adapter's default
+ * route. A kind's own audio operation (role `audio`) takes this default when it has none.
+ */
+export const AUDIO_OPERATION = "audio";
 
 /** A model route: which provider and model serve an operation, its per-call estimate and its terms. */
 export interface Route {
@@ -106,6 +111,11 @@ export interface Route {
   size?: string;
   /** Whether the model accepts a seed; only then is one sent and recorded. */
   supportsSeed?: boolean;
+  /**
+   * The vendor's training opt-out as the developer declared it in settings for this route, with
+   * the date it was set; recorded on each call as declared by the developer.
+   */
+  trainingOptOut?: { optedOut: boolean; since: string };
   providerOptions?: Record<string, Record<string, unknown>>;
   /**
    * The route's provider options when they differ from the default route of the route's own
@@ -176,6 +186,118 @@ const googleGrant: OutputGrant = {
 const googleTerms =
   "Google Gemini API Additional Terms of Service, via Vercel AI Gateway (as of 2026-11-07)";
 const googleTermsAsOf = "2026-11-07";
+
+/**
+ * Stability's terms for Stable Audio, read 2026-11-18 (docs/PRD-audio.md, "Routes"). Stability
+ * assigns its rights in output, so the target may declare its own licence.
+ */
+const stabilityAudioGrant: OutputGrant = {
+  license: "LicenseRef-stability-api",
+  plan: "api",
+  commercial: true,
+  relabel: true,
+};
+const stabilityAudioTerms =
+  "Stability AI API Terms of Service (as of 2026-11-18): Stability assigns its rights in output to you; commercial use allowed. Training on inputs and outputs is on by default, with an opt-out. Its watermark, content credentials and other AI markings may not be removed, and output may not be presented as human-made.";
+const stabilityAudioTermsAsOf = "2026-11-18";
+/** Stability's published price: 8 credits a successful generation at $0.01 a credit. */
+const STABLE_AUDIO_USD = 0.08;
+
+/** Stable Audio 2.5: direct and synchronous, 1 to 190 s, with a seed. Serves every audio kind. */
+const stableAudio25Route: Route = {
+  model: "stable-audio-2.5",
+  estimatedCostUsd: STABLE_AUDIO_USD,
+  supportsSeed: true,
+  outputGrant: stabilityAudioGrant,
+  providerTerms: stabilityAudioTerms,
+  providerTermsAsOf: stabilityAudioTermsAsOf,
+};
+
+/**
+ * The Stability adapter's routes by model beyond its default: Stable Audio 3.0, asynchronous with a
+ * job id, up to 380 s, results kept 24 h; for ambience and music. A settings route naming the
+ * Stability provider and this model takes its terms, grant and estimate.
+ */
+export const STABILITY_MODEL_ROUTES: Readonly<Record<string, Route>> = {
+  "stable-audio-3.0": {
+    model: "stable-audio-3.0",
+    estimatedCostUsd: STABLE_AUDIO_USD,
+    supportsSeed: true,
+    outputGrant: stabilityAudioGrant,
+    providerTerms: stabilityAudioTerms,
+    providerTermsAsOf: stabilityAudioTermsAsOf,
+  },
+};
+
+/** The Stability adapter's default routes: audio on Stable Audio 2.5. */
+export const STABILITY_DEFAULT_ROUTES: Readonly<Record<string, Route>> = {
+  audio: stableAudio25Route,
+};
+
+/**
+ * ElevenLabs Sound Effects v3, direct, on a paid plan (read 2026-11-18). The grant's plan is
+ * replaced on each call by the account's tier as the adapter reads it; the output is non-exclusive.
+ * Its estimate is the published $0.12 a minute for the longest clip the API makes (30 s); each
+ * call reserves the rate times its own requested duration.
+ */
+export const ELEVENLABS_DEFAULT_ROUTES: Readonly<Record<string, Route>> = {
+  audio: {
+    model: "eleven_text_to_sound_v3",
+    estimatedCostUsd: 0.06,
+    providerOptions: { elevenlabs: { sampleRate: 44100 } },
+    outputGrant: {
+      license: "LicenseRef-elevenlabs-paid",
+      plan: "paid",
+      commercial: true,
+      relabel: true,
+      exclusive: false,
+    },
+    providerTerms:
+      'ElevenLabs Terms of Service, paid plan (as of 2026-11-18): paid plans may use output commercially; free plans are non-commercial only. You keep the rights in output. Output is non-exclusive: it may not be unique across users. ElevenLabs may use content to improve its services, with a "Data use" opt-out that applies from the day it is set.',
+    providerTermsAsOf: "2026-11-18",
+  },
+};
+
+/**
+ * Audio routes the design refuses, each with its reason (docs/PRD-audio.md, "Routes"): a route of
+ * the `audio` role that matches one is unavailable, naming the reason, before any reservation.
+ */
+export const REFUSED_AUDIO_ROUTES: readonly {
+  reason: string;
+  matches: (route: Route, adapter: string) => boolean;
+}[] = [
+  {
+    reason: "its model is licensed CC BY-NC (non-commercial), and a sold game is commercial use",
+    matches: (route) =>
+      /(^|-)NC(-|$)/.test(route.outputGrant?.license ?? "") ||
+      /(^|[/_-])(musicgen|audiogen)([._-]|$)/i.test(route.model),
+  },
+  {
+    reason:
+      "it is open-weight Stable Audio hosted by a third party: the Stability AI Community License needs registration, ends above $1,000,000 of revenue and does not say how a host's outputs are covered",
+    // The scripted stand-in serves the core defaults, Stability's included, and reaches no host.
+    matches: (route, adapter) =>
+      adapter !== "stability" &&
+      adapter !== STAND_IN_ADAPTER &&
+      /stable[-_ ]?audio/i.test(route.model),
+  },
+  {
+    reason:
+      "it reaches ElevenLabs through the AI Gateway, whose terms do not say which ElevenLabs rights tier applies",
+    matches: (route, adapter) =>
+      adapter === "vercel-ai-gateway" && /^elevenlabs\//i.test(route.model),
+  },
+  {
+    reason:
+      "it is Eleven Music, whose plans below Enterprise exclude games outside its Indie Game definition, which Assetgrove cannot verify",
+    matches: (route) =>
+      /^(eleven[-_]?)?music([-_]|$)/i.test(route.model.replace(/^elevenlabs\//i, "")),
+  },
+  {
+    reason: "its vendor has no public API",
+    matches: (route) => /(^|\/)(suno|udio)([/_-]|$)/i.test(route.model),
+  },
+];
 
 /**
  * The core default routes, each with the grant its terms give: the gateway survey of 2026-11-07
@@ -657,6 +779,8 @@ export const defaultRoutes: Routes = {
     providerTerms: googleTerms,
     providerTermsAsOf: googleTermsAsOf,
   },
+  // Audio (docs/PRD-audio.md): Stability's default, served by the Stability adapter.
+  [AUDIO_OPERATION]: stableAudio25Route,
 };
 
 /** The 3D operations, served by Tripo; every other core default is a gateway route. */
@@ -668,7 +792,7 @@ function pick(keep: (operation: string) => boolean): Record<string, Route> {
 
 /** The gateway adapter's default routes: the 2D operations of the core defaults. */
 export const GATEWAY_DEFAULT_ROUTES: Readonly<Record<string, Route>> = pick(
-  (op) => !MODEL3D_OPERATIONS.has(op),
+  (op) => !MODEL3D_OPERATIONS.has(op) && op !== AUDIO_OPERATION,
 );
 /** The Tripo adapter's default routes: the 3D operations of the core defaults. */
 export const TRIPO_DEFAULT_ROUTES: Readonly<Record<string, Route>> = pick((op) =>
@@ -713,6 +837,7 @@ export const OPERATION_ROLES: Readonly<Record<string, string>> = {
   rig3d: "rig3d",
   clips3d: "clips3d",
   [EMBED_OPERATION]: "embeddings",
+  [AUDIO_OPERATION]: "audio",
 };
 
 /** The adapter capability each role needs. */
@@ -726,6 +851,7 @@ export const ROLE_CAPABILITY: Readonly<Record<string, string>> = {
   rig3d: "rig",
   clips3d: "animate",
   embeddings: "embed",
+  audio: "audio",
 };
 
 /**
@@ -742,6 +868,7 @@ export const ROLE_DEFAULT_OPERATION: Readonly<Record<string, string>> = {
   rig3d: "rig3d",
   clips3d: "clips3d",
   embeddings: EMBED_OPERATION,
+  audio: AUDIO_OPERATION,
 };
 
 /**
@@ -803,6 +930,8 @@ export interface RouteProvider {
     defaultRoutes?: Readonly<Record<string, Route>>;
     /** Which of its models embed images and text in one space; every model when absent. */
     embedsModel?: (model: string) => boolean;
+    /** Its routes by model beyond its defaults (`ProviderAdapter.modelRoutes`). */
+    modelRoutes?: Readonly<Record<string, Route>>;
   };
   /** The provider's settings entry; `free` lets an override leave out its estimate. */
   settings?: { free?: boolean };
@@ -884,6 +1013,12 @@ export function resolveRoute(
   let fallback: Route | undefined;
   if (override !== undefined) {
     fallback = defaultOf(override.provider);
+    // A model the adapter knows beyond its default carries its own terms, grant and estimate.
+    const p = providers.find((q) => q.id === override.provider);
+    const known =
+      fallback?.model === override.model ? undefined : p?.adapter.modelRoutes?.[override.model];
+    if (p !== undefined && known !== undefined)
+      fallback = { ...structuredClone(known), provider: p.id };
   } else if (candidates.length > 1) {
     throw new RouteAmbiguousError(
       operation,
@@ -925,6 +1060,9 @@ export function resolveRoute(
         ...(override.providerOptions !== undefined && {
           providerOptions: structuredClone(override.providerOptions),
         }),
+        ...(override.trainingOptOut !== undefined && {
+          trainingOptOut: { ...override.trainingOptOut },
+        }),
       };
     } else {
       missingEstimate = override.estimatedCostUsd === undefined ? field : undefined;
@@ -944,6 +1082,9 @@ export function resolveRoute(
         }),
         ...(override.providerOptions !== undefined && {
           providerOptions: structuredClone(override.providerOptions),
+        }),
+        ...(override.trainingOptOut !== undefined && {
+          trainingOptOut: { ...override.trainingOptOut },
         }),
       };
     }
@@ -979,6 +1120,14 @@ export function resolveRoute(
       operation,
       `route unavailable: ${what} names model "${route.model}" of provider "${provider.id}", which its ${provider.adapter.id} adapter cannot embed images and text with in one space; set ${fields} in the developer settings to a model that can`,
     );
+  }
+  if (role === "audio") {
+    const refused = REFUSED_AUDIO_ROUTES.find((r) => r.matches(route, provider.adapter.id));
+    if (refused !== undefined)
+      throw new RouteUnavailableError(
+        operation,
+        `route unavailable: ${what} names model "${route.model}" of provider "${provider.id}" (${provider.adapter.id} adapter), a refused audio route: ${refused.reason}`,
+      );
   }
   if (
     missingEstimate !== undefined &&

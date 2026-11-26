@@ -292,7 +292,7 @@ test("the tree's find, like and where paths over MCP with a hosted embedder make
       name: SHIM,
       version: "1.0.0",
       type: "module",
-      assetgrove: { api: 2, entry: "./index.js" },
+      assetgrove: { api: 3, entry: "./index.js" },
       peerDependencies: { "@clockgrove/assetgrove": "^0.2.0" },
     }),
   );

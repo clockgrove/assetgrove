@@ -1,4 +1,4 @@
-/** The tiles pack's entry for core's extension API (api 2): the `tiles:terrain` kind. */
+/** The tiles pack's entry for core's extension API (api 3): the `tiles:terrain` kind. */
 import type { Extension, ExtensionContext } from "@clockgrove/assetgrove/extension";
 import { tilesTerrainKind } from "./kind.ts";
 

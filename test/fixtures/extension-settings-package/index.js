@@ -6,7 +6,7 @@
 export default function extension(context) {
   const { z } = context;
   return {
-    api: 2,
+    api: 3,
     name: "tuned",
     settingsSchema: z.strictObject({
       binary: z.string().default("/opt/tuned/bin/tuned"),

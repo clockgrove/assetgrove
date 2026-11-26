@@ -26,7 +26,7 @@
     "./package.json": "./package.json"
   },
   "assetgrove": {
-    "api": 2,
+    "api": 3,
     "entry": "./dist/extension.js"
   },
   "files": [

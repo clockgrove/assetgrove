@@ -44,7 +44,7 @@ const tileSample: KindSample = {
 /** A pack with one kind whose only check is `check`. */
 function packWith(check: KindCheck): (c: ExtensionContext) => Extension {
   return ({ z }) => ({
-    api: 2,
+    api: 3,
     name: "probe",
     kinds: [
       {
@@ -109,7 +109,7 @@ test("a kind's own operations take their roles' default routes, as core routes t
   const planned: string[] = [];
   const report = await runConformance(
     () => ({
-      api: 2,
+      api: 3,
       name: "probe",
       kinds: [
         {

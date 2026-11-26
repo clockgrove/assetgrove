@@ -1,6 +1,11 @@
+import { AUDIO_PARAMETERS } from "../audio-parameters.ts";
 import { CALL_PARAMETERS } from "../call-parameters.ts";
 import type {
+  AccountReading,
+  AccountRoute,
   AnimateRequest,
+  AudioRequest,
+  AudioResult,
   Billing,
   CallKind,
   CallTypes,
@@ -179,6 +184,10 @@ export interface Script {
   rig?(request: RigRequest, index: number): Scripted<ModelResult>;
   /** Answers clip retargeting calls. */
   animate?(request: AnimateRequest, index: number): Scripted<ModelResult>;
+  /** Answers audio calls; a script without it cannot answer one. */
+  audio?(request: AudioRequest, index: number): Scripted<AudioResult>;
+  /** Test only: the account check a real adapter makes (`GenerationProvider.checkAccount`). */
+  account?(route?: AccountRoute): AccountReading | Promise<AccountReading>;
   /**
    * Test only: the scripted adapter marks the provider paid, so its calls count in the spend
    * ledger and need a declared limit, and tests can prove the limits offline.
@@ -232,6 +241,9 @@ export class ScriptedProvider implements GenerationProvider {
   readonly billing: Billing;
   /** It records every typed parameter it is sent, so it declares them all. */
   readonly parameters = CALL_PARAMETERS;
+  readonly audioParameters = AUDIO_PARAMETERS;
+  /** The script's own `account`, when it has one. */
+  readonly checkAccount?: (route?: AccountRoute) => Promise<AccountReading>;
   /** The script's own `estimate`, when it has one. */
   readonly estimate?: (request: CallTypes[CallKind][0], kind: CallKind) => Promise<number>;
   readonly calls: Array<
@@ -242,7 +254,9 @@ export class ScriptedProvider implements GenerationProvider {
     | { kind: "rig"; request: RigRequest }
     | { kind: "animate"; request: AnimateRequest }
     | { kind: "embed"; request: EmbedRequest }
+    | { kind: "audio"; request: AudioRequest }
   > = [];
+  private audioCount = 0;
   private embedCount = 0;
   private modelCount = 0;
   private rigCount = 0;
@@ -286,6 +300,8 @@ export class ScriptedProvider implements GenerationProvider {
     };
     const estimate = script.estimate?.bind(script);
     if (estimate !== undefined) this.estimate = async (request, kind) => estimate(request, kind);
+    const account = script.account?.bind(script);
+    if (account !== undefined) this.checkAccount = async (route) => account(route);
   }
 
   declares(capability: string): boolean {
@@ -443,5 +459,12 @@ export class ScriptedProvider implements GenerationProvider {
     const index = this.animateCount++;
     if (!this.script.animate) throw new Error("the provider script has no animate answer");
     return { requestId: `scripted-animate-${index}`, ...this.script.animate(request, index) };
+  }
+
+  async generateAudio(request: AudioRequest): Promise<AudioResult> {
+    this.calls.push({ kind: "audio", request });
+    const index = this.audioCount++;
+    if (!this.script.audio) throw new Error("the provider script has no audio answer");
+    return { requestId: `scripted-audio-${index}`, ...this.script.audio(request, index) };
   }
 }

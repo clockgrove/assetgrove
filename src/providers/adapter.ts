@@ -3,11 +3,13 @@ import { toolRunner, type ToolRunner, type ToolScope } from "../extension/tools.
  * Provider adapters (design section 11): each makes provider instances from a settings entry and
  * declares how their calls are billed (`billing`: where a cost comes from, whether it can be looked
  * up); whether they are paid is core's decision (`corePaid`). Core registers `vercel-ai-gateway`, `anthropic`, `openai`,
- * `openai-compatible`, `tripo` and `scripted`. Each lists the operations it serves by default
+ * `openai-compatible`, `tripo`, `stability`, `elevenlabs` and `scripted`. Each lists the operations it serves by default
  * (`defaultRoutes`, src/routes.ts).
  * An adapter reads its key from the entry's `keyEnv` or its default variable and passes `apiKey`
  * and `baseURL` to its SDK explicitly, so no `*_BASE_URL` variable ever applies.
  */
+import { AUDIO_PARAMETERS } from "../audio-parameters.ts";
+import type { AudioParameterName } from "../audio-parameters.ts";
 import { CALL_PARAMETERS } from "../call-parameters.ts";
 import type { CallParameterName } from "../call-parameters.ts";
 import type { ZodType } from "zod";
@@ -20,13 +22,18 @@ import { OPENAI_BASE_URL, OpenAIProvider } from "../gateway/openai.ts";
 import { OpenAICompatibleProvider } from "../gateway/openai-compatible.ts";
 import { ScriptedProvider } from "../gateway/scripted.ts";
 import type { Script } from "../gateway/scripted.ts";
+import { ELEVENLABS_BASE_URL, ElevenLabsProvider } from "../gateway/elevenlabs.ts";
+import { STABILITY_BASE_URL, StabilityProvider } from "../gateway/stability.ts";
 import { TRIPO_BASE_URL, TripoProvider } from "../gateway/tripo.ts";
 import { VercelGateway } from "../gateway/vercel.ts";
 import {
   ANTHROPIC_DEFAULT_ROUTES,
   defaultRoutes,
+  ELEVENLABS_DEFAULT_ROUTES,
   GATEWAY_DEFAULT_ROUTES,
   OPENAI_DEFAULT_ROUTES,
+  STABILITY_DEFAULT_ROUTES,
+  STABILITY_MODEL_ROUTES,
   TRIPO_DEFAULT_ROUTES,
 } from "../routes.ts";
 import type { Route } from "../routes.ts";
@@ -39,7 +46,7 @@ import type { ProviderSettings, Settings } from "../settings.ts";
  * space (design section 7.7): an adapter that embeds only one of them does not declare it.
  */
 export type Capability =
-  "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate" | "mask" | "embed";
+  "image" | "edit" | "vision" | "decide" | "model" | "rig" | "animate" | "mask" | "embed" | "audio";
 
 /** What an adapter is given to make one provider instance. */
 export interface AdapterContext {
@@ -89,6 +96,18 @@ export interface ProviderAdapter {
    * passing one it does not list is refused before any spend, naming it. None when absent.
    */
   parameters?: readonly CallParameterName[];
+  /**
+   * The audio call parameters (src/audio-parameters.ts) its providers map to their API, beyond
+   * `seed`, which is sent wherever the route has one. A call passing `durationS` or
+   * `promptInfluence` it does not list is refused before any spend, naming it. None when absent.
+   */
+  audioParameters?: readonly AudioParameterName[];
+  /**
+   * Routes for models it serves beyond its `defaultRoutes`, by model, each with its own grant,
+   * terms and estimate: a settings route or role naming a provider of this adapter and one of
+   * these models takes that route as its default, as it would the default route's own model.
+   */
+  modelRoutes?: Readonly<Record<string, Route>>;
   /**
    * The zod schema of the fields a `providers.<id>` entry of this adapter carries beyond core's
    * (`adapter`, `keyEnv`, `baseURL`, `free`, `usdPerCredit`, `limit`). Only a pack adapter
@@ -210,6 +229,68 @@ export const tripoAdapter: ProviderAdapter = {
 };
 
 /**
+ * Stability's REST API on its fixed endpoint (docs/PRD-audio.md, "Routes"): Stable Audio 2.5 by
+ * default, 3.0 as a model route served as a journaled job. Stability publishes no official
+ * JavaScript SDK, so the provider speaks its REST API over the guarded `fetch`
+ * (src/gateway/stability.ts, docs/decisions.md). Paid at 8 credits a successful generation through
+ * `usdPerCredit` (the published $0.01 when unset), reported on the result.
+ */
+export const stabilityAdapter: ProviderAdapter = {
+  id: "stability",
+  capabilities: ["audio"],
+  defaultKeyEnv: "STABILITY_API_KEY",
+  fixedHosts: [new URL(STABILITY_BASE_URL).host],
+  endpointFromSettings: false,
+  defaultRoutes: STABILITY_DEFAULT_ROUTES,
+  modelRoutes: STABILITY_MODEL_ROUTES,
+  audioParameters: ["durationS"],
+  create: (c) =>
+    new StabilityProvider({
+      apiKey: c.apiKey,
+      ...(c.keyEnv !== undefined && { keyEnv: c.keyEnv }),
+      ...(c.settings.usdPerCredit !== undefined && { usdPerCredit: c.settings.usdPerCredit }),
+      fetch: c.fetch,
+      billing: {
+        adapter: "stability",
+        paid: true,
+        settle: "reported",
+        reconcile: "unavailable",
+        ...billingFrom(c),
+      },
+    }),
+};
+
+/**
+ * ElevenLabs Sound Effects through its official SDK, `@elevenlabs/elevenlabs-js`, given the
+ * guarded `fetch` and no retries (src/gateway/elevenlabs.ts). The account's tier is read at
+ * `doctor`, at plan and at each call: a free tier, or a sample rate the tier doesn't allow, is
+ * refused, and each call records the tier as its grant's plan. Paid: the published $0.12 a minute
+ * times the requested duration is reserved and settled.
+ */
+export const elevenlabsAdapter: ProviderAdapter = {
+  id: "elevenlabs",
+  capabilities: ["audio"],
+  defaultKeyEnv: "ELEVENLABS_API_KEY",
+  fixedHosts: [new URL(ELEVENLABS_BASE_URL).host],
+  endpointFromSettings: false,
+  defaultRoutes: ELEVENLABS_DEFAULT_ROUTES,
+  audioParameters: ["durationS", "promptInfluence"],
+  create: (c) =>
+    new ElevenLabsProvider({
+      apiKey: c.apiKey,
+      ...(c.keyEnv !== undefined && { keyEnv: c.keyEnv }),
+      fetch: c.fetch,
+      billing: {
+        adapter: "elevenlabs",
+        paid: true,
+        settle: "declared",
+        reconcile: "unavailable",
+        ...billingFrom(c),
+      },
+    }),
+};
+
+/**
  * Any OpenAI-compatible endpoint at the settings' `baseURL` (a loopback image or chat server, or a
  * hosted one). It serves what the server offers, so it has no default routes: settings route each
  * operation to it, with the grant the server's terms give. Paid unless the entry is `free` (a
@@ -252,11 +333,23 @@ const NO_SCRIPT: Script = {
 
 export const scriptedAdapter: ProviderAdapter = {
   id: "scripted",
-  capabilities: ["image", "edit", "vision", "decide", "model", "rig", "animate", "mask", "embed"],
+  capabilities: [
+    "image",
+    "edit",
+    "vision",
+    "decide",
+    "model",
+    "rig",
+    "animate",
+    "mask",
+    "embed",
+    "audio",
+  ],
   fixedHosts: [],
   endpointFromSettings: false,
   defaultRoutes,
   parameters: [...CALL_PARAMETERS],
+  audioParameters: [...AUDIO_PARAMETERS],
   create: (c) =>
     new ScriptedProvider(c.script ?? NO_SCRIPT, {
       settle: "reported",
@@ -271,6 +364,8 @@ export const CORE_ADAPTERS: readonly ProviderAdapter[] = [
   anthropicAdapter,
   openaiAdapter,
   tripoAdapter,
+  stabilityAdapter,
+  elevenlabsAdapter,
   openaiCompatibleAdapter,
   scriptedAdapter,
 ];

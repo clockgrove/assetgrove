@@ -81,7 +81,7 @@ const soundKind = {
 
 const plainKind = { ...soundKind, kind: "fx:plain", media: undefined } as unknown as Generator;
 
-const extension = { api: 2, name: "fx", kinds: [soundKind, plainKind] } as unknown as Extension;
+const extension = { api: 3, name: "fx", kinds: [soundKind, plainKind] } as unknown as Extension;
 const registry = new ExtensionRegistry([
   CORE_ENTRY,
   { extension, info: { package: "fx-pack", version: "1.0.0", entry: "/x/index.js" } },
@@ -101,7 +101,7 @@ test("a pack kind with an unknown media, or frames on a non-image kind, is refus
     [{ ...soundKind, media: "video" }, /declares media "video"; a kind's media is "image"/],
     [{ ...soundKind, frames: "single" }, /only an image kind has frames/],
   ] as const) {
-    const pack = { api: 2, name: "fx", kinds: [kind] };
+    const pack = { api: 3, name: "fx", kinds: [kind] };
     assert.throws(
       () => checkExtension(pack, "fx-pack"),
       (e: unknown) => e instanceof ExtensionError && pattern.test(e.message),

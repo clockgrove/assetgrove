@@ -473,7 +473,7 @@ function twoPackTree(): string {
         name: `@clockgrove/${dir}`,
         version: "0.2.0",
         files: ["dist", "skills"],
-        assetgrove: { api: 2, entry: "./dist/extension.js" },
+        assetgrove: { api: 3, entry: "./dist/extension.js" },
       }),
     );
     writeFileSync(
