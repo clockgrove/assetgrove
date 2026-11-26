@@ -1,6 +1,6 @@
-# Media transformation (images)
+# Media transformation (images and audio)
 
-The transformation core runs deterministic image operations on any image: generated, imported or hand-made. Operations chain into recipes, which are declared as data. Engines sit behind one adapter, and every operation records one provenance step. The sheet import ([sheet-import.md](sheet-import.md)) is built on it.
+The transformation core runs deterministic image operations on any image, and audio operations on any PCM WAV ([below](#audio)): generated, imported or hand-made. Operations chain into recipes, which are declared as data. Engines sit behind one adapter, and every operation records one provenance step. The sheet import ([sheet-import.md](sheet-import.md)) is built on it.
 
 ## Commands
 
@@ -38,6 +38,32 @@ Outputs are named after the source file. `slice` adds `-f001`, `-f002` and so on
 | `convert`     | each  | Sets the format an image is written in, by extension or media type. The engine decides which formats exist. The in-house engine encodes PNG and lossless WebP.                                                                                                                                                                                                                                                                                                                                |
 
 `assetgrove ops --json` lists each operation's parameter schema. The schemas use a small JSON Schema subset: types, `enum`, bounds, `required` and `default`. Unknown parameters are refused.
+
+## Audio
+
+The audio engine, `assetgrove-audio` (`src/audio/engine.ts`), sits beside the raster engine ([PRD-audio.md](PRD-audio.md), core changes 2 and 3). It reads and writes PCM WAV through `wavefile`: 8, 16, 24 or 32-bit integer, or 32 or 64-bit float. Compressed WAV is refused. Samples are held as 64-bit floats from −1 to 1, scaled from the file's integers by a power of two, so a file written back at its own bit depth keeps its samples to the bit. An output keeps its source's sample rate and bit depth unless an operation changes them, and it is written with only its `fmt ` and `data` chunks, plus the AI mark when a digital source type is declared.
+
+`op` and `recipe` take WAV inputs the same way as images. All inputs of one run are WAV, or none are. Audio and image operations share the recipe format and the schema subset. An operation that doesn't fit the input's media is refused when it runs.
+
+```sh
+pnpm assetgrove op gain take.wav --out take-gained.wav \
+  --params '{"target": -23, "truePeakCeiling": -1, "encoderHeadroom": 1}'
+pnpm assetgrove op loop take.wav --out loop.wav \
+  --params '{"bars": 4, "beatsPerBar": 4, "bpm": 140, "crossfadeMs": 50, "curve": "equal-gain"}'
+```
+
+| Operation      | Scope | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trim-silence` | each  | Cuts leading and trailing silence, frames whose loudest channel is below `floorDb` (default −60 dBFS), keeping `marginMs` (default 10). An all-silent file is refused.                                                                                                                                                                                                                                                                                                                |
+| `fade`         | each  | Fades in over `inMs` and out over `outMs` (each 10 by default), linearly, so the first and last frames are silent. Fades longer than the file are refused.                                                                                                                                                                                                                                                                                                                            |
+| `gain`         | each  | Gains the file to `target` LUFS, measured as `measure` says: `integrated` (default) or `momentary`, the maximum momentary loudness, for an `sfx`. Gain only, no limiter: when the target would put true peak above `truePeakCeiling` minus `encoderHeadroom`, it refuses, naming both numbers. A file whose loudness isn't defined (silence, or shorter than 400 ms) is refused.                                                                                                      |
+| `mono`         | each  | Folds to one channel, the mean of the channels. A mono file is unchanged.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `resample`     | each  | Changes the sample rate to `sampleRate` with libsamplerate (`@alexanderolsen/libsamplerate-js`, WebAssembly). `converter` is `sinc-best` (default), `sinc-medium` or `sinc-fastest`.                                                                                                                                                                                                                                                                                                  |
+| `loop`         | each  | Makes a seamless loop from a file generated with an overhang. The loop length is `floor(bars × beatsPerBar × 60 / bpm × sampleRate)` frames, Godot's, or `floor(seconds × sampleRate)` for ambience. It cuts there and folds the overhang into the head over `crossfadeMs`, with `curve` `equal-gain` (music) or `equal-power` (ambience). An overhang shorter than the crossfade is refused. The step's report and the output's `meta.loop` record the residual fraction of a frame. |
+
+**Loudness and true peak** (`src/audio/loudness.ts`) come from the `@audio/loudness` family: integrated loudness from `@audio/loudness-lufs` (ITU-R BS.1770-4, gated), true peak from `@audio/loudness-truepeak` (4× oversampled), and maximum momentary loudness, the loudest ungated 400 ms window at 100 ms steps, over the same K-weighting (`@audio/weighting-k`) and channel weights. `test/audio-loudness.test.ts` runs the EBU Tech 3341 test vectors with their published tolerances.
+
+**Provenance.** Audio steps are recorded like image steps, chained by sample hashes instead of pixel hashes. A sample hash is the SHA-256 of `pcm <bitDepth> <channels>x<sampleRate>\n` followed by the interleaved little-endian samples at the bit depth, as the `data` chunk holds them. Other chunks, such as the AI mark, loop points or Content Credentials, never change it. Sources and outputs record `samples` (the sample hash) in place of `pixels`, and outputs record sample rate, channels, frames and bit depth in place of a size.
 
 ## Recipes
 
@@ -227,4 +253,4 @@ Another engine, such as sharp/libvips, ImageMagick or a model-based matte, imple
 
 ## Programmatic use
 
-`runOperation`, `runRecipe`, `parseRecipe` and `transformFiles` in `src/transform/run.ts` are the entry points. The CLI and the MCP tools `op`, `recipe` and `ops` call them.
+`runOperation`, `runRecipe`, `parseRecipe` and `transformFiles` in `src/transform/run.ts` are the entry points; `runAudioRecipe` and `transformAudioFiles` in `src/audio/run.ts` are their audio counterparts. The CLI and the MCP tools `op`, `recipe` and `ops` call them.
