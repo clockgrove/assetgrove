@@ -181,7 +181,7 @@ An optional top-level `audio` block sets what the audio kinds' masters are made 
 
 ### Audio specs
 
-- `sfx`: `brief` and `maxDurationS` (above 0, at most 30). The master is trimmed, faded and gained to `loudness.target` by its maximum momentary loudness.
+- `sfx`: `brief` and `maxDurationS` (above 0, at most 30). The master is trimmed, faded and gained to `loudness.target` by its maximum momentary loudness. A member of a variant set (five footsteps, three impacts) also sets `subject` and `variant`, a whole number from 1 to 99: its `assetId` must then be `<subject>-NN` (`footstep-03`), so the set's member ids and their order are fixed by the specs; any other id is refused naming the one it must have. `audit <folder> --checks loudness` judges each set, the members sharing a subject, by `audio:set-loudness`: every member within `setSpreadLu` of the set's median.
 - `ambience`: `brief` and `loopS`, the loop length in seconds. The master has exactly `floor(loopS x sampleRate)` frames.
 - `music`: `brief` and `form`, `track` or `cue`; `durationS`, required unless the track sets `loop`; `loop` as `{ bpm, bars, beatsPerBar }`, a track only (a cue is refused with it). `instrumentation`, `sections`, `theme`, `bpm`, `meter` and `key` are optional, sent in the prompt and recorded as requested, never measured.
 - A spec's `maxDurationS`, `loopS` and `loop` are checked against the master's measured length; the candidate's `fields.audio` records the steps run, the master's format and loudness, and, if a step refused (a gain that would pass the true-peak ceiling), `refused`, which fails `audio:loudness`. An `sfx` shorter than the 400 ms momentary window skips `gain`, and true peak alone judges it.
