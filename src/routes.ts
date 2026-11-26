@@ -1109,6 +1109,14 @@ export function resolveRoute(
       `route unavailable: ${what} names provider "${route.provider}", which is not in the developer settings' providers`,
     );
   }
+  if (role === "audio") {
+    const refused = REFUSED_AUDIO_ROUTES.find((r) => r.matches(route, provider.adapter.id));
+    if (refused !== undefined)
+      throw new RouteUnavailableError(
+        operation,
+        `route unavailable: ${what} names model "${route.model}" of provider "${provider.id}" (${provider.adapter.id} adapter), a refused audio route: ${refused.reason}`,
+      );
+  }
   if (capability !== undefined && !provider.adapter.capabilities.includes(capability)) {
     throw new RouteUnavailableError(
       operation,
@@ -1120,14 +1128,6 @@ export function resolveRoute(
       operation,
       `route unavailable: ${what} names model "${route.model}" of provider "${provider.id}", which its ${provider.adapter.id} adapter cannot embed images and text with in one space; set ${fields} in the developer settings to a model that can`,
     );
-  }
-  if (role === "audio") {
-    const refused = REFUSED_AUDIO_ROUTES.find((r) => r.matches(route, provider.adapter.id));
-    if (refused !== undefined)
-      throw new RouteUnavailableError(
-        operation,
-        `route unavailable: ${what} names model "${route.model}" of provider "${provider.id}" (${provider.adapter.id} adapter), a refused audio route: ${refused.reason}`,
-      );
   }
   if (
     missingEstimate !== undefined &&
