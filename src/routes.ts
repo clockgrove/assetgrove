@@ -290,8 +290,13 @@ export const REFUSED_AUDIO_ROUTES: readonly {
   {
     reason:
       "it is Eleven Music, whose plans below Enterprise exclude games outside its Indie Game definition, which Assetgrove cannot verify",
-    matches: (route) =>
-      /^(eleven[-_]?)?music([-_]|$)/i.test(route.model.replace(/^elevenlabs\//i, "")),
+    // Only ElevenLabs' own ids: `eleven_music*` anywhere, a bare `music_v1` only on ElevenLabs
+    // (its adapter, or an `elevenlabs/` model id). Another vendor's `music-…` model is not this.
+    matches: (route, adapter) => {
+      const model = route.model.replace(/^elevenlabs\//i, "");
+      const eleven = adapter === "elevenlabs" || /^elevenlabs\//i.test(route.model);
+      return /^eleven[-_]?music([-_]|$)/i.test(model) || (eleven && /^music([-_]|$)/i.test(model));
+    },
   },
   {
     reason: "its vendor has no public API",

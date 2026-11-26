@@ -207,6 +207,8 @@ test("the refused audio routes are refused with their reasons", () => {
       /ElevenLabs through the AI Gateway.*which ElevenLabs rights tier applies/,
     ],
     ["elevenlabs", "music_v1", /Eleven Music.*Indie Game definition/],
+    ["elevenlabs", "eleven_music_v1", /Eleven Music.*Indie Game definition/],
+    ["host", "eleven_music", /Eleven Music.*Indie Game definition/],
     ["host", "suno/v4", /no public API/],
   ];
   for (const [provider, model, reason, extra] of cases) {
@@ -228,6 +230,25 @@ test("the refused audio routes are refused with their reasons", () => {
       },
     );
   }
+  // Another vendor's music model is not Eleven Music: what refuses it here is the host's
+  // missing audio capability, never the Eleven Music reason.
+  assert.throws(
+    () =>
+      resolveRoute(
+        {
+          roles: { audio: { provider: "host", model: "music-01", estimatedCostUsd: 1 } },
+          routes: {},
+        } as never,
+        "audio",
+        providers,
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof RouteUnavailableError);
+      assert.doesNotMatch(error.message, /Eleven Music|refused audio route/);
+      assert.match(error.message, /no audio capability/);
+      return true;
+    },
+  );
   // Other roles are untouched by the audio refusals.
   const vision = resolveRoute(
     {
