@@ -56,7 +56,7 @@ function run(
   name: string,
   spec: Record<string, unknown>,
   bytes: Uint8Array,
-  options: { profile?: TargetProfile; steps?: TransformStep[] } = {},
+  options: { profile?: TargetProfile; steps?: TransformStep[]; refused?: string } = {},
 ): Reason {
   const check = AUDIO_CHECKS.find((c) => c.name === name)!;
   const input = {
@@ -67,7 +67,15 @@ function run(
       mediaType: "audio/wav",
       extension: "wav",
       bytes,
-      fields: options.steps === undefined ? {} : { audio: { steps: options.steps } },
+      fields:
+        options.steps === undefined && options.refused === undefined
+          ? {}
+          : {
+              audio: {
+                ...(options.steps !== undefined && { steps: options.steps }),
+                ...(options.refused !== undefined && { refused: options.refused }),
+              },
+            },
     },
   } as unknown as KindCheckInput;
   const reasons = check.run!(input, undefined as never) as Reason[];
@@ -224,6 +232,14 @@ test("audio:loudness: integrated for loops, momentary for sfx, short sfx by true
   );
   assert.equal(silent.passed, false);
   assert.match(silent.reason, /undefined/);
+
+  // A recipe step that refused (a gain at the true-peak ceiling) fails the check, even on a short
+  // sfx that true peak alone would pass.
+  const stopped = run("audio:loudness", { kind: "sfx" }, wav([sine(0.2, 0.5)]), {
+    refused: "gain: the true peak would pass the ceiling",
+  });
+  assert.equal(stopped.passed, false);
+  assert.match(stopped.reason, /recipe stopped.*gain: the true peak would pass the ceiling/);
 });
 
 function padded(lead: number, body: number, trail: number): Uint8Array {

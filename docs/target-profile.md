@@ -184,7 +184,7 @@ An optional top-level `audio` block sets what the audio kinds' masters are made 
 - `sfx`: `brief` and `maxDurationS` (above 0, at most 30). The master is trimmed, faded and gained to `loudness.target` by its maximum momentary loudness.
 - `ambience`: `brief` and `loopS`, the loop length in seconds. The master has exactly `floor(loopS x sampleRate)` frames.
 - `music`: `brief` and `form`, `track` or `cue`; `durationS`, required unless the track sets `loop`; `loop` as `{ bpm, bars, beatsPerBar }`, a track only (a cue is refused with it). `instrumentation`, `sections`, `theme`, `bpm`, `meter` and `key` are optional, sent in the prompt and recorded as requested, never measured.
-- A spec's `maxDurationS`, `loopS` and `loop` are checked against the master's measured length; the candidate's `fields.audio` records the steps run, the master's format and loudness, and, if a step refused (a gain that would pass the true-peak ceiling), `refused`.
+- A spec's `maxDurationS`, `loopS` and `loop` are checked against the master's measured length; the candidate's `fields.audio` records the steps run, the master's format and loudness, and, if a step refused (a gain that would pass the true-peak ceiling), `refused`, which fails `audio:loudness`. An `sfx` shorter than the 400 ms momentary window skips `gain`, and true peak alone judges it.
 
 ## Library
 

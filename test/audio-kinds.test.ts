@@ -89,7 +89,10 @@ const SPECS: Record<string, Record<string, unknown>> = {
   },
 };
 
-function provider(requests: Array<Record<string, unknown>> = []) {
+function provider(
+  requests: Array<Record<string, unknown>> = [],
+  lengthS: (requestedS: number) => number = (requestedS) => requestedS,
+) {
   return new ScriptedProvider({
     image: () => {
       throw new Error("no image call expected");
@@ -100,7 +103,7 @@ function provider(requests: Array<Record<string, unknown>> = []) {
     audio: (request) => {
       requests.push(request as unknown as Record<string, unknown>);
       return {
-        audio: { mediaType: "audio/wav", bytes: tone(request.durationS ?? 1) },
+        audio: { mediaType: "audio/wav", bytes: tone(lengthS(request.durationS ?? 1)) },
         costUsd: 0.08,
       };
     },
@@ -110,6 +113,7 @@ function provider(requests: Array<Record<string, unknown>> = []) {
 async function stageOf(
   spec: Record<string, unknown>,
   requests: Array<Record<string, unknown>> = [],
+  lengthS?: (requestedS: number) => number,
 ) {
   const world = await syntheticWorld();
   temporary.push(world.dir);
@@ -120,7 +124,7 @@ async function stageOf(
     bibleDir: world.bibleDir,
     profile: syntheticProfile(AUDIO_PROFILE as never),
     routes: defaultRoutes,
-    provider: provider(requests),
+    provider: provider(requests, lengthS),
     providerName: "scripted",
     generators: [...CORE_REGISTRY.kinds],
     runsDir: world.runsDir,
@@ -237,6 +241,8 @@ for (const [name, channels] of [
 }
 
 test("a gain that would pass the true-peak ceiling stops the recipe and the exact checks filter the candidate", async () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const made: Array<{ fields: Record<string, unknown> } & Record<string, any>> = [];
   const world = await syntheticWorld();
   temporary.push(world.dir);
   const options = {
@@ -251,7 +257,18 @@ test("a gain that would pass the true-peak ceiling stops the recipe and the exac
     routes: defaultRoutes,
     provider: provider(),
     providerName: "scripted",
-    generators: [...CORE_REGISTRY.kinds],
+    generators: CORE_REGISTRY.kinds.map((g) =>
+      g.kind === "music"
+        ? {
+            ...g,
+            async generate(context: Parameters<typeof g.generate>[0]) {
+              const result = await g.generate(context);
+              made.push(result.output);
+              return result;
+            },
+          }
+        : g,
+    ),
     runsDir: world.runsDir,
     candidates: 1,
   };
@@ -259,6 +276,44 @@ test("a gain that would pass the true-peak ceiling stops the recipe and the exac
   const { run } = await stage(options);
   assert.equal(run.candidates.length, 0);
   assert.equal(run.filtered, 1);
+
+  // The refusal is recorded on the candidate, and audio:loudness is the check that fails it.
+  const output = made[0]!;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const audio = output.fields["audio"] as Record<string, any>;
+  assert.match(String(audio["refused"]), /ceiling/);
+  assert.ok(!(audio["steps"] as Array<{ op: string }>).some((s) => s.op === "gain"));
+  const failed = AUDIO_CHECKS.flatMap(
+    (check) =>
+      check.run!(
+        { spec: options.spec, profile: options.profile, bible: {}, output } as never,
+        undefined as never,
+      ) as Array<{ check: string; passed: boolean; reason: string }>,
+  ).filter((r) => !r.passed);
+  const loudness = failed.find((r) => r.check === "audio:loudness");
+  assert.match(String(loudness?.reason), /recipe stopped before the loudness was set: .*ceiling/);
+});
+
+test("an sfx under the 400 ms momentary window skips gain and passes on true peak", async () => {
+  const { run } = await stageOf(SPECS["sfx"]!, [], () => 0.2);
+  assert.deepEqual(run.errors, []);
+  assert.equal(run.candidates.length, 1);
+  const candidate = run.candidates[0]!;
+  assert.deepEqual(
+    candidate.reasons.filter((r) => !r.passed),
+    [],
+  );
+  assert.match(
+    candidate.reasons.find((r) => r.check === "audio:loudness")!.reason,
+    /under the 400 ms momentary window, so true peak alone decides/,
+  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const audio = candidate.fields["audio"] as Record<string, any>;
+  assert.equal(audio["refused"], undefined);
+  assert.deepEqual(
+    (audio["steps"] as Array<{ op: string }>).map((s) => s.op),
+    ["mono", "trim-silence", "fade"],
+  );
 });
 
 /** A provider script for the CLI: a stereo tone as long as the request. */
@@ -354,6 +409,17 @@ test("a profile without audio.loudness is refused at stage and plan, naming the 
     }),
     /audio\.loudness/,
   );
+  // With the developer settings' block, plan gets past the block to its real refusal.
+  await assert.rejects(
+    planJobs({
+      biblePath: join(dir, "BIBLE.md"),
+      specPath: w.base[1]!,
+      profilePath: w.base[5]!,
+      audioLoudness: LOUDNESS,
+    }),
+    (error: Error) =>
+      /stage it instead/.test(error.message) && !/audio\.loudness/.test(error.message),
+  );
 });
 
 test("developer settings carrying audio.loudness stage an audio kind on that profile", async () => {
@@ -365,6 +431,14 @@ test("developer settings carrying audio.loudness stage an audio kind on that pro
     JSON.parse(dry.stdout)["plan"].perCandidate.map((c: { operation: string }) => c.operation),
     ["audio"],
   );
+  // The settings' block is in the request digest: another loudness is another request.
+  const workOf = (stdout: string) => JSON.parse(stdout)["work"] ?? JSON.parse(stdout);
+  writeSettings({ audio: { loudness: { ...LOUDNESS, target: -16 } } });
+  const other = await cli(["stage", ...w.base, "--dry-run", "--json"]);
+  assert.equal(other.code, 0, other.stdout + other.stderr);
+  assert.notEqual(workOf(other.stdout)["digest"], undefined);
+  assert.notEqual(workOf(other.stdout)["digest"], workOf(dry.stdout)["digest"]);
+  writeSettings({ audio: { loudness: LOUDNESS } });
 
   const run = await cli([
     "stage",

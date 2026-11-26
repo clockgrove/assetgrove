@@ -223,9 +223,12 @@ const TRUE_PEAK = check("audio:true-peak", ({ audio, settings }) => {
   );
 });
 
-const LOUDNESS = check("audio:loudness", ({ audio, kind, settings }) => {
+const LOUDNESS = check("audio:loudness", ({ input, audio, kind, settings }) => {
   const name = "audio:loudness";
   const { target, tolerance, truePeakCeiling, encoderHeadroom } = settings.loudness;
+  const refused = (input.output.fields["audio"] as { refused?: string } | undefined)?.refused;
+  if (refused !== undefined)
+    return reason(name, false, `the recipe stopped before the loudness was set: ${refused}`);
   const measure = measureLoudness(audio.channels, audio.sampleRate);
   const sfx = kind === "sfx";
   const value = sfx ? measure.momentaryMax : measure.integrated;

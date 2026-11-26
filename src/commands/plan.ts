@@ -57,6 +57,7 @@ async function prepare(args: PlanArgs, ctx: RunContext) {
     runCapUsd: ctx.settings.caps.runUsd,
     promptAllow: ctx.settings.promptPolicy.allow,
     ...(ctx.extensions && { kinds: ctx.extensions }),
+    ...(ctx.settings.audio?.loudness && { audioLoudness: ctx.settings.audio.loudness }),
   });
   // The apply after this plan runs its own prompt-policy check first: buildWorkPlan forecasts it
   // too, with its readings, and its second call when the compiler can write model-written text.

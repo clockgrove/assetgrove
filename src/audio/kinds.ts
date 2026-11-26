@@ -4,7 +4,8 @@
  * loop, gain) with every step recorded. The kinds declare the exact checks of `checks.ts`; core
  * runs them. A recipe step that refuses (gain at the true-peak ceiling) stops the recipe: the
  * candidate keeps the last step's samples and the refusal is recorded in `fields.audio.refused`,
- * which the checks then fail on their own.
+ * which `audio:loudness` fails. An `sfx` under the 400 ms momentary window has no momentary
+ * loudness to gain to, so it skips `gain` and true peak alone judges it, as the design says.
  */
 import { z } from "zod";
 import { InputError } from "../errors.ts";
@@ -204,6 +205,12 @@ function recipeOf(spec: AssetSpec, item: AudioItem, settings: ResolvedAudioProfi
   return steps;
 }
 
+/** The momentary loudness window, s: a clip shorter than this has no momentary loudness. */
+const MOMENTARY_WINDOW_S = 0.4;
+
+const underMomentaryWindow = (item: AudioItem): boolean =>
+  (item.channels[0]?.length ?? 0) / item.sampleRate < MOMENTARY_WINDOW_S;
+
 /** A loudness figure as JSON: null where it is undefined (silence, or under 400 ms). */
 const finiteOrNull = (value: number | null): number | null =>
   value !== null && Number.isFinite(value) ? value : null;
@@ -246,6 +253,7 @@ function audioGenerator(kind: AudioKind, specSchema: z.ZodType): Generator {
       const steps: TransformStep[] = [];
       let refused: string | undefined;
       for (const step of recipeOf(spec, source, settings)) {
+        if (step.op === "gain" && kind === "sfx" && underMomentaryWindow(items[0]!)) continue;
         try {
           const ran = await runAudioOperation(items, step);
           items = ran.items;

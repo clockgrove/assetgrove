@@ -3,6 +3,7 @@ import { basename, dirname } from "node:path";
 import { paletteReads } from "../call-parameters.ts";
 import { withSettingsLoudness } from "../audio/profile.ts";
 import { InputError } from "../errors.ts";
+import { canonicalJson, sha256Hex } from "../library/canonical.ts";
 import { readJson, loadProfile, loadStyleBible } from "../inputs.ts";
 import { runCap } from "../budget.ts";
 import { DEFAULT_CANDIDATES, planStage, stage } from "../loop.ts";
@@ -85,6 +86,11 @@ async function prepare(args: StageArgs, ctx: RunContext) {
     near,
     promptAllow: ctx.settings.promptPolicy.allow,
     inputs: ["spec", "bible", "profile"],
+    // The effective loudness block (the profile's, else the developer settings') sets the master's
+    // gain and which candidates pass, so a request made to another loudness is another request.
+    ...(profile.value.audio?.loudness !== undefined && {
+      hashes: { "profile/audio.loudness": sha256Hex(canonicalJson(profile.value.audio.loudness)) },
+    }),
     // The candidate prompts name the subject (the asset id when the spec has no subject), so the
     // plan step checks it, free, before the spend is confirmed.
     promptText: [subjectOf(spec.value), ...(args.note !== undefined ? [args.note] : [])],
