@@ -67,23 +67,43 @@ export function memberLoudness(kind: string, audio: AudioContext): number | null
   return kind === "sfx" ? measure.momentaryMax : measure.integrated;
 }
 
-/** Each member of a variant set within `spreadLu` of the set's median loudness passes. */
+/** The momentary window an `sfx` is measured over; a shorter clip has no momentary loudness. */
+const MOMENTARY_WINDOW_S = 0.4;
+
+/**
+ * An `sfx` shorter than the 400 ms momentary window: its length in milliseconds, since the
+ * Loudness rule judges such a clip by true peak alone. Undefined for a longer clip or another kind.
+ */
+export function shortClipMs(kind: string, audio: AudioContext): number | undefined {
+  const seconds = (audio.channels[0]?.length ?? 0) / audio.sampleRate;
+  return kind === "sfx" && seconds < MOMENTARY_WINDOW_S ? seconds * 1000 : undefined;
+}
+
+/** The median of a set's defined loudnesses; null when none is defined. */
+export function medianLoudness(values: readonly (number | null)[]): number | null {
+  const known = values.filter((l): l is number => l !== null).sort((a, b) => a - b);
+  if (known.length === 0) return null;
+  const mid = Math.floor(known.length / 2);
+  return known.length % 2 ? known[mid]! : (known[mid - 1]! + known[mid]!) / 2;
+}
+
+/**
+ * Each member of a variant set within `spreadLu` of the set's median loudness passes. A member
+ * under the 400 ms momentary window (`shortMs`) has no loudness to compare: true peak alone judges
+ * it (`audio:true-peak`), so it passes saying so and stays out of the median.
+ */
 export function setLoudness(
-  members: { id: string; loudness: number | null }[],
+  members: { id: string; loudness: number | null; shortMs?: number }[],
   spreadLu: number,
 ): Reason[] {
-  const known = members
-    .map((m) => m.loudness)
-    .filter((l): l is number => l !== null)
-    .sort((a, b) => a - b);
-  const mid = Math.floor(known.length / 2);
-  const median =
-    known.length === 0
-      ? null
-      : known.length % 2
-        ? known[mid]!
-        : (known[mid - 1]! + known[mid]!) / 2;
+  const median = medianLoudness(members.map((m) => (m.shortMs === undefined ? m.loudness : null)));
   return members.map((m) => {
+    if (m.shortMs !== undefined)
+      return reason(
+        SET_LOUDNESS_CHECK,
+        true,
+        `${m.id} is ${fixed(m.shortMs)} ms, under the 400 ms momentary window, so true peak alone judges it (audio:true-peak), not the set's loudness`,
+      );
     if (m.loudness === null || median === null)
       return reason(
         SET_LOUDNESS_CHECK,
@@ -234,7 +254,7 @@ const LOUDNESS = check("audio:loudness", ({ input, audio, kind, settings }) => {
   const value = sfx ? measure.momentaryMax : measure.integrated;
   if (value === null) {
     const frames = audio.channels[0]?.length ?? 0;
-    if (sfx && measure.truePeak > -Infinity && frames / audio.sampleRate < 0.4) {
+    if (sfx && measure.truePeak > -Infinity && frames / audio.sampleRate < MOMENTARY_WINDOW_S) {
       const limit = truePeakCeiling - encoderHeadroom;
       return reason(
         name,

@@ -7,8 +7,11 @@
  * region and note in the form, and runs through the executor and journal. Each region becomes an
  * `editing` annotation on the version (which turns `changes-requested`), its mask and references
  * copied into `<assetId>.review/<sha256>.<ext>`. Every candidate appears on `compare.png`, with its
- * `outsideChange`. Picking one appends the version with `answers` naming the requests.
+ * `outsideChange`. On an audio asset every region is `t=<start>,<end> : <note>` in seconds and the
+ * job is another round of the audio kind with the notes, with no compare sheet. Picking one
+ * appends the version with `answers` naming the requests.
  */
+import { withSettingsLoudness } from "../audio/profile.ts";
 import { bindProvenance } from "../provenance-binding.ts";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -44,6 +47,7 @@ import { loadAsset, locateAsset, withLibraryLock, writeAsset } from "../library/
 import { freeChecks } from "../library/adopt.ts";
 import type { LoadedAsset } from "../library/actions.ts";
 import { sha256Hex } from "../library/canonical.ts";
+import { anchorMembers, checkAnchor, versionExtent } from "../library/extent.ts";
 import { parseLfsPointer } from "../library/lfs.ts";
 import { appendAnnotation, nextStamp, versionStatus } from "../library/review.ts";
 import type { Annotation, AnnotationInput, Version, VersionStatus } from "../library/review.ts";
@@ -105,7 +109,7 @@ interface RequestChangeArgs {
 }
 
 /** Which job the regions ask for (assumption 1 of the plan). */
-type Job = "masked-edit" | "edit" | "fix-frame" | "3d-round";
+type Job = "masked-edit" | "edit" | "fix-frame" | "3d-round" | "audio-round";
 
 /** The file extension a media type names: its subtype, so no format list lives here. */
 function extensionOf(mediaType: string): string {
@@ -142,8 +146,21 @@ async function sourceRun(asset: LoadedAsset, runsDir: string): Promise<RunRecord
 }
 
 /** The job the regions ask for, refusing a mix (exit 2). */
-function jobKind(regions: readonly Region[], is3d: boolean): "still" | "frame" | "3d" {
+function jobKind(
+  regions: readonly Region[],
+  is3d: boolean,
+  isAudio: boolean,
+): "still" | "frame" | "3d" | "audio" {
   if (regions.length === 0) throw new InputError("request_change needs at least one --region");
+  const timed = regions.filter((r) => r.shape.kind === "time").length;
+  if (isAudio) {
+    if (timed < regions.length)
+      throw new InputError(
+        "a region on an audio asset marks a span of seconds: t=<start>,<end> : <note>",
+      );
+    return "audio";
+  }
+  if (timed > 0) throw new InputError("a time region marks audio; this asset is not audio");
   if (is3d) {
     if (regions.some((r) => r.view === undefined))
       throw new InputError(
@@ -198,7 +215,6 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
   const version = asset.record.versions.at(-1)!;
   const regions = parseRegions(args.region ?? [], { base: process.cwd() });
   const is3d = extname(asset.mediaPath).toLowerCase() === ".glb";
-  const kind = jobKind(regions, is3d);
   if (!existsSync(asset.mediaPath))
     throw new InputError(`the working media ${asset.mediaPath} is missing`);
   const bytes = new Uint8Array(await readFile(asset.mediaPath));
@@ -210,6 +226,17 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     );
   const runsDir = resolve(args.runs ?? DEFAULT_RUNS);
   const source = await sourceRun(asset, runsDir);
+  const registry = ctx.extensions ?? CORE_REGISTRY;
+  const generators = [...registry.kinds];
+  const isAudio = generators.find((g) => g.kind === source.spec.kind)?.media === "audio";
+  const kind = jobKind(regions, is3d, isAudio);
+  const profile = withSettingsLoudness(source.profile, ctx.settings.audio?.loudness);
+  if (kind === "audio") {
+    const extent = await versionExtent(asset, version);
+    for (const r of regions)
+      if (r.shape.kind === "time")
+        checkAnchor({ time: { start: r.shape.start, end: r.shape.end } }, extent, asset.assetId);
+  }
   const sourceCandidate = source.candidates.find((candidate) => candidate.id === version.candidate);
   const providers = await providerSet(args.providerScript, ctx);
   const routes = providers.routes;
@@ -232,9 +259,31 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
       }
     | undefined;
   let palettes: Record<string, string> = {};
-  const registry = ctx.extensions ?? CORE_REGISTRY;
-  const generators = [...registry.kinds];
-  if (kind === "3d") {
+  if (kind === "audio") {
+    const projectBible = join(projectDir(undefined, asset.dir), BIBLE_PATH);
+    biblePath = args.bible ?? projectBible;
+    if (args.bible === undefined && !existsSync(projectBible))
+      throw new InputError(
+        `another round of an audio kind needs a style bible: give it with --bible or add ${projectBible}`,
+      );
+    bible = await loadStyleBible(biblePath);
+    promptText.push(source.spec.subject ?? source.spec.assetId ?? asset.assetId);
+    const plan = planStage({
+      spec: source.spec,
+      profile,
+      routes,
+      generators,
+      candidates,
+      capUsd,
+      bible: bible.value,
+    });
+    palettes = paletteReads([...plan.perCandidate, ...plan.perRequest]);
+    jobs = mergeJobs([
+      ...jobsOf(plan.perCandidate, routes, candidates),
+      ...jobsOf(plan.perRequest, routes),
+    ]);
+    job = "audio-round";
+  } else if (kind === "3d") {
     if (args.bible === undefined)
       throw new InputError(
         "a view region asks for another round of the 3D kind, which reads the style bible: give it with --bible",
@@ -356,6 +405,10 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     reads,
     hashes: {
       version: version.sha256,
+      ...(kind === "audio" &&
+        profile.audio?.loudness !== undefined && {
+          "profile/audio.loudness": sha256Hex(canonicalJson(profile.audio.loudness)),
+        }),
       ...(changeQa && {
         kindChecks: sha256Hex(
           canonicalJson({
@@ -390,6 +443,7 @@ async function prepare(args: RequestChangeArgs, ctx: RunContext) {
     regions,
     job,
     source,
+    profile,
     sourceCandidate,
     providers,
     capUsd,
@@ -410,6 +464,8 @@ function selectorOf(
   region: Region,
   size: { width: number; height: number } | undefined,
 ): Record<string, unknown> | undefined {
+  if (region.shape.kind === "time")
+    return anchorMembers({ time: region.shape })["selector"] as Record<string, unknown>;
   if (region.shape.kind !== "box") return undefined;
   const { unit, x, y, width, height } = region.shape;
   const pct = (value: number, of: number) => Number(((value * 100) / of).toFixed(4));
@@ -528,6 +584,7 @@ async function recordRequests(
 /** Where a region lies, in words for the prompt. */
 function whereOf(region: Region): string {
   if (region.shape.kind === "mask") return "in the area the mask marks";
+  if (region.shape.kind === "time") return `from ${region.shape.start} s to ${region.shape.end} s`;
   const { unit, x, y, width, height } = region.shape;
   const u = unit === "percent" ? "%" : " px";
   return `in the area from ${x}${u} to ${x + width}${u} across and ${y}${u} to ${y + height}${u} down`;
@@ -579,7 +636,10 @@ masked edit when the edit route's adapter declares the mask capability (a mask=P
 that file), otherwise an edit of the whole image with the notes (--keep-rest asks to keep the rest);
 frame regions take fix-frame's path, one edit per frame plus one fix-scale decision per frame
 when its candidate scales differ, both in the confirmed spend; view regions on a 3D asset run another
-round of the 3D kind with the note (--bible names the style bible). The asset, the version's
+round of the 3D kind with the note (--bible names the style bible); on an audio asset every region is
+"t=<start>,<end> : <note>", seconds within the version's duration, and the job is another round of
+the audio kind regenerated from its brief with the notes (--bible, else the project's BIBLE.md; no
+compare.png, the contact sheet shows waveforms). The asset, the version's
 sha256 and each region, note, mask and reference are in the request's digest; the notes pass the
 prompt policy before the confirmation, and the spend form shows each region and note. Each region
 becomes an editing annotation on the version (its state turns changes-requested), its mask and
@@ -604,7 +664,7 @@ version is appended with answers naming the requests. The run that made the asse
         type: "array",
         items: { type: "string" },
         description:
-          "a region and its note: <x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]... : <note>",
+          "a region and its note: <x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]... : <note>, or t=<start>,<end> : <note> in seconds for audio",
         placeholder: "<region>",
       },
       keepRest: {
@@ -659,6 +719,7 @@ version is appended with answers naming the requests. The run that made the asse
       regions,
       job,
       source,
+      profile,
       sourceCandidate,
       providers,
       capUsd,
@@ -692,15 +753,21 @@ version is appended with answers naming the requests. The run that made the asse
     let before: Raster | undefined;
     let run: RunRecord;
 
-    if (job === "3d-round") {
+    if (job === "3d-round" || job === "audio-round") {
       const bible = prepared.bible!;
-      const note = regions.map((r) => `In view ${r.view}: ${r.note}`).join("\n");
+      const note = regions
+        .map((r) =>
+          r.shape.kind === "time"
+            ? `From ${r.shape.start} s to ${r.shape.end} s: ${r.note}`
+            : `In view ${r.view}: ${r.note}`,
+        )
+        .join("\n");
       const staging = await stage({
         spec: source.spec,
         specDir: source.specDir,
         bible: bible.value,
         bibleDir: bible.dir,
-        profile: source.profile,
+        profile: job === "audio-round" ? profile : source.profile,
         routes: providers.routes,
         provider: providers,
         generators: prepared.generators,
@@ -715,31 +782,34 @@ version is appended with answers naming the requests. The run that made the asse
         ...(work.promptPolicy && { promptPolicy: work.promptPolicy }),
       });
       run = staging.run;
-      const renders = (c: StagedCandidate | undefined) =>
-        (c?.artifacts ?? [])
-          .filter((a) => a.endsWith(".png") && !basename(a).startsWith("clip-"))
-          .sort();
-      const n = regions[0]!.view!;
-      const viewRegions = regions.filter((r) => r.view === n);
-      // The version's view: its turntable render in the library, else the one its run staged.
-      const sourceRender = renders(sourceCandidate)[n - 1];
-      const beforeView =
-        turntableViews(asset.mediaPath)[n - 1] ??
-        (sourceRender !== undefined
-          ? join(resolve(args.runs ?? DEFAULT_RUNS), source.runId, sourceRender)
-          : undefined);
-      for (const [i, c] of run.candidates.entries()) {
-        const after = renders(c)[n - 1];
-        if (beforeView === undefined || after === undefined) continue;
-        const comparison = await compareRasters(
-          decodeImage(new Uint8Array(await readFile(beforeView))),
-          decodeImage(new Uint8Array(await readFile(join(dir, after)))),
-          viewRegions,
-        );
-        rows.push({ number: i + 1, comparison });
-        outside.push({ id: c.id, ...comparisonFields(comparison) });
+      if (job === "audio-round") errors.push(...run.errors);
+      else {
+        const renders = (c: StagedCandidate | undefined) =>
+          (c?.artifacts ?? [])
+            .filter((a) => a.endsWith(".png") && !basename(a).startsWith("clip-"))
+            .sort();
+        const n = regions[0]!.view!;
+        const viewRegions = regions.filter((r) => r.view === n);
+        // The version's view: its turntable render in the library, else the one its run staged.
+        const sourceRender = renders(sourceCandidate)[n - 1];
+        const beforeView =
+          turntableViews(asset.mediaPath)[n - 1] ??
+          (sourceRender !== undefined
+            ? join(resolve(args.runs ?? DEFAULT_RUNS), source.runId, sourceRender)
+            : undefined);
+        for (const [i, c] of run.candidates.entries()) {
+          const after = renders(c)[n - 1];
+          if (beforeView === undefined || after === undefined) continue;
+          const comparison = await compareRasters(
+            decodeImage(new Uint8Array(await readFile(beforeView))),
+            decodeImage(new Uint8Array(await readFile(join(dir, after)))),
+            viewRegions,
+          );
+          rows.push({ number: i + 1, comparison });
+          outside.push({ id: c.id, ...comparisonFields(comparison) });
+        }
+        errors.push(...run.errors);
       }
-      errors.push(...run.errors);
     } else {
       const qaRegistry = changeQa && kindQaRegistry(changeQa.generator, CORE_REGISTRY.kinds);
       const editBibleVersion =

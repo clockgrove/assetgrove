@@ -43,9 +43,31 @@ const requestedMusic = {
   key: z.string().optional(),
 };
 
+/** A variant set member's id, fixed by its spec: `subject-01` to `subject-99`. */
+const variantId = (subject: string, variant: number): string =>
+  `${subject}-${String(variant).padStart(2, "0")}`;
+
 const SFX_SPEC_SCHEMA = CORE_SPEC_SCHEMA.extend({
   brief,
   maxDurationS: positive.max(30),
+  variant: z.number().int().min(1).max(99).optional(),
+}).superRefine((spec, context) => {
+  if (spec.variant === undefined) return;
+  if (spec.subject === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["subject"],
+      message: `a variant needs the set's subject, and its assetId must be <subject>-${String(spec.variant).padStart(2, "0")}`,
+    });
+    return;
+  }
+  const id = variantId(spec.subject, spec.variant);
+  if (spec.assetId !== id)
+    context.addIssue({
+      code: "custom",
+      path: ["assetId"],
+      message: `variant ${spec.variant} of subject ${spec.subject} must have assetId ${id}`,
+    });
 });
 
 const AMBIENCE_SPEC_SCHEMA = CORE_SPEC_SCHEMA.extend({
@@ -114,7 +136,7 @@ function requestedDurationS(spec: AssetSpec, settings: ResolvedAudioProfile): nu
 function requestedOf(spec: AssetSpec): Record<string, unknown> {
   const names =
     spec.kind === "sfx"
-      ? ["brief", "maxDurationS"]
+      ? ["brief", "maxDurationS", "variant"]
       : spec.kind === "ambience"
         ? ["brief", "loopS"]
         : [

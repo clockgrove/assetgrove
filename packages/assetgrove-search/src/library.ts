@@ -33,6 +33,9 @@ export interface LibraryItem {
   description?: string;
   width?: number;
   height?: number;
+  durationS?: number;
+  form?: string;
+  tempo?: number;
   mediaType?: string;
   mediaSha256?: string;
   mediaStatus?: "available" | "unavailable";

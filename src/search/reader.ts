@@ -120,6 +120,10 @@ export async function createLibraryReader(options: {
       const data = asset.card.data as Record<string, unknown>;
       const str = (k: string) =>
         typeof data[k] === "string" && data[k] !== "" ? (data[k] as string) : undefined;
+      // Form and tempo are machine fields on a music card only; elsewhere they are a person's.
+      const music = data["kind"] === "music";
+      const form = music ? str("form") : undefined;
+      const tempo = music && typeof data["tempo"] === "number" ? data["tempo"] : undefined;
       const declared = data["origin"];
       const record =
         declared && typeof declared === "object" ? (declared as Record<string, unknown>) : {};
@@ -142,6 +146,7 @@ export async function createLibraryReader(options: {
         description,
         ...asset.tags,
         asset.kind,
+        form,
         asset.subject,
         asset.card.body.trim(),
         origin,
@@ -168,6 +173,7 @@ export async function createLibraryReader(options: {
                 ? {
                     width: media.width,
                     height: media.height,
+                    durationS: media.durationS,
                     mediaType: media.mediaType,
                   }
                 : { mediaReason: media.reason }),
@@ -180,6 +186,8 @@ export async function createLibraryReader(options: {
         originSource,
         originLicense,
         digitalSourceType,
+        ...(form && { form }),
+        ...(tempo !== undefined && { tempo }),
         ...(asset.kind && { kind: asset.kind }),
         ...(asset.subject && { subject: asset.subject }),
         tags: asset.tags,

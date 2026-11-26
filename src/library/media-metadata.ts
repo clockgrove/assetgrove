@@ -1,3 +1,4 @@
+import { decodeAudio, frameCount } from "../audio/engine.ts";
 import { decodeImage } from "../image/raster.ts";
 import { GLB_MEDIA_TYPE, parseGlb } from "../model3d/glb.ts";
 import { sniffMediaType } from "../request.ts";
@@ -12,6 +13,9 @@ export type MediaEvidence =
       mediaType: string;
       width?: number;
       height?: number;
+      durationS?: number;
+      sampleRate?: number;
+      channels?: number;
     }
   | { format: "assetgrove-media/1"; sha256: string; status: "unavailable"; reason: string };
 
@@ -30,6 +34,27 @@ export function measureMediaBytes(bytes: Uint8Array, sha256: string): MediaEvide
         mediaType,
         width,
         height,
+      };
+    } catch {
+      return {
+        format: "assetgrove-media/1",
+        sha256,
+        status: "unavailable",
+        reason: "invalid_media",
+      };
+    }
+  }
+  if (mediaType === "audio/wav") {
+    try {
+      const audio = decodeAudio(bytes);
+      return {
+        format: "assetgrove-media/1",
+        sha256,
+        status: "available",
+        mediaType,
+        durationS: frameCount(audio) / audio.sampleRate,
+        sampleRate: audio.sampleRate,
+        channels: audio.channels.length,
       };
     } catch {
       return {

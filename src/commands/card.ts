@@ -52,7 +52,7 @@ import {
 } from "../library/actions.ts";
 import {
   CardFieldOwnedError,
-  MACHINE_FIELDS,
+  OWNED_FIELDS,
   dropSummary,
   dropSuggestedFields,
   setPersonFields,
@@ -79,7 +79,7 @@ function editedFields(args: CardEditArgs): Record<string, unknown> {
   for (const entry of args.field ?? []) {
     const at = entry.indexOf("=");
     const name = at === -1 ? entry : entry.slice(0, at);
-    if ((MACHINE_FIELDS as readonly string[]).includes(name)) throw new CardFieldOwnedError(name);
+    if (OWNED_FIELDS.includes(name)) throw new CardFieldOwnedError(name);
     if (at <= 0 || !/^[A-Za-z_][\w-]*$/.test(name)) {
       throw new InputError(`--field "${entry}" is not name=value`);
     }

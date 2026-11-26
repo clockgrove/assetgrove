@@ -18,12 +18,14 @@ export const FILTER_FIELDS = [
   "address",
   "path",
   "view",
+  "form",
   "title",
   "mediaType",
   "mediaStatus",
 ] as const;
 
-export const NUMERIC_FILTER_FIELDS = ["width", "height"] as const;
+export const NUMERIC_FILTER_FIELDS = ["width", "height", "durationS", "tempo"] as const;
+const NUMERIC: ReadonlySet<string> = new Set(NUMERIC_FILTER_FIELDS);
 const ALL_FILTER_FIELDS: readonly string[] = [...FILTER_FIELDS, ...NUMERIC_FILTER_FIELDS];
 const ALLOWED = `${ALL_FILTER_FIELDS.join(", ")}, tag`;
 const OPS = ["!=", "<=", ">=", "=", "<", ">"] as const;
@@ -50,14 +52,17 @@ function parseOne(raw: string): FilterTerm {
   if (!ALL_FILTER_FIELDS.includes(field)) {
     throw bad(raw, `Unknown filter field "${field}": measured evidence unavailable`);
   }
-  if (field === "width" || field === "height") {
+  if (NUMERIC.has(field)) {
     if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) || !Number.isFinite(Number(value))) {
       throw bad(raw, `Filter "${raw}" requires a finite numeric boundary`);
     }
     return { field, op, value: Number(value) };
   }
   if (op === "<=" || op === ">=") {
-    throw bad(raw, `Filter "${raw}": inclusive boundaries require width or height`);
+    throw bad(
+      raw,
+      `Filter "${raw}": inclusive boundaries require ${NUMERIC_FILTER_FIELDS.join(", ")}`,
+    );
   }
   return { field, op, value };
 }
@@ -122,7 +127,7 @@ export function compileFilter(terms: FilterTerm[]): string | undefined {
           details: { filter: t },
         });
       }
-      if (t.op === "!=" && t.field !== "width" && t.field !== "height")
+      if (t.op === "!=" && !NUMERIC.has(t.field))
         return `(${t.field} IS NULL OR ${t.field} != ${lit})`;
       return `${t.field} ${t.op} ${lit}`;
     })

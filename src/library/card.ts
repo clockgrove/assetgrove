@@ -23,7 +23,10 @@ import { isSummaryEntry, matchingSummaryEntry } from "./summary.ts";
 import type { CardSummary, SummaryEntry } from "./summary.ts";
 import type { MediaEvidence } from "./media-metadata.ts";
 
-/** The fields Assetgrove writes, in the order a card lists them. */
+/**
+ * The fields Assetgrove writes, in the order a card lists them. `form` and `tempo` are owned on a
+ * `music` card only (`machineFieldsOf`); on any other card they are person fields.
+ */
 export const MACHINE_FIELDS = [
   "type",
   "format",
@@ -34,6 +37,8 @@ export const MACHINE_FIELDS = [
   "kind",
   "subject",
   "animationFamily",
+  "form",
+  "tempo",
   "state",
   "version",
   "bible",
@@ -46,7 +51,18 @@ export const MACHINE_FIELDS = [
 /** The fields a person edits; any other key is kept as written. */
 export const PERSON_FIELDS = ["title", "description", "tags"] as const;
 
-const MACHINE = new Set<string>(MACHINE_FIELDS);
+/** The fields Assetgrove owns on a `music` card only. */
+export const MUSIC_MACHINE_FIELDS: readonly string[] = ["form", "tempo"];
+
+/** The fields Assetgrove owns on every card, whatever its kind. */
+export const OWNED_FIELDS: readonly string[] = MACHINE_FIELDS.filter(
+  (key) => !MUSIC_MACHINE_FIELDS.includes(key),
+);
+
+/** The machine fields a card of `kind` holds, in card order. */
+export function machineFieldsOf(kind: unknown): readonly string[] {
+  return kind === "music" ? MACHINE_FIELDS : OWNED_FIELDS;
+}
 
 export interface CardEntry {
   key: string;
@@ -216,6 +232,10 @@ export interface MachineInput {
   subject: string;
   /** The spec's animation family, for a strip of one; the card id is `<assetId>-<family>`. */
   animationFamily?: string;
+  /** A `music` spec's form: `track` or `cue`. */
+  form?: string;
+  /** A `music` spec's requested tempo, in beats per minute. */
+  tempo?: number;
   /** The Assetgrove version, e.g. "0.2.0". */
   assetgrove: string;
   media?: MediaEvidence;
@@ -290,6 +310,8 @@ export function machineFields(input: MachineInput): Record<string, unknown> {
     kind: input.kind,
     subject: input.subject,
     ...(input.animationFamily !== undefined && { animationFamily: input.animationFamily }),
+    ...(input.form !== undefined && { form: input.form }),
+    ...(input.tempo !== undefined && { tempo: input.tempo }),
     state: versionStatus(review, current.sha256),
     version: versionNumber(review, current.sha256),
     bible: provenance.bibleVersion,
@@ -363,16 +385,17 @@ function rewrite(card: Card, fields: Record<string, unknown>, source: string): C
     key: entry.key,
     text: index === card.entries.length - 1 ? entry.text + card.newline : entry.text,
   }));
+  const owned = machineFieldsOf("kind" in fields ? fields["kind"] : card.data["kind"]);
   const entries: CardEntry[] = [];
   for (const entry of withNewline) {
-    if (!MACHINE.has(entry.key)) entries.push(entry);
+    if (!owned.includes(entry.key)) entries.push(entry);
     else if (entry.key in fields) {
       const text = renderEntry(entry.key, fields[entry.key], card.newline);
       entries.push(text === entry.text ? entry : { key: entry.key, text });
     }
   }
   const present = new Set(entries.map((entry) => entry.key));
-  for (const key of MACHINE_FIELDS) {
+  for (const key of owned) {
     if (key in fields && !present.has(key)) {
       entries.push({ key, text: renderEntry(key, fields[key], card.newline) });
     }
@@ -391,7 +414,7 @@ export interface Person {
 export function newCard(person: Person, fields: Record<string, unknown>): Card {
   const newline = "\n";
   const values: Record<string, unknown> = {};
-  for (const key of MACHINE_FIELDS) {
+  for (const key of machineFieldsOf(fields["kind"])) {
     if (key in fields) values[key] = fields[key];
     if (key === "format") {
       values["title"] = person.title;
@@ -459,7 +482,8 @@ export function refreshFromReview(
     data.generated?.at ??
     current.at;
   const fields: Record<string, unknown> = {};
-  for (const key of MACHINE_FIELDS) if (key in card.data) fields[key] = card.data[key];
+  for (const key of machineFieldsOf(card.data["kind"]))
+    if (key in card.data) fields[key] = card.data[key];
   const bible = data.lock?.bible ?? data.bible;
   fields["verified"] = verifiedOf(review, qaAt, source);
   fields["state"] = versionStatus(review, current.sha256);
@@ -480,9 +504,9 @@ export function refreshFromReview(
 /** A card edit naming a field Assetgrove owns: exit 2 `card_field_owned`. */
 export class CardFieldOwnedError extends InputError {
   readonly code = "card_field_owned";
-  constructor(field: string) {
+  constructor(field: string, owned: readonly string[] = OWNED_FIELDS) {
     super(
-      `"${field}" is a machine field Assetgrove rebuilds from the records (${MACHINE_FIELDS.join(", ")}); a card edit changes person fields only`,
+      `"${field}" is a machine field Assetgrove rebuilds from the records (${owned.join(", ")}); a card edit changes person fields only`,
     );
     this.name = "CardFieldOwnedError";
   }
@@ -499,7 +523,9 @@ export function setPersonFields(
   body: string | undefined,
   source: string,
 ): Card {
-  for (const key of Object.keys(values)) if (MACHINE.has(key)) throw new CardFieldOwnedError(key);
+  const owned = machineFieldsOf(card.data["kind"]);
+  for (const key of Object.keys(values))
+    if (owned.includes(key)) throw new CardFieldOwnedError(key, owned);
   const entries = card.entries.map((entry, index) => ({
     key: entry.key,
     text: index === card.entries.length - 1 ? entry.text + card.newline : entry.text,
@@ -522,7 +548,8 @@ export function setPersonFields(
 /** The machine fields a card holds now, with `verified` replaced. */
 function withVerified(card: Card, verified: unknown[], source: string): Card {
   const fields: Record<string, unknown> = {};
-  for (const key of MACHINE_FIELDS) if (key in card.data) fields[key] = card.data[key];
+  for (const key of machineFieldsOf(card.data["kind"]))
+    if (key in card.data) fields[key] = card.data[key];
   fields["verified"] = verified;
   return rewrite(card, fields, source);
 }

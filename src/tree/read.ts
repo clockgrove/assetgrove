@@ -18,7 +18,7 @@ import { CORE_REGISTRY } from "../extensions/registry.ts";
 import type { KindTraits } from "../frames.ts";
 import { BIBLE_PATH } from "../init.ts";
 import { findProvenance } from "../library/adopt.ts";
-import { MACHINE_FIELDS } from "../library/card.ts";
+import { machineFieldsOf } from "../library/card.ts";
 import { sha256Hex } from "../library/canonical.ts";
 import { logEntriesFromReview, renderLog } from "../library/folder.ts";
 import { bibleVersionOf } from "../library/maintain.ts";
@@ -386,7 +386,8 @@ function stillAsset(view: View, id: string): Asset {
 function machine(asset: Asset): JsonObject {
   const data = asset.card.data;
   const out: JsonObject = { id: asset.id };
-  for (const key of MACHINE_FIELDS) if (data[key] !== undefined) out[key] = data[key];
+  for (const key of machineFieldsOf(data["kind"]))
+    if (data[key] !== undefined) out[key] = data[key];
   out["tags"] = asset.tags;
   return out;
 }
