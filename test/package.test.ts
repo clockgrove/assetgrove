@@ -17,6 +17,11 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 // npm reaches the registry through the machine's proxy, which the fixture removed for Assetgrove.
 const npmEnv = { ...process.env, ...machineProxyEnv };
 const FIVE_MINUTES = 5 * 60 * 1000;
+// Installing the tarball writes about 34,000 files, 29,000 of them `@elevenlabs/elevenlabs-js`'s
+// (the official SDK the ElevenLabs adapter uses, decisions.md). On a Windows runner, where each
+// file written is scanned, this test once ran past five minutes, so it gets eight, which stays
+// inside the test job's 20-minute limit with the rest of its shard.
+const EIGHT_MINUTES = 8 * 60 * 1000;
 // A tarball built elsewhere (a release candidate) is installed instead of packing this checkout.
 const prebuilt = process.env["ASSETGROVE_TEST_TARBALL"];
 
@@ -105,7 +110,7 @@ test(
 
 test(
   "the packed tarball installs and its bin runs without TypeScript stripping",
-  { timeout: FIVE_MINUTES },
+  { timeout: EIGHT_MINUTES },
   async () => {
     const temps: string[] = [];
     const temp = async () => {
