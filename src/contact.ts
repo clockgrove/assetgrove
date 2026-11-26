@@ -1,10 +1,10 @@
 /**
  * The contact sheet of a run (design section 10): `<run>/contact.png`, one numbered row per staged
  * candidate. A still sits beside its references, a sprite strip shows a row of key frames (every
- * frame QA flagged, then frames spread evenly) and a 3D
- * character its turntable frames. Numbers only: no text from any shared file or request input is
- * drawn, so the sheet changes only when an image does. It reuses the raster code of the sheet
- * import (src/sheet/import.ts).
+ * frame QA flagged, then frames spread evenly), a 3D character its turntable frames and an audio
+ * candidate its waveform, one lane per channel. Numbers only: no text from any shared file or
+ * request input is drawn, so the sheet changes only when an image or a sample does. It reuses the
+ * raster code of the sheet import (src/sheet/import.ts).
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +13,8 @@ import { splitStrip } from "./animation/strip.ts";
 import { CORE_REGISTRY } from "./extensions/registry.ts";
 import { frameLayoutOf, isStripKind } from "./frames.ts";
 import type { KindTraits } from "./frames.ts";
-import { mediaOf } from "./media.ts";
+import { waveformRaster } from "./audio/waveform.ts";
+import { decodeWav, mediaOf } from "./media.ts";
 import { drawDigits, textWidth } from "./image/digits.ts";
 import { createRaster, decodeImage, encodePng } from "./image/raster.ts";
 import type { Raster } from "./image/raster.ts";
@@ -225,7 +226,8 @@ export function candidateNumber(id: string, fallback: number): number {
 
 /**
  * The images of one staged candidate, by its kind's media trait: a model kind's turntable, a strip
- * kind's key frames, an image; none for an audio kind.
+ * kind's key frames, an image, an audio kind's waveform (one lane per channel; none when the
+ * file does not decode).
  */
 async function candidateImages(
   runDir: string,
@@ -235,8 +237,14 @@ async function candidateImages(
   traits: KindTraits,
 ): Promise<Raster[]> {
   const media = mediaOf(spec.kind, traits);
-  // An audio candidate has no image cell yet: its waveform cell comes with the audio kinds.
-  if (media === "audio") return [];
+  if (media === "audio") {
+    try {
+      const audio = decodeWav(new Uint8Array(await readFile(join(runDir, candidate.file))));
+      return [waveformRaster(audio, CELL_PX)];
+    } catch {
+      return [];
+    }
+  }
   if (media === "model") {
     // Turntable frames are the view renders; the clip frames are not part of the turntable.
     const views = (candidate.artifacts ?? []).filter(

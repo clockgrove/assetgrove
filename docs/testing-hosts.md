@@ -9,7 +9,7 @@ What the person should see, with a client that declares form elicitation:
 - Accepting writes a record at `<configDir>/confirmations/<digest>.json` with method `elicitation`, the client's name and its protocol version.
 - Declining exits 8 `confirmation_declined`.
 - A client without form elicitation gets exit 8 `confirmation_required`, with `assetgrove confirm <id>` to finish in a terminal.
-- `stage` returns the run's contact sheet (`contact.png`) as MCP image content.
+- `stage` returns the run's contact sheet (`contact.png`) as MCP image content. It also returns each audio candidate as `audio` content (under the 64 KB read cap) or a `file://` `resource_link` (over it): the staged master, the bytes the pick digest covers.
 
 ## Setup
 
@@ -118,7 +118,7 @@ Ask the harness to call `stage` with one candidate and a low cap, then `pick` on
 - [ ] Mark honoured in auto mode: with the harness in its auto, yolo or full-auto mode, it still asks you before calling `stage` and `pick` (both carry `_meta["anthropic/requiresUserInteraction"]`).
 - [ ] Progress seen: progress shows in the harness while `stage` runs.
 - [ ] Contact sheet reaches the person: record how, as an image rendered inline, a path only, or not at all.
-- [ ] Candidate links reach the person: inspect the staging result's `resource_link` content and the pick form's `candidateResources`; read a link before answering the sealed form.
+- [ ] Candidate links reach the person: inspect the staging result's `resource_link` content and the pick form's `candidateResources`; read a link before answering the sealed form. For audio, play the preview and check the form's `previews` name the same file and sha256; change the staged file and confirm the pick is refused.
 - [ ] Unattended (headless) session: with headless settings (`headless.operator`, see `docs/settings.md`), `stage` runs without a form and `pick` must name its candidate. Record whether the harness can run it unattended.
 - [ ] Disconnect: start a `stage` call, then stop or interrupt it mid-run. Note what the harness shows and what the server leaves behind.
 
