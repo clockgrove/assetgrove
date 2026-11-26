@@ -21,7 +21,10 @@ import { PromptRefusedError } from "../src/policy/text.ts";
 import { packageBlocklist } from "../src/policy/blocklist.ts";
 import { CORE_ADAPTERS } from "../src/providers/adapter.ts";
 import { ProviderSet } from "../src/providers/set.ts";
-import { checkAccounts } from "../src/runs/plan.ts";
+import { buildWorkPlan, checkAccounts, jobsOf } from "../src/runs/plan.ts";
+import { CORE_ENTRY, ExtensionRegistry } from "../src/extensions/registry.ts";
+import type { Extension } from "../src/extension/api.ts";
+import { EXIT } from "../src/errors.ts";
 import { Journal, withRunScope } from "../src/runs/journal.ts";
 import type { Clearance } from "../src/runs/journal.ts";
 import { resolveRoute, RouteUnavailableError } from "../src/routes.ts";
@@ -476,6 +479,68 @@ test("at plan, the ElevenLabs tier is read: a free tier and a sample rate the ti
     ["/v1/user/subscription"],
     "the plan reads the tier and spends nothing",
   );
+});
+
+test("a plan for a kind whose operation has role audio, routed to ElevenLabs on a free tier, exits 2 route_unavailable before any call", async () => {
+  const pack = {
+    api: 3,
+    name: "foley",
+    kinds: [
+      {
+        kind: "foley:cue",
+        operations: { "foley:sfx": "audio" },
+        planCandidate: () => [],
+        generate: () => Promise.reject(new Error("not called")),
+      },
+    ],
+  } as unknown as Extension;
+  const { operations } = new ExtensionRegistry([
+    CORE_ENTRY,
+    { extension: pack, info: { package: "foley-pack", version: "1.0.0", entry: "/x/index.js" } },
+  ]);
+  const plan = (tier: string) => {
+    const seen = vendor(tier);
+    const set = ProviderSet.fromSettings(
+      {
+        providers: { elevenlabs: { limit: LIMIT } },
+        roles: { audio: { provider: "elevenlabs", model: "eleven_text_to_sound_v3" } },
+        routes: {},
+        path: "settings.json",
+      } as never,
+      { env, operations },
+    );
+    const route = set.routes["foley:sfx"]!;
+    assert.equal(route.provider, "elevenlabs");
+    const calls = [{ operation: "foley:sfx", model: route.model, estimatedCostUsd: 0.06 }];
+    const built = buildWorkPlan(
+      { name: "make", input: { type: "object", properties: {}, additionalProperties: false } },
+      {},
+      {
+        inputs: [],
+        jobs: jobsOf(calls, set.routes),
+        capUsd: 1,
+        paid: true,
+        providers: set,
+        candidates: 1,
+      },
+    );
+    return { built, seen };
+  };
+  const free = plan("free");
+  await assert.rejects(free.built, (error: unknown) => {
+    assert.ok(error instanceof RouteUnavailableError);
+    assert.equal(error.code, "route_unavailable");
+    assert.equal(EXIT[error.code], 2);
+    assert.match(error.message, /on the free plan \(elevenlabs subscription\)/);
+    return true;
+  });
+  assert.deepEqual(
+    free.seen.map((s) => s.url.pathname),
+    ["/v1/user/subscription"],
+    "the plan reads the tier and makes no generation call",
+  );
+  const pro = plan("pro");
+  assert.equal((await pro.built).jobs[0]!.operation, "foley:sfx");
 });
 
 test("doctor reads each ElevenLabs account and reports a free tier as a provider-account finding", async () => {
