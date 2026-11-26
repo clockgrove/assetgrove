@@ -232,12 +232,13 @@ test("3.0 called directly gives up at the timeout", async () => {
   );
 });
 
-test("jobs.audio serves only 3.0, declares no key dedupe or find, and maps statuses", async () => {
+test("jobs.audio serves only 3.0, declares no key dedupe or find, and maps statuses; a 429 or 5xx poll throws", async () => {
   const f = fake({
     "GET /v2beta/results/a": [new Response(null, { status: 202 })],
     "GET /v2beta/results/b": [wavReply()],
     "GET /v2beta/results/c": [json({ name: "not_found", errors: ["gone"] }, 404)],
     "GET /v2beta/results/d": [json({ name: "server_error", errors: ["boom"] }, 500)],
+    "GET /v2beta/results/e": [json({ name: "rate_limited", errors: ["slow down"] }, 429)],
   });
   const jobs = provider(f.impl).jobs!.audio!;
   assert.equal(jobs.serves!({ model: "stable-audio-3.0", prompt: "x" }), true);
@@ -247,7 +248,9 @@ test("jobs.audio serves only 3.0, declares no key dedupe or find, and maps statu
   assert.equal(await jobs.status("a"), "running");
   assert.equal(await jobs.status("b"), "done");
   assert.equal(await jobs.status("c"), "unknown");
-  assert.equal(await jobs.status("d"), "failed");
+  // A server error or a rate limit says nothing about the job itself: thrown, never "failed".
+  await assert.rejects(jobs.status("d"), /boom \(HTTP 500, server_error\)/);
+  await assert.rejects(jobs.status("e"), /slow down \(HTTP 429, rate_limited\)/);
   const result = await jobs.result("b", { model: "stable-audio-3.0", prompt: "x" });
   assert.deepEqual(result.audio.bytes, WAV);
   assert.equal(f.calls.filter((c) => c.url.endsWith("/results/b")).length, 1);

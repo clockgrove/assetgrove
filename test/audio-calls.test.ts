@@ -391,6 +391,51 @@ test("Stability, made from settings, is priced at 8 credits through usdPerCredit
   assert.match(form.body, /name="seed"\r\n\r\n11/);
 });
 
+test("Stable Audio 3.0 through core: a rate-limited poll keeps the job journaled and a resumed run collects it without a second submit", async () => {
+  const seen: Seen[] = [];
+  let poll = 0;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    seen.push({ url, method: request.method, body: "" });
+    if (url.pathname === "/v2beta/audio/stable-audio-3/text-to-audio")
+      return new Response(JSON.stringify({ id: "job-3" }), {
+        headers: { "content-type": "application/json" },
+      });
+    if (url.pathname === "/v2beta/results/job-3")
+      return poll++ === 0
+        ? new Response(JSON.stringify({ name: "rate_limited", errors: ["slow down"] }), {
+            status: 429,
+            headers: { "content-type": "application/json" },
+          })
+        : new Response(WAV, { headers: { "content-type": "audio/wav" } });
+    return new Response("{}", { status: 404 });
+  }) as typeof fetch;
+  const set = audioSet(
+    { stability: { limit: LIMIT } },
+    { audio: { provider: "stability", model: "stable-audio-3.0" } },
+  );
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "audio-resume-")));
+  const clearance = { digest: "d", record: {} } as unknown as Clearance;
+  const run = () => {
+    const caller = new Caller({
+      provider: set,
+      budget: new Budget(5),
+      routes: set.routes,
+      jobPolling: { firstMs: 0, maxMs: 0, sleep: async () => {} },
+    });
+    return withRunScope({ journal: new Journal(dir, "run-1"), clearance }, () =>
+      caller.audio("audio", "rain on a tin roof", { parameters: { durationS: 2 } }),
+    );
+  };
+  await assert.rejects(run, /job job-3 could not be collected: .*slow down \(HTTP 429/);
+  const posts = () => seen.filter((s) => s.method === "POST").length;
+  assert.equal(posts(), 1, "the rate limit settles nothing and submits nothing again");
+  const audio = await run();
+  assert.deepEqual(audio.bytes, WAV);
+  assert.equal(posts(), 1, "the resumed run fetches the stored job without a second submit");
+});
+
 test("at plan, the ElevenLabs tier is read: a free tier and a sample rate the tier doesn't allow are refused", async () => {
   const job = (provider: string) => ({
     operation: "audio",

@@ -206,7 +206,10 @@ export class StabilityProvider implements GenerationProvider {
       this.#finished.set(id, response);
       return "done";
     }
-    return "failed";
+    // Any other answer (429, 401, 5xx) says nothing about the job itself, which may still
+    // finish and be charged: throw, so core keeps the job journaled for the next run rather
+    // than settle it and submit again.
+    throw await this.#failure("audio", response);
   }
 
   async #collect(id: string, request: AudioRequest): Promise<AudioResult> {
