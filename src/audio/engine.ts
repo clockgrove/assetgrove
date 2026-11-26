@@ -29,6 +29,11 @@ export interface AudioItem {
   bitDepth: string;
   /** What operations measured or decided for this item (JSON values), for callers and reports. */
   meta: Record<string, unknown>;
+  /**
+   * Set by the `encode` step, always the last: the item is written as this lossy rendition
+   * instead of a WAV. Absent on a master.
+   */
+  encoding?: { mediaType: "audio/ogg"; quality: number };
 }
 
 /** The number of sample frames (samples per channel) of an item. */

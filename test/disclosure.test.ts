@@ -8,7 +8,10 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { audioGenerators } from "../src/audio/kinds.ts";
 import { disclose, disclosureMarkdown } from "../src/disclosure.ts";
+import type { Extension } from "../src/extension/api.ts";
+import { CORE_ENTRY, ExtensionRegistry } from "../src/extensions/registry.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
@@ -368,4 +371,119 @@ test("whole-library unreadable cards remain unresolved without changing legacy s
     assert.equal(store.status, "unresolved");
     assert.deepEqual(store.unresolvedAssets, [name]);
   }
+});
+
+test("audio assets get a sound line from their route record in the Steam and itch.io text", async () => {
+  const sound = (over: Partial<Provenance>): Partial<Provenance> => ({
+    models: ["stable-audio-2.5"],
+    ...over,
+  });
+  const target = await library([
+    [
+      "boom",
+      sound({
+        calls: [callOf("stability:audio:stable-audio-2.5", "stable-audio-2.5")],
+      }),
+    ],
+    [
+      "theme",
+      sound({
+        models: ["eleven_music"],
+        calls: [
+          callOf("elevenlabs:audio:eleven_music", "eleven_music", {
+            outputGrant: {
+              license: "ElevenLabs",
+              plan: "creator",
+              commercial: true,
+              relabel: true,
+              exclusive: false,
+            },
+            trainingOptOut: {
+              optedOut: true,
+              since: "2026-11-01",
+              source: "declared by the developer",
+            },
+          }),
+        ],
+      }),
+    ],
+    ["bare", sound({ calls: [] })],
+    ["walk", {}],
+  ]);
+  const { scanCards } = await import("../src/library/write.ts");
+  for (const card of scanCards(target)) {
+    const path = join(card.dir, `${card.id}.md`);
+    const text = await readFile(path, "utf8");
+    const family = ["boom", "theme", "bare"].find((f) => card.resource?.includes(f));
+    if (family === undefined) continue;
+    await writeFile(
+      path,
+      text.replace(/^kind: .*$/m, family === "theme" ? "kind: music" : "kind: sfx"),
+    );
+  }
+  const d = await disclose(target);
+  assert.deepEqual(
+    d.sounds.map((s) => [s.kind, s.models, s.providers, s.plans, s.exclusive]),
+    [
+      ["sfx", [], [], [], undefined],
+      ["sfx", ["stable-audio-2.5"], ["stability"], ["api"], undefined],
+      ["music", ["eleven_music"], ["elevenlabs"], ["creator"], false],
+    ],
+  );
+  assert.deepEqual(d.sounds[2]!.trainingOptOut, {
+    optedOut: true,
+    since: "2026-11-01",
+    source: "declared by the developer",
+  });
+  const lines = d.sounds.map((s) => s.line);
+  assert.match(lines[0]!, /^Sound: .+ \(sfx\): route record unavailable$/);
+  assert.match(lines[1]!, /\(sfx\): stable-audio-2.5 via stability, api plan$/);
+  assert.match(
+    lines[2]!,
+    /\(music\): eleven_music via elevenlabs, creator plan, non-exclusive, training opt-out declared by the developer: yes since 2026-11-01$/,
+  );
+  for (const text of [d.steam, d.itch.text]) {
+    assert.equal(text.split("\n").filter((l) => l.startsWith("Sound:")).length, 3);
+    assert.ok(lines.every((l) => text.includes(`\n${l}`)));
+    assert.ok(!text.includes(prompt));
+  }
+  const plain = await disclose(await library());
+  assert.deepEqual(plain.sounds, []);
+  assert.ok(!plain.steam.includes("\n") && !plain.itch.text.includes("\n"));
+});
+
+test("an extension's audio kind gets a sound line, asked of its media trait", async () => {
+  const target = await library([
+    [
+      "chime",
+      {
+        models: ["stable-audio-2.5"],
+        calls: [callOf("stability:audio:stable-audio-2.5", "stable-audio-2.5")],
+      },
+    ],
+  ]);
+  const { scanCards } = await import("../src/library/write.ts");
+  for (const card of scanCards(target)) {
+    if (!card.resource?.includes("chime")) continue;
+    const path = join(card.dir, `${card.id}.md`);
+    await writeFile(path, (await readFile(path, "utf8")).replace(/^kind: .*$/m, "kind: fx:chime"));
+  }
+  const sfx = audioGenerators.find((k) => k.kind === "sfx")!;
+  const extension = {
+    api: 3,
+    name: "fx",
+    kinds: [{ ...sfx, kind: "fx:chime" }],
+  } as unknown as Extension;
+  const kinds = new ExtensionRegistry([
+    CORE_ENTRY,
+    { extension, info: { package: "fx-pack", version: "1.0.0", entry: "/x/index.js" } },
+  ]);
+  assert.deepEqual((await disclose(target)).sounds, []);
+  const d = await disclose(target, { kinds });
+  assert.deepEqual(
+    d.sounds.map((s) => s.kind),
+    ["fx:chime"],
+  );
+  assert.match(d.sounds[0]!.line, /\(fx:chime\): stable-audio-2.5 via stability, api plan$/);
+  assert.ok(d.steam.includes(`\n${d.sounds[0]!.line}`));
 });

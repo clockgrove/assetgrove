@@ -9,6 +9,7 @@ import type { OperationSpec } from "../transform/types.ts";
 import { deriveAudio, frameCount } from "./engine.ts";
 import type { AudioItem } from "./engine.ts";
 import { integratedLoudness, maxMomentaryLoudness, truePeak } from "./loudness.ts";
+import { OGG_QUALITY, oggEncoder } from "./ogg.ts";
 
 /** What an audio operation can read besides its parameters; profile values will arrive here. */
 export type AudioOperationContext = Record<string, never>;
@@ -140,6 +141,25 @@ export const AUDIO_OPERATIONS: OperationSpec[] = [
         },
       },
       required: ["crossfadeMs", "curve"],
+    },
+  },
+  {
+    name: "encode",
+    summary:
+      "write an Ogg Vorbis rendition at a quality; the last step of a rendition recipe, never of a master",
+    scope: "each",
+    media: "audio",
+    params: {
+      type: "object",
+      properties: {
+        quality: {
+          type: "number",
+          minimum: OGG_QUALITY.min,
+          maximum: OGG_QUALITY.max,
+          default: OGG_QUALITY.default,
+          description: "libvorbis VBR quality, -1 (smallest) to 10 (best)",
+        },
+      },
     },
   },
 ];
@@ -321,6 +341,21 @@ function loop(item: AudioItem, params: Record<string, unknown>): AudioOperationR
   return { items: [deriveAudio(item, channels, { loop: loopMeta })], report: loopMeta };
 }
 
+async function encode(
+  item: AudioItem,
+  params: Record<string, unknown>,
+): Promise<AudioOperationResult> {
+  if (item.channels.length > 2)
+    throw new InputError(
+      `encode: Ogg Vorbis renditions are mono or stereo; this sound has ${item.channels.length} channels (fold it with the mono step)`,
+    );
+  const quality = params["quality"] as number;
+  return {
+    items: [{ ...item, encoding: { mediaType: "audio/ogg", quality } }],
+    report: { mediaType: "audio/ogg", quality, encoder: await oggEncoder() },
+  };
+}
+
 /** The `assetgrove-audio` engine's implementations, by operation name. */
 export const AUDIO_IMPLEMENTATIONS: Record<string, AudioOperationImpl> = {
   "trim-silence": async (item, params) => trimSilence(item, params),
@@ -329,4 +364,5 @@ export const AUDIO_IMPLEMENTATIONS: Record<string, AudioOperationImpl> = {
   mono: async (item) => mono(item),
   resample: (item, params) => resample(item, params),
   loop: async (item, params) => loop(item, params),
+  encode: (item, params) => encode(item, params),
 };

@@ -5,6 +5,7 @@ import { read as readKtx2, write as writeKtx2 } from "ktx-parse";
 import type { TransformStep } from "./transform/types.ts";
 import wavefile from "wavefile";
 import { parseGlb, writeGlb } from "./model3d/glb.ts";
+import { readVorbisComments, setVorbisComments, vorbisComment } from "./audio/vorbis-comments.ts";
 import type { GltfDocument } from "./model3d/glb.ts";
 
 const { WaveFile } = wavefile;
@@ -569,7 +570,43 @@ export function embedDigitalSourceType(
     wav.set_PMX(packet);
     return keepC2paChunks(bytes, wav.toBuffer());
   }
+  if (mediaType === "audio/ogg") {
+    // Vorbis comments. As in XMP, models named before stay when none are given, and a calls
+    // sha256 is dropped when none is given.
+    const modelsText = modelText(models);
+    const marked = setVorbisComments(bytes, {
+      [VORBIS_MARK_FIELDS.digitalSourceType]: value,
+      ...(modelsText !== undefined && { [VORBIS_MARK_FIELDS.models]: modelsText }),
+      [VORBIS_MARK_FIELDS.callsSha256]: options.callsSha256,
+    });
+    return Buffer.compare(Buffer.from(marked), Buffer.from(bytes)) === 0 ? bytes : marked;
+  }
   return bytes;
+}
+
+/**
+ * The Vorbis comment fields of an Ogg's AI mark (docs/PRD-audio.md, "Marks"): the IPTC digital
+ * source type, IPTC's AI system used (the models) and Assetgrove's calls sha256, the properties
+ * the XMP mark of the other formats carries.
+ */
+export const VORBIS_MARK_FIELDS = {
+  digitalSourceType: "DIGITALSOURCETYPE",
+  models: "AISYSTEMUSED",
+  callsSha256: "ASSETGROVE_CALLSSHA256",
+} as const;
+
+/** An Ogg's mark as the glTF JSON-LD packet names its properties, so one reader serves both. */
+function oggMark(bytes: Uint8Array): Record<string, unknown> | undefined {
+  const comments = readVorbisComments(bytes);
+  const entries = [
+    ["Iptc4xmpExt:DigitalSourceType", VORBIS_MARK_FIELDS.digitalSourceType],
+    [`Iptc4xmpExt:${modelProperty}`, VORBIS_MARK_FIELDS.models],
+    [gltfCallsKey, VORBIS_MARK_FIELDS.callsSha256],
+  ].flatMap(([key, field]) => {
+    const value = vorbisComment(comments, field!);
+    return value === undefined ? [] : [[key!, value] as const];
+  });
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
 function wavXmp(wav: InstanceType<typeof WaveFile>): string | undefined {
@@ -672,6 +709,8 @@ export function readDigitalSourceType(
   } else if (mediaType === "audio/wav") {
     const xml = wavXmp(new WaveFile(bytes));
     return xml === undefined ? undefined : readXmp(xml);
+  } else if (mediaType === "audio/ogg") {
+    return sourceType(oggMark(bytes)?.["Iptc4xmpExt:DigitalSourceType"]);
   }
   return undefined;
 }
@@ -689,6 +728,9 @@ function markPacket(
   else if (mediaType === "image/jpeg") xml = readJpegXmp(bytes);
   else if (mediaType === "model/gltf+json" || mediaType === "model/gltf-binary") {
     const json = gltfPacket(gltfDocument(bytes, mediaType));
+    return json === undefined ? undefined : { json };
+  } else if (mediaType === "audio/ogg") {
+    const json = oggMark(bytes);
     return json === undefined ? undefined : { json };
   } else if (mediaType === "image/ktx2") xml = ktx2Xmp(readKtx2(bytes).keyValue[ktx2Key]);
   else if (mediaType === "audio/wav") xml = wavXmp(new WaveFile(bytes));

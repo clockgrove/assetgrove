@@ -37,7 +37,7 @@ Not in 1.0: voice and text-to-speech, synchronized stems, adaptive or layered sc
    | Resample                                               | `@alexanderolsen/libsamplerate-js`                                                  | MIT (libsamplerate BSD-2-Clause) |
    | Loudness and true peak                                 | `@audio/loudness-lufs`, trusted only after it passes the EBU Tech 3341 test vectors | MIT                              |
    | Container facts for adopted files                      | `music-metadata`                                                                    | MIT                              |
-   | Encode Ogg Vorbis (renditions only)                    | chosen in Objective 6 from libvorbis WASM builds that carry no LGPL code            | —                                |
+   | Encode Ogg Vorbis (renditions only)                    | `@audio/encode-ogg`, libvorbis and libogg in WebAssembly with no LGPL code          | MIT (libvorbis BSD-3-Clause)     |
 
    Core never decodes an Ogg: checks judge the master, and the Godot pack's CI proves the delivered file imports and plays.
 

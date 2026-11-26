@@ -20,6 +20,7 @@ import { checkStep } from "../transform/run.ts";
 import type { Recipe, RecipeStep, TransformStep } from "../transform/types.ts";
 import { AUDIO_ENGINE, decodeAudio, encodeWav, frameCount, sampleHash } from "./engine.ts";
 import type { AudioItem } from "./engine.ts";
+import { encodeOgg, oggEncoder } from "./ogg.ts";
 import { AUDIO_IMPLEMENTATIONS } from "./operations.ts";
 import type { AudioOperationContext } from "./operations.ts";
 
@@ -43,6 +44,10 @@ export async function runAudioOperation(
     throw new InputError(`${step.op} is an image operation and cannot run on audio`);
   if (step.engine !== undefined && step.engine !== AUDIO_ENGINE.name)
     throw new InputError(`${step.op} runs on "${AUDIO_ENGINE.name}", not "${step.engine}"`);
+  if (items.some((item) => item.encoding !== undefined))
+    throw new InputError(
+      `${step.op} comes after encode, which is the last step: an encoded rendition is not changed`,
+    );
   const context: AudioOperationContext = {};
   const reports: Record<string, unknown>[] = [];
   const out: AudioItem[] = [];
@@ -105,13 +110,17 @@ export interface AudioOutputFile {
   name: string;
   path: string;
   sha256: string;
-  mediaType: "audio/wav";
+  /** A WAV master, or an Ogg Vorbis rendition when the recipe ends in `encode`. */
+  mediaType: "audio/wav" | "audio/ogg";
   sampleRate: number;
   channels: number;
   frames: number;
   bitDepth: string;
   samples: string;
-  encodedBy: { name: string; version: string };
+  /** The encoder that wrote the bytes; for an Ogg, the libvorbis build, its vendor and licence. */
+  encodedBy: { name: string; version: string; vendor?: string; license?: string };
+  /** For an Ogg: the libvorbis quality it was encoded at. */
+  quality?: number;
   meta?: Record<string, unknown>;
 }
 
@@ -130,7 +139,7 @@ export interface TransformAudioFilesOptions extends AudioRunOptions {
   inputName?: string;
   recipe: Recipe;
   inputs: string[];
-  /** A `.wav` file path for one output; otherwise a directory. */
+  /** A `.wav` (`.ogg` for a recipe ending in `encode`) file path for one output; otherwise a directory. */
   out: string;
 }
 
@@ -191,14 +200,15 @@ export async function transformAudioFiles(options: TransformAudioFilesOptions): 
     () => false,
   );
   const single = results.length === 1 && extname(out) !== "" && !isDir;
-  if (single && extname(out).toLowerCase() !== ".wav")
+  const extension = (item: AudioItem) => (item.encoding ? ".ogg" : ".wav");
+  if (single && extname(out).toLowerCase() !== extension(results[0]!))
     throw new InputError(
-      `refused: ${out} names a ${extname(out)} file but the output is audio/wav; use a .wav path`,
+      `refused: ${out} names a ${extname(out)} file but the output is ${results[0]!.encoding?.mediaType ?? "audio/wav"}; use a ${extension(results[0]!)} path`,
     );
   const dir = single ? dirname(out) : out;
   const inputs = new Set(options.inputs.map((p) => resolve(p)));
   const planned = results.map((item) => {
-    const path = single ? out : join(dir, `${item.name}.wav`);
+    const path = single ? out : join(dir, `${item.name}${extension(item)}`);
     if (inputs.has(path))
       throw new InputError(`refused: ${path} is an input; sources are never overwritten`);
     return { item, path };
@@ -214,7 +224,12 @@ export async function transformAudioFiles(options: TransformAudioFilesOptions): 
   for (const { item, path } of planned) {
     const digitalSourceType = item.digitalSourceType ?? DIGITAL_SOURCE_TYPES.undeclared;
     const samples = sampleHash(item);
-    const bytes = embedDigitalSourceType(encodeWav(item), "audio/wav", digitalSourceType);
+    const mediaType = item.encoding?.mediaType ?? "audio/wav";
+    // An Ogg's stream serial comes from its samples, so the same sound encodes to the same bytes.
+    const encoded = item.encoding
+      ? await encodeOgg(item, item.encoding.quality, Number.parseInt(samples.slice(0, 8), 16))
+      : encodeWav(item);
+    const bytes = embedDigitalSourceType(encoded, mediaType, digitalSourceType);
     steps.push(metadataStep(digitalSourceType, [samples]));
     plannedFiles.push({ path, bytes });
     if (!options.dryRun) await writeFile(path, bytes);
@@ -224,13 +239,16 @@ export async function transformAudioFiles(options: TransformAudioFilesOptions): 
       digitalSourceType,
       path,
       sha256: sha256(bytes),
-      mediaType: "audio/wav",
+      mediaType,
       sampleRate: item.sampleRate,
       channels: item.channels.length,
       frames: frameCount(item),
       bitDepth: item.bitDepth,
       samples,
-      encodedBy: { name: AUDIO_ENGINE.name, version: AUDIO_ENGINE.version },
+      encodedBy: item.encoding
+        ? await oggEncoder()
+        : { name: AUDIO_ENGINE.name, version: AUDIO_ENGINE.version },
+      ...(item.encoding && { quality: item.encoding.quality }),
       ...(meta !== undefined && { meta }),
     });
   }

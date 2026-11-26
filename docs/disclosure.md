@@ -6,11 +6,13 @@ Assetgrove marks every file it hands off, and `disclosure` summarises the librar
 
 Each handed-off file carries the IPTC digital source type, and, where IPTC defines AI-system properties, the models in `AISystemUsed`. It also carries `assetgrove:callsSha256`, the sha256 of the provenance record's calls, which ties the record to the file ([decisions](decisions.md#provenance-is-bound-to-its-media)); it names no prompt. The prompt is never written into a file.
 
-| Format          | Where the mark lives                               |
-| --------------- | -------------------------------------------------- |
-| PNG, JPEG, WebP | an XMP packet (`iTXt`, APP1, `XMP ` chunk)         |
-| glTF, GLB       | the `KHR_xmp_json_ld` extension                    |
-| KTX2            | the key-value entry `XMP`, holding the same packet |
+| Format          | Where the mark lives                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------ |
+| PNG, JPEG, WebP | an XMP packet (`iTXt`, APP1, `XMP ` chunk)                                                       |
+| glTF, GLB       | the `KHR_xmp_json_ld` extension                                                                  |
+| KTX2            | the key-value entry `XMP`, holding the same packet                                               |
+| WAV             | an XMP packet in the `_PMX` chunk                                                                |
+| Ogg Vorbis      | Vorbis comments: `DIGITALSOURCETYPE` (the IPTC URI), `AISYSTEMUSED` and `ASSETGROVE_CALLSSHA256` |
 
 Other formats cannot carry the mark. Engines and packers can also strip a mark, so the provenance record always holds the source type too ([docs/library.md](library.md)).
 
@@ -21,6 +23,8 @@ Beside the IPTC mark, every PNG, JPEG and WebP hand-off writes (the media, image
 An asset a person edited by hand and adopted with `library adopt` ([library.md](library.md)) carries `c2pa.opened` of the AI-made original, which is its `parentOf` ingredient with its own manifest, then `c2pa.edited` with the source type `compositeWithTrainedAlgorithmicMedia`.
 
 The signer is the certificate and key the developer settings name in `contentCredentials`, or else Assetgrove's local development certificate, created once in the state directory ([settings.md](settings.md#content-credentials)). The hand-off result's `contentCredentials` (and its provenance's) records which certificate signed: its sha256, subject, issuer, serial number, algorithm and `development`; with the development certificate the result carries a `warning`, and the disclosure summary says so. Re-running a hand-off on an unchanged asset keeps the file already there when its manifest holds for the same bytes, claim and certificate, so its bytes stay identical.
+
+An Ogg Vorbis rendition ([transform.md](transform.md#named-renditions-from-a-mezzanine-version)) carries the same manifest as a sidecar, `<stem>.c2pa` beside it, because the SDK cannot embed one in Ogg. The sidecar is bound to the Ogg through `org.clockgrove.assetgrove.input`, whose sha256 must be the Ogg's.
 
 The manifests are built and read by the Content Authenticity Initiative's SDK ([decisions.md](decisions.md#c2pa-content-credentials-on-the-cais-webassembly-sdk)). glTF, GLB and KTX2 keep the IPTC/XMP mark only.
 
@@ -43,7 +47,8 @@ The `disclosure` tool takes the same arguments. It reads the cards under `root` 
 - the model vendors behind gateway calls (`vendors`): the model id's prefix on a call whose provider's adapter is `vercel-ai-gateway`, by the rule `init` uses for each route's data flow. It needs the developer settings to know which provider is a gateway; without them the list is empty;
 - provider terms, with the date each was recorded as of: the call's `providerTermsAsOf`, which each route records beside `providerTerms`. Only for a record made before calls carried that field is the date read from the text's `(as of YYYY-MM-DD)`;
 - content credentials: how many assets were signed, by which certificate, and, when any were signed with Assetgrove's local development certificate, a note that no C2PA trust list holds it and that a certificate from a C2PA-recognised authority (developer settings `contentCredentials`) replaces it before release;
-- text for Steam's AI content survey and tags and text for itch.io's AI disclosure.
+- text for Steam's AI content survey and tags and text for itch.io's AI disclosure;
+- a sound line per audio asset (a kind whose media trait is `audio`: `sfx`, `ambience`, `music`), from its calls' route records, in `sounds` and appended to both the Steam and the itch.io text: `Sound: <asset> (<kind>): <models> via <provider>, <plan> plan`, then `, non-exclusive` when the output grant says the output may not be unique across users, and the training opt-out the developer declared for the route, with its date. A card without a route record says `route record unavailable`.
 
 No prompt text is read or shown. `--out` writes the same summary as Markdown, to a path inside the current directory. The Steam and itch.io text is a draft for the developer to check against the form as the store shows it today.
 

@@ -1,6 +1,21 @@
-/** Project-owned, pinned, deterministic image renditions. No provider calls or target activation. */
+/**
+ * Project-owned, pinned, deterministic renditions of an image or an audio master. No provider
+ * calls or target activation. An audio recipe ending in `encode` makes an Ogg Vorbis rendition,
+ * which carries the AI mark as Vorbis comments and a C2PA sidecar manifest (docs/PRD-audio.md).
+ */
 import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { transformAudioFiles } from "../audio/run.ts";
+import type { AudioTransformRecord } from "../audio/run.ts";
+import {
+  existingSigner,
+  resolveSigner,
+  sidecarCredentialed,
+  sidecarHolds,
+  sidecarName,
+  takesSidecar,
+} from "../credentials.ts";
+import type { ContentSigner, SignerRecord } from "../credentials.ts";
 import { InputError } from "../errors.ts";
 import { canonicalJson, sha256Hex } from "../library/canonical.ts";
 import {
@@ -16,7 +31,10 @@ import type { DigitalSourceType } from "../metadata.ts";
 import { checkProvenance } from "../provenance-binding.ts";
 import { sniffMediaType } from "../request.ts";
 import type { Provenance } from "../types.ts";
+import { assetgroveVersion } from "../library/write.ts";
 import { checkWrites } from "../paths.ts";
+import { loadSettings } from "../settings.ts";
+import { operationSpec } from "./operations.ts";
 import { readRecipe, transformFiles } from "./run.ts";
 import { rasterEngine } from "./raster-engine.ts";
 import type { RunOptions, TransformRecord } from "./run.ts";
@@ -32,6 +50,35 @@ export interface RenditionOptions extends Pick<RunOptions, "style" | "frame" | "
   digitalSourceType?: DigitalSourceType;
   /** Output file stem (default `rendition`); names only, not part of the digest. */
   name?: string;
+  /**
+   * Signs the C2PA sidecar of an Ogg rendition; by default the developer settings'
+   * `contentCredentials`, else the development certificate, as hand-off signs.
+   */
+  signer?: ContentSigner;
+  /**
+   * The sidecar already at the destination, by file name, for a preview whose caller writes
+   * elsewhere (delivery): kept when it still holds for the same bytes. A real build reads its own
+   * rendition directory.
+   */
+  existingSidecar?: (name: string) => Promise<Uint8Array | undefined>;
+  /**
+   * Sign a sidecar that does not hold even in a preview (default: only a real build signs).
+   * Delivery plans in preview and writes the planned bytes itself, so its real delivery signs.
+   * Without it a preview writes nothing, the development certificate included: it reports a
+   * sidecar already there that still holds, else the sidecar's path alone.
+   */
+  sign?: boolean;
+}
+
+/** An Ogg rendition's C2PA sidecar manifest, as its output records it. */
+export interface RenditionSidecar {
+  /** The sidecar's file name, beside the rendition: its stem and `.c2pa`. */
+  name: string;
+  path: string;
+  /** Absent in a preview that would sign a new sidecar: a signature is not byte-stable. */
+  sha256?: string;
+  /** Absent in a preview with no signer yet (the development certificate not made). */
+  signer?: SignerRecord;
 }
 
 async function read(path: string): Promise<Uint8Array> {
@@ -73,7 +120,18 @@ export async function buildRendition(options: RenditionOptions) {
   // must implement the same synchronous raster operations; async overrides are rejected too.
   const engines = options.engines ?? [rasterEngine];
   const recipe = readRecipe(json(recipeBytes, recipePath), recipePath, engines);
+  const audio = sniffMediaType(sourceBytes) === "audio/wav";
   for (const step of recipe.steps) {
+    const media = operationSpec(step.op)?.media;
+    if (audio) {
+      if (media !== "audio")
+        throw new InputError(
+          `the source is a WAV master, so its rendition takes only audio operations: ${step.op}`,
+        );
+      continue;
+    }
+    if (media === "audio")
+      throw new InputError(`${step.op} is an audio operation; the source is not a WAV master`);
     const engine =
       step.engine === undefined
         ? engines.find((e) => e.operations[step.op] || e.asyncOperations?.[step.op])
@@ -151,16 +209,28 @@ export async function buildRendition(options: RenditionOptions) {
   }
   disclosure ??= options.digitalSourceType;
   requireDeclared(disclosure);
-  const plan = await transformFiles({
-    ...options,
-    recipe,
-    inputs: [source],
-    inputName: options.name ?? "rendition",
-    out: join(resolve(options.out), "planned"),
-    digitalSourceType: disclosure,
-    dryRun: true,
-    engines,
-  });
+  const plan: {
+    record: TransformRecord | AudioTransformRecord;
+    plannedFiles: { path: string; bytes: Uint8Array }[];
+  } = audio
+    ? await transformAudioFiles({
+        recipe,
+        inputs: [source],
+        inputName: options.name ?? "rendition",
+        out: join(resolve(options.out), "planned"),
+        digitalSourceType: disclosure,
+        dryRun: true,
+      })
+    : await transformFiles({
+        ...options,
+        recipe,
+        inputs: [source],
+        inputName: options.name ?? "rendition",
+        out: join(resolve(options.out), "planned"),
+        digitalSourceType: disclosure,
+        dryRun: true,
+        engines,
+      });
   // transformFiles reads the source itself. Refuse a source changed during planning as well.
   if (plan.record.sources[0]?.sha256 !== expected)
     throw new InputError("source SHA-256 changed during planning");
@@ -195,7 +265,7 @@ export async function buildRendition(options: RenditionOptions) {
     version: "assetgrove-rendition/1",
     sourceSha256: expected,
     recipe: resolvedRecipe,
-    style: plan.record.style,
+    style: "style" in plan.record ? plan.record.style : undefined,
     decoder: plan.record.sources[0]!.decodedBy,
     encoders: plan.record.outputs.map((o) => ({ mediaType: o.mediaType, encodedBy: o.encodedBy })),
     digitalSourceTypes: plan.record.outputs.map((o) => o.digitalSourceType),
@@ -211,11 +281,60 @@ export async function buildRendition(options: RenditionOptions) {
       throw new InputError(`refused: unsafe rendition output name: ${output.name}`);
     return { ...output, path: join(directory, basename(output.path)) };
   });
-  checkWrites([...outputs.map((output) => basename(output.path)), "provenance.json"]);
+  // An Ogg's C2PA manifest is a sidecar beside it; the Ogg's bytes, and so the digest, stay.
+  const sidecars: (RenditionSidecar & { bytes?: Uint8Array; output: number })[] = [];
+  const sign = options.sign ?? !options.preview;
+  for (const [index, output] of outputs.entries()) {
+    if (!takesSidecar(output.mediaType)) continue;
+    const signer =
+      options.signer ??
+      (sign ? await resolveSigner(loadSettings()) : await existingSigner(loadSettings()));
+    const name = sidecarName(basename(output.path));
+    const path = join(directory, name);
+    const existing =
+      (options.existingSidecar && (await options.existingSidecar(name))) ??
+      (await readFile(path).then(
+        (b) => new Uint8Array(b),
+        () => undefined,
+      ));
+    const claim = {
+      digitalSourceType: output.digitalSourceType,
+      models: models ?? [],
+      title: basename(output.path),
+    };
+    const fileBytes = plan.plannedFiles[index]!.bytes;
+    let bytes: Uint8Array | undefined;
+    if (sign) {
+      bytes = await sidecarCredentialed(
+        fileBytes,
+        output.mediaType,
+        claim,
+        signer!,
+        assetgroveVersion(),
+        existing,
+      );
+    } else if (signer !== undefined && existing !== undefined) {
+      // Keep-or-sign without the signing: a sidecar that still holds is what the build keeps.
+      if (await sidecarHolds(fileBytes, claim, signer, existing)) bytes = existing;
+    }
+    const sidecar: RenditionSidecar = {
+      name,
+      path,
+      ...(bytes !== undefined && { sha256: sha256Hex(bytes) }),
+      ...(signer !== undefined && { signer: signer.record }),
+    };
+    Object.assign(output, { contentCredentials: sidecar });
+    sidecars.push({ ...sidecar, ...(bytes !== undefined && { bytes }), output: index });
+  }
+  checkWrites([
+    ...outputs.map((output) => basename(output.path)),
+    ...sidecars.map((s) => s.name),
+    "provenance.json",
+  ]);
   const provenancePath = join(directory, "provenance.json");
-  const record: TransformRecord & { rendition: unknown; sourceProvenance?: unknown } = {
+  const record = {
     ...plan.record,
-    outputs,
+    outputs: outputs as (TransformRecord | AudioTransformRecord)["outputs"],
     ...(sourceProvenance !== undefined && {
       sourceProvenance: {
         path: sidecar,
@@ -228,14 +347,21 @@ export async function buildRendition(options: RenditionOptions) {
       recipe: { name: options.recipe, path: recipePath, sha256: sha256Hex(recipeBytes) },
       resolvedRecipe,
       build,
-    },
+    } as unknown,
+  } as (TransformRecord | AudioTransformRecord) & {
+    rendition: unknown;
+    sourceProvenance?: unknown;
   };
   const files = plan.plannedFiles.map((file, i) => ({ ...file, path: outputs[i]!.path }));
   if (!options.preview) {
     const protectedPaths = [source, recipePath, ...(provenanceBytes ? [sidecar] : [])];
     const protectedStats = await Promise.all(protectedPaths.map((p) => stat(p)));
     // Check all existing targets before writing anything, including links to an input.
-    for (const file of [...files, { path: provenancePath, bytes: new Uint8Array() }]) {
+    for (const file of [
+      ...files,
+      ...sidecars.map((s) => ({ path: s.path, bytes: new Uint8Array() })),
+      { path: provenancePath, bytes: new Uint8Array() },
+    ]) {
       const existing = await lstat(file.path).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return undefined;
         throw error;
@@ -249,7 +375,7 @@ export async function buildRendition(options: RenditionOptions) {
       }
       if (
         existing &&
-        file.path !== provenancePath &&
+        files.includes(file) &&
         sha256Hex(await read(file.path)) !== sha256Hex(file.bytes)
       ) {
         throw new InputError(`refused: existing rendition bytes differ: ${file.path}`);
@@ -267,7 +393,17 @@ export async function buildRendition(options: RenditionOptions) {
           throw error;
       }
     }
+    // A sidecar is replaced when it no longer held for these bytes; `sidecarCredentialed` kept it
+    // otherwise, so an unchanged rendition keeps its bytes.
+    for (const sidecar of sidecars) await writeFile(sidecar.path, sidecar.bytes!);
     await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
   }
-  return { record, provenancePath, digest, preview: options.preview ?? false, files };
+  return {
+    record,
+    provenancePath,
+    digest,
+    preview: options.preview ?? false,
+    files,
+    sidecars: sidecars.map(({ output, path, bytes }) => ({ output, path, bytes })),
+  };
 }

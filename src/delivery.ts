@@ -26,6 +26,7 @@ import type { DigitalSourceType } from "./metadata.ts";
 import { checkWrites } from "./paths.ts";
 import { evaluateRelease } from "./release-policy.ts";
 import type { ReleaseCheck, ReleaseFinding, ReleasePolicy } from "./release-policy.ts";
+import type { ContentSigner } from "./credentials.ts";
 import { buildRendition } from "./transform/rendition.ts";
 import type { RunOptions } from "./transform/run.ts";
 
@@ -42,6 +43,8 @@ export interface DeliveryOptions extends Pick<RunOptions, "style" | "frame" | "e
   policy?: ReleasePolicy;
   /** The time licence windows are checked at; now by default. */
   now?: Date;
+  /** Signs an Ogg rendition's C2PA sidecar; by default as `buildRendition` signs. */
+  signer?: ContentSigner;
 }
 
 export type DeliveryProblemCode =
@@ -76,6 +79,9 @@ export interface DeliveryOutput {
   mediaType: string;
   size: number;
   digitalSourceType: string;
+  /** An Ogg rendition's C2PA sidecar manifest, written beside it. */
+  /** In a preview, `sha256` and `size` are absent for a sidecar the delivery would newly sign. */
+  contentCredentials?: { path: string; sha256?: string; size?: number };
 }
 
 export interface DeliveryItem {
@@ -314,6 +320,17 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
           out: join(stage, "out"),
           preview: true,
           name: item.name ?? loaded.assetId,
+          // A sidecar already delivered is kept while it still holds for the same bytes, so a
+          // repeated delivery writes the same files.
+          existingSidecar: async (name) => {
+            const rel = item.to === "." ? name : posix.join(item.to, name);
+            const path = join(out, ...rel.split("/"));
+            const found = await lstat(path).catch(() => undefined);
+            return found?.isFile() ? new Uint8Array(await readFile(path)) : undefined;
+          },
+          // A preview delivery signs nothing and so writes nothing, the certificate included.
+          sign: options.preview !== true,
+          ...(options.signer !== undefined && { signer: options.signer }),
           ...(item.digitalSourceType !== undefined && {
             digitalSourceType: item.digitalSourceType,
           }),
@@ -326,16 +343,34 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
         problem("item_invalid", error.message, item.asset);
         continue;
       }
+      const destination = (path: string) =>
+        item.to === "." ? basename(path) : posix.join(item.to, basename(path));
       const outputs = built.record.outputs.map((output, i): DeliveryOutput => {
-        const rel =
-          item.to === "." ? basename(output.path) : posix.join(item.to, basename(output.path));
+        const rel = destination(output.path);
         entries.push({ item: index, rel, bytes: built.files[i]!.bytes });
+        const sidecar = built.sidecars.find((s) => s.output === i);
+        // A preview's sidecar has no bytes when it would be newly signed; its path is still checked.
+        if (sidecar !== undefined)
+          entries.push({
+            item: index,
+            rel: destination(sidecar.path),
+            bytes: sidecar.bytes ?? new Uint8Array(),
+          });
         return {
           path: rel,
           sha256: output.sha256,
           mediaType: output.mediaType,
           size: built.files[i]!.bytes.length,
           digitalSourceType: output.digitalSourceType,
+          ...(sidecar !== undefined && {
+            contentCredentials: {
+              path: destination(sidecar.path),
+              ...(sidecar.bytes !== undefined && {
+                sha256: sha256Hex(sidecar.bytes),
+                size: sidecar.bytes.length,
+              }),
+            },
+          }),
         };
       });
       const rendition = built.record.rendition as { recipe: { sha256: string }; build: unknown };
