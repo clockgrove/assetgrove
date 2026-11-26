@@ -143,6 +143,8 @@ interface Placed {
 }
 
 async function place(region: Region, width: number, height: number): Promise<Placed> {
+  if (region.shape.kind === "time")
+    throw new InputError("a time region marks audio; compare takes boxes and masks on images");
   if (region.shape.kind === "box") {
     const rect = boxRect(region.shape, width, height);
     return {

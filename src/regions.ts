@@ -1,12 +1,15 @@
 /**
- * Region text (design section 3.4): `<box|mask=PATH> [frame N|view N] [ref PATH]... : <note>`.
- * A box is `x,y,w,h` in pixels, or in percent when every value ends in `%`. `request_change`
- * and `compare` take the same strings. Paths resolve inside the project root.
+ * Region text (design section 3.4): `<box|mask=PATH> [frame N|view N] [ref PATH]... : <note>`, or
+ * `t=<start>,<end> : <note>` for an audio asset. A box is `x,y,w,h` in pixels, or in percent when
+ * every value ends in `%`; a time is `start,end` in seconds, the media-fragment temporal form, and
+ * takes no frame, view or ref. `request_change` and `compare` take the same strings, though
+ * `compare` refuses a time. Paths resolve inside the project root.
  */
 import { resolve } from "node:path";
 import { requireInsideProject } from "./bible.ts";
 import { InputError } from "./errors.ts";
 import type { Raster } from "./image/raster.ts";
+import { parseTimeFragment } from "./library/review.ts";
 
 /** A box in pixels or in percent of the image. */
 export interface RegionBox {
@@ -25,8 +28,15 @@ export interface RegionMask {
   path: string;
 }
 
+/** A span of an audio asset in seconds, `t=<start>,<end>`. */
+export interface RegionTime {
+  kind: "time";
+  start: number;
+  end: number;
+}
+
 export interface Region {
-  shape: RegionBox | RegionMask;
+  shape: RegionBox | RegionMask | RegionTime;
   frame?: number;
   view?: number;
   /** Absolute reference image paths, inside the project root. */
@@ -43,7 +53,7 @@ export interface ParseRegionOptions {
 
 function malformed(text: string, why: string): InputError {
   return new InputError(
-    `malformed region "${text}": ${why}; expected <x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]... : <note>`,
+    `malformed region "${text}": ${why}; expected <x,y,w,h|mask=PATH> [frame N|view N] [ref PATH]... : <note>, or t=<start>,<end> : <note> for audio`,
   );
 }
 
@@ -69,6 +79,14 @@ function parseBox(text: string, token: string): RegionBox {
   return { kind: "box", unit: percent[0] ? "percent" : "px", x, y, width, height };
 }
 
+function parseTime(text: string, token: string): RegionTime {
+  const range = parseTimeFragment(token);
+  if (range === undefined)
+    throw malformed(text, `time "${token}" needs two non-negative seconds, t=[npt:]start,end`);
+  if (range.end <= range.start) throw malformed(text, "a time region needs an end after its start");
+  return { kind: "time", ...range };
+}
+
 /** Parses one region text; a malformed one or a path outside the project root is an InputError (exit 2). */
 export function parseRegion(text: string, options: ParseRegionOptions = {}): Region {
   const base = resolve(options.base ?? process.cwd());
@@ -80,12 +98,16 @@ export function parseRegion(text: string, options: ParseRegionOptions = {}): Reg
   const first = tokens.shift();
   if (first === undefined) throw malformed(text, "it names no box or mask");
   const region: Region = {
-    shape: first.startsWith("mask=")
-      ? { kind: "mask", path: resolve(base, first.slice(5)) }
-      : parseBox(text, first),
+    shape: first.startsWith("t=")
+      ? parseTime(text, first)
+      : first.startsWith("mask=")
+        ? { kind: "mask", path: resolve(base, first.slice(5)) }
+        : parseBox(text, first),
     refs: [],
     note,
   };
+  if (region.shape.kind === "time" && tokens.length > 0)
+    throw malformed(text, "a time region takes no frame, view or ref");
   if (region.shape.kind === "mask" && first.length === 5)
     throw malformed(text, "mask= needs a path");
   while (tokens.length > 0) {
