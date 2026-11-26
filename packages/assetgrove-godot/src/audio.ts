@@ -127,9 +127,10 @@ interface Layout {
 
 function layoutOf(asset: AudioAsset, options: AudioOptions): Layout {
   const project = relativePath(options.project, "options.project");
-  inProject(project, asset.media, "the audio");
   let stream = asset.media;
-  if (options.format === "ogg") {
+  // Only the delivered stream must be in the project: an Ogg's master WAV can stay outside it.
+  if (options.format !== "ogg") inProject(project, asset.media, "the audio");
+  else {
     const given = options.ogg.replaceAll("{assetId}", asset.assetId);
     stream = relativePath(
       given === "" ? asset.media.replace(/\.wav$/i, ".ogg") : given,

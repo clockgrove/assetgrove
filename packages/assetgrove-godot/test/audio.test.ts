@@ -244,7 +244,7 @@ test("WAV loops keep their smpl loop points, get no .import, and play across the
   wrapped(seen, "VILLAGE", 0.05, 0.25);
 });
 
-test("an Ogg gets Godot's .import with its loop and tempo, kept on a re-hand-off, and plays across the boundary", async (t) => {
+test("an Ogg gets Godot's .import with its loop and tempo (a music loop and an ambience loop), kept on a re-hand-off, and plays across the boundary", async (t) => {
   if (!usable) return t.skip(SKIP!);
   const dir = target();
   const options = { project: "game", format: "ogg" };
@@ -270,17 +270,32 @@ test("an Ogg gets Godot's .import with its loop and tempo, kept on a re-hand-off
   );
   assert.equal(readFileSync(join(dir, `${ogg}.import`), "utf8"), imported);
 
+  // An ambience loop: loop=true and loop_offset=0, and no tempo.
+  const windOgg = "game/audio/wind.ogg";
+  const windWav = sampleWav({ frames: WIND.frames, loop: true });
+  const windFiles = await handOff(dir, context(WIND.spec, windWav, WIND.frames, true), options);
+  assert.deepEqual(windFiles.map((f) => f.path).sort(), [windOgg, `${windOgg}.import`]);
+  const windImported = readFileSync(join(dir, `${windOgg}.import`), "utf8");
+  assert.match(windImported, /^loop=true$/m, windImported);
+  assert.match(windImported, /^loop_offset=0(\.0)?$/m, windImported);
+  assert.doesNotMatch(windImported, /^bpm=[1-9]/m, windImported);
+
   const seen = inProject(
     dir,
     `\tvar village := load("res://audio/village.ogg") as AudioStreamOggVorbis
 \tprint("VILLAGE_IMPORT %s %f %f %d %d" % [village.loop, village.loop_offset, village.bpm, village.beat_count, village.bar_beats])
 \tprint("UID %s" % ResourceUID.id_to_text(ResourceLoader.get_resource_uid("res://audio/village.ogg")))
 \tplay("VILLAGE", village, 2.0, 0.05, 0.25)
+\tvar wind := load("res://audio/wind.ogg") as AudioStreamOggVorbis
+\tprint("WIND_IMPORT %s %f %f %d" % [wind.loop, wind.loop_offset, wind.bpm, wind.beat_count])
+\tplay("WIND", wind, 1.0, 0.05, 0.25)
 `,
   );
   assert.equal(seen["VILLAGE_IMPORT"], "true 0.000000 120.000000 4 4");
   assert.equal(seen["UID"], uid);
   wrapped(seen, "VILLAGE", 0.05, 0.25);
+  assert.equal(seen["WIND_IMPORT"], "true 0.000000 0.000000 0");
+  wrapped(seen, "WIND", 0.05, 0.25);
 
   // A developer's .import that disagrees with the version fails the check, naming the setting.
   writeFileSync(

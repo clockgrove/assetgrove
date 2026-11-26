@@ -46,8 +46,15 @@ export function importParams(content: Uint8Array | string): Record<string, strin
       continue;
     }
     if (section !== "params") continue;
-    const match = /^([^=\s;][^=]*?)\s*=\s*(.*)$/.exec(line);
-    if (match) params[match[1] ?? ""] = (match[2] ?? "").replace(/^"(.*)"$/, "$1");
+    // Split at the first `=` without a regular expression: no backtracking on a long line.
+    const at = line.indexOf("=");
+    if (at <= 0 || line.startsWith(";")) continue;
+    const key = line.slice(0, at).trimEnd();
+    const value = line.slice(at + 1).trimStart();
+    params[key] =
+      value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+        ? value.slice(1, -1)
+        : value;
   }
   return params;
 }

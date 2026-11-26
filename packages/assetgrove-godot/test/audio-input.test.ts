@@ -195,6 +195,29 @@ test("an Ogg the target has an .import for is returned alone, its .import never 
   assert.equal(seen.length, 0);
 });
 
+test("a master WAV outside the project is handed off as an Ogg inside it, and refused as a WAV", async () => {
+  const seen: ToolRunOptions[] = [];
+  const outside = { ...looped, path: "masters/rain.wav" };
+  const options = parse({ project: "game", format: "ogg", ogg: "game/audio/{assetId}.ogg" });
+  const files = await write(context(outside, scripted(seen)), options, nothing);
+  assert.deepEqual(paths(files), ["game/audio/rain.ogg", "game/audio/rain.ogg.import"]);
+  const read = targetOf({
+    "masters/rain.wav": "RIFF",
+    "game/audio/rain.ogg": "OggS",
+    "game/audio/rain.ogg.import": importFile(
+      STREAM_UID,
+      "loop=true\nloop_offset=0\nbpm=120\nbeat_count=8\nbar_beats=4\n",
+    ),
+  });
+  smpl.loop = { start: 0, end: 88200 };
+  assert.deepEqual(await check(context(outside, undefined), options, files, read), []);
+  delete smpl.loop;
+  await assert.rejects(write(context(outside, scripted([])), parse({ project: "game" }), nothing), {
+    code: "invalid_input",
+    message: /the audio masters\/rain\.wav is outside the Godot project game\//,
+  });
+});
+
 test("the options are refused when they name an Ogg or a randomizer outside the project or not of the right type", async () => {
   const run = scripted([]);
   await assert.rejects(
@@ -493,4 +516,12 @@ test("an .import's [params] are read as written, quotes removed", () => {
     ),
     { loop: "true", "edit/loop_mode": "2", name: "x y" },
   );
+});
+
+test("an .import line of many spaces and no value is read in linear time", () => {
+  const long = " ".repeat(100_000);
+  const started = performance.now();
+  const params = importParams(`[params]\n!${long}x\n!=${long}x\nkey ${long}= ${long}"v"\n; c=1\n`);
+  assert.ok(performance.now() - started < 1000, `${performance.now() - started} ms`);
+  assert.deepEqual(params, { "!": "x", key: "v" });
 });
