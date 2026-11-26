@@ -1,7 +1,7 @@
-import "./fixtures/env.ts";
+import { stateDir } from "./fixtures/env.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,11 @@ import { OggVorbisDecoder } from "@wasm-audio-decoders/ogg-vorbis";
 import { encodeWav } from "../src/audio/engine.ts";
 import type { AudioItem } from "../src/audio/engine.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
-import { developmentSigner, sidecarCredentialProblem } from "../src/credentials.ts";
+import {
+  DEVELOPMENT_DIR,
+  developmentSigner,
+  sidecarCredentialProblem,
+} from "../src/credentials.ts";
 import { planDelivery } from "../src/delivery.ts";
 import { markProblems } from "../src/handoff/mark-check.ts";
 import { sha256Hex } from "../src/library/canonical.ts";
@@ -230,6 +234,68 @@ test("the rendition CLI writes the Ogg and its sidecar with the settings' signer
     }),
     undefined,
   );
+});
+
+test("a rendition preview writes nothing, the development certificate included, and reports the sidecar on disk", async () => {
+  const p = await project();
+  const certificate = join(stateDir, DEVELOPMENT_DIR);
+  await rm(certificate, { recursive: true, force: true });
+  const out = join(p.dir, "out");
+  const run = async (...extra: string[]) => {
+    const { stdout } = await exec(process.execPath, [
+      CLI,
+      "rendition",
+      "--recipes",
+      p.recipes,
+      "--recipe",
+      "ogg",
+      "--source",
+      p.source,
+      "--source-sha256",
+      sha256Hex(p.bytes),
+      "--out",
+      out,
+      "--json",
+      ...extra,
+    ]);
+    return (JSON.parse(stdout) as { outputs: OggOutput[] }).outputs[0]!;
+  };
+  const planned = await run("--preview");
+  assert.equal(existsSync(certificate), false);
+  assert.equal(existsSync(out), false);
+  assert.equal(planned.contentCredentials?.sha256, undefined);
+  assert.match(planned.contentCredentials!.path, /\.c2pa$/);
+});
+
+test("a rendition preview after a build reports the sidecar already on disk", async () => {
+  const p = await project();
+  const out = join(p.dir, "out");
+  const run = async (...extra: string[]) => {
+    const { stdout } = await exec(process.execPath, [
+      CLI,
+      "rendition",
+      "--recipes",
+      p.recipes,
+      "--recipe",
+      "ogg",
+      "--source",
+      p.source,
+      "--source-sha256",
+      sha256Hex(p.bytes),
+      "--out",
+      out,
+      "--json",
+      ...extra,
+    ]);
+    return (JSON.parse(stdout) as { outputs: OggOutput[] }).outputs[0]!;
+  };
+  const built = await run();
+  const onDisk = sha256Hex(new Uint8Array(await readFile(built.contentCredentials!.path)));
+  assert.equal(built.contentCredentials!.sha256, onDisk);
+  const again = await run("--preview");
+  assert.equal(again.contentCredentials!.path, built.contentCredentials!.path);
+  assert.equal(again.contentCredentials!.sha256, onDisk);
+  assert.equal(again.sha256, built.sha256);
 });
 
 test("a target asks for an Ogg of a library master through deliver, and gets it with its sidecar", async () => {

@@ -7,8 +7,9 @@
 import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { audioGenerators } from "./audio/kinds.ts";
+import { CORE_REGISTRY } from "./extensions/registry.ts";
 import { mediaOf } from "./media.ts";
+import type { KindMedia } from "./media.ts";
 import { upstreamOf } from "./dataflows.ts";
 import { canCarryCredentials, readCredentials } from "./credentials.ts";
 import { markableMediaType } from "./handoff/mark-check.ts";
@@ -185,8 +186,14 @@ function soundOf(
 /** Summarises the library under `root` from its cards and provenance. */
 export async function disclose(
   root: string,
-  options: { settings?: Pick<Settings, "providers">; selected?: string[] } = {},
+  options: {
+    settings?: Pick<Settings, "providers">;
+    selected?: string[];
+    /** The kinds whose media trait says which assets are audio; core's by default. */
+    kinds?: KindMedia;
+  } = {},
 ): Promise<Disclosure> {
+  const kindMedia = options.kinds ?? CORE_REGISTRY;
   const byKind: Record<string, Record<string, number>> = {};
   const sources = new Map<string, number>();
   const models = new Map<string, number>();
@@ -302,8 +309,7 @@ export async function disclose(
       !mediaMatches
     )
       unresolvedAssets.push(name);
-    if (mediaOf(kind, { kinds: audioGenerators }) === "audio")
-      sounds.push(soundOf(name, kind, provenance));
+    if (mediaOf(kind, kindMedia) === "audio") sounds.push(soundOf(name, kind, provenance));
     const row = (byKind[kind] ??= {});
     row[source] = (row[source] ?? 0) + 1;
     bump(sources, source);

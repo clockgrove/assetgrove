@@ -8,7 +8,10 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { audioGenerators } from "../src/audio/kinds.ts";
 import { disclose, disclosureMarkdown } from "../src/disclosure.ts";
+import type { Extension } from "../src/extension/api.ts";
+import { CORE_ENTRY, ExtensionRegistry } from "../src/extensions/registry.ts";
 import { writeToTarget } from "../src/handoff.ts";
 import { createRaster, encodePng } from "../src/image/raster.ts";
 import { DIGITAL_SOURCE_TYPES } from "../src/metadata.ts";
@@ -447,4 +450,40 @@ test("audio assets get a sound line from their route record in the Steam and itc
   const plain = await disclose(await library());
   assert.deepEqual(plain.sounds, []);
   assert.ok(!plain.steam.includes("\n") && !plain.itch.text.includes("\n"));
+});
+
+test("an extension's audio kind gets a sound line, asked of its media trait", async () => {
+  const target = await library([
+    [
+      "chime",
+      {
+        models: ["stable-audio-2.5"],
+        calls: [callOf("stability:audio:stable-audio-2.5", "stable-audio-2.5")],
+      },
+    ],
+  ]);
+  const { scanCards } = await import("../src/library/write.ts");
+  for (const card of scanCards(target)) {
+    if (!card.resource?.includes("chime")) continue;
+    const path = join(card.dir, `${card.id}.md`);
+    await writeFile(path, (await readFile(path, "utf8")).replace(/^kind: .*$/m, "kind: fx:chime"));
+  }
+  const sfx = audioGenerators.find((k) => k.kind === "sfx")!;
+  const extension = {
+    api: 3,
+    name: "fx",
+    kinds: [{ ...sfx, kind: "fx:chime" }],
+  } as unknown as Extension;
+  const kinds = new ExtensionRegistry([
+    CORE_ENTRY,
+    { extension, info: { package: "fx-pack", version: "1.0.0", entry: "/x/index.js" } },
+  ]);
+  assert.deepEqual((await disclose(target)).sounds, []);
+  const d = await disclose(target, { kinds });
+  assert.deepEqual(
+    d.sounds.map((s) => s.kind),
+    ["fx:chime"],
+  );
+  assert.match(d.sounds[0]!.line, /\(fx:chime\): stable-audio-2.5 via stability, api plan$/);
+  assert.ok(d.steam.includes(`\n${d.sounds[0]!.line}`));
 });

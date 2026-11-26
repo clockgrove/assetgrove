@@ -146,7 +146,10 @@ as a sidecar, `<stem>.c2pa` beside it ([disclosure.md](disclosure.md#content-cre
 output's `contentCredentials` names the sidecar, its sha256 and the signer. The signer is the
 developer settings' `contentCredentials`, or else the development certificate. A rebuild keeps a
 sidecar that still holds for the same bytes and certificate, so an unchanged rendition keeps every
-byte.
+byte. A preview signs nothing and never creates the development certificate: it
+reports the sidecar's sha256 only when the one already in `<out>/<digest>/` still holds, else its
+path alone, because a new signature is not byte-stable. `deliver --preview` does the same against
+the sidecar already at the destination.
 
 This workflow accepts deterministic raster and audio operations; material,
 model-assisted and external-tool operations remain available through their existing commands.

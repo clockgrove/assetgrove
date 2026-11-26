@@ -320,6 +320,20 @@ export async function resolveSigner(settings: {
     : developmentSigner(settings.stateDir);
 }
 
+/**
+ * The signer `resolveSigner` would give, without creating anything: undefined when the settings
+ * name none and the development certificate does not exist yet. For a preview, which never writes.
+ */
+export async function existingSigner(settings: {
+  stateDir: string;
+  contentCredentials?: CredentialSettings;
+}): Promise<ContentSigner | undefined> {
+  if (settings.contentCredentials) return settingsSigner(settings.contentCredentials);
+  const dir = join(settings.stateDir, DEVELOPMENT_DIR);
+  if (!existsSync(join(dir, "chain.pem")) || !existsSync(join(dir, "signer.key"))) return undefined;
+  return developmentSigner(settings.stateDir);
+}
+
 /** What a manifest says: how the file was made, and from what. */
 export interface CredentialClaim {
   digitalSourceType: DigitalSourceType;
@@ -792,6 +806,22 @@ export async function sidecarCredentialProblem(
   return problemOf(path, read, expected);
 }
 
+/** Whether an existing sidecar still holds for these bytes, this claim and this signer's certificate. */
+export async function sidecarHolds(
+  bytes: Uint8Array,
+  claim: CredentialClaim,
+  signer: ContentSigner,
+  existing: Uint8Array,
+): Promise<boolean> {
+  const read = await readSidecarCredentials(existing, bytes).catch(() => undefined);
+  return (
+    read !== undefined &&
+    read.certificateSha256 === signer.record.certificateSha256 &&
+    problemOf("", read, { digitalSourceType: claim.digitalSourceType, models: claim.models }) ===
+      undefined
+  );
+}
+
 /**
  * The sidecar to write for an asset: `existing` when it validates, was signed over these same
  * `bytes` by the same certificate and records the same claim, so an unchanged rendition keeps
@@ -805,15 +835,7 @@ export async function sidecarCredentialed(
   version: string,
   existing?: Uint8Array,
 ): Promise<Uint8Array> {
-  if (existing !== undefined) {
-    const read = await readSidecarCredentials(existing, bytes).catch(() => undefined);
-    if (
-      read !== undefined &&
-      read.certificateSha256 === signer.record.certificateSha256 &&
-      problemOf("", read, { digitalSourceType: claim.digitalSourceType, models: claim.models }) ===
-        undefined
-    )
-      return existing;
-  }
+  if (existing !== undefined && (await sidecarHolds(bytes, claim, signer, existing)))
+    return existing;
   return signSidecarCredentials(bytes, mediaType, claim, signer, version);
 }

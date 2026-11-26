@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { disclose, disclosureMarkdown } from "../disclosure.ts";
 import { InputError } from "../errors.ts";
+import { CORE_REGISTRY } from "../extensions/registry.ts";
 import { defineCommand } from "./types.ts";
 
 interface DisclosureArgs {
@@ -43,6 +44,7 @@ Spends nothing; nothing is written without --out.`,
     const root = resolve(args.root ?? ".");
     const summary = await disclose(root, {
       settings: ctx.settings,
+      kinds: ctx.extensions ?? CORE_REGISTRY,
       ...(args.selected !== undefined && { selected: args.selected }),
     });
     if (args.out !== undefined) {

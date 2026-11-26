@@ -7,7 +7,14 @@ import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promi
 import { basename, dirname, join, resolve } from "node:path";
 import { transformAudioFiles } from "../audio/run.ts";
 import type { AudioTransformRecord } from "../audio/run.ts";
-import { resolveSigner, sidecarCredentialed, sidecarName, takesSidecar } from "../credentials.ts";
+import {
+  existingSigner,
+  resolveSigner,
+  sidecarCredentialed,
+  sidecarHolds,
+  sidecarName,
+  takesSidecar,
+} from "../credentials.ts";
 import type { ContentSigner, SignerRecord } from "../credentials.ts";
 import { InputError } from "../errors.ts";
 import { canonicalJson, sha256Hex } from "../library/canonical.ts";
@@ -54,6 +61,13 @@ export interface RenditionOptions extends Pick<RunOptions, "style" | "frame" | "
    * rendition directory.
    */
   existingSidecar?: (name: string) => Promise<Uint8Array | undefined>;
+  /**
+   * Sign a sidecar that does not hold even in a preview (default: only a real build signs).
+   * Delivery plans in preview and writes the planned bytes itself, so its real delivery signs.
+   * Without it a preview writes nothing, the development certificate included: it reports a
+   * sidecar already there that still holds, else the sidecar's path alone.
+   */
+  sign?: boolean;
 }
 
 /** An Ogg rendition's C2PA sidecar manifest, as its output records it. */
@@ -61,8 +75,10 @@ export interface RenditionSidecar {
   /** The sidecar's file name, beside the rendition: its stem and `.c2pa`. */
   name: string;
   path: string;
-  sha256: string;
-  signer: SignerRecord;
+  /** Absent in a preview that would sign a new sidecar: a signature is not byte-stable. */
+  sha256?: string;
+  /** Absent in a preview with no signer yet (the development certificate not made). */
+  signer?: SignerRecord;
 }
 
 async function read(path: string): Promise<Uint8Array> {
@@ -266,33 +282,49 @@ export async function buildRendition(options: RenditionOptions) {
     return { ...output, path: join(directory, basename(output.path)) };
   });
   // An Ogg's C2PA manifest is a sidecar beside it; the Ogg's bytes, and so the digest, stay.
-  const sidecars: (RenditionSidecar & { bytes: Uint8Array; output: number })[] = [];
+  const sidecars: (RenditionSidecar & { bytes?: Uint8Array; output: number })[] = [];
+  const sign = options.sign ?? !options.preview;
   for (const [index, output] of outputs.entries()) {
     if (!takesSidecar(output.mediaType)) continue;
-    const signer = options.signer ?? (await resolveSigner(loadSettings()));
+    const signer =
+      options.signer ??
+      (sign ? await resolveSigner(loadSettings()) : await existingSigner(loadSettings()));
     const name = sidecarName(basename(output.path));
     const path = join(directory, name);
-    const existing = options.preview
-      ? await options.existingSidecar?.(name)
-      : await readFile(path).then(
-          (b) => new Uint8Array(b),
-          () => undefined,
-        );
-    const bytes = await sidecarCredentialed(
-      plan.plannedFiles[index]!.bytes,
-      output.mediaType,
-      {
-        digitalSourceType: output.digitalSourceType,
-        models: models ?? [],
-        title: basename(output.path),
-      },
-      signer,
-      assetgroveVersion(),
-      existing,
-    );
-    const sidecar = { name, path, sha256: sha256Hex(bytes), signer: signer.record };
+    const existing =
+      (options.existingSidecar && (await options.existingSidecar(name))) ??
+      (await readFile(path).then(
+        (b) => new Uint8Array(b),
+        () => undefined,
+      ));
+    const claim = {
+      digitalSourceType: output.digitalSourceType,
+      models: models ?? [],
+      title: basename(output.path),
+    };
+    const fileBytes = plan.plannedFiles[index]!.bytes;
+    let bytes: Uint8Array | undefined;
+    if (sign) {
+      bytes = await sidecarCredentialed(
+        fileBytes,
+        output.mediaType,
+        claim,
+        signer!,
+        assetgroveVersion(),
+        existing,
+      );
+    } else if (signer !== undefined && existing !== undefined) {
+      // Keep-or-sign without the signing: a sidecar that still holds is what the build keeps.
+      if (await sidecarHolds(fileBytes, claim, signer, existing)) bytes = existing;
+    }
+    const sidecar: RenditionSidecar = {
+      name,
+      path,
+      ...(bytes !== undefined && { sha256: sha256Hex(bytes) }),
+      ...(signer !== undefined && { signer: signer.record }),
+    };
     Object.assign(output, { contentCredentials: sidecar });
-    sidecars.push({ ...sidecar, bytes, output: index });
+    sidecars.push({ ...sidecar, ...(bytes !== undefined && { bytes }), output: index });
   }
   checkWrites([
     ...outputs.map((output) => basename(output.path)),
@@ -363,7 +395,7 @@ export async function buildRendition(options: RenditionOptions) {
     }
     // A sidecar is replaced when it no longer held for these bytes; `sidecarCredentialed` kept it
     // otherwise, so an unchanged rendition keeps its bytes.
-    for (const sidecar of sidecars) await writeFile(sidecar.path, sidecar.bytes);
+    for (const sidecar of sidecars) await writeFile(sidecar.path, sidecar.bytes!);
     await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
   }
   return {

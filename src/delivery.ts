@@ -80,7 +80,8 @@ export interface DeliveryOutput {
   size: number;
   digitalSourceType: string;
   /** An Ogg rendition's C2PA sidecar manifest, written beside it. */
-  contentCredentials?: { path: string; sha256: string; size: number };
+  /** In a preview, `sha256` and `size` are absent for a sidecar the delivery would newly sign. */
+  contentCredentials?: { path: string; sha256?: string; size?: number };
 }
 
 export interface DeliveryItem {
@@ -327,6 +328,8 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
             const found = await lstat(path).catch(() => undefined);
             return found?.isFile() ? new Uint8Array(await readFile(path)) : undefined;
           },
+          // A preview delivery signs nothing and so writes nothing, the certificate included.
+          sign: options.preview !== true,
           ...(options.signer !== undefined && { signer: options.signer }),
           ...(item.digitalSourceType !== undefined && {
             digitalSourceType: item.digitalSourceType,
@@ -346,8 +349,13 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
         const rel = destination(output.path);
         entries.push({ item: index, rel, bytes: built.files[i]!.bytes });
         const sidecar = built.sidecars.find((s) => s.output === i);
+        // A preview's sidecar has no bytes when it would be newly signed; its path is still checked.
         if (sidecar !== undefined)
-          entries.push({ item: index, rel: destination(sidecar.path), bytes: sidecar.bytes });
+          entries.push({
+            item: index,
+            rel: destination(sidecar.path),
+            bytes: sidecar.bytes ?? new Uint8Array(),
+          });
         return {
           path: rel,
           sha256: output.sha256,
@@ -357,8 +365,10 @@ export async function planDelivery(options: DeliveryOptions): Promise<DeliveryRe
           ...(sidecar !== undefined && {
             contentCredentials: {
               path: destination(sidecar.path),
-              sha256: sha256Hex(sidecar.bytes),
-              size: sidecar.bytes.length,
+              ...(sidecar.bytes !== undefined && {
+                sha256: sha256Hex(sidecar.bytes),
+                size: sidecar.bytes.length,
+              }),
             },
           }),
         };
